@@ -1,0 +1,44 @@
+[package]
+name = "pyana-circuit"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+authors = ["Pyana Contributors"]
+license = "MIT OR Apache-2.0"
+description = "Zero-knowledge proof circuits for pyana authorization token chains"
+
+[dependencies]
+# Try plonky3 - fall back to mock if unavailable
+p3-field = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-baby-bear = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-air = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-matrix = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-uni-stark = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-challenger = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-commit = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-fri = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-dft = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-poseidon2 = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-mds = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+p3-monty-31 = { git = "https://github.com/Plonky3/Plonky3", optional = true }
+
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
+rand = { version = "0.10", optional = true }
+
+[features]
+default = ["mock"]
+mock = []
+plonky3 = [
+    "p3-field", "p3-baby-bear", "p3-air", "p3-matrix", "p3-uni-stark",
+    "p3-challenger", "p3-commit", "p3-fri", "p3-symmetric", "p3-dft",
+    "p3-poseidon2", "p3-mds", "p3-monty-31", "rand",
+]
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "stark_bench"
+harness = false

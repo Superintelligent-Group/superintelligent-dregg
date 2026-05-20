@@ -1,0 +1,6 @@
+[toolchain]
+version = "2026-01-01"
+channel = "nightly-2026-01-01"
+profile = "default"
+
+components = ["cargo", "clippy", "rust-analyzer", "rustc", "rustfmt"]

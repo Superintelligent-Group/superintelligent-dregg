@@ -1,0 +1,25 @@
+[package]
+name = "pyana-bridge"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["turn"]
+turn = []
+
+[dependencies]
+pyana-commit = { path = "../commit" }
+pyana-trace = { path = "../trace" }
+pyana-circuit = { path = "../circuit" }
+pyana-turn = { path = "../turn" }
+token = { path = "../token", default-features = false, features = ["macaroon"] }
+macaroon = { path = "../macaroon" }
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "presentation_bench"
+harness = false

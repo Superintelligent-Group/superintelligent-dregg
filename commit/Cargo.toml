@@ -1,0 +1,8 @@
+[package]
+name = "pyana-commit"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }

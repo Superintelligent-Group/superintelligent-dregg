@@ -1,0 +1,94 @@
+//! Pyana Authorization Token Library
+//!
+//! Unified abstraction over two token formats:
+//!
+//! - **Macaroon** (feature `macaroon`): HMAC-SHA256 symmetric tokens.
+//!   Fast (~0.5μs verify), requires root secret key. Best for internal
+//!   service-to-service auth on hot paths.
+//!
+//! - **Biscuit** (feature `biscuit`): Ed25519/P-256 asymmetric tokens
+//!   with Datalog authorization. Decentralized verification with just
+//!   a public key. Best for distributed/delegated auth scenarios.
+//!
+//! Both implement [`AuthToken`] — the rest of the auth system
+//! (OAuth, sidecar, RPC, guest API) works through this trait.
+//!
+//! # Token Format Detection
+//!
+//! Tokens are self-describing via prefix:
+//! - `em2_` — Macaroon (Pyana Macaroon v2)
+//! - `eb2_` — Biscuit (Pyana Biscuit v2)
+//!
+//! Use [`TokenFormat::detect`] to auto-detect from an encoded string.
+
+pub mod pyana;
+pub mod error;
+pub mod format;
+pub mod revocation;
+pub mod traits;
+
+#[cfg(feature = "biscuit")]
+pub mod biscuit_backend;
+
+#[cfg(feature = "macaroon")]
+pub mod pyana_caveats;
+
+#[cfg(feature = "macaroon")]
+pub mod macaroon_backend;
+
+// Re-export primary types.
+pub use error::TokenError;
+pub use format::TokenFormat;
+pub use revocation::RevocationFilter;
+pub use traits::{
+  Attenuation, AuthRequest, AuthToken, BudgetSpec, Capability, FeatureGlobSpec, TokenClearance,
+  TokenVerifier,
+};
+
+#[cfg(feature = "biscuit")]
+pub use biscuit_backend::BiscuitToken;
+
+#[cfg(feature = "macaroon")]
+pub use macaroon_backend::MacaroonToken;
+
+// Re-export underlying crate types for advanced usage.
+#[cfg(feature = "biscuit")]
+pub use biscuit_auth;
+
+#[cfg(feature = "macaroon")]
+pub use pyana_macaroon;
+
+/// Decode a token from its prefixed string representation.
+///
+/// Auto-detects the format from the prefix and returns a boxed [`AuthToken`].
+///
+/// For **Biscuit** tokens, you must provide the root public key.
+/// For **Macaroon** tokens, you must provide the root secret key.
+///
+/// Use the format-specific constructors for type-safe key handling.
+pub fn decode_token(
+  encoded: &str,
+  #[cfg(feature = "biscuit")] biscuit_public_key: Option<biscuit_auth::PublicKey>,
+  #[cfg(feature = "macaroon")] macaroon_root_key: Option<[u8; 32]>,
+) -> Result<Box<dyn AuthToken>, TokenError> {
+  let fmt = TokenFormat::detect(encoded)?;
+  match fmt {
+    #[cfg(feature = "biscuit")]
+    TokenFormat::Biscuit => {
+      let pk = biscuit_public_key
+        .ok_or_else(|| TokenError::KeyError("biscuit public key required".into()))?;
+      Ok(Box::new(BiscuitToken::from_encoded(encoded, pk)?))
+    }
+    #[cfg(feature = "macaroon")]
+    TokenFormat::Macaroon => {
+      let key = macaroon_root_key
+        .ok_or_else(|| TokenError::KeyError("macaroon root key required".into()))?;
+      Ok(Box::new(MacaroonToken::from_encoded(encoded, key)?))
+    }
+    #[allow(unreachable_patterns)]
+    _ => Err(TokenError::UnsupportedFormat(format!(
+      "{} support not compiled in",
+      fmt
+    ))),
+  }
+}

@@ -1,0 +1,17 @@
+[package]
+name = "pyana-coord"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Two-layer turn coordination: causal chaining + atomic multi-party turns"
+
+[dependencies]
+pyana-cell = { path = "../cell" }
+pyana-turn = { path = "../turn" }
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["std"] }
+serde = { version = "1", features = ["derive"] }

@@ -1,0 +1,34 @@
+[package]
+name = "pyana-federation"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pyana-commit = { path = "../commit" }
+pyana-types = { path = "../types" }
+hints = { path = "../hints" }
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["std"] }
+getrandom = "0.3"
+crossbeam-channel = "0.5"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+tokio = { version = "1", features = ["full"] }
+ark-serialize = { version = "0.5.0", features = ["serde_with"] }
+ark-ff = "0.5.0"
+ark-std = "0.5.0"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bin]]
+name = "pyana-federation-demo"
+path = "src/bin/demo.rs"
+
+[[bin]]
+name = "pyana-federation-node"
+path = "src/bin/node.rs"
+
+[[bench]]
+name = "consensus_bench"
+harness = false

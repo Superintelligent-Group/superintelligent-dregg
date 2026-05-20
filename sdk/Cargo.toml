@@ -1,0 +1,31 @@
+[package]
+name = "pyana-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Agent SDK and wallet for the pyana federation — token management, turn execution, and proof generation"
+
+[dependencies]
+pyana-types = { path = "../types" }
+pyana-cell = { path = "../cell" }
+pyana-turn = { path = "../turn" }
+pyana-bridge = { path = "../bridge" }
+pyana-circuit = { path = "../circuit" }
+pyana-wire = { path = "../wire" }
+token = { path = "../token", default-features = false, features = ["macaroon"] }
+
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["std"] }
+getrandom = { workspace = true }
+postcard = { version = "1", features = ["use-std"] }
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["full"] }
+zeroize = { workspace = true }
+
+[[example]]
+name = "agent_demo"
+path = "examples/agent_demo.rs"

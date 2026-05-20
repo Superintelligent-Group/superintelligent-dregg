@@ -1,0 +1,18 @@
+[package]
+name = "pyana-turn"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Call-forest transaction model for atomic agent execution turns"
+
+[dependencies]
+pyana-cell = { path = "../cell" }
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["hazmat"] }
+serde = { workspace = true }
+
+[dev-dependencies]

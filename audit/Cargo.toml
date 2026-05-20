@@ -1,0 +1,9 @@
+[package]
+name = "pyana-audit"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pyana-commit = { path = "../commit" }
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }

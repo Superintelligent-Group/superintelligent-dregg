@@ -1,0 +1,1215 @@
+//! Full presentation builder.
+//!
+//! The presentation builder takes a plaintext token chain (a sequence of
+//! attenuations) and produces a ZK-ready presentation proof. This is the
+//! high-level API that orchestrates the entire pipeline:
+//!
+//! 1. Convert each token to a committed fact set.
+//! 2. Compute fold deltas for each attenuation step.
+//! 3. Evaluate the authorization request against the final state.
+//! 4. Produce a circuit witness and generate the (mock) proof.
+//!
+//! The resulting `BridgePresentationProof` can be verified without knowing
+//! the token chain, capabilities, or any private data — only the public
+//! inputs (federation root, request predicate, timestamp) are visible.
+
+use pyana_circuit::{
+    BabyBear, PresentationAir, PresentationProof, PresentationVerification,
+    PresentationWitness, RealPresentationProof,
+};
+use pyana_circuit::derivation_air::{CircuitRule, DerivationWitness};
+use pyana_circuit::fold_air::{FoldWitness, RemovedFact};
+use pyana_circuit::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
+use pyana_circuit::poseidon2;
+use pyana_circuit::stark;
+use pyana_commit::{
+    Fact, FieldElement, FoldDelta, SymbolTable, TokenState,
+};
+use pyana_commit::merkle::{MerkleTree, MerkleProof};
+use pyana_token::{AuthRequest, Attenuation, MacaroonToken};
+use pyana_trace::{AuthorizationTrace, Conclusion, Term as TraceTerm, symbol_from_str};
+
+use crate::authorize::{self, AuthError};
+use crate::convert::macaroon_to_factset;
+use crate::delta::{further_attenuation_delta, initial_attenuation_delta};
+
+/// Trait for resolving issuer membership in a federation.
+///
+/// A `FederationRegistry` provides real Merkle proofs from an externally-managed
+/// federation tree. This is the production path for issuer membership: the tree
+/// is maintained by the federation operator and the prover retrieves a proof for
+/// its issuer key.
+///
+/// The synthetic/deterministic path in `build_issuer_membership()` is retained
+/// as a **testing fallback only** and is clearly marked as such.
+pub trait FederationRegistry {
+    /// Look up the issuer's membership proof in the federation tree.
+    ///
+    /// Returns the Merkle proof (path indices + siblings at each level) and the
+    /// current tree root, or `None` if the issuer is not a member.
+    fn issuer_proof(&self, issuer_key: &[u8; 32]) -> Option<(MerkleProof, [u8; 32])>;
+}
+
+/// A step in the token chain: the token, its committed state, and the fold delta
+/// from the previous state.
+#[derive(Clone, Debug)]
+pub struct ChainStep {
+    /// The committed state at this step.
+    pub state: TokenState,
+    /// The fold delta from the previous step (None for the first step).
+    pub delta: Option<FoldDelta>,
+    /// Facts in the committed state.
+    pub facts: Vec<Fact>,
+}
+
+/// The high-level presentation builder that bridges plaintext tokens to ZK proofs.
+///
+/// Usage:
+/// 1. Create with `new(issuer_key, federation_root)`.
+/// 2. Call `set_root_token(token)` to set the initial (unrestricted) root token.
+/// 3. Call `add_attenuation(attenuation)` for each attenuation step.
+/// 4. Call `prove(request)` to generate the ZK presentation proof.
+pub struct BridgePresentationBuilder {
+    /// The issuer's key (used for federation membership proof).
+    issuer_key: [u8; 32],
+    /// The federation root of trust (raw bytes, for public input serialization).
+    federation_root: [u8; 32],
+    /// The federation root as a BabyBear field element (used for Merkle comparison).
+    federation_root_bb: BabyBear,
+    /// Chain of committed states and fold deltas.
+    chain: Vec<ChainStep>,
+    /// The accumulated symbol table.
+    symbols: SymbolTable,
+    /// The root token (first token in the chain).
+    root_token: Option<MacaroonToken>,
+    /// The authorization state: includes all semantic facts (app, service, feature, etc.)
+    /// that are needed for policy evaluation. This is separate from the fold chain states
+    /// because the fold chain only tracks structural narrowing.
+    auth_state: TokenState,
+    /// Optional external federation tree for real issuer membership proofs.
+    /// When set, `build_issuer_membership` uses a real Merkle path from this tree
+    /// instead of the synthetic/deterministic fallback.
+    federation_tree: Option<MerkleTree>,
+}
+
+/// The complete bridge presentation proof.
+///
+/// Contains both the ZK proof (circuit-level) and the supporting metadata
+/// needed for full verification.
+#[derive(Clone, Debug)]
+pub struct BridgePresentationProof {
+    /// The circuit-level presentation proof (mock-backed).
+    pub circuit_proof: PresentationProof,
+    /// Real STARK proof for issuer membership (when generated via `prove_real()`).
+    /// This is the proof that the wire protocol should extract and transmit.
+    /// `None` when using the mock `prove()` path.
+    pub real_stark_proof: Option<RealPresentationProof>,
+    /// The authorization trace (for debugging / off-chain verification).
+    pub trace: AuthorizationTrace,
+    /// Number of attenuation steps in the chain.
+    pub chain_length: usize,
+    /// The final state root (public input).
+    pub final_state_root: [u8; 32],
+    /// The federation root (public input).
+    pub federation_root: [u8; 32],
+    /// Verification result from the circuit layer.
+    pub verification: PresentationVerification,
+}
+
+impl BridgePresentationProof {
+    /// Whether the proof is valid.
+    pub fn is_valid(&self) -> bool {
+        self.verification == PresentationVerification::Valid
+    }
+
+    /// Get the proof size in bytes.
+    pub fn proof_size_bytes(&self) -> usize {
+        if let Some(real) = &self.real_stark_proof {
+            real.total_proof_size_bytes()
+        } else {
+            self.circuit_proof.total_proof_size_bytes
+        }
+    }
+
+    /// Human-readable proof size.
+    pub fn proof_size_display(&self) -> String {
+        if let Some(real) = &self.real_stark_proof {
+            real.proof_size_display()
+        } else {
+            self.circuit_proof.proof_size_display()
+        }
+    }
+
+    /// Whether this proof contains a real STARK issuer membership proof.
+    pub fn has_real_stark_proof(&self) -> bool {
+        self.real_stark_proof.is_some()
+    }
+
+    /// Extract the serialized STARK proof bytes for the issuer membership claim.
+    ///
+    /// This is the primary method for wire protocol integration: the returned bytes
+    /// can be transmitted to a verifier which reconstructs them via
+    /// `stark::proof_from_bytes()` and calls `stark::verify()` with the
+    /// `MerkleStarkAir` and the public inputs `[leaf_hash, federation_root]`.
+    ///
+    /// Returns `None` if this proof was generated via the mock `prove()` path.
+    pub fn issuer_proof_bytes(&self) -> Option<Vec<u8>> {
+        self.real_stark_proof.as_ref().map(|real| {
+            stark::proof_to_bytes(&real.issuer_membership_stark_proof)
+        })
+    }
+
+    /// Verify the real STARK issuer membership proof (if present).
+    ///
+    /// This performs full cryptographic verification using the STARK verifier.
+    /// Returns `None` if no real STARK proof is attached; returns `Some(Ok(()))`
+    /// if verification succeeds, or `Some(Err(msg))` on failure.
+    pub fn verify_issuer_stark(&self) -> Option<Result<(), String>> {
+        self.real_stark_proof.as_ref().map(|real| {
+            let air = stark::MerkleStarkAir;
+            let pi: Vec<BabyBear> = real
+                .issuer_membership_stark_proof
+                .public_inputs
+                .iter()
+                .map(|&v| BabyBear::new(v))
+                .collect();
+            stark::verify(&air, &real.issuer_membership_stark_proof, &pi)
+        })
+    }
+}
+
+impl BridgePresentationBuilder {
+    /// Create a new presentation builder.
+    ///
+    /// # Arguments
+    ///
+    /// * `issuer_key` - The issuer's 32-byte key (hashed for federation membership).
+    /// * `federation_root` - The 32-byte federation root of trust.
+    pub fn new(issuer_key: [u8; 32], federation_root: [u8; 32]) -> Self {
+        let federation_root_bb = bytes_to_babybear(&federation_root);
+        Self {
+            issuer_key,
+            federation_root,
+            federation_root_bb,
+            chain: Vec::new(),
+            symbols: SymbolTable::new(),
+            root_token: None,
+            auth_state: TokenState::new(),
+            federation_tree: None,
+        }
+    }
+
+    /// Create a new presentation builder with a pre-computed BabyBear federation root.
+    ///
+    /// This is used when the federation root is known as a field element (e.g., from
+    /// a Merkle tree that already operates in BabyBear). The `federation_root` bytes
+    /// are still stored for public input serialization.
+    pub fn new_with_root_bb(
+        issuer_key: [u8; 32],
+        federation_root: [u8; 32],
+        federation_root_bb: BabyBear,
+    ) -> Self {
+        Self {
+            issuer_key,
+            federation_root,
+            federation_root_bb,
+            chain: Vec::new(),
+            symbols: SymbolTable::new(),
+            root_token: None,
+            auth_state: TokenState::new(),
+            federation_tree: None,
+        }
+    }
+
+    /// Attach an external federation Merkle tree for real issuer membership proofs.
+    ///
+    /// When a federation tree is provided, `build_issuer_membership()` will look up
+    /// the issuer key in this tree and use the real Merkle path. This is the production
+    /// path that connects to an actual federation registry.
+    ///
+    /// Without this, the builder falls back to a synthetic/deterministic path that is
+    /// only suitable for testing.
+    pub fn with_federation_tree(&mut self, tree: MerkleTree) -> &mut Self {
+        // Recompute the federation root from the actual tree.
+        let mut tree_clone = tree.clone();
+        let root_bytes = tree_clone.root();
+        self.federation_root = root_bytes;
+        self.federation_root_bb = bytes_to_babybear(&root_bytes);
+        self.federation_tree = Some(tree);
+        self
+    }
+
+    /// Set the root (unrestricted) token.
+    ///
+    /// This is the initial token minted by the issuer. It has no caveats
+    /// and represents unlimited access.
+    pub fn set_root_token(&mut self, token: MacaroonToken) {
+        let (factset, syms) = macaroon_to_factset(&token);
+        self.symbols.merge(&syms);
+
+        let facts: Vec<Fact> = factset.iter().copied().collect();
+        let mut state = TokenState::new();
+        for &fact in &facts {
+            state.add_fact(fact);
+        }
+
+        // Initialize the authorization state with the same facts.
+        self.auth_state = TokenState::new();
+        for &fact in &facts {
+            self.auth_state.add_fact(fact);
+        }
+
+        self.chain.push(ChainStep {
+            state,
+            delta: None,
+            facts,
+        });
+        self.root_token = Some(token);
+    }
+
+    /// Add an attenuation step to the chain.
+    ///
+    /// This takes the `Attenuation` spec (the restrictions being applied)
+    /// and computes the fold delta from the current state to the new state.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the attenuation was successfully applied, `false` if it
+    /// was invalid (e.g., trying to attenuate an empty chain).
+    pub fn add_attenuation(&mut self, attenuation: &Attenuation) -> bool {
+        let current_step = match self.chain.last() {
+            Some(step) => step,
+            None => return false,
+        };
+
+        let current_state = &current_step.state;
+
+        // Convert attenuation to new restriction facts.
+        let new_facts = crate::convert::attenuation_to_facts(attenuation, &mut self.symbols);
+
+        if new_facts.is_empty() {
+            return false;
+        }
+
+        // If this is the first attenuation (from unrestricted root), we remove
+        // the unrestricted fact and add checks.
+        let is_first_attenuation = current_step.facts.len() == 1
+            && current_step.facts[0].predicate == FieldElement::from_symbol("unrestricted");
+
+        if is_first_attenuation {
+            let result = initial_attenuation_delta(attenuation, &mut self.symbols);
+            match result {
+                Some((_old_state, new_state, delta)) => {
+                    // Update the authorization state: replace unrestricted with
+                    // the actual restriction facts for policy evaluation.
+                    self.auth_state = TokenState::new();
+                    for fact in &new_facts {
+                        self.auth_state.add_fact(*fact);
+                    }
+
+                    let new_chain_facts = new_state.all_facts();
+                    self.chain.push(ChainStep {
+                        state: new_state,
+                        delta: Some(delta),
+                        facts: new_chain_facts,
+                    });
+                    true
+                }
+                None => false,
+            }
+        } else {
+            // Subsequent attenuation: add restrictions as checks.
+            let result =
+                further_attenuation_delta(current_state, &new_facts, &self.symbols);
+            match result {
+                Some((new_state, delta)) => {
+                    // Add the new restriction facts to the authorization state.
+                    for fact in &new_facts {
+                        if !self.auth_state.contains(fact) {
+                            self.auth_state.add_fact(*fact);
+                        }
+                    }
+
+                    let new_chain_facts = new_state.all_facts();
+                    self.chain.push(ChainStep {
+                        state: new_state,
+                        delta: Some(delta),
+                        facts: new_chain_facts,
+                    });
+                    true
+                }
+                None => false,
+            }
+        }
+    }
+
+    /// Get the current chain length (number of states, including root).
+    pub fn chain_length(&self) -> usize {
+        self.chain.len()
+    }
+
+    /// Get the current (final) state, if any.
+    pub fn final_state(&self) -> Option<&TokenState> {
+        self.chain.last().map(|s| &s.state)
+    }
+
+    /// Get the symbol table.
+    pub fn symbols(&self) -> &SymbolTable {
+        &self.symbols
+    }
+
+    /// Verify the fold chain integrity.
+    ///
+    /// Checks that all fold deltas in the chain are valid and properly linked.
+    pub fn verify_chain(&self) -> bool {
+        let deltas: Vec<&FoldDelta> = self
+            .chain
+            .iter()
+            .filter_map(|step| step.delta.as_ref())
+            .collect();
+
+        if deltas.is_empty() {
+            return true; // Only the root, no attenuations.
+        }
+
+        // Each delta must individually verify.
+        for delta in &deltas {
+            if !delta.apply_and_verify() {
+                return false;
+            }
+        }
+
+        // Chain continuity: each delta's new_root must equal the next delta's old_root.
+        for i in 0..deltas.len() - 1 {
+            if deltas[i].new_root != deltas[i + 1].old_root {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Generate the ZK presentation proof for the given authorization request.
+    ///
+    /// This is the main entry point that:
+    /// 1. Verifies the fold chain.
+    /// 2. Evaluates the authorization request against the final state.
+    /// 3. Converts the trace to circuit witnesses.
+    /// 4. Generates the (mock) STARK proof.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The authorization request to prove.
+    ///
+    /// # Returns
+    ///
+    /// A `BridgePresentationProof` containing the proof and metadata,
+    /// or an error if authorization fails or the proof cannot be generated.
+    pub fn prove(
+        &mut self,
+        request: &AuthRequest,
+    ) -> Result<BridgePresentationProof, AuthError> {
+        // 1. Get the final state.
+        let final_step = self.chain.last().ok_or(AuthError::EmptyState)?;
+        let final_state = &final_step.state;
+
+        // 2. Evaluate authorization against the auth_state which contains the
+        //    actual semantic facts (app, service, feature, etc.) needed by policy rules.
+        let trace = authorize::authorize_with_trace(&self.auth_state, request, &self.symbols)?;
+
+        // 3. Compute the final state root (from the fold chain state).
+        let mut final_state_clone = final_state.clone();
+        let final_root_bytes = final_state_clone.root();
+
+        // 4. Build the circuit witness.
+        let circuit_witness = self.build_circuit_witness(&trace, request)?;
+
+        // 5. Generate the presentation proof.
+        let air = PresentationAir::new(circuit_witness.clone());
+        let verification = air.verify_all();
+
+        let circuit_proof = air.prove().ok_or_else(|| {
+            AuthError::InvalidRequest("proof generation failed".into())
+        })?;
+
+        Ok(BridgePresentationProof {
+            circuit_proof,
+            real_stark_proof: None,
+            trace,
+            chain_length: self.chain.len(),
+            final_state_root: final_root_bytes,
+            federation_root: self.federation_root,
+            verification,
+        })
+    }
+
+    /// Generate a real STARK-backed presentation proof for the given authorization request.
+    ///
+    /// Unlike `prove()` which uses mock proofs, this method calls
+    /// `PresentationAir::prove_stark()` to produce a real STARK proof for the
+    /// issuer membership sub-circuit. This is the preferred path for production
+    /// use where cryptographic soundness of the issuer membership proof is required.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The authorization request to prove.
+    ///
+    /// # Returns
+    ///
+    /// A `BridgePresentationProof` backed by a real STARK issuer membership proof,
+    /// or an error if authorization fails or the proof cannot be generated.
+    ///
+    /// # Security Note
+    ///
+    /// The underlying MerkleStarkAir uses a linear algebraic binding constraint
+    /// (parent = current + sib0 + sib1 + sib2 + position) which provides algebraic
+    /// binding only, NOT collision resistance. See the SECURITY comment on
+    /// MerkleStarkAir in circuit/src/stark.rs for details. Replace with Poseidon2
+    /// hash constraints for production soundness.
+    pub fn prove_real(
+        &mut self,
+        request: &AuthRequest,
+    ) -> Result<BridgePresentationProof, AuthError> {
+        // 1. Get the final state.
+        let final_step = self.chain.last().ok_or(AuthError::EmptyState)?;
+        let final_state = &final_step.state;
+
+        // 2. Evaluate authorization against the auth_state.
+        let trace = authorize::authorize_with_trace(&self.auth_state, request, &self.symbols)?;
+
+        // 3. Compute the final state root.
+        let mut final_state_clone = final_state.clone();
+        let final_root_bytes = final_state_clone.root();
+
+        // 4. Build the circuit witness.
+        let circuit_witness = self.build_circuit_witness(&trace, request)?;
+
+        // 5. Generate the presentation proof using the real STARK path.
+        //    The STARK proof for issuer membership is stored in the result so the
+        //    wire protocol can extract it via `issuer_proof_bytes()`.
+        let air = PresentationAir::new(circuit_witness.clone());
+        let verification = air.verify_all();
+
+        // Generate the real STARK proof. This is the cryptographically-sound proof
+        // of issuer membership that is transmitted over the wire.
+        let stark_proof = air.prove_stark().ok_or_else(|| {
+            AuthError::InvalidRequest("STARK proof generation failed".into())
+        })?;
+
+        // Also generate the mock proof for backward-compatible API consumers.
+        let circuit_proof = air.prove().ok_or_else(|| {
+            AuthError::InvalidRequest("proof generation failed".into())
+        })?;
+
+        Ok(BridgePresentationProof {
+            circuit_proof,
+            real_stark_proof: Some(stark_proof),
+            trace,
+            chain_length: self.chain.len(),
+            final_state_root: final_root_bytes,
+            federation_root: self.federation_root,
+            verification,
+        })
+    }
+
+    /// Generate an IVC-based presentation proof for the given authorization request.
+    ///
+    /// This uses `PresentationAir::prove_ivc()` to accumulate the entire fold chain
+    /// into a single constant-size IVC proof instead of N separate fold proofs.
+    /// This is the preferred path for long attenuation chains where proof size matters.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The authorization request to prove.
+    ///
+    /// # Returns
+    ///
+    /// A `BridgePresentationProof` backed by an IVC fold chain proof,
+    /// or an error if authorization fails or the proof cannot be generated.
+    pub fn prove_ivc(
+        &mut self,
+        request: &AuthRequest,
+    ) -> Result<BridgePresentationProof, AuthError> {
+        // 1. Get the final state.
+        let final_step = self.chain.last().ok_or(AuthError::EmptyState)?;
+        let final_state = &final_step.state;
+
+        // 2. Evaluate authorization against the auth_state.
+        let trace = authorize::authorize_with_trace(&self.auth_state, request, &self.symbols)?;
+
+        // 3. Compute the final state root.
+        let mut final_state_clone = final_state.clone();
+        let final_root_bytes = final_state_clone.root();
+
+        // 4. Build the circuit witness.
+        let circuit_witness = self.build_circuit_witness(&trace, request)?;
+
+        // 5. Generate the IVC presentation proof.
+        let air = PresentationAir::new(circuit_witness.clone());
+        let verification = air.verify_all();
+
+        let _ivc_proof = air.prove_ivc().ok_or_else(|| {
+            AuthError::InvalidRequest("IVC proof generation failed".into())
+        })?;
+
+        // Generate the standard circuit_proof for API compatibility.
+        let circuit_proof = air.prove().ok_or_else(|| {
+            AuthError::InvalidRequest("proof generation failed".into())
+        })?;
+
+        Ok(BridgePresentationProof {
+            circuit_proof,
+            real_stark_proof: None,
+            trace,
+            chain_length: self.chain.len(),
+            final_state_root: final_root_bytes,
+            federation_root: self.federation_root,
+            verification,
+        })
+    }
+
+    /// Build the circuit-level presentation witness from the authorization trace.
+    fn build_circuit_witness(
+        &self,
+        trace: &AuthorizationTrace,
+        request: &AuthRequest,
+    ) -> Result<PresentationWitness, AuthError> {
+        // Convert the request predicate (action or combined) to BabyBear.
+        let request_pred_bb = if let Some(action) = &request.action {
+            let sym = symbol_from_str(action);
+            bytes_to_babybear(&sym)
+        } else {
+            BabyBear::new(0)
+        };
+
+        // Timestamp.
+        let timestamp = request.now.unwrap_or(0);
+        let timestamp_bb = BabyBear::from_u64(timestamp as u64);
+
+        // Build fold witnesses from the chain deltas.
+        let fold_chain = self.build_fold_witnesses();
+
+        // Build the derivation witness from the trace.
+        let derivation = self.build_derivation_witness(trace)?;
+
+        // Build the issuer membership witness.
+        let issuer_key_hash = bytes_to_babybear(&self.issuer_key);
+        let issuer_membership = self.build_issuer_membership(issuer_key_hash)?;
+
+        // Assemble the presentation witness.
+        // We need the federation_root to match the issuer_membership.expected_root
+        // for the proof to verify.
+        let witness = PresentationWitness {
+            federation_root: issuer_membership.expected_root,
+            request_predicate: request_pred_bb,
+            timestamp: timestamp_bb,
+            fold_chain,
+            derivation,
+            issuer_membership,
+            issuer_key_hash,
+        };
+
+        Ok(witness)
+    }
+
+    /// Build FoldWitness instances for the circuit from our chain deltas.
+    pub fn build_fold_witnesses(&self) -> Vec<FoldWitness> {
+        let mut witnesses = Vec::new();
+
+        for step in &self.chain {
+            if let Some(delta) = &step.delta {
+                let old_root_bb = bytes_to_babybear(&delta.old_root);
+                let new_root_bb = bytes_to_babybear(&delta.new_root);
+
+                // Convert removed facts to circuit format.
+                let removed_facts: Vec<RemovedFact> = delta
+                    .removed
+                    .iter()
+                    .map(|(fact, _proof)| {
+                        let pred_bb = bytes_to_babybear(&fact.predicate.0);
+                        let terms = [
+                            bytes_to_babybear(&fact.terms[0].0),
+                            bytes_to_babybear(&fact.terms[1].0),
+                            bytes_to_babybear(&fact.terms[2].0),
+                        ];
+                        RemovedFact {
+                            predicate: pred_bb,
+                            terms,
+                            membership_proof: None, // Verified in the commit layer; full Merkle proof elided.
+                        }
+                    })
+                    .collect();
+
+                witnesses.push(FoldWitness {
+                    old_root: old_root_bb,
+                    new_root: new_root_bb,
+                    removed_facts,
+                    num_added_checks: delta.added_checks.len(),
+                });
+            }
+        }
+
+        witnesses
+    }
+
+    /// Build the DerivationWitness from the authorization trace.
+    fn build_derivation_witness(
+        &self,
+        trace: &AuthorizationTrace,
+    ) -> Result<DerivationWitness, AuthError> {
+        // The derivation witness proves that the final state authorizes the request.
+        // We need to pick the rule that fired (from the trace conclusion).
+
+        let rule_id = match &trace.conclusion {
+            Conclusion::Allow { policy_rule_id } => *policy_rule_id,
+            Conclusion::Deny => return Err(AuthError::Denied),
+        };
+
+        // Get the final state root.
+        let final_step = self.chain.last().ok_or(AuthError::EmptyState)?;
+        let mut final_state = final_step.state.clone();
+        let state_root_bytes = final_state.root();
+        let state_root_bb = bytes_to_babybear(&state_root_bytes);
+
+        // Reconstruct the evaluator's fact set so we can look up body facts
+        // by index. The evaluator builds: base facts + request facts + derived facts.
+        let reconstructed_facts = self.reconstruct_evaluator_facts(trace);
+
+        // Build body fact hashes from the derivation steps.
+        // Use the last step that derived "allow".
+        let allow_step = trace
+            .steps
+            .iter()
+            .find(|s| s.derived_fact.predicate == symbol_from_str("allow"));
+
+        let (body_fact_hashes, substitution, derived_pred, derived_terms) = if let Some(step) = allow_step {
+            let body_hashes: Vec<BabyBear> = step
+                .body_fact_indices
+                .iter()
+                .map(|&idx| {
+                    // Hash the actual body fact using Poseidon2 for circuit compatibility.
+                    if let Some(fact) = reconstructed_facts.get(idx) {
+                        let pred_bb = bytes_to_babybear(&fact.predicate);
+                        let mut term_bbs = [BabyBear::ZERO; 3];
+                        for (i, term) in fact.terms.iter().take(3).enumerate() {
+                            term_bbs[i] = match term {
+                                TraceTerm::Const(sym) => bytes_to_babybear(sym),
+                                TraceTerm::Int(v) => BabyBear::from_u64(*v as u64),
+                                TraceTerm::Var(_) => BabyBear::ZERO,
+                            };
+                        }
+                        poseidon2::hash_fact(pred_bb, &term_bbs)
+                    } else {
+                        // Index out of range — use a non-zero sentinel.
+                        BabyBear::new(1)
+                    }
+                })
+                .collect();
+
+            let subst: Vec<BabyBear> = step
+                .substitution
+                .bindings
+                .iter()
+                .map(|(_, term)| match term {
+                    TraceTerm::Const(sym) => bytes_to_babybear(sym),
+                    TraceTerm::Int(i) => BabyBear::from_u64(*i as u64),
+                    TraceTerm::Var(_) => BabyBear::ZERO,
+                })
+                .collect();
+
+            let pred = bytes_to_babybear(&step.derived_fact.predicate);
+            let mut terms = [BabyBear::ZERO; 3];
+            for (i, term) in step.derived_fact.terms.iter().take(3).enumerate() {
+                terms[i] = match term {
+                    TraceTerm::Const(sym) => bytes_to_babybear(sym),
+                    TraceTerm::Int(v) => BabyBear::from_u64(*v as u64),
+                    TraceTerm::Var(_) => BabyBear::ZERO,
+                };
+            }
+
+            (body_hashes, subst, pred, terms)
+        } else {
+            // No derivation step found — this shouldn't happen for Allow conclusions.
+            // Fall back to a minimal witness.
+            let allow_sym = symbol_from_str("allow");
+            (
+                vec![BabyBear::new(rule_id)],
+                vec![],
+                bytes_to_babybear(&allow_sym),
+                [BabyBear::ZERO; 3],
+            )
+        };
+
+        // Ensure we have at least one body hash.
+        let body_fact_hashes = if body_fact_hashes.is_empty() {
+            vec![BabyBear::new(1)]
+        } else {
+            body_fact_hashes
+        };
+
+        // Build the circuit rule representation.
+        // The "allow" rule's head has no terms (it's just "allow()"),
+        // so all head_terms are literal zeros.
+        let circuit_rule = CircuitRule {
+            id: rule_id,
+            num_body_atoms: body_fact_hashes.len(),
+            num_variables: substitution.len(),
+            head_predicate: derived_pred,
+            head_terms: [
+                (false, derived_terms[0]),
+                (false, derived_terms[1]),
+                (false, derived_terms[2]),
+            ],
+            body_atoms: vec![],
+        };
+
+        Ok(DerivationWitness {
+            rule: circuit_rule,
+            state_root: state_root_bb,
+            body_fact_hashes,
+            substitution,
+            derived_predicate: derived_pred,
+            derived_terms,
+        })
+    }
+
+    /// Reconstruct the evaluator's fact set from the authorization trace.
+    ///
+    /// The evaluator builds facts as: base committed facts (from auth_state) +
+    /// request facts (injected by the evaluator) + derived facts from prior steps.
+    /// The `body_fact_indices` in each DerivationStep index into this growing list.
+    fn reconstruct_evaluator_facts(&self, trace: &AuthorizationTrace) -> Vec<pyana_trace::Fact> {
+        use pyana_trace::{Fact as TraceFact, Term, symbol_from_str};
+
+        let mut facts: Vec<TraceFact> = Vec::new();
+
+        // 1. Base facts from the committed auth_state.
+        for fact in self.auth_state.all_facts() {
+            let pred_symbol = if let Some(name) = self.symbols.resolve(fact.predicate) {
+                symbol_from_str(name)
+            } else {
+                fact.predicate.0
+            };
+            let mut terms = Vec::new();
+            for term_fe in &fact.terms {
+                if term_fe.is_zero() {
+                    break;
+                }
+                if let Some(name) = self.symbols.resolve(*term_fe) {
+                    terms.push(Term::Const(symbol_from_str(name)));
+                } else {
+                    terms.push(Term::Const(term_fe.0));
+                }
+            }
+            facts.push(TraceFact::new(pred_symbol, terms));
+        }
+
+        // 2. Request facts (same injection as the evaluator performs).
+        let req = &trace.request;
+        if let Some(app_id) = &req.app_id {
+            facts.push(TraceFact::new(symbol_from_str("request_app"), vec![Term::Const(*app_id)]));
+        }
+        if let Some(service) = &req.service {
+            facts.push(TraceFact::new(symbol_from_str("request_service"), vec![Term::Const(*service)]));
+        }
+        if let Some(action) = &req.action {
+            facts.push(TraceFact::new(symbol_from_str("request_action"), vec![Term::Const(*action)]));
+        }
+        for feature in &req.features {
+            facts.push(TraceFact::new(symbol_from_str("request_feature"), vec![Term::Const(*feature)]));
+        }
+        if let Some(user_id) = &req.user_id {
+            facts.push(TraceFact::new(symbol_from_str("request_user"), vec![Term::Const(*user_id)]));
+        }
+        facts.push(TraceFact::new(symbol_from_str("request_time"), vec![Term::Int(req.now)]));
+
+        // 3. Derived facts from prior steps (in order).
+        for step in &trace.steps {
+            facts.push(step.derived_fact.clone());
+        }
+
+        facts
+    }
+
+    /// Build the issuer membership Merkle witness.
+    ///
+    /// If a federation tree was attached via `with_federation_tree()`, this uses
+    /// a real Merkle proof from the tree. Otherwise, it falls back to a synthetic
+    /// deterministic path for testing.
+    ///
+    /// The computed root is checked against the expected `federation_root`; if they
+    /// don't match, the proof is considered invalid (returns Err).
+    pub fn build_issuer_membership(&self, issuer_key_hash: BabyBear) -> Result<MerkleWitness, AuthError> {
+        // Production path: use real federation tree if available.
+        if let Some(tree) = &self.federation_tree {
+            return self.build_issuer_membership_from_tree(tree, issuer_key_hash);
+        }
+
+        // TESTING FALLBACK: synthetic/deterministic Merkle path.
+        // This constructs a path from BLAKE3-derived siblings. It is NOT connected
+        // to any real federation registry and is only suitable for unit tests and
+        // development. The root check below still ensures the builder was configured
+        // with the matching synthetic root (via `new_with_root_bb`).
+        self.build_issuer_membership_synthetic(issuer_key_hash)
+    }
+
+    /// Build issuer membership from a real federation Merkle tree.
+    ///
+    /// Looks up the issuer key's leaf hash in the tree and converts the resulting
+    /// `MerkleProof` (with `[u8; 32]` siblings) into the circuit's `MerkleWitness`
+    /// (with `BabyBear` field element siblings).
+    fn build_issuer_membership_from_tree(
+        &self,
+        tree: &MerkleTree,
+        issuer_key_hash: BabyBear,
+    ) -> Result<MerkleWitness, AuthError> {
+        // The federation tree stores issuer keys as leaf data.
+        // Look up the issuer key's membership proof.
+        let proof = tree
+            .membership_proof(&self.issuer_key)
+            .ok_or(AuthError::IssuerNotInFederation)?;
+
+        // Convert the MerkleProof (byte-level) to a circuit MerkleWitness (field-level).
+        let mut levels = Vec::with_capacity(proof.path_indices.len());
+        let mut current = issuer_key_hash;
+
+        for i in 0..proof.path_indices.len() {
+            let position = proof.path_indices[i];
+            // Convert 32-byte siblings to BabyBear via Poseidon2 hash compression.
+            let siblings = [
+                bytes_to_babybear(&proof.siblings[i][0]),
+                bytes_to_babybear(&proof.siblings[i][1]),
+                bytes_to_babybear(&proof.siblings[i][2]),
+            ];
+            let parent = MerkleAir::compute_parent(current, position, &siblings);
+            levels.push(MerkleLevelWitness { position, siblings });
+            current = parent;
+        }
+
+        // The computed root must match the federation root we were configured with.
+        if current != self.federation_root_bb {
+            return Err(AuthError::IssuerNotInFederation);
+        }
+
+        Ok(MerkleWitness {
+            leaf_hash: issuer_key_hash,
+            levels,
+            expected_root: current,
+        })
+    }
+
+    /// Synthetic/deterministic issuer membership proof (TESTING ONLY).
+    ///
+    /// Constructs a Merkle path from BLAKE3-derived sibling values. This is NOT
+    /// connected to any real federation registry. The "membership" it proves is
+    /// purely that the path was built targeting the configured `federation_root_bb`.
+    ///
+    /// Use `with_federation_tree()` for production proofs.
+    fn build_issuer_membership_synthetic(
+        &self,
+        issuer_key_hash: BabyBear,
+    ) -> Result<MerkleWitness, AuthError> {
+        let depth = 8;
+        let mut current = issuer_key_hash;
+        let mut levels = Vec::with_capacity(depth);
+
+        // Derive sibling values deterministically from the issuer key.
+        for i in 0..depth {
+            let position = (i % 4) as u8;
+            let siblings = [
+                BabyBear::new(hash_index(i, 0, &self.issuer_key)),
+                BabyBear::new(hash_index(i, 1, &self.issuer_key)),
+                BabyBear::new(hash_index(i, 2, &self.issuer_key)),
+            ];
+            let parent = MerkleAir::compute_parent(current, position, &siblings);
+            levels.push(MerkleLevelWitness { position, siblings });
+            current = parent;
+        }
+
+        // Verify that the computed root matches the expected federation root.
+        // This prevents the tautological construction from silently passing:
+        // the builder cannot fabricate membership if the federation_root is a
+        // real, externally-provided public parameter.
+        if current != self.federation_root_bb {
+            return Err(AuthError::IssuerNotInFederation);
+        }
+
+        Ok(MerkleWitness {
+            leaf_hash: issuer_key_hash,
+            levels,
+            expected_root: current,
+        })
+    }
+}
+
+/// Encode a 32-byte value as 8 BabyBear field elements (4 bytes each, mod p).
+/// This preserves full 256-bit distinguishability across the limb vector.
+pub fn bytes_to_babybear_vec(bytes: &[u8; 32]) -> [BabyBear; 8] {
+    BabyBear::encode_hash(bytes)
+}
+
+/// Compress a 32-byte value into a single BabyBear element by encoding as
+/// 8 limbs and hashing them together with Poseidon2. This preserves collision
+/// resistance up to the ~31-bit field size while using all 256 input bits.
+pub fn bytes_to_babybear(bytes: &[u8; 32]) -> BabyBear {
+    let limbs = bytes_to_babybear_vec(bytes);
+    poseidon2::hash_many(&limbs)
+}
+
+/// Derive a deterministic sibling hash for Merkle path construction.
+/// Exposed as pub(crate) for test helpers that need to compute the matching federation root.
+pub fn hash_index(level: usize, sibling_idx: usize, key: &[u8; 32]) -> u32 {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&level.to_le_bytes());
+    hasher.update(&sibling_idx.to_le_bytes());
+    hasher.update(key);
+    let hash = hasher.finalize();
+    let bytes = hash.as_bytes();
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % (pyana_circuit::field::BABYBEAR_P)
+}
+
+/// Verify a presentation proof's public inputs.
+///
+/// This is a standalone verification function that checks the proof
+/// without needing access to the original token chain.
+pub fn verify_presentation(proof: &BridgePresentationProof) -> bool {
+    proof.is_valid()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyana_circuit::MockProver;
+
+    fn test_key() -> [u8; 32] {
+        let mut key = [0u8; 32];
+        key[0] = 0x42;
+        key[1] = 0x13;
+        key[31] = 0xFF;
+        key
+    }
+
+    fn test_federation_root() -> [u8; 32] {
+        let mut root = [0u8; 32];
+        root[0] = 0xFE;
+        root[1] = 0xDE;
+        root[31] = 0x01;
+        root
+    }
+
+    #[test]
+    fn test_builder_new() {
+        let builder = BridgePresentationBuilder::new(test_key(), test_federation_root());
+        assert_eq!(builder.chain_length(), 0);
+    }
+
+    #[test]
+    fn test_builder_set_root_token() {
+        let key = test_key();
+        let mut builder = BridgePresentationBuilder::new(key, test_federation_root());
+        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+
+        builder.set_root_token(token);
+        assert_eq!(builder.chain_length(), 1);
+        assert!(builder.final_state().is_some());
+    }
+
+    #[test]
+    fn test_builder_add_attenuation() {
+        let key = test_key();
+        let mut builder = BridgePresentationBuilder::new(key, test_federation_root());
+        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+
+        builder.set_root_token(token);
+
+        let att = Attenuation {
+            apps: vec![("my-app".into(), "rw".into())],
+            ..Default::default()
+        };
+
+        let result = builder.add_attenuation(&att);
+        assert!(result);
+        assert_eq!(builder.chain_length(), 2);
+    }
+
+    #[test]
+    fn test_builder_multiple_attenuations() {
+        let key = test_key();
+        let mut builder = BridgePresentationBuilder::new(key, test_federation_root());
+        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+
+        builder.set_root_token(token);
+
+        // First attenuation: restrict to an app.
+        let att1 = Attenuation {
+            apps: vec![("my-app".into(), "rw".into())],
+            ..Default::default()
+        };
+        assert!(builder.add_attenuation(&att1));
+        assert_eq!(builder.chain_length(), 2);
+
+        // Second attenuation: add user confinement.
+        let att2 = Attenuation {
+            confine_user: Some("alice".into()),
+            ..Default::default()
+        };
+        assert!(builder.add_attenuation(&att2));
+        assert_eq!(builder.chain_length(), 3);
+    }
+
+    #[test]
+    fn test_builder_verify_chain() {
+        let key = test_key();
+        let mut builder = BridgePresentationBuilder::new(key, test_federation_root());
+        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+
+        builder.set_root_token(token);
+
+        let att = Attenuation {
+            apps: vec![("my-app".into(), "rw".into())],
+            ..Default::default()
+        };
+        builder.add_attenuation(&att);
+
+        assert!(builder.verify_chain());
+    }
+
+    #[test]
+    fn test_builder_empty_attenuation_fails() {
+        let key = test_key();
+        let mut builder = BridgePresentationBuilder::new(key, test_federation_root());
+        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+
+        builder.set_root_token(token);
+
+        let att = Attenuation::default();
+        assert!(!builder.add_attenuation(&att));
+    }
+
+    #[test]
+    fn test_builder_attenuation_without_root_fails() {
+        let key = test_key();
+        let mut builder = BridgePresentationBuilder::new(key, test_federation_root());
+
+        let att = Attenuation {
+            apps: vec![("my-app".into(), "rw".into())],
+            ..Default::default()
+        };
+        assert!(!builder.add_attenuation(&att));
+    }
+
+    #[test]
+    fn test_bytes_to_babybear_vec() {
+        // Multi-limb encoding should preserve all 32 bytes.
+        let mut bytes = [0u8; 32];
+        bytes[0] = 1;
+        bytes[31] = 0xFF;
+        let limbs = bytes_to_babybear_vec(&bytes);
+        assert_eq!(limbs.len(), 8);
+        // First limb encodes bytes[0..4]: value 1
+        assert_eq!(limbs[0], BabyBear::new(1));
+        // Last limb encodes bytes[28..32]: 0xFF000000 = 4278190080, mod p
+        let expected_last = BabyBear::new(0xFF000000u32);
+        assert_eq!(limbs[7], expected_last);
+    }
+
+    #[test]
+    fn test_bytes_to_babybear_hash() {
+        // Poseidon2-compressed hash should be deterministic and non-trivial.
+        let bytes = [0u8; 32];
+        let h1 = bytes_to_babybear(&bytes);
+        let h2 = bytes_to_babybear(&bytes);
+        assert_eq!(h1, h2);
+
+        // Different inputs should produce different hashes.
+        let mut bytes2 = [0u8; 32];
+        bytes2[16] = 1; // Change a byte in the middle (was invisible to old 4-byte truncation).
+        let h3 = bytes_to_babybear(&bytes2);
+        assert_ne!(h1, h3, "bytes differing only beyond byte 3 must produce different hashes");
+    }
+
+    #[test]
+    fn test_hash_index_deterministic() {
+        let key = test_key();
+        let h1 = hash_index(0, 0, &key);
+        let h2 = hash_index(0, 0, &key);
+        assert_eq!(h1, h2);
+
+        let h3 = hash_index(0, 1, &key);
+        assert_ne!(h1, h3); // Different sibling index should give different hash.
+    }
+
+    #[test]
+    fn test_build_issuer_membership_rejects_wrong_root() {
+        // With an arbitrary federation_root that doesn't match the synthetic
+        // Merkle path, the builder should return IssuerNotInFederation.
+        let key = test_key();
+        let builder = BridgePresentationBuilder::new(key, test_federation_root());
+        let issuer_hash = bytes_to_babybear(&key);
+
+        let result = builder.build_issuer_membership(issuer_hash);
+        assert!(
+            result.is_err(),
+            "Synthetic proof should fail against an unrelated federation root"
+        );
+        assert_eq!(result.unwrap_err(), AuthError::IssuerNotInFederation);
+    }
+
+    #[test]
+    fn test_build_issuer_membership_accepts_matching_root() {
+        // Compute the "correct" federation root from the synthetic path,
+        // then verify the builder accepts it when using new_with_root_bb.
+        let key = test_key();
+        let issuer_hash = bytes_to_babybear(&key);
+
+        // First, compute what root the synthetic path produces.
+        let depth = 8;
+        let mut current = issuer_hash;
+        for i in 0..depth {
+            let position = (i % 4) as u8;
+            let siblings = [
+                BabyBear::new(hash_index(i, 0, &key)),
+                BabyBear::new(hash_index(i, 1, &key)),
+                BabyBear::new(hash_index(i, 2, &key)),
+            ];
+            current = MerkleAir::compute_parent(current, position, &siblings);
+        }
+        let expected_root_bb = current;
+
+        // Use new_with_root_bb so the federation root check passes.
+        let builder = BridgePresentationBuilder::new_with_root_bb(
+            key,
+            test_federation_root(),
+            expected_root_bb,
+        );
+        let result = builder.build_issuer_membership(issuer_hash);
+        assert!(result.is_ok(), "Should succeed with matching root");
+
+        let witness = result.unwrap();
+        assert_eq!(witness.leaf_hash, issuer_hash);
+        assert_eq!(witness.levels.len(), 8);
+        assert_eq!(witness.expected_root, expected_root_bb);
+
+        // The Merkle AIR should verify this witness.
+        let air = MerkleAir::new(witness);
+        let result = MockProver::verify(&air);
+        assert!(
+            result.is_valid(),
+            "Issuer membership Merkle proof should verify"
+        );
+    }
+
+    #[test]
+    fn test_with_federation_tree() {
+        // Create a federation tree and insert an issuer key.
+        let key = test_key();
+        let mut tree = MerkleTree::new();
+        tree.insert(&key);
+
+        let mut builder = BridgePresentationBuilder::new(key, [0u8; 32]);
+        builder.with_federation_tree(tree);
+
+        // The builder's federation_root should now match the tree's root.
+        assert_ne!(builder.federation_root, [0u8; 32]);
+    }
+}

@@ -1,0 +1,28 @@
+[package]
+name = "pyana-tests"
+version = "0.1.0"
+edition = "2024"
+autobins = false
+
+[lib]
+name = "pyana_tests"
+path = "src/main.rs"
+
+[dependencies]
+pyana-circuit = { path = "../circuit" }
+pyana-commit = { path = "../commit" }
+pyana-trace = { path = "../trace" }
+pyana-federation = { path = "../federation" }
+pyana-audit = { path = "../audit" }
+pyana-bridge = { path = "../bridge" }
+pyana-wire = { path = "../wire" }
+pyana-turn = { path = "../turn" }
+pyana-cell = { path = "../cell" }
+hints = { path = "../hints" }
+token = { path = "../token", default-features = false, features = ["macaroon"] }
+blake3 = "1"
+getrandom = "0.3"
+
+[[example]]
+name = "bench_summary"
+path = "../benches/summary.rs"

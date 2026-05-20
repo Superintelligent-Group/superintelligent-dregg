@@ -1,0 +1,38 @@
+[package]
+name = "pyana-wire"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["stark-verifier", "federation"]
+stark-verifier = ["pyana-circuit"]
+federation = ["pyana-federation"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+postcard = { version = "1", features = ["use-std"] }
+serde = { version = "1", features = ["derive"] }
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["std"] }
+getrandom = { workspace = true }
+pyana-circuit = { path = "../circuit", optional = true }
+pyana-federation = { path = "../federation", optional = true }
+pyana-store = { path = "../store" }
+pyana-types = { path = "../types" }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bin]]
+name = "pyana-network-demo"
+path = "src/bin/demo.rs"
+required-features = ["stark-verifier"]
+
+[[bin]]
+name = "multi_node"
+path = "src/bin/multi_node.rs"
+required-features = ["stark-verifier", "federation"]
+
+[[bench]]
+name = "wire_bench"
+harness = false

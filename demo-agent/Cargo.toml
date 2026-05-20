@@ -1,0 +1,16 @@
+[package]
+name = "pyana-demo-agent"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pyana-cell = { path = "../cell" }
+pyana-turn = { path = "../turn" }
+pyana-bridge = { path = "../bridge" }
+pyana-circuit = { path = "../circuit" }
+token = { path = "../token", default-features = false, features = ["macaroon"] }
+blake3 = "1"
+
+[[bin]]
+name = "pyana-agent-demo"
+path = "src/main.rs"

@@ -1,0 +1,15 @@
+[package]
+name = "pyana-cell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Agent cell model — capability-secure isolated execution contexts"
+
+[dependencies]
+blake3 = "1"
+pyana-types = { path = "../types" }
+serde = { version = "1", features = ["derive", "std"] }

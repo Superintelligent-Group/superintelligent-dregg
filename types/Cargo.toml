@@ -1,0 +1,17 @@
+[package]
+name = "pyana-types"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+authors = ["Pyana Contributors"]
+license = "MIT OR Apache-2.0"
+description = "Canonical shared types for the pyana federation: PublicKey, Signature, AttestedRoot, etc."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["std"] }
+getrandom = "0.3"
+
+[dev-dependencies]
+postcard = { version = "1", features = ["use-std"] }

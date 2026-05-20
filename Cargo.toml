@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = ["macaroon", "secrets", "token", "tokenizer", "hints", "morpheus", "commit", "trace", "demo", "demo-agent", "federation", "circuit", "audit", "bridge", "wire", "store", "cell", "turn", "coord", "tests", "types", "sdk"]
+exclude = ["net"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+authors = ["Pyana Contributors"]
+license = "MIT OR Apache-2.0"
+homepage = "https://pyana.dev"
+repository = "https://github.com/pyana-dev/breadstuffs"
+
+[patch.crates-io]
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+
+[workspace.dependencies]
+## Local
+macaroon = { path = "macaroon" }
+pyana-types = { path = "types" }
+secrets = { path = "secrets" }
+token = { path = "token" }
+tokenizer = { path = "tokenizer" }
+
+## Crates.io
+aes-gcm = { version = "0.11.0-rc.3", features = ["arrayvec"] }
+base64 = { version = "0.22" }
+chacha20poly1305 = { version = "0.10" }
+criterion = { version = "0.5", features = ["html_reports"] }
+directories = { version = "6" }
+getrandom = { version = "0" }
+globset = { version = "0" }
+hmac = { version = "0.12" }
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+rmp-serde = { version = "1.3.1" }
+scalable_cuckoo_filter = { version = "0.5", features = ["serde_support"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = { version = "1" }
+sha2 = { version = "0.10" }
+tempfile = { version = "3" }
+thiserror = { version = "2" }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+zeroize = { version = "1", features = ["std", "derive"] }

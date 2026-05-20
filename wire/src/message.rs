@@ -1,0 +1,425 @@
+//! Wire protocol message types for cross-silo token presentation and federation sync.
+//!
+//! All messages are serialized with postcard (compact binary, serde-compatible) and
+//! transmitted over TCP with length-prefixed framing.
+
+use serde::{Deserialize, Serialize};
+
+pub use pyana_types::{PublicKey, Signature, AttestedRoot as TypesAttestedRoot, RevocationEvent as TypesRevocationEvent, ThresholdQC};
+
+// =============================================================================
+// Authorization Request
+// =============================================================================
+
+/// An authorization request that accompanies a token presentation.
+///
+/// Describes what action is being requested so the verifying silo can check
+/// whether the presented proof actually authorizes the specific action.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorizationRequest {
+    /// The resource being accessed (e.g., "api/v1/users").
+    pub resource: String,
+    /// The action being performed (e.g., "read", "write", "admin").
+    pub action: String,
+    /// The requesting principal identifier.
+    pub principal: String,
+    /// Optional scope constraints (e.g., ["org:acme", "team:platform"]).
+    pub scopes: Vec<String>,
+    /// Unix timestamp when the request was made.
+    pub timestamp: i64,
+    /// A nonce to prevent replay attacks.
+    pub nonce: [u8; 16],
+}
+
+impl AuthorizationRequest {
+    /// Create a new authorization request with a random nonce.
+    pub fn new(resource: impl Into<String>, action: impl Into<String>, principal: impl Into<String>) -> Self {
+        let mut nonce = [0u8; 16];
+        getrandom_fill(&mut nonce);
+        Self {
+            resource: resource.into(),
+            action: action.into(),
+            principal: principal.into(),
+            scopes: Vec::new(),
+            timestamp: current_timestamp(),
+            nonce,
+        }
+    }
+
+    /// Add scopes to this request.
+    pub fn with_scopes(mut self, scopes: Vec<String>) -> Self {
+        self.scopes = scopes;
+        self
+    }
+
+    /// Compute a BLAKE3 hash of this request for signing/binding.
+    pub fn digest(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-wire authorization-request v1");
+        hasher.update(self.resource.as_bytes());
+        hasher.update(&[0u8]); // separator
+        hasher.update(self.action.as_bytes());
+        hasher.update(&[0u8]);
+        hasher.update(self.principal.as_bytes());
+        hasher.update(&[0u8]);
+        for scope in &self.scopes {
+            hasher.update(scope.as_bytes());
+            hasher.update(&[0u8]);
+        }
+        hasher.update(&self.timestamp.to_le_bytes());
+        hasher.update(&self.nonce);
+        *hasher.finalize().as_bytes()
+    }
+}
+
+// =============================================================================
+// Wire Messages
+// =============================================================================
+
+/// The top-level wire protocol message enum.
+///
+/// Each variant represents a distinct message type that can be exchanged between
+/// silos over TCP. Messages are serialized with postcard and framed with a
+/// 4-byte little-endian length prefix.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireMessage {
+    // -------------------------------------------------------------------------
+    // Token Presentation
+    // -------------------------------------------------------------------------
+    /// Present a token proof to a remote silo for authorization.
+    ///
+    /// The proof is the serialized STARK presentation proof (~24 KiB) generated
+    /// by the circuit crate. The federation_root anchors the proof to the
+    /// current attested revocation tree.
+    PresentToken {
+        /// The serialized presentation proof (STARK).
+        proof: Vec<u8>,
+        /// The authorization request being made.
+        request: AuthorizationRequest,
+        /// The federation root the proof was generated against.
+        federation_root: [u8; 32],
+    },
+
+    /// Result of a token presentation verification.
+    PresentationResult {
+        /// Whether the presentation was accepted.
+        accepted: bool,
+        /// Human-readable reason (especially useful for rejections).
+        reason: Option<String>,
+        /// The request digest this result corresponds to.
+        request_digest: [u8; 32],
+    },
+
+    // -------------------------------------------------------------------------
+    // Federation Sync
+    // -------------------------------------------------------------------------
+    /// Request the current attested revocation root from a peer.
+    RequestAttestedRoot,
+
+    /// Response containing the current attested revocation root.
+    ///
+    /// Signatures are FULL 64-byte Ed25519 signatures (not truncated).
+    AttestedRoot {
+        /// The Merkle root of the revocation tree.
+        root: [u8; 32],
+        /// The block height at which this root was finalized.
+        height: u64,
+        /// Unix timestamp when finalized.
+        timestamp: i64,
+        /// Quorum signatures: (public_key, signature) pairs.
+        /// Public keys are 32 bytes, signatures are 64 bytes (Ed25519).
+        signatures: Vec<(PublicKey, Signature)>,
+        /// Optional threshold aggregate QC (constant-size BLS).
+        threshold_qc: Option<ThresholdQC>,
+    },
+
+    // -------------------------------------------------------------------------
+    // Revocation
+    // -------------------------------------------------------------------------
+    /// Submit a revocation to a peer silo for propagation.
+    SubmitRevocation {
+        /// The token ID being revoked.
+        token_id: String,
+        /// The revoking authority's public key.
+        authority: PublicKey,
+        /// Signature from the revoking authority (64 bytes, Ed25519).
+        authority_sig: Signature,
+    },
+
+    /// Acknowledgment of a revocation submission.
+    RevocationAck {
+        /// The new Merkle root after incorporating the revocation.
+        new_root: [u8; 32],
+        /// The new block height.
+        height: u64,
+    },
+
+    // -------------------------------------------------------------------------
+    // Non-membership proofs
+    // -------------------------------------------------------------------------
+    /// Request a non-membership proof for a token ID.
+    ///
+    /// Used to verify that a token has NOT been revoked. The response includes
+    /// a Merkle non-membership proof anchored to the current attested root.
+    RequestNonMembership {
+        /// The token ID to check.
+        token_id: String,
+    },
+
+    /// Response containing a non-membership proof (or None if revoked).
+    NonMembershipResponse {
+        /// The token ID this response is for.
+        token_id: String,
+        /// The non-membership proof, or None if the token IS revoked.
+        proof: Option<Vec<u8>>,
+        /// The attested root this proof is anchored to.
+        root: [u8; 32],
+        /// Height of the root.
+        height: u64,
+    },
+
+    // -------------------------------------------------------------------------
+    // Federation Discovery / Handshake
+    // -------------------------------------------------------------------------
+    /// Initial handshake message sent when connecting to a peer.
+    Hello {
+        /// This node's public key / identity.
+        node_id: [u8; 32],
+        /// Human-readable node name.
+        node_name: String,
+        /// Protocol version.
+        protocol_version: u32,
+        /// Capabilities advertised by this node.
+        capabilities: Vec<String>,
+    },
+
+    /// Response to a Hello, welcoming the peer into the federation view.
+    Welcome {
+        /// The current federation root.
+        federation_root: [u8; 32],
+        /// Number of members in the federation.
+        member_count: u32,
+        /// The responder's node identity.
+        node_id: [u8; 32],
+        /// Human-readable node name.
+        node_name: String,
+    },
+
+    // -------------------------------------------------------------------------
+    // Keepalive / Diagnostics
+    // -------------------------------------------------------------------------
+    /// Periodic heartbeat to keep connections alive.
+    Ping {
+        /// Sequence number for round-trip measurement.
+        seq: u64,
+        /// Timestamp when the ping was sent.
+        timestamp: i64,
+    },
+
+    /// Response to a Ping.
+    Pong {
+        /// The sequence number from the corresponding Ping.
+        seq: u64,
+        /// Timestamp when the pong was sent.
+        timestamp: i64,
+    },
+
+    /// Protocol error — sent when a message cannot be processed.
+    Error {
+        /// Error code.
+        code: u32,
+        /// Human-readable error message.
+        message: String,
+    },
+}
+
+impl WireMessage {
+    /// Return a human-readable name for the message variant.
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::PresentToken { .. } => "PresentToken",
+            Self::PresentationResult { .. } => "PresentationResult",
+            Self::RequestAttestedRoot => "RequestAttestedRoot",
+            Self::AttestedRoot { .. } => "AttestedRoot",
+            Self::SubmitRevocation { .. } => "SubmitRevocation",
+            Self::RevocationAck { .. } => "RevocationAck",
+            Self::RequestNonMembership { .. } => "RequestNonMembership",
+            Self::NonMembershipResponse { .. } => "NonMembershipResponse",
+            Self::Hello { .. } => "Hello",
+            Self::Welcome { .. } => "Welcome",
+            Self::Ping { .. } => "Ping",
+            Self::Pong { .. } => "Pong",
+            Self::Error { .. } => "Error",
+        }
+    }
+
+    /// Estimate the wire size of this message (useful for logging).
+    pub fn estimated_size(&self) -> usize {
+        // Use postcard to get the actual serialized size
+        postcard::to_stdvec(self).map(|v| v.len()).unwrap_or(0)
+    }
+
+    /// Format size in human-readable form.
+    pub fn size_display(&self) -> String {
+        let bytes = self.estimated_size();
+        if bytes < 1024 {
+            format!("{bytes} B")
+        } else if bytes < 1024 * 1024 {
+            format!("{:.1} KiB", bytes as f64 / 1024.0)
+        } else {
+            format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+        }
+    }
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+/// Fill a buffer with cryptographically secure random bytes.
+fn getrandom_fill(buf: &mut [u8]) {
+    getrandom::fill(buf).expect("getrandom failed to provide random bytes");
+}
+
+/// Get the current Unix timestamp in seconds.
+fn current_timestamp() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+// =============================================================================
+// Error Codes
+// =============================================================================
+
+/// Well-known wire protocol error codes.
+pub mod error_codes {
+    /// The message could not be deserialized.
+    pub const MALFORMED_MESSAGE: u32 = 1;
+    /// The protocol version is not supported.
+    pub const UNSUPPORTED_VERSION: u32 = 2;
+    /// The federation root is unknown/stale.
+    pub const UNKNOWN_FEDERATION_ROOT: u32 = 3;
+    /// The proof verification failed.
+    pub const PROOF_VERIFICATION_FAILED: u32 = 4;
+    /// The token has been revoked.
+    pub const TOKEN_REVOKED: u32 = 5;
+    /// The request has expired (timestamp too old).
+    pub const REQUEST_EXPIRED: u32 = 6;
+    /// Internal server error.
+    pub const INTERNAL_ERROR: u32 = 100;
+}
+
+/// The current protocol version.
+pub const PROTOCOL_VERSION: u32 = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip_hello() {
+        let msg = WireMessage::Hello {
+            node_id: [0xab; 32],
+            node_name: "test-node".to_string(),
+            protocol_version: PROTOCOL_VERSION,
+            capabilities: vec!["present".to_string(), "revoke".to_string()],
+        };
+        let bytes = postcard::to_stdvec(&msg).unwrap();
+        let decoded: WireMessage = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn roundtrip_present_token() {
+        let proof = vec![0u8; 24_000]; // ~24 KiB proof
+        let request = AuthorizationRequest::new("api/users", "read", "alice@acme.corp");
+        let msg = WireMessage::PresentToken {
+            proof,
+            request,
+            federation_root: [0x42; 32],
+        };
+        let bytes = postcard::to_stdvec(&msg).unwrap();
+        let decoded: WireMessage = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn roundtrip_all_variants() {
+        let messages = vec![
+            WireMessage::RequestAttestedRoot,
+            WireMessage::AttestedRoot {
+                root: [1; 32],
+                height: 42,
+                timestamp: 1700000000,
+                signatures: vec![(PublicKey([2; 32]), Signature([3; 64]))],
+                threshold_qc: None,
+            },
+            WireMessage::SubmitRevocation {
+                token_id: "tok-123".to_string(),
+                authority: PublicKey([4; 32]),
+                authority_sig: Signature([4; 64]),
+            },
+            WireMessage::RevocationAck {
+                new_root: [5; 32],
+                height: 43,
+            },
+            WireMessage::RequestNonMembership {
+                token_id: "tok-456".to_string(),
+            },
+            WireMessage::NonMembershipResponse {
+                token_id: "tok-456".to_string(),
+                proof: Some(vec![6; 128]),
+                root: [7; 32],
+                height: 44,
+            },
+            WireMessage::Welcome {
+                federation_root: [8; 32],
+                member_count: 5,
+                node_id: [9; 32],
+                node_name: "responder".to_string(),
+            },
+            WireMessage::Ping { seq: 1, timestamp: 100 },
+            WireMessage::Pong { seq: 1, timestamp: 101 },
+            WireMessage::PresentationResult {
+                accepted: true,
+                reason: None,
+                request_digest: [10; 32],
+            },
+            WireMessage::Error {
+                code: error_codes::MALFORMED_MESSAGE,
+                message: "bad frame".to_string(),
+            },
+        ];
+
+        for msg in messages {
+            let bytes = postcard::to_stdvec(&msg).unwrap();
+            let decoded: WireMessage = postcard::from_bytes(&bytes).unwrap();
+            assert_eq!(msg, decoded, "roundtrip failed for {:?}", msg.variant_name());
+        }
+    }
+
+    #[test]
+    fn authorization_request_digest_deterministic() {
+        let mut req = AuthorizationRequest::new("res", "act", "princ");
+        req.nonce = [0; 16]; // fix nonce for determinism
+        req.timestamp = 12345;
+
+        let d1 = req.digest();
+        let d2 = req.digest();
+        assert_eq!(d1, d2);
+    }
+
+    #[test]
+    fn authorization_request_digest_varies_on_input() {
+        let mut req1 = AuthorizationRequest::new("res1", "act", "princ");
+        req1.nonce = [0; 16];
+        req1.timestamp = 12345;
+
+        let mut req2 = AuthorizationRequest::new("res2", "act", "princ");
+        req2.nonce = [0; 16];
+        req2.timestamp = 12345;
+
+        assert_ne!(req1.digest(), req2.digest());
+    }
+}
