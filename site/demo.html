@@ -44,6 +44,18 @@
   </section>
 
   <section>
+    <h2>Browser extension wallet</h2>
+    <p>With the <a href="https://github.com/emberian/pyana/tree/main/extension" style="color: var(--accent);">Pyana wallet extension</a> installed, web pages can request capability-based authorization via <code>window.pyana</code>.</p>
+    <p style="margin-top: var(--s4);"><a href="examples/auth-demo.html" style="color: var(--accent); font-weight: bold; font-size: 1.1em;">Launch Auth Demo &rarr;</a></p>
+    <ul style="list-style: none; padding: 0; margin-top: var(--s3); text-align: left; display: inline-block;">
+      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Provision a demo token into the wallet</li>
+      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; Request authorization (the wallet evaluates Datalog + generates STARK proof)</li>
+      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; See what the verifier learns at each privacy level</li>
+      <li style="margin: var(--s2) 0; color: var(--fg2);">&#x25b8; All crypto runs locally in WASM — no server round-trip</li>
+    </ul>
+  </section>
+
+  <section>
     <h2>CLI demo</h2>
     <p>The <code>demo</code> and <code>demo-agent</code> crates provide a command-line demonstration of the full authorization flow:</p>
     <pre><code># Clone and build

@@ -16,6 +16,7 @@ use pyana_sdk::{AuthRequest, Attenuation, CellId};
 use pyana_turn::{CallForest, Turn};
 
 use crate::state::NodeState;
+use crate::ws::handle_ws;
 
 // =============================================================================
 // Request/Response types
@@ -128,6 +129,7 @@ pub struct AttestedRootInfo {
 pub fn router(state: NodeState) -> Router {
     Router::new()
         .route("/status", get(get_status))
+        .route("/ws", get(handle_ws))
         .route("/wallet", get(get_wallet))
         .route("/wallet/authorize", post(post_authorize))
         .route("/wallet/mint", post(post_mint))
@@ -305,6 +307,12 @@ async fn post_submit_turn(
     // Sign the turn.
     let signed = s.wallet.sign_turn(&turn);
     let turn_hash = hex_encode(&signed.signature.0[..32]);
+
+    // Emit receipt event to WebSocket subscribers.
+    drop(s);
+    state.emit(crate::state::NodeEvent::Receipt {
+        hash: turn_hash.clone(),
+    });
 
     Ok(Json(SubmitTurnResponse {
         accepted: true,

@@ -6,12 +6,19 @@ edition = "2024"
 [dependencies]
 pyana-cell = { path = "../cell" }
 pyana-turn = { path = "../turn" }
+pyana-coord = { path = "../coord" }
+pyana-types = { path = "../types" }
 pyana-bridge = { path = "../bridge" }
 pyana-circuit = { path = "../circuit" }
-token = { path = "../token", default-features = false, features = ["macaroon"] }
+pyana-commit = { path = "../commit" }
+pyana-sdk = { path = "../sdk" }
+pyana-trace = { path = "../trace" }
+pyana-federation = { path = "../federation" }
+token = { path = "../token", default-features = false, features = ["macaroon", "datalog"] }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["hazmat"] }
 getrandom = { workspace = true }
+postcard = { version = "1", features = ["use-std"] }
 
 [[bin]]
 name = "pyana-agent-demo"
@@ -28,3 +35,43 @@ name = "auction_demo"
 
 [[example]]
 name = "atomic_swap_demo"
+
+[[example]]
+name = "private_orderbook"
+
+[[example]]
+name = "payment_channel"
+
+[[example]]
+name = "multi_silo_budget"
+
+[[example]]
+name = "causal_ordering"
+
+[[example]]
+name = "federation_bootstrap"
+
+
+[[example]]
+name = "wallet_lifecycle"
+
+[[example]]
+name = "web_auth_flow"
+
+[[example]]
+name = "ivc_attenuation_chain"
+
+[[example]]
+name = "programmable_cell"
+
+[[example]]
+name = "multi_org_delegation"
+
+[[example]]
+name = "sub_agent_spawn"
+
+[[example]]
+name = "rbac_datalog"
+
+[[example]]
+name = "token_revocation"

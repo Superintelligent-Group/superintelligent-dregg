@@ -7,16 +7,38 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, broadcast};
 
 use pyana_cell::Ledger;
 use pyana_sdk::AgentWallet;
 use pyana_store::PersistentStore;
 
+// =============================================================================
+// Events (broadcast to WebSocket clients)
+// =============================================================================
+
+/// Events emitted when node state changes, broadcast to WebSocket subscribers.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum NodeEvent {
+    /// A new attested root was received from the federation.
+    Root {
+        height: u64,
+        merkle_root: String,
+        timestamp: i64,
+    },
+    /// A token was revoked.
+    Revocation { token_id: String },
+    /// A new receipt was appended to the local chain.
+    Receipt { hash: String },
+}
+
 /// Shared node state accessible from all async tasks.
 #[derive(Clone)]
 pub struct NodeState {
     inner: Arc<RwLock<NodeStateInner>>,
+    /// Broadcast channel for real-time events (WebSocket push).
+    events_tx: broadcast::Sender<NodeEvent>,
 }
 
 /// The inner mutable state of the node.
@@ -60,6 +82,7 @@ impl NodeState {
 
         let wallet = AgentWallet::new();
         let ledger = Ledger::new();
+        let (events_tx, _) = broadcast::channel(256);
 
         Ok(Self {
             inner: Arc::new(RwLock::new(NodeStateInner {
@@ -69,6 +92,7 @@ impl NodeState {
                 peers,
                 unlocked: false,
             })),
+            events_tx,
         })
     }
 
@@ -85,6 +109,7 @@ impl NodeState {
 
         let wallet = AgentWallet::from_key_bytes(key_bytes);
         let ledger = Ledger::new();
+        let (events_tx, _) = broadcast::channel(256);
 
         Ok(Self {
             inner: Arc::new(RwLock::new(NodeStateInner {
@@ -94,6 +119,7 @@ impl NodeState {
                 peers,
                 unlocked: false,
             })),
+            events_tx,
         })
     }
 
@@ -138,6 +164,17 @@ impl NodeState {
             token_count: state.wallet.tokens().len(),
             receipt_chain_length: state.wallet.receipt_chain_length(),
         }
+    }
+
+    /// Subscribe to node events (returns a broadcast receiver).
+    pub fn subscribe_events(&self) -> broadcast::Receiver<NodeEvent> {
+        self.events_tx.subscribe()
+    }
+
+    /// Emit a node event to all connected WebSocket clients.
+    pub fn emit(&self, event: NodeEvent) {
+        // Ignore send errors (no active receivers is fine).
+        let _ = self.events_tx.send(event);
     }
 }
 

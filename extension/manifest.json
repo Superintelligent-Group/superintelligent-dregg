@@ -14,10 +14,17 @@
     "run_at": "document_start"
   }],
   "web_accessible_resources": [{
-    "resources": ["page.js"],
+    "resources": [
+      "page.js",
+      "pyana_wasm_bg.wasm",
+      "pyana_wasm.js"
+    ],
     "matches": ["<all_urls>"]
   }],
   "action": {
     "default_popup": "popup.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   }
 }

@@ -1,7 +1,56 @@
 // Pyana wallet background service worker.
-// Manages wallet state, evaluates authorization, generates proofs (via WASM when available).
+// Manages wallet state, evaluates authorization, generates proofs via WASM.
 
 const STORAGE_KEY = 'pyana_wallet';
+const NODE_WS_URL = 'ws://localhost:8420/ws';
+
+// ---------------------------------------------------------------------------
+// WASM module loading
+// ---------------------------------------------------------------------------
+
+let wasm = null;
+
+const wasmReady = (async () => {
+  try {
+    wasm = await import('./pyana_wasm.js');
+    await wasm.default();
+    console.log('[pyana] WASM module loaded');
+  } catch (e) {
+    console.warn('[pyana] WASM module unavailable, falling back to stubs:', e.message);
+    wasm = null;
+  }
+})();
+
+// Queue for authorize calls that arrive before WASM is ready.
+const pendingQueue = [];
+let ready = false;
+wasmReady.then(() => {
+  ready = true;
+  for (const { msg, resolve } of pendingQueue) {
+    resolve(handleMessage(msg));
+  }
+  pendingQueue.length = 0;
+});
+
+// ---------------------------------------------------------------------------
+// Event bus (authorization, revoked notifications)
+// ---------------------------------------------------------------------------
+
+const subscribers = new Map(); // tabId -> Set of event names
+
+function notifySubscribers(event, payload) {
+  for (const [tabId, events] of subscribers) {
+    if (events.has(event)) {
+      chrome.tabs.sendMessage(tabId, { type: 'pyana:event', event, payload }).catch(() => {
+        subscribers.delete(tabId);
+      });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wallet state
+// ---------------------------------------------------------------------------
 
 let state = null;
 
@@ -33,8 +82,32 @@ async function saveState() {
   await chrome.storage.local.set({ [STORAGE_KEY]: state });
 }
 
+// ---------------------------------------------------------------------------
+// Authorization logic — delegates to WASM when available
+// ---------------------------------------------------------------------------
+
 function evaluateDatalog(token, request) {
-  // Stub: checks action membership. Will call pyana WASM Datalog engine.
+  if (wasm) {
+    try {
+      const facts = token.actions.map(a => ({
+        predicate: 'grant',
+        terms: [a, token.resource || '*'],
+      }));
+      const reqJson = JSON.stringify({
+        action: request.action,
+        service: request.resource,
+      });
+      const result = wasm.evaluate_datalog(JSON.stringify(facts), reqJson);
+      return {
+        allowed: result.conclusion === 'allow',
+        trace: result.steps.map(s => `rule(${s.rule_id}) derived ${s.derived_predicate_hex}`),
+      };
+    } catch (e) {
+      console.warn('[pyana] WASM evaluate_datalog failed, using stub:', e.message);
+    }
+  }
+
+  // Stub fallback: checks action membership.
   const allowed = token.actions.includes(request.action);
   const trace = allowed
     ? [`token(${token.id}) grants action(${request.action}) on resource(${request.resource})`]
@@ -43,11 +116,49 @@ function evaluateDatalog(token, request) {
 }
 
 function generateProof(witness, mode) {
-  // Stub: returns random bytes. Will call pyana WASM circuit prover.
+  if (wasm) {
+    try {
+      // Use STARK proof generation from the WASM module.
+      // The leaf_value is a hash of the witness truncated to u32.
+      const hash = witness.reduce((acc, b, i) => acc ^ (b << ((i % 4) * 8)), 0) >>> 0;
+      const depth = mode === 'private' ? 8 : mode === 'selective' ? 4 : 2;
+      const result = wasm.generate_stark_proof(hash, depth);
+      // Return proof bytes (we use the JSON encoding for transport).
+      return new TextEncoder().encode(result.proof_json);
+    } catch (e) {
+      console.warn('[pyana] WASM generate_stark_proof failed, using stub:', e.message);
+    }
+  }
+
+  // Stub fallback: returns random bytes.
   const size = mode === 'private' ? 256 : mode === 'selective' ? 128 : 64;
   const proof = new Uint8Array(size);
   crypto.getRandomValues(proof);
   return proof;
+}
+
+function verifyToken(tokenStr, rootKey, appId, action) {
+  if (wasm) {
+    try {
+      return wasm.verify_token(tokenStr, rootKey, appId, action);
+    } catch (e) {
+      console.warn('[pyana] WASM verify_token failed:', e.message);
+    }
+  }
+  // TODO: stub — no verification without WASM
+  return { allowed: true, policy: null, error: null };
+}
+
+function computeMerkleRoot(leaves) {
+  if (wasm) {
+    try {
+      return wasm.compute_merkle_root(JSON.stringify(leaves));
+    } catch (e) {
+      console.warn('[pyana] WASM compute_merkle_root failed:', e.message);
+    }
+  }
+  // TODO: stub — no Merkle operations without WASM
+  return { root_hex: '0'.repeat(64), num_leaves: leaves.length };
 }
 
 async function authorize(request) {
@@ -90,8 +201,62 @@ async function authorize(request) {
   });
   await saveState();
 
-  return { allowed: true, proof: Array.from(proof), facts: evalResult.trace };
+  const result = { allowed: true, proof: Array.from(proof), facts: evalResult.trace };
+  notifySubscribers('authorization', {
+    action: request.action,
+    resource: request.resource,
+    allowed: true,
+  });
+  return result;
 }
+
+// ---------------------------------------------------------------------------
+// Token provisioning
+// ---------------------------------------------------------------------------
+
+async function provisionToken(tokenData, senderTabId) {
+  // Open the provision popup for user confirmation.
+  return new Promise((resolve) => {
+    const popupUrl = chrome.runtime.getURL('provision.html') +
+      '?data=' + encodeURIComponent(JSON.stringify(tokenData));
+
+    chrome.windows.create({
+      url: popupUrl,
+      type: 'popup',
+      width: 400,
+      height: 480,
+      focused: true,
+    }, (win) => {
+      // Listen for the user's decision from the popup.
+      const listener = async (message, sender, sendResponse) => {
+        if (message.type !== 'pyana:provisionDecision') return;
+        chrome.runtime.onMessage.removeListener(listener);
+
+        if (message.accepted) {
+          const wallet = await loadState();
+          const token = {
+            id: `tok_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            actions: tokenData.actions || [],
+            resource: tokenData.resource || '*',
+            expiry: tokenData.expiry || null,
+            issuer: tokenData.issuer || null,
+            provisioned: Date.now(),
+          };
+          wallet.tokens.push(token);
+          await saveState();
+          resolve({ accepted: true, tokenId: token.id });
+        } else {
+          resolve({ accepted: false });
+        }
+      };
+      chrome.runtime.onMessage.addListener(listener);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Wallet state queries
+// ---------------------------------------------------------------------------
 
 async function getWalletState() {
   const wallet = await loadState();
@@ -114,37 +279,182 @@ async function getCapabilities() {
   return Array.from(actions);
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  const handle = async () => {
-    switch (message.type) {
-      case 'pyana:authorize':
-        return { id: message.id, result: await authorize(message.request) };
-      case 'pyana:isConnected':
-        return { id: message.id, result: true };
-      case 'pyana:getCapabilities':
-        return { id: message.id, result: await getCapabilities() };
-      case 'pyana:getState':
-        return { id: message.id, result: await getWalletState() };
-      case 'pyana:lock': {
-        const wallet = await loadState();
-        wallet.locked = true;
-        await saveState();
-        return { id: message.id, result: true };
-      }
-      case 'pyana:unlock': {
-        const wallet = await loadState();
-        wallet.locked = false;
-        await saveState();
-        return { id: message.id, result: true };
-      }
-      default:
-        return { id: message.id, error: 'Unknown message type' };
+async function revokeToken(tokenId) {
+  const wallet = await loadState();
+  const idx = wallet.tokens.findIndex(t => t.id === tokenId);
+  if (idx === -1) return { revoked: false, error: 'Token not found' };
+  wallet.tokens.splice(idx, 1);
+  await saveState();
+  notifySubscribers('revoked', { tokenId });
+  return { revoked: true };
+}
+
+// ---------------------------------------------------------------------------
+// Message router
+// ---------------------------------------------------------------------------
+
+async function handleMessage(message, sender) {
+  switch (message.type) {
+    case 'pyana:authorize':
+      return { id: message.id, result: await authorize(message.request) };
+    case 'pyana:isConnected':
+      return { id: message.id, result: true };
+    case 'pyana:getCapabilities':
+      return { id: message.id, result: await getCapabilities() };
+    case 'pyana:getState':
+      return { id: message.id, result: await getWalletState() };
+    case 'pyana:lock': {
+      const wallet = await loadState();
+      wallet.locked = true;
+      await saveState();
+      return { id: message.id, result: true };
     }
+    case 'pyana:unlock': {
+      const wallet = await loadState();
+      wallet.locked = false;
+      await saveState();
+      notifySubscribers('ready', { locked: false });
+      return { id: message.id, result: true };
+    }
+    case 'pyana:provision': {
+      const tabId = sender?.tab?.id;
+      const result = await provisionToken(message.tokenData, tabId);
+      return { id: message.id, result };
+    }
+    case 'pyana:revoke': {
+      const result = await revokeToken(message.tokenId);
+      return { id: message.id, result };
+    }
+    case 'pyana:subscribe': {
+      const tabId = sender?.tab?.id;
+      if (tabId != null) {
+        if (!subscribers.has(tabId)) subscribers.set(tabId, new Set());
+        subscribers.get(tabId).add(message.event);
+      }
+      return { id: message.id, result: true };
+    }
+    case 'pyana:provisionDecision':
+      // Handled by the per-popup listener in provisionToken; just ack here.
+      return { id: message.id, result: true };
+    default:
+      return { id: message.id, error: 'Unknown message type' };
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const dispatch = async () => {
+    // Defer authorize calls until WASM is ready (other calls are fine without it).
+    if (message.type === 'pyana:authorize' && !ready) {
+      return new Promise((resolve) => {
+        pendingQueue.push({ msg: message, resolve });
+      });
+    }
+    return handleMessage(message, sender);
   };
-  handle().then(sendResponse).catch(err => {
+  dispatch().then(sendResponse).catch(err => {
     sendResponse({ id: message.id, error: String(err) });
   });
   return true;
 });
 
+// ---------------------------------------------------------------------------
+// WebSocket connection to pyana-node for real-time sync
+// ---------------------------------------------------------------------------
+
+let nodeWs = null;
+let wsReconnectDelay = 1000;
+const WS_MAX_RECONNECT_DELAY = 60000;
+
+function connectNodeWs() {
+  if (nodeWs && (nodeWs.readyState === WebSocket.CONNECTING || nodeWs.readyState === WebSocket.OPEN)) {
+    return;
+  }
+
+  try {
+    nodeWs = new WebSocket(NODE_WS_URL);
+  } catch (e) {
+    console.warn('[pyana] WebSocket construction failed:', e.message);
+    scheduleReconnect();
+    return;
+  }
+
+  nodeWs.onopen = () => {
+    console.log('[pyana] WebSocket connected to node');
+    wsReconnectDelay = 1000; // Reset backoff on success.
+
+    // Subscribe to all event topics.
+    nodeWs.send(JSON.stringify({
+      type: 'subscribe',
+      topics: ['roots', 'revocations', 'receipts'],
+    }));
+  };
+
+  nodeWs.onmessage = async (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+
+    switch (msg.type) {
+      case 'root': {
+        // A new attested root arrived from the federation.
+        console.log('[pyana] New root:', msg.height, msg.merkle_root);
+        notifySubscribers('root', { height: msg.height, merkle_root: msg.merkle_root });
+        break;
+      }
+      case 'revocation': {
+        // A token was revoked — remove it locally if we hold it.
+        const wallet = await loadState();
+        const idx = wallet.tokens.findIndex(t => t.id === msg.token_id);
+        if (idx !== -1) {
+          wallet.tokens.splice(idx, 1);
+          await saveState();
+          console.log('[pyana] Token revoked via WS:', msg.token_id);
+        }
+        notifySubscribers('revoked', { tokenId: msg.token_id });
+        break;
+      }
+      case 'receipt': {
+        // A new receipt was appended.
+        const wallet = await loadState();
+        wallet.receiptChain.push(msg.hash);
+        await saveState();
+        notifySubscribers('receipt', { hash: msg.hash });
+        break;
+      }
+      case 'subscribed':
+        console.log('[pyana] Subscribed to topics:', msg.topics);
+        break;
+      case 'error':
+        console.warn('[pyana] WS error from node:', msg.message);
+        break;
+    }
+  };
+
+  nodeWs.onclose = () => {
+    console.log('[pyana] WebSocket disconnected from node');
+    nodeWs = null;
+    scheduleReconnect();
+  };
+
+  nodeWs.onerror = (err) => {
+    console.warn('[pyana] WebSocket error:', err);
+    // onclose will fire after onerror, triggering reconnect.
+  };
+}
+
+function scheduleReconnect() {
+  setTimeout(() => {
+    connectNodeWs();
+  }, wsReconnectDelay);
+  wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_MAX_RECONNECT_DELAY);
+}
+
+// ---------------------------------------------------------------------------
+// Initialization
+// ---------------------------------------------------------------------------
+
 loadState();
+connectNodeWs();

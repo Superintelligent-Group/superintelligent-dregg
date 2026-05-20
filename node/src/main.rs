@@ -9,6 +9,7 @@
 mod api;
 mod federation_sync;
 mod state;
+mod ws;
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
