@@ -47,7 +47,10 @@ pub mod runtime;
 pub mod error;
 
 // Re-export primary types at crate root for convenience.
-pub use wallet::{AgentWallet, HeldToken, DelegatedToken, SignedTurn};
+pub use wallet::{
+    AgentWallet, HeldToken, DelegatedToken, SignedTurn,
+    VerificationMode, AuthorizationPresentation, FactIndex,
+};
 pub use client::{SiloClient, PresentationResult};
 pub use runtime::{AgentRuntime, SubAgent};
 pub use error::SdkError;

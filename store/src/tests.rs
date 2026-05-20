@@ -1053,7 +1053,7 @@ fn test_nullifier_persistence() {
     let store = new_store();
     let note = Note::with_randomness([1u8; 32], [1, 100, 0, 0, 0, 0, 0, 0], [10u8; 32]);
     let spending_key = [0xBB; 32];
-    let nullifier = note.nullifier(&spending_key, 0);
+    let nullifier = note.nullifier(&spending_key);
 
     // Not spent initially.
     assert!(!store.is_nullifier_spent(&nullifier).unwrap());
@@ -1081,7 +1081,7 @@ fn test_nullifier_persistence_across_restart() {
     let path = dir.path().join("note_test.redb");
     let note = Note::with_randomness([1u8; 32], [1, 100, 0, 0, 0, 0, 0, 0], [10u8; 32]);
     let spending_key = [0xBB; 32];
-    let nullifier = note.nullifier(&spending_key, 0);
+    let nullifier = note.nullifier(&spending_key);
 
     // First session: store commitment and nullifier.
     {
@@ -1115,7 +1115,7 @@ fn test_attested_root_includes_note_tree() {
 
     // Add a nullifier.
     let spending_key = [0xBB; 32];
-    let nullifier = note1.nullifier(&spending_key, 0);
+    let nullifier = note1.nullifier(&spending_key);
     store.store_nullifier(&nullifier).unwrap();
 
     // Get the roots.

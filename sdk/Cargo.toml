@@ -16,7 +16,8 @@ pyana-turn = { path = "../turn" }
 pyana-bridge = { path = "../bridge" }
 pyana-circuit = { path = "../circuit" }
 pyana-wire = { path = "../wire" }
-token = { path = "../token", default-features = false, features = ["macaroon"] }
+token = { path = "../token", default-features = false, features = ["macaroon", "datalog"] }
+pyana-trace = { path = "../trace" }
 
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }

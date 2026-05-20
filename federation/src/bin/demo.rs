@@ -6,10 +6,12 @@
 //! 3. Revocation via consensus
 //! 4. Non-membership verification with attested roots
 //! 5. Byzantine fault tolerance
+//! 6. Epoch-based reconfiguration (adding a new member)
 
+use pyana_federation::consensus::ReconfigurationProposal;
 use pyana_federation::node::Federation;
 use pyana_federation::revocation::RevocationVerifier;
-use pyana_federation::types::hex_encode;
+use pyana_federation::types::{generate_keypair, hex_encode, sign};
 
 fn main() {
     print_header();
@@ -29,6 +31,9 @@ fn main() {
     // Step 5: Byzantine fault tolerance.
     step_5_byzantine_fault(&mut fed, &t2.id);
 
+    // Step 6: Epoch-based reconfiguration.
+    step_6_reconfiguration(&mut fed);
+
     print_footer(&fed);
 }
 
@@ -37,7 +42,7 @@ fn main() {
 // =============================================================================
 
 fn step_1_spawn_nodes() -> Federation {
-    print_step(1, 5, "Spawning 4 federation nodes...");
+    print_step(1, 6, "Spawning 4 federation nodes...");
 
     let fed = Federation::new(&["alpha.org", "beta.corp", "gamma.edu", "delta.gov"]);
 
@@ -74,7 +79,7 @@ struct MintedToken {
 }
 
 fn step_2_issue_tokens(fed: &mut Federation) -> (MintedToken, MintedToken) {
-    print_step(2, 5, "Normal operation -- issuing tokens...");
+    print_step(2, 6, "Normal operation -- issuing tokens...");
 
     let token1 = fed.mint_token(0, "engineer Alice");
     let token2 = fed.mint_token(1, "contractor Bob");
@@ -119,7 +124,7 @@ fn step_2_issue_tokens(fed: &mut Federation) -> (MintedToken, MintedToken) {
 // =============================================================================
 
 fn step_3_revoke_token(fed: &mut Federation, token_id: &str) {
-    print_step(3, 5, "Revocation -- alpha.org revokes T1...");
+    print_step(3, 6, "Revocation -- alpha.org revokes T1...");
 
     println!(
         "  {} alpha.org submits Revoke(T1) to consensus",
@@ -182,7 +187,7 @@ fn step_3_revoke_token(fed: &mut Federation, token_id: &str) {
 // =============================================================================
 
 fn step_4_verify_tokens(fed: &Federation, revoked_id: &str, valid_id: &str) {
-    print_step(4, 5, "Verification with attested root...");
+    print_step(4, 6, "Verification with attested root...");
 
     // gamma.edu (node 2) verifies T2 (Bob's token).
     println!(
@@ -261,7 +266,7 @@ fn step_4_verify_tokens(fed: &Federation, revoked_id: &str, valid_id: &str) {
 // =============================================================================
 
 fn step_5_byzantine_fault(fed: &mut Federation, token_id: &str) {
-    print_step(5, 5, "Byzantine fault tolerance...");
+    print_step(5, 6, "Byzantine fault tolerance...");
 
     // Crash delta.gov (node 3).
     println!(
@@ -331,6 +336,174 @@ fn step_5_byzantine_fault(fed: &mut Federation, token_id: &str) {
 }
 
 // =============================================================================
+// Step 6: Epoch-based Reconfiguration
+// =============================================================================
+
+fn step_6_reconfiguration(fed: &mut Federation) {
+    print_step(6, 6, "Epoch-based reconfiguration -- adding epsilon.net...");
+
+    // Show current epoch.
+    println!(
+        "  {} Epoch 0: {{{}}} ({} nodes, threshold {})",
+        arrow(),
+        fed.nodes.iter().map(|n| n.identity.name.as_str()).collect::<Vec<_>>().join(", "),
+        fed.config.num_nodes,
+        fed.config.threshold
+    );
+
+    // Recover node 3 first (it was crashed in step 5).
+    // Sync its consensus state to match the current chain tip.
+    fed.recover_node(3);
+    {
+        let current_height = fed.consensus_states[0].current_height;
+        let current_view = fed.consensus_states[0].current_view;
+        let last_hash = fed.consensus_states[0].last_finalized_hash;
+        fed.consensus_states[3].current_height = current_height;
+        fed.consensus_states[3].current_view = current_view;
+        fed.consensus_states[3].last_finalized_hash = last_hash;
+        // Also sync the revocation tree for the missed blocks.
+        for (block, _) in &fed.finalized_history {
+            if !fed.nodes[3].is_revoked(&block.events[0].token_id) {
+                fed.nodes[3].apply_finalized_block(block);
+            }
+        }
+    }
+
+    // Generate a new member "epsilon.net".
+    let (epsilon_sk, epsilon_pk) = generate_keypair();
+
+    // Build the new member set: current members + epsilon.
+    let mut new_members: Vec<pyana_federation::types::PublicKey> = fed
+        .nodes
+        .iter()
+        .map(|n| n.identity.public_key.clone())
+        .collect();
+    new_members.push(epsilon_pk.clone());
+
+    // Node 0 (alpha.org) proposes the reconfiguration.
+    let proposer_pk = fed.nodes[0].identity.public_key.clone();
+    let proposer_sk = &fed.nodes[0].signing_key;
+    let msg = ReconfigurationProposal::signing_message(fed.orchestrator.config.epoch, &new_members);
+    let sig = sign(proposer_sk, &msg);
+
+    let proposal = ReconfigurationProposal {
+        epoch: fed.orchestrator.config.epoch,
+        new_members: new_members.clone(),
+        proposer: proposer_pk,
+        signature: sig,
+    };
+
+    println!(
+        "  {} alpha.org proposes: add epsilon.net (pubkey: {})",
+        arrow(),
+        epsilon_pk.short_hex()
+    );
+
+    fed.orchestrator.propose_reconfiguration(proposal).unwrap();
+
+    // Collect votes from other members.
+    let proposal_hash = fed.orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
+
+    // Nodes 1, 2, 3 vote (we need threshold - 1 more votes since proposer already voted).
+    for i in 1..fed.nodes.len() {
+        let voter_sk = &fed.nodes[i].signing_key;
+        if fed.orchestrator.vote_reconfiguration(proposal_hash, voter_sk).is_ok() {
+            println!(
+                "  {} {} votes: approve reconfiguration",
+                arrow(),
+                fed.nodes[i].identity.name
+            );
+        }
+        if fed.orchestrator.reconfig_has_quorum() {
+            break;
+        }
+    }
+
+    println!(
+        "  {} Quorum reached! Reconfiguration will apply at next block.",
+        arrow()
+    );
+
+    // Submit a revocation to trigger a consensus round (which applies the reconfig).
+    let trigger_token = fed.mint_token(0, "reconfig-trigger");
+    fed.submit_revocation(0, &trigger_token.id);
+    let result = fed.run_consensus_round();
+    assert!(result.is_some(), "consensus round should succeed");
+
+    // Show the new epoch.
+    println!(
+        "  {} Epoch 1: new config applied ({} nodes, threshold {})",
+        arrow(),
+        fed.orchestrator.config.num_nodes,
+        fed.orchestrator.config.threshold
+    );
+    println!(
+        "  {} Members: [{}]",
+        arrow(),
+        fed.orchestrator.config.members.iter().map(|pk| pk.short_hex()).collect::<Vec<_>>().join(", ")
+    );
+
+    // Now add the new node and do another round to show it works.
+    // (In a real system the new node would sync state; here we just add a consensus state.)
+    let new_node = pyana_federation::node::FederationNode::new("epsilon.net", 4);
+    // Overwrite the keys with our generated ones.
+    let mut epsilon_node = pyana_federation::node::FederationNode {
+        identity: pyana_federation::types::NodeIdentity {
+            name: "epsilon.net".to_string(),
+            id: 4,
+            public_key: epsilon_pk,
+        },
+        signing_key: epsilon_sk.clone(),
+        revocation_tree: new_node.revocation_tree,
+        attested_root: None,
+        minted_tokens: Vec::new(),
+        is_online: true,
+    };
+    // Sync the tree state (in production, state sync protocol handles this).
+    for (block, _qc) in &fed.finalized_history {
+        epsilon_node.apply_finalized_block(block);
+    }
+    fed.nodes.push(epsilon_node);
+
+    // Add a consensus state for the new node.
+    let mut new_state = pyana_federation::ConsensusState::new(
+        4,
+        epsilon_sk,
+        fed.orchestrator.config.clone(),
+    );
+    // Sync height/view.
+    new_state.current_height = fed.consensus_states[0].current_height;
+    new_state.current_view = fed.consensus_states[0].current_view;
+    new_state.last_finalized_hash = fed.consensus_states[0].last_finalized_hash;
+    fed.consensus_states.push(new_state);
+
+    // Run one more round with the new 5-node config.
+    let post_token = fed.mint_token(1, "post-reconfig-token");
+    fed.submit_revocation(1, &post_token.id);
+    let post_result = fed.run_consensus_round();
+
+    match post_result {
+        Some((block, qc)) => {
+            println!(
+                "  {} Post-reconfig consensus: block at height {} finalized ({}/{} votes)",
+                arrow(),
+                block.height,
+                qc.votes.len(),
+                fed.orchestrator.config.num_nodes
+            );
+        }
+        None => {
+            println!(
+                "  {} Post-reconfig consensus: round completed (no pending events)",
+                arrow()
+            );
+        }
+    }
+
+    println!();
+}
+
+// =============================================================================
 // Display Helpers
 // =============================================================================
 
@@ -362,12 +535,15 @@ fn print_footer(fed: &Federation) {
         "\x1b[1m  Federation consensus demo complete.\x1b[0m"
     );
     println!(
-        "\x1b[1m  {} nodes, {} revocations, {} blocks finalized,\x1b[0m",
-        fed.config.num_nodes, total_revocations, total_blocks
+        "\x1b[1m  {} nodes (epoch {}), {} revocations, {} blocks finalized,\x1b[0m",
+        fed.orchestrator.config.num_nodes,
+        fed.orchestrator.config.epoch,
+        total_revocations,
+        total_blocks
     );
     println!(
-        "\x1b[1m  {} Byzantine fault tolerated.\x1b[0m",
-        fed.config.max_faults
+        "\x1b[1m  {} Byzantine faults tolerated.\x1b[0m",
+        fed.orchestrator.config.max_faults
     );
     println!(
         "\x1b[1m{}\x1b[0m",

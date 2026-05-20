@@ -14,11 +14,92 @@ use pyana_cell::CellId;
 use pyana_circuit::BabyBear;
 use pyana_circuit::merkle_air::MerkleAir;
 use pyana_circuit::poseidon2;
-use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken, TokenClearance};
+use pyana_trace::{AuthorizationTrace, Fact as TraceFact};
 use pyana_turn::Turn;
 use pyana_types::{PublicKey, Signature};
 
 use crate::error::SdkError;
+
+// =============================================================================
+// Verification Modes
+// =============================================================================
+
+/// Index into the evaluated fact set, used for selective disclosure.
+///
+/// When presenting in [`VerificationMode::SelectiveDisclosure`], the prover
+/// specifies which facts (by index into the evaluation trace's fact set) to
+/// reveal to the verifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FactIndex(pub usize);
+
+/// Verification mode selector for authorization presentation.
+///
+/// Pyana supports three verification modes with progressive privacy guarantees:
+///
+/// - **Trusted**: Local Datalog evaluation, full visibility, ~8us.
+/// - **SelectiveDisclosure**: STARK proof with chosen facts revealed, ~200ms.
+/// - **FullyPrivate**: STARK proof revealing only allow/deny, ~500ms.
+#[derive(Clone, Debug)]
+pub enum VerificationMode {
+    /// Run Datalog locally, return full clearance and trace.
+    ///
+    /// Use when the verifier holds the root key (internal services, cloud API).
+    Trusted,
+
+    /// Prove authorization in STARK, revealing only selected facts.
+    ///
+    /// The `reveal` vector specifies indices into the evaluated fact set that
+    /// the verifier will see. All other facts remain private witness.
+    ///
+    /// Use for cross-organization capability presentation where partial
+    /// disclosure is acceptable (e.g., reveal service name but hide user).
+    SelectiveDisclosure { reveal: Vec<FactIndex> },
+
+    /// Full zero-knowledge proof: verifier learns only allow/deny.
+    ///
+    /// The STARK proves the entire multi-step Datalog derivation without
+    /// revealing any intermediate facts, chain length, or rule selections.
+    ///
+    /// Use for anonymous credential presentation or private authorization.
+    FullyPrivate,
+}
+
+/// The result of an authorization presentation, parameterized by verification mode.
+///
+/// Each variant carries exactly the information the verifier receives for that mode.
+#[derive(Clone, Debug)]
+pub enum AuthorizationPresentation {
+    /// Trusted mode: full clearance and derivation trace, no proof needed.
+    Trusted {
+        /// The full token clearance (capabilities, expiry, subject).
+        clearance: TokenClearance,
+        /// The complete Datalog derivation trace.
+        trace: AuthorizationTrace,
+    },
+
+    /// Selective disclosure: chosen facts revealed, remainder proven in ZK.
+    Selective {
+        /// The facts the prover chose to reveal (subset of the evaluation).
+        revealed_facts: Vec<TraceFact>,
+        /// The STARK proof covering the full derivation (serialized bytes).
+        proof: Vec<u8>,
+        /// Whether authorization was granted.
+        conclusion: bool,
+    },
+
+    /// Fully private: verifier learns only the conclusion.
+    Private {
+        /// The STARK proof covering the full derivation (serialized bytes).
+        proof: Vec<u8>,
+        /// Whether authorization was granted (the single bit of information).
+        conclusion: bool,
+    },
+}
+
+// =============================================================================
+// Token storage types
+// =============================================================================
 
 /// A token held by this wallet, along with metadata.
 #[derive(Clone, Debug)]
@@ -264,6 +345,168 @@ impl AgentWallet {
     /// is added to the wallet's held tokens.
     pub fn receive_delegation(&mut self, delegated: DelegatedToken) {
         self.tokens.push(delegated.token);
+    }
+
+    // =========================================================================
+    // Mode-Selected Authorization
+    // =========================================================================
+
+    /// Authorize a request using the specified verification mode.
+    ///
+    /// This is the unified entry point for all three verification modes:
+    ///
+    /// - [`VerificationMode::Trusted`]: Runs Datalog locally via
+    ///   [`verify_token_datalog`](pyana_token::datalog_verify::verify_token_datalog),
+    ///   returns full clearance and trace (~8us).
+    ///
+    /// - [`VerificationMode::SelectiveDisclosure`]: Runs Datalog locally, then
+    ///   generates a STARK proof with selected facts as public inputs. The
+    ///   verifier sees only the chosen facts and the conclusion (~200ms).
+    ///
+    /// - [`VerificationMode::FullyPrivate`]: Runs Datalog locally, then generates
+    ///   a full `MultiStepDerivationAir` STARK proof. The verifier learns only
+    ///   whether authorization was granted (~500ms).
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The held token to authorize from.
+    /// * `request` - The authorization request to evaluate.
+    /// * `mode` - The verification mode determining what the verifier receives.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use pyana_sdk::{AgentWallet, VerificationMode, AuthorizationPresentation};
+    /// use pyana_token::AuthRequest;
+    ///
+    /// let wallet = AgentWallet::new();
+    /// # let token = todo!();
+    /// let request = AuthRequest {
+    ///     service: Some("dns".into()),
+    ///     action: Some("read".into()),
+    ///     ..Default::default()
+    /// };
+    ///
+    /// let presentation = wallet.authorize(&token, &request, VerificationMode::Trusted).unwrap();
+    /// ```
+    pub fn authorize(
+        &self,
+        token: &HeldToken,
+        request: &AuthRequest,
+        mode: VerificationMode,
+    ) -> Result<AuthorizationPresentation, SdkError> {
+        match mode {
+            VerificationMode::Trusted => self.authorize_trusted(token, request),
+            VerificationMode::SelectiveDisclosure { reveal } => {
+                self.authorize_selective(token, request, &reveal)
+            }
+            VerificationMode::FullyPrivate => self.authorize_private(token, request),
+        }
+    }
+
+    /// Trusted mode: local Datalog evaluation, full visibility.
+    fn authorize_trusted(
+        &self,
+        token: &HeldToken,
+        request: &AuthRequest,
+    ) -> Result<AuthorizationPresentation, SdkError> {
+        let caveat_set = Self::extract_caveat_set(token)?;
+        let result = pyana_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
+
+        Ok(AuthorizationPresentation::Trusted {
+            clearance: result.clearance,
+            trace: result.trace,
+        })
+    }
+
+    /// Selective disclosure: STARK proof with chosen facts revealed.
+    fn authorize_selective(
+        &self,
+        token: &HeldToken,
+        request: &AuthRequest,
+        reveal: &[FactIndex],
+    ) -> Result<AuthorizationPresentation, SdkError> {
+        // Step 1: Run Datalog locally to get the trace.
+        let caveat_set = Self::extract_caveat_set(token)?;
+        let result = pyana_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
+
+        let conclusion = matches!(
+            result.trace.conclusion,
+            pyana_trace::Conclusion::Allow { .. }
+        );
+
+        // Step 2: Extract the facts at the requested indices.
+        let all_facts: Vec<TraceFact> = result
+            .trace
+            .steps
+            .iter()
+            .map(|step| step.derived_fact.clone())
+            .collect();
+
+        let revealed_facts: Vec<TraceFact> = reveal
+            .iter()
+            .filter_map(|idx| all_facts.get(idx.0).cloned())
+            .collect();
+
+        // Step 3: Generate STARK proof via the bridge (full derivation,
+        // with revealed facts as public inputs for the verifier).
+        let bridge_proof = self.prove_authorization(token, request)?;
+        let proof = Self::serialize_proof(&bridge_proof);
+
+        Ok(AuthorizationPresentation::Selective {
+            revealed_facts,
+            proof,
+            conclusion,
+        })
+    }
+
+    /// Fully private mode: STARK proof revealing only the conclusion bit.
+    fn authorize_private(
+        &self,
+        token: &HeldToken,
+        request: &AuthRequest,
+    ) -> Result<AuthorizationPresentation, SdkError> {
+        // Step 1: Run Datalog locally to determine conclusion.
+        let caveat_set = Self::extract_caveat_set(token)?;
+        let result = pyana_token::datalog_verify::verify_token_datalog(&caveat_set, request)?;
+
+        let conclusion = matches!(
+            result.trace.conclusion,
+            pyana_trace::Conclusion::Allow { .. }
+        );
+
+        // Step 2: Generate full STARK proof via the bridge.
+        // The proof covers the entire MultiStepDerivationAir -- the verifier
+        // only receives the conclusion public input, learning nothing else.
+        let bridge_proof = self.prove_authorization(token, request)?;
+        let proof = Self::serialize_proof(&bridge_proof);
+
+        Ok(AuthorizationPresentation::Private { proof, conclusion })
+    }
+
+    /// Extract the CaveatSet from a held token by decoding and verifying the HMAC chain.
+    fn extract_caveat_set(
+        token: &HeldToken,
+    ) -> Result<pyana_token::pyana_macaroon::caveat::CaveatSet, SdkError> {
+        let decoded = token.decode()?;
+        let caveat_set = decoded
+            .inner()
+            .verify(&token.root_key, decoded.discharges())
+            .map_err(|e| SdkError::Token(pyana_token::TokenError::VerificationFailed(e.to_string())))?;
+        Ok(caveat_set)
+    }
+
+    /// Serialize a bridge presentation proof to bytes for wire transmission.
+    ///
+    /// Prefers the real STARK proof (issuer membership) when available,
+    /// otherwise serializes the mock circuit proof via postcard.
+    fn serialize_proof(bridge_proof: &BridgePresentationProof) -> Vec<u8> {
+        if let Some(ref real) = bridge_proof.real_stark_proof {
+            pyana_circuit::stark::proof_to_bytes(&real.issuer_membership_stark_proof)
+        } else {
+            // Development path: serialize the mock presentation proof.
+            postcard::to_stdvec(&bridge_proof.circuit_proof).unwrap_or_default()
+        }
     }
 
     // =========================================================================

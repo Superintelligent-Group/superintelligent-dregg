@@ -255,7 +255,7 @@ mod tests {
         let mut set = PersistentNullifierSet::new();
         let note = make_note(1);
         let spending_key = [0xBB; 32];
-        let nullifier = note.nullifier(&spending_key, 0);
+        let nullifier = note.nullifier(&spending_key);
 
         // First insert succeeds.
         assert!(set.insert(nullifier));
@@ -272,13 +272,13 @@ mod tests {
 
         let note1 = make_note(1);
         let spending_key = [0xBB; 32];
-        let n1 = note1.nullifier(&spending_key, 0);
+        let n1 = note1.nullifier(&spending_key);
         set.insert(n1);
         let root_one = set.root();
         assert_ne!(root_empty, root_one);
 
         let note2 = make_note(2);
-        let n2 = note2.nullifier(&spending_key, 1);
+        let n2 = note2.nullifier(&spending_key);
         set.insert(n2);
         let root_two = set.root();
         assert_ne!(root_one, root_two);

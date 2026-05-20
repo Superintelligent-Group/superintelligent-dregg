@@ -205,7 +205,9 @@ impl Federation {
     pub fn run_consensus_round(&mut self) -> Option<(RevocationBlock, QuorumCertificate)> {
         // Sync online status.
         for (i, node) in self.nodes.iter().enumerate() {
-            self.consensus_states[i].set_online(node.is_online);
+            if i < self.consensus_states.len() {
+                self.consensus_states[i].set_online(node.is_online);
+            }
         }
 
         // Run the consensus round.
@@ -219,6 +221,11 @@ impl Federation {
                 node.apply_finalized_block(&block);
                 node.update_attested_root(&qc, &identities);
             }
+        }
+
+        // Keep Federation.config in sync if the orchestrator applied a reconfig.
+        if self.config.epoch != self.orchestrator.config.epoch {
+            self.config = self.orchestrator.config.clone();
         }
 
         self.finalized_history.push((block.clone(), qc.clone()));

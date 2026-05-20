@@ -71,8 +71,8 @@ fn main() {
         [0xA0u8; 32],
     );
     let alice_commitment = alice_note.commitment();
-    let alice_position: u64 = 0;
-    let alice_nullifier = alice_note.nullifier(&alice_spending_key, alice_position);
+    let _alice_position: u64 = 0;
+    let alice_nullifier = alice_note.nullifier(&alice_spending_key);
 
     // Bob's note: 50 units of Asset B
     let bob_spending_key = blake3::derive_key("bob-note-spending-v1", &bob_pubkey);
@@ -82,8 +82,8 @@ fn main() {
         [0xB0u8; 32],
     );
     let bob_commitment = bob_note.commitment();
-    let bob_position: u64 = 1;
-    let bob_nullifier = bob_note.nullifier(&bob_spending_key, bob_position);
+    let _bob_position: u64 = 1;
+    let bob_nullifier = bob_note.nullifier(&bob_spending_key);
 
     println!("--- Pre-Swap State ---");
     println!("  Alice's note: {} units of Asset A (commitment: {:02x}{:02x}{:02x}{:02x}...)",

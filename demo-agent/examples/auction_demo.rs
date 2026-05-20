@@ -184,7 +184,7 @@ fn main() {
     println!("--- Step 4: SETTLEMENT ---");
 
     // Winner's bid note is spent (funds go to seller)
-    let winner_nullifier = bid_note_b.nullifier(&bidder_b_key, 1);
+    let winner_nullifier = bid_note_b.nullifier(&bidder_b_key);
     nullifier_set.insert(winner_nullifier).expect("Winner spend should succeed");
     println!("  Winner (Bidder B) spends bid note");
     println!("    Nullifier: {:02x}{:02x}{:02x}{:02x}...",
@@ -203,7 +203,7 @@ fn main() {
     println!("  Refunding losing bidders...");
 
     // Bidder A refund
-    let refund_a_nullifier = bid_note_a.nullifier(&bidder_a_key, 0);
+    let refund_a_nullifier = bid_note_a.nullifier(&bidder_a_key);
     nullifier_set.insert(refund_a_nullifier).expect("Refund A should succeed");
     let refund_note_a = Note::with_randomness(bidder_a_pubkey, [0, bid_a_amount, 0, 0, 0, 0, 0, 0], [0xA1u8; 32]);
     let refund_commitment_a = refund_note_a.commitment();
@@ -213,7 +213,7 @@ fn main() {
         refund_commitment_a.0[0], refund_commitment_a.0[1], refund_commitment_a.0[2], refund_commitment_a.0[3]);
 
     // Bidder C refund
-    let refund_c_nullifier = bid_note_c.nullifier(&bidder_c_key, 2);
+    let refund_c_nullifier = bid_note_c.nullifier(&bidder_c_key);
     nullifier_set.insert(refund_c_nullifier).expect("Refund C should succeed");
     let refund_note_c = Note::with_randomness(bidder_c_pubkey, [0, bid_c_amount, 0, 0, 0, 0, 0, 0], [0xC1u8; 32]);
     let refund_commitment_c = refund_note_c.commitment();

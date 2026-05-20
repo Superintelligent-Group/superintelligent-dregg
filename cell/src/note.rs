@@ -1,11 +1,15 @@
 //! Anonymous note model: consume-once cells with private state.
 //!
-//! A note is a committed tuple: (owner, fields[8], randomness) with a unique commitment.
+//! A note is a committed tuple: (owner, fields[8], randomness, creation_nonce) with a unique commitment.
 //! Spending a note = revealing its nullifier (only the owner can compute this).
 //! Creating a note = adding a commitment to the note tree.
 //!
 //! Notes are self-proving: the STARK proof + Merkle path is enough to verify,
 //! no federation callback needed.
+//!
+//! Nullifiers are derived from note-intrinsic data only (no tree position), making
+//! them globally unique and federation-independent. This ensures double-spend
+//! protection works across federation boundaries without export ceremonies.
 //!
 //! All commitments use domain-separated BLAKE3 (placeholder for Poseidon2 over
 //! the STARK-native field). The API is designed so that swapping to algebraic
@@ -14,13 +18,15 @@
 use serde::{Deserialize, Serialize};
 
 /// A note commitment (published to the note tree).
-/// commitment = H("pyana-note commitment v1", owner || fields[0..8] || randomness)
+/// commitment = H("pyana-note commitment v1", owner || fields[0..8] || randomness || creation_nonce)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NoteCommitment(pub [u8; 32]);
 
 /// A nullifier (published when spending a note).
-/// nullifier = H("pyana-note nullifier v1", commitment || spending_key || position_in_tree)
+/// nullifier = H("pyana-note nullifier v1", commitment || spending_key || creation_nonce)
 /// Only the owner can compute this. Publishing it "spends" the note.
+/// Derived from note-intrinsic data only — no tree position — so the same note
+/// produces the same nullifier regardless of which tree it lives in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Nullifier(pub [u8; 32]);
 
@@ -35,14 +41,20 @@ pub struct Note {
     pub fields: [u64; 8],
     /// Random blinding factor (ensures commitment uniqueness).
     pub randomness: [u8; 32],
+    /// Unique per-note nonce chosen at creation time. Embedded in the commitment
+    /// and used in nullifier derivation. Makes nullifiers federation-independent:
+    /// the same note produces the same nullifier regardless of tree position.
+    pub creation_nonce: [u8; 32],
 }
 
 /// A note with its computed commitment and position info.
+/// The tree position is metadata used for Merkle proof generation only —
+/// it does NOT participate in nullifier derivation.
 #[derive(Clone, Debug)]
 pub struct PositionedNote {
     pub note: Note,
     pub commitment: NoteCommitment,
-    /// Position in the note tree (needed for nullifier derivation).
+    /// Position in the note tree (needed for Merkle proof generation, NOT for nullifiers).
     pub tree_position: u64,
 }
 
@@ -78,34 +90,54 @@ impl core::fmt::Display for NoteError {
 impl std::error::Error for NoteError {}
 
 impl Note {
-    /// Create a new note with random blinding.
+    /// Create a new note with random blinding and a unique creation nonce.
     pub fn new(owner: [u8; 32], fields: [u64; 8]) -> Self {
-        let mut randomness = [0u8; 32];
-        // Use BLAKE3 keyed hash of owner + fields as deterministic "randomness"
-        // for reproducibility in tests. Real usage should supply external randomness.
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .to_le_bytes();
+
+        // Derive randomness.
         let mut hasher = blake3::Hasher::new_derive_key("pyana-note randomness v1");
         hasher.update(&owner);
         for f in &fields {
             hasher.update(&f.to_le_bytes());
         }
-        // Mix in a counter to avoid collisions when creating multiple notes
-        // with same owner+fields. In production, this would be `getrandom`.
-        hasher.update(&std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-            .to_le_bytes());
+        hasher.update(&timestamp);
+        let mut randomness = [0u8; 32];
         randomness.copy_from_slice(hasher.finalize().as_bytes());
-        Self { owner, fields, randomness }
+
+        // Derive creation_nonce (independent domain separation).
+        let mut nonce_hasher = blake3::Hasher::new_derive_key("pyana-note creation-nonce v1");
+        nonce_hasher.update(&owner);
+        nonce_hasher.update(&randomness);
+        nonce_hasher.update(&timestamp);
+        let mut creation_nonce = [0u8; 32];
+        creation_nonce.copy_from_slice(nonce_hasher.finalize().as_bytes());
+
+        Self { owner, fields, randomness, creation_nonce }
     }
 
-    /// Create a note with explicit randomness (for deterministic tests).
+    /// Create a note with explicit randomness and creation nonce (for deterministic tests).
     pub fn with_randomness(owner: [u8; 32], fields: [u64; 8], randomness: [u8; 32]) -> Self {
-        Self { owner, fields, randomness }
+        // Derive a deterministic creation_nonce from the randomness.
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-note creation-nonce v1");
+        hasher.update(&owner);
+        hasher.update(&randomness);
+        let mut creation_nonce = [0u8; 32];
+        creation_nonce.copy_from_slice(hasher.finalize().as_bytes());
+        Self { owner, fields, randomness, creation_nonce }
+    }
+
+    /// Create a note with explicit randomness AND explicit creation nonce.
+    /// Use when you need full control over both values (e.g., testing nonce uniqueness).
+    pub fn with_nonce(owner: [u8; 32], fields: [u64; 8], randomness: [u8; 32], creation_nonce: [u8; 32]) -> Self {
+        Self { owner, fields, randomness, creation_nonce }
     }
 
     /// Compute the commitment for this note.
-    /// Uses domain-separated BLAKE3 over (owner || fields || randomness).
+    /// Uses domain-separated BLAKE3 over (owner || fields || randomness || creation_nonce).
     pub fn commitment(&self) -> NoteCommitment {
         let mut hasher = blake3::Hasher::new_derive_key("pyana-note commitment v1");
         hasher.update(&self.owner);
@@ -113,17 +145,22 @@ impl Note {
             hasher.update(&f.to_le_bytes());
         }
         hasher.update(&self.randomness);
+        hasher.update(&self.creation_nonce);
         NoteCommitment(*hasher.finalize().as_bytes())
     }
 
-    /// Compute the nullifier for this note given the owner's secret key and tree position.
-    /// nullifier = H("pyana-note nullifier v1", commitment || spending_key || tree_position)
-    pub fn nullifier(&self, spending_key: &[u8; 32], tree_position: u64) -> Nullifier {
+    /// Compute the nullifier for this note given the owner's secret key.
+    /// nullifier = H("pyana-note nullifier v1", commitment || spending_key || creation_nonce)
+    ///
+    /// Derived from note-intrinsic data only. No tree position is used, so the same
+    /// note produces the same nullifier regardless of which tree (or federation) it
+    /// lives in. This makes double-spend detection global by construction.
+    pub fn nullifier(&self, spending_key: &[u8; 32]) -> Nullifier {
         let commitment = self.commitment();
         let mut hasher = blake3::Hasher::new_derive_key("pyana-note nullifier v1");
         hasher.update(&commitment.0);
         hasher.update(spending_key);
-        hasher.update(&tree_position.to_le_bytes());
+        hasher.update(&self.creation_nonce);
         Nullifier(*hasher.finalize().as_bytes())
     }
 
@@ -204,24 +241,67 @@ mod tests {
         let key1 = test_spending_key(1);
         let key2 = test_spending_key(2);
 
-        let nullifier1 = note.nullifier(&key1, 0);
-        let nullifier2 = note.nullifier(&key2, 0);
+        let nullifier1 = note.nullifier(&key1);
+        let nullifier2 = note.nullifier(&key2);
 
         // Different spending keys produce different nullifiers.
         assert_ne!(nullifier1, nullifier2);
     }
 
     #[test]
-    fn test_nullifier_depends_on_position() {
+    fn test_nullifier_same_regardless_of_tree_position() {
+        // CRITICAL: same note in two different trees produces the SAME nullifier.
+        // This is the core property that enables federation-independent double-spend detection.
         let owner = test_owner(1);
         let fields = [1u64, 100, 0, 0, 0, 0, 0, 0];
         let note = Note::with_randomness(owner, fields, [42u8; 32]);
         let key = test_spending_key(1);
 
-        let n1 = note.nullifier(&key, 0);
-        let n2 = note.nullifier(&key, 1);
+        // Nullifier is deterministic and position-independent.
+        let n1 = note.nullifier(&key);
+        let n2 = note.nullifier(&key);
+        assert_eq!(n1, n2);
 
-        assert_ne!(n1, n2);
+        // Even if positioned at different tree locations, nullifier is the same.
+        let positioned_a = note.clone().positioned(0);
+        let positioned_b = note.clone().positioned(999);
+        assert_eq!(positioned_a.note.nullifier(&key), positioned_b.note.nullifier(&key));
+    }
+
+    #[test]
+    fn test_nullifier_unique_per_note() {
+        // Different creation_nonce = different nullifier, even with same content.
+        let owner = test_owner(1);
+        let fields = [1u64, 100, 0, 0, 0, 0, 0, 0];
+        let key = test_spending_key(1);
+
+        let note1 = Note::with_nonce(owner, fields, [42u8; 32], [1u8; 32]);
+        let note2 = Note::with_nonce(owner, fields, [42u8; 32], [2u8; 32]);
+
+        assert_ne!(note1.nullifier(&key), note2.nullifier(&key));
+    }
+
+    #[test]
+    fn test_double_spend_across_contexts() {
+        // A nullifier computed once is valid everywhere — no tree-specific derivation.
+        let owner = test_owner(1);
+        let fields = [1u64, 100, 0, 0, 0, 0, 0, 0];
+        let key = test_spending_key(1);
+        let note = Note::with_randomness(owner, fields, [42u8; 32]);
+
+        // Compute nullifier (simulating one federation).
+        let nullifier = note.nullifier(&key);
+
+        // In a different context (different federation, different tree position),
+        // the same note still produces the same nullifier.
+        let same_nullifier = note.nullifier(&key);
+        assert_eq!(nullifier, same_nullifier);
+
+        // A nullifier set in any federation can detect the double-spend.
+        let mut set = crate::nullifier_set::NullifierSet::new();
+        set.insert(nullifier).unwrap();
+        let double_spend = set.insert(same_nullifier);
+        assert!(matches!(double_spend, Err(NoteError::DoubleSpend { .. })));
     }
 
     #[test]

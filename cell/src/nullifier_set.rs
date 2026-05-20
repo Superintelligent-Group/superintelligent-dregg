@@ -156,7 +156,7 @@ mod tests {
         let randomness = [seed; 32];
         let note = Note::with_randomness(owner, fields, randomness);
         let spending_key = [seed.wrapping_add(100); 32];
-        note.nullifier(&spending_key, seed as u64)
+        note.nullifier(&spending_key)
     }
 
     #[test]

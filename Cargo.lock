@@ -4097,6 +4097,7 @@ dependencies = [
  "pyana-bridge",
  "pyana-cell",
  "pyana-circuit",
+ "pyana-trace",
  "pyana-turn",
  "pyana-types",
  "pyana-wire",

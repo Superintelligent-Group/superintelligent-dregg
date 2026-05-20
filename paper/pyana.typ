@@ -57,7 +57,7 @@
   #v(0.3em)
   #text(size: 10pt, fill: luma(80))[
     Draft -- May 20, 2026 \
-    `github.com/pyana-dev/breadstuffs`
+    `github.com/emberian/pyana`
   ]
 ]
 

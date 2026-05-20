@@ -50,7 +50,7 @@ fn main() {
     let mint_fields = [asset_id, 0, 1, 1700000000, 0, 0, 0, 0];
     let nft_note_alice = Note::with_randomness(alice_pubkey, mint_fields, [0x42u8; 32]);
     let alice_commitment = nft_note_alice.commitment();
-    let alice_position: u64 = 0; // First note in the tree
+    let _alice_position: u64 = 0; // First note in the tree
 
     println!("  Created note with commitment: {:02x}{:02x}{:02x}{:02x}...",
         alice_commitment.0[0], alice_commitment.0[1], alice_commitment.0[2], alice_commitment.0[3]);
@@ -66,7 +66,7 @@ fn main() {
     println!("--- Step 2: TRANSFER (Alice -> Bob) ---");
 
     // Alice computes and reveals her nullifier (proves she owns the note)
-    let nullifier_alice = nft_note_alice.nullifier(&alice_spending_key, alice_position);
+    let nullifier_alice = nft_note_alice.nullifier(&alice_spending_key);
     println!("  Alice reveals nullifier: {:02x}{:02x}{:02x}{:02x}...",
         nullifier_alice.0[0], nullifier_alice.0[1], nullifier_alice.0[2], nullifier_alice.0[3]);
 
@@ -78,7 +78,7 @@ fn main() {
     let transfer_fields = [asset_id, 0, 1, 1700000000, 0, 0, 0, 0];
     let nft_note_bob = Note::with_randomness(bob_pubkey, transfer_fields, [0x43u8; 32]);
     let bob_commitment = nft_note_bob.commitment();
-    let bob_position: u64 = 1; // Second note in the tree
+    let _bob_position: u64 = 1; // Second note in the tree
 
     println!("  Created new note for Bob: {:02x}{:02x}{:02x}{:02x}...",
         bob_commitment.0[0], bob_commitment.0[1], bob_commitment.0[2], bob_commitment.0[3]);
@@ -124,7 +124,7 @@ fn main() {
     }
 
     // Also demonstrate non-membership proof for Bob's note (proving it's NOT spent)
-    let nullifier_bob = nft_note_bob.nullifier(&bob_spending_key, bob_position);
+    let nullifier_bob = nft_note_bob.nullifier(&bob_spending_key);
     let non_membership = nullifier_set.prove_non_membership(&nullifier_bob);
     assert!(non_membership.is_some(), "Should be able to prove Bob's note is NOT spent");
     let proof = non_membership.unwrap();
@@ -139,7 +139,7 @@ fn main() {
     println!("--- Step 5: PROVENANCE (ownership chain) ---");
 
     // Bob transfers to Carol
-    let nullifier_bob_spend = nft_note_bob.nullifier(&bob_spending_key, bob_position);
+    let nullifier_bob_spend = nft_note_bob.nullifier(&bob_spending_key);
     nullifier_set.insert(nullifier_bob_spend).expect("Bob's spend should succeed");
 
     let nft_note_carol = Note::with_randomness(carol_pubkey, transfer_fields, [0x44u8; 32]);

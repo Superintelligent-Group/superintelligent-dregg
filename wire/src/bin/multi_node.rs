@@ -512,7 +512,7 @@ async fn main() {
     );
 
     // 6b: Transfer: spend the original note, create two new notes (60 + 40).
-    let nullifier = mint_note.nullifier(&spending_key, mint_pos);
+    let nullifier = mint_note.nullifier(&spending_key);
     store.store_nullifier(&nullifier).unwrap();
     println!(
         "  [Node 1] Spent note (nullifier: {}...)",

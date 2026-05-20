@@ -165,6 +165,8 @@ impl AgentRuntime {
             preconditions: Default::default(),
             effects,
             may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
         };
 
         // Compute the signing message and sign with the wallet's key.
@@ -340,6 +342,8 @@ impl SubAgent {
             preconditions: Default::default(),
             effects,
             may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
         };
 
         // Sign with the sub-agent's wallet.
