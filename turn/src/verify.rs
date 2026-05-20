@@ -11,6 +11,7 @@
 //! - Agent consistency: all receipts in a chain belong to the same agent
 //! - Genesis validity: the first receipt has `previous_receipt_hash = None`
 
+use ed25519_dalek;
 use pyana_cell::CellId;
 
 use crate::turn::TurnReceipt;
@@ -59,6 +60,13 @@ pub enum VerifyError {
         /// The actual agent found.
         actual_agent: CellId,
     },
+
+    /// A receipt's executor signature failed verification against all known
+    /// executor public keys.
+    ExecutorSignatureInvalid {
+        /// Index of the receipt with the invalid signature.
+        index: usize,
+    },
 }
 
 impl core::fmt::Display for VerifyError {
@@ -79,6 +87,9 @@ impl core::fmt::Display for VerifyError {
                     f,
                     "agent mismatch at receipt index {index}: expected {expected_agent}, got {actual_agent}"
                 )
+            }
+            VerifyError::ExecutorSignatureInvalid { index } => {
+                write!(f, "executor signature invalid at receipt index {index}")
             }
         }
     }
@@ -219,6 +230,61 @@ pub fn verify_receipt_extends(
     Ok(())
 }
 
+/// Verify a receipt chain with executor signature verification.
+///
+/// In addition to the structural checks performed by [`verify_receipt_chain`], this
+/// function verifies the Ed25519 executor signature on each receipt that has one.
+///
+/// If a receipt has an `executor_signature`, it must verify against at least one
+/// of the provided `executor_pubkeys`. If no signatures are present on any receipt,
+/// this is equivalent to `verify_receipt_chain`.
+pub fn verify_receipt_chain_with_keys(
+    receipts: &[TurnReceipt],
+    executor_pubkeys: &[[u8; 32]],
+) -> Result<(), VerifyError> {
+    // First, verify structural integrity.
+    verify_receipt_chain(receipts)?;
+
+    // Then verify executor signatures on receipts that have them.
+    for (i, receipt) in receipts.iter().enumerate() {
+        if let Some(ref sig_bytes) = receipt.executor_signature {
+            if sig_bytes.len() != 64 {
+                return Err(VerifyError::ExecutorSignatureInvalid { index: i });
+            }
+            let sig_array: [u8; 64] = sig_bytes[..64].try_into().unwrap();
+            let receipt_hash = receipt.receipt_hash();
+            let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
+
+            let mut verified = false;
+            for pubkey_bytes in executor_pubkeys {
+                if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(pubkey_bytes) {
+                    use ed25519_dalek::Verifier;
+                    if vk.verify(&receipt_hash, &signature).is_ok() {
+                        verified = true;
+                        break;
+                    }
+                }
+            }
+
+            if !verified {
+                return Err(VerifyError::ExecutorSignatureInvalid { index: i });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Sign a receipt with the given Ed25519 signing key.
+/// Returns the 64-byte signature over the receipt hash.
+pub fn sign_receipt(receipt: &TurnReceipt, signing_key: &[u8; 32]) -> Vec<u8> {
+    use ed25519_dalek::Signer;
+    let sk = ed25519_dalek::SigningKey::from_bytes(signing_key);
+    let receipt_hash = receipt.receipt_hash();
+    let sig = sk.sign(&receipt_hash);
+    sig.to_bytes().to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +307,8 @@ mod tests {
             action_count: 1,
             previous_receipt_hash,
             agent,
+            routing_directives: Vec::new(),
+            executor_signature: None,
         }
     }
 

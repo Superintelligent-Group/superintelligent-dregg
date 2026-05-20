@@ -190,6 +190,8 @@ impl AgentRuntime {
             fee: 10_000,
             memo: None,
             valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: Vec::new(),
         };
 
         // Execute against the local ledger.
@@ -365,6 +367,8 @@ impl SubAgent {
             fee: 5_000,
             memo: None,
             valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: Vec::new(),
         };
 
         let mut ledger = self.ledger.lock().unwrap();

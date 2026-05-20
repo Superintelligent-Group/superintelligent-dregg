@@ -498,6 +498,8 @@ fn test_real_signature_verification() {
         fee: 500,
         memo: None,
         valid_until: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -613,6 +615,8 @@ fn test_wrong_key_signature_rejected() {
         fee: 500,
         memo: None,
         valid_until: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -1171,6 +1175,8 @@ fn test_empty_forest_rejected() {
         fee: 100,
         memo: None,
         valid_until: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
     };
 
     let result = executor.execute(&turn, &mut ledger);

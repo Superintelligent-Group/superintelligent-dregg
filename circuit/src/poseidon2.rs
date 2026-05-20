@@ -33,10 +33,10 @@ pub const TOTAL_ROUNDS: usize = EXTERNAL_ROUNDS + INTERNAL_ROUNDS;
 const SBOX_ALPHA: u32 = 7;
 
 /// Cached round constants, computed once from BLAKE3 derivation.
-static ROUND_CONSTANTS: LazyLock<Vec<[BabyBear; WIDTH]>> = LazyLock::new(compute_round_constants);
+pub static ROUND_CONSTANTS: LazyLock<Vec<[BabyBear; WIDTH]>> = LazyLock::new(compute_round_constants);
 
 /// Cached internal diagonal matrix, computed once from BLAKE3 derivation.
-static INTERNAL_DIAG: LazyLock<[BabyBear; WIDTH]> = LazyLock::new(compute_internal_diag);
+pub static INTERNAL_DIAG: LazyLock<[BabyBear; WIDTH]> = LazyLock::new(compute_internal_diag);
 
 /// Round constants for Poseidon2 (generated deterministically).
 /// In production these would be from a nothing-up-my-sleeve derivation.
@@ -98,14 +98,14 @@ impl Poseidon2State {
 
     /// Apply the S-box: x -> x^7.
     #[inline]
-    fn sbox(x: BabyBear) -> BabyBear {
+    pub fn sbox(x: BabyBear) -> BabyBear {
         x.pow(SBOX_ALPHA)
     }
 
     /// Apply the external (full) linear layer: a circulant-like MDS matrix.
     /// Uses the Poseidon2 external matrix construction:
     /// M_E * x where M_E is a width-8 circulant derived from [2, 3, 1, 1, ...].
-    fn external_linear_layer(&mut self) {
+    pub fn external_linear_layer(&mut self) {
         // Simplified external matrix: use a Cauchy-like construction.
         // For width 8, we use the standard Poseidon2 external matrix.
         // This is equivalent to 4 parallel butterfly operations.
@@ -153,7 +153,7 @@ impl Poseidon2State {
 
     /// Apply the internal linear layer: M_I * x.
     /// Poseidon2 internal layer: x_0 = sum(x_i) + (d_0 - 1) * x_0, others similar.
-    fn internal_linear_layer(&mut self) {
+    pub fn internal_linear_layer(&mut self) {
         let diag = &*INTERNAL_DIAG;
         let sum: BabyBear = self.state.iter().copied().fold(BabyBear::ZERO, |a, b| a + b);
 
@@ -206,6 +206,76 @@ impl Poseidon2State {
             // External linear layer
             self.external_linear_layer();
         }
+    }
+}
+
+/// Apply the external linear layer to a state array (standalone version).
+pub fn apply_external_linear_layer(state: &[BabyBear; WIDTH]) -> [BabyBear; WIDTH] {
+    let mut s = *state;
+    for i in (0..WIDTH).step_by(2) {
+        let t = s[i] + s[i + 1];
+        s[i + 1] = s[i] - s[i + 1];
+        s[i] = t;
+    }
+    for i in (0..WIDTH).step_by(4) {
+        let t0 = s[i] + s[i + 2];
+        let t1 = s[i + 1] + s[i + 3];
+        s[i + 2] = s[i] - s[i + 2];
+        s[i + 3] = s[i + 1] - s[i + 3];
+        s[i] = t0;
+        s[i + 1] = t1;
+    }
+    for i in 0..4 {
+        let t = s[i] + s[i + 4];
+        s[i + 4] = s[i] - s[i + 4];
+        s[i] = t;
+    }
+    let multipliers = [
+        BabyBear::new(2), BabyBear::new(3), BabyBear::new(4), BabyBear::new(5),
+        BabyBear::new(6), BabyBear::new(7), BabyBear::new(8), BabyBear::new(9),
+    ];
+    for i in 0..WIDTH { s[i] = s[i] * multipliers[i]; }
+    s
+}
+
+/// Apply the internal linear layer to a state array (standalone version).
+pub fn apply_internal_linear_layer(state: &[BabyBear; WIDTH]) -> [BabyBear; WIDTH] {
+    let diag = &*INTERNAL_DIAG;
+    let sum: BabyBear = state.iter().copied().fold(BabyBear::ZERO, |a, b| a + b);
+    let mut result = [BabyBear::ZERO; WIDTH];
+    for i in 0..WIDTH {
+        result[i] = sum + (diag[i] - BabyBear::ONE) * state[i];
+    }
+    result
+}
+
+/// Compute one full (external) round of Poseidon2.
+pub fn compute_full_round(state: &[BabyBear; WIDTH], round_constants: &[BabyBear; WIDTH]) -> [BabyBear; WIDTH] {
+    let mut s = [BabyBear::ZERO; WIDTH];
+    for i in 0..WIDTH {
+        s[i] = Poseidon2State::sbox(state[i] + round_constants[i]);
+    }
+    apply_external_linear_layer(&s)
+}
+
+/// Compute one partial (internal) round of Poseidon2.
+pub fn compute_partial_round(state: &[BabyBear; WIDTH], round_constant: BabyBear) -> [BabyBear; WIDTH] {
+    let mut s = *state;
+    s[0] = Poseidon2State::sbox(s[0] + round_constant);
+    apply_internal_linear_layer(&s)
+}
+
+/// Compute the expected next state for a given round index (0-indexed).
+pub fn compute_round(state: &[BabyBear; WIDTH], round_idx: usize) -> [BabyBear; WIDTH] {
+    let rc = &*ROUND_CONSTANTS;
+    if round_idx < EXTERNAL_ROUNDS / 2 {
+        compute_full_round(state, &rc[round_idx])
+    } else if round_idx < EXTERNAL_ROUNDS / 2 + INTERNAL_ROUNDS {
+        compute_partial_round(state, rc[round_idx][0])
+    } else if round_idx < TOTAL_ROUNDS {
+        compute_full_round(state, &rc[round_idx])
+    } else {
+        *state
     }
 }
 

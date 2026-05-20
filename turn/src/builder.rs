@@ -93,6 +93,8 @@ impl TurnBuilder {
             fee: self.fee,
             memo: self.memo,
             valid_until: self.valid_until,
+            previous_receipt_hash: None,
+            depends_on: Vec::new(),
         }
     }
 

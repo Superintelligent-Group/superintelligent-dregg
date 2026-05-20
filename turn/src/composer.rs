@@ -283,6 +283,8 @@ impl TurnComposer {
             fee: self.fee,
             memo: self.memo,
             valid_until: self.valid_until,
+            depends_on: Vec::new(),
+            previous_receipt_hash: None,
         };
 
         Ok(turn)

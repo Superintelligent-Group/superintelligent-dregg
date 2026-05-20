@@ -19,6 +19,7 @@ pub mod nullifier_set;
 pub mod permissions;
 pub mod preconditions;
 pub mod program;
+pub mod seal;
 pub mod state;
 
 #[cfg(test)]
@@ -36,4 +37,5 @@ pub use preconditions::{
     CellStatePrecondition, EvalContext, NetworkPrecondition, Preconditions, TimeRange,
 };
 pub use program::{CellProgram, ProgramError, StateConstraint};
+pub use seal::{SealError, SealPair, SealedBox, test_seal_pair};
 pub use state::{CellState, FieldElement, FieldVisibility, FIELD_ZERO, PublicFieldView, STATE_SLOTS};

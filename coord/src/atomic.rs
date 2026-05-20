@@ -477,6 +477,8 @@ impl Coordinator {
             fee: forest.fee,
             memo: Some("atomic multi-party turn".to_string()),
             valid_until: None,
+            depends_on: Vec::new(),
+            previous_receipt_hash: None,
         };
 
         // Execute the turn with proper metering.
@@ -751,6 +753,8 @@ impl Participant {
             fee: forest.fee,
             memo: Some("atomic multi-party turn".to_string()),
             valid_until: None,
+            depends_on: Vec::new(),
+            previous_receipt_hash: None,
         };
 
         let executor = TurnExecutor::new(self.costs.clone());

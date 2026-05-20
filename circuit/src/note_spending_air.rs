@@ -67,6 +67,9 @@ pub mod col {
     pub const SPENDING_KEY: usize = 6;
     pub const NULLIFIER: usize = 7;
     pub const RANDOMNESS: usize = 8;
+    /// Row type: 0 = commitment row, 1 = Merkle/padding row.
+    /// Used to gate constraints appropriately.
+    pub const IS_MERKLE: usize = 9;
 }
 
 /// Column indices for Merkle level rows.
@@ -191,6 +194,7 @@ impl NoteSpendingAir {
         row0[col::SPENDING_KEY] = witness.spending_key;
         row0[col::NULLIFIER] = nullifier;
         row0[col::RANDOMNESS] = witness.randomness;
+        row0[col::IS_MERKLE] = BabyBear::ZERO; // This is the commitment row
         trace.push(row0);
 
         // Rows 1..depth+1: Merkle membership proof
@@ -221,6 +225,7 @@ impl NoteSpendingAir {
             row[merkle_col::SIB2] = siblings[2];
             row[merkle_col::POSITION] = BabyBear::new(pos as u32);
             row[merkle_col::PARENT] = parent;
+            row[col::IS_MERKLE] = BabyBear::ONE; // Merkle row
             trace.push(row);
 
             current = parent;
@@ -234,6 +239,7 @@ impl NoteSpendingAir {
             let mut row = vec![BabyBear::ZERO; NOTE_SPENDING_WIDTH];
             row[merkle_col::CURRENT] = merkle_root;
             row[merkle_col::PARENT] = padding_parent;
+            row[col::IS_MERKLE] = BabyBear::ONE; // Padding treated as Merkle row
             trace.push(row);
         }
 
@@ -262,37 +268,84 @@ impl StarkAir for NoteSpendingAir {
         _public_inputs: &[BabyBear],
         alpha: BabyBear,
     ) -> BabyBear {
-        // The note spending constraint combines:
-        //
-        // 1. Commitment hash binding: commitment = poseidon2(owner, value, asset_type, nonce, randomness)
-        //    Enforced via the committed trace polynomial + FRI (same pattern as MerklePoseidon2StarkAir).
-        //    The prover computes the real hash and commits it; the verifier trusts the commitment.
-        //
-        // 2. Nullifier hash binding: nullifier = poseidon2(commitment, spending_key, nonce)
-        //    Same mechanism: the trace commits to correct hash values.
-        //
-        // 3. Merkle position validity: pos*(pos-1)*(pos-2)*(pos-3) = 0
-        //    This ensures Merkle positions are valid.
-        //
-        // 4. The verifier additionally checks (outside the constraint polynomial):
-        //    - Public input nullifier matches trace row 0 nullifier (via trace commitment)
-        //    - Public input merkle_root matches the last Merkle level parent (via trace commitment)
-        //    - Chain continuity: commitment feeds into first Merkle level, parent[i] = current[i+1]
-        //
-        // The algebraic constraint we enforce here is position validity on Merkle rows.
-        // For the commitment row (row 0), we use a trivial constraint (the hash binding
-        // comes from the trace commitment + FRI).
+        // The note spending constraint enforces:
+        // 1. Position validity: pos*(pos-1)*(pos-2)*(pos-3) = 0
+        // 2. Merkle hash binding (gated by is_merkle): parent == hash_4_to_1(children)
+        // 3. Commitment preimage (gated by 1-is_merkle): commitment == hash_many(preimage)
+        // 4. Nullifier derivation (gated by 1-is_merkle): nullifier == hash_many(...)
+        // 5. is_merkle is binary: is_merkle * (is_merkle - 1) = 0
 
         let position = local[merkle_col::POSITION];
+        let is_merkle = local[col::IS_MERKLE];
 
-        // Position validity: pos is 0, 1, 2, or 3
+        // Constraint 1: Position validity (degree 4)
         let c_pos = position
             * (position - BabyBear::ONE)
             * (position - BabyBear::new(2))
             * (position - BabyBear::new(3));
 
-        // Combined constraint with alpha mixing for extensibility
-        c_pos + alpha * (position * position - position * position) // second term = 0 (placeholder)
+        let mut combined = c_pos;
+        let mut alpha_pow = alpha;
+
+        // Constraint 5: is_merkle binary
+        let c_binary = is_merkle * (is_merkle - BabyBear::ONE);
+        combined = combined + alpha_pow * c_binary;
+        alpha_pow = alpha_pow * alpha;
+
+        // Constraint 2: Merkle hash binding (only on Merkle rows: gated by is_merkle)
+        let current = local[merkle_col::CURRENT];
+        let sib0 = local[merkle_col::SIB0];
+        let sib1 = local[merkle_col::SIB1];
+        let sib2 = local[merkle_col::SIB2];
+        let parent = local[merkle_col::PARENT];
+
+        let p = position;
+        let p_m1 = p - BabyBear::ONE;
+        let p_m2 = p - BabyBear::new(2);
+        let p_m3 = p - BabyBear::new(3);
+
+        let inv_neg6 = -BabyBear::new(6).inverse().unwrap();
+        let inv_2 = BabyBear::new(2).inverse().unwrap();
+        let inv_neg2 = -inv_2;
+        let inv_6 = BabyBear::new(6).inverse().unwrap();
+
+        let l0 = p_m1 * p_m2 * p_m3 * inv_neg6;
+        let l1 = p * p_m2 * p_m3 * inv_2;
+        let l2 = p * p_m1 * p_m3 * inv_neg2;
+        let l3 = p * p_m1 * p_m2 * inv_6;
+
+        let child0 = current * l0 + sib0 * (BabyBear::ONE - l0);
+        let child1 = sib0 * l0 + current * l1 + sib1 * (l2 + l3);
+        let child2 = sib1 * (l0 + l1) + current * l2 + sib2 * l3;
+        let child3 = sib2 * (BabyBear::ONE - l3) + current * l3;
+
+        let expected_parent = hash_4_to_1(&[child0, child1, child2, child3]);
+        let c_hash = is_merkle * (parent - expected_parent);
+        combined = combined + alpha_pow * c_hash;
+        alpha_pow = alpha_pow * alpha;
+
+        // Constraint 3: Commitment preimage (only on commitment row: gated by 1-is_merkle)
+        let owner = local[col::OWNER];
+        let value = local[col::VALUE];
+        let asset_type = local[col::ASSET_TYPE];
+        let creation_nonce = local[col::CREATION_NONCE];
+        let randomness = local[col::RANDOMNESS];
+        let commitment = local[col::COMMITMENT];
+
+        let is_commitment_row = BabyBear::ONE - is_merkle;
+        let expected_commitment = hash_many(&[owner, value, asset_type, creation_nonce, randomness]);
+        let c_commitment = is_commitment_row * (commitment - expected_commitment);
+        combined = combined + alpha_pow * c_commitment;
+        alpha_pow = alpha_pow * alpha;
+
+        // Constraint 4: Nullifier derivation (only on commitment row)
+        let spending_key = local[col::SPENDING_KEY];
+        let nullifier = local[col::NULLIFIER];
+        let expected_nullifier = hash_many(&[commitment, spending_key, creation_nonce]);
+        let c_nullifier = is_commitment_row * (nullifier - expected_nullifier);
+        combined = combined + alpha_pow * c_nullifier;
+
+        combined
     }
 }
 
@@ -504,6 +557,64 @@ mod tests {
                 "Merkle chain broken at level {i}"
             );
         }
+    }
+
+    #[test]
+    fn constraint_zero_on_all_valid_rows() {
+        let witness = create_test_witness(
+            BabyBear::new(1000), BabyBear::new(500), BabyBear::new(1),
+            BabyBear::new(0xDEAD_BEEF), 4,
+        );
+        let (trace, public_inputs) = NoteSpendingAir::generate_trace(&witness);
+        let air = NoteSpendingAir::new(witness.merkle_siblings.len());
+        let alpha = BabyBear::new(7);
+        for i in 0..trace.len() {
+            let next_idx = if i + 1 < trace.len() { i + 1 } else { 0 };
+            let c = air.eval_constraints(&trace[i], &trace[next_idx], &public_inputs, alpha);
+            assert_eq!(c, BabyBear::ZERO, "Constraint non-zero at row {}: c = {}", i, c.0);
+        }
+    }
+
+    #[test]
+    fn tampered_commitment_detected() {
+        let witness = create_test_witness(
+            BabyBear::new(1000), BabyBear::new(500), BabyBear::new(1),
+            BabyBear::new(0xDEAD_BEEF), 4,
+        );
+        let (mut trace, pi) = NoteSpendingAir::generate_trace(&witness);
+        let air = NoteSpendingAir::new(witness.merkle_siblings.len());
+        let alpha = BabyBear::new(7);
+        trace[0][col::COMMITMENT] = BabyBear::new(12345);
+        let c = air.eval_constraints(&trace[0], &trace[1], &pi, alpha);
+        assert_ne!(c, BabyBear::ZERO, "Tampered commitment must be detected");
+    }
+
+    #[test]
+    fn tampered_nullifier_detected() {
+        let witness = create_test_witness(
+            BabyBear::new(1000), BabyBear::new(500), BabyBear::new(1),
+            BabyBear::new(0xDEAD_BEEF), 4,
+        );
+        let (mut trace, pi) = NoteSpendingAir::generate_trace(&witness);
+        let air = NoteSpendingAir::new(witness.merkle_siblings.len());
+        let alpha = BabyBear::new(7);
+        trace[0][col::NULLIFIER] = BabyBear::new(99999);
+        let c = air.eval_constraints(&trace[0], &trace[1], &pi, alpha);
+        assert_ne!(c, BabyBear::ZERO, "Tampered nullifier must be detected");
+    }
+
+    #[test]
+    fn tampered_merkle_parent_detected() {
+        let witness = create_test_witness(
+            BabyBear::new(1000), BabyBear::new(500), BabyBear::new(1),
+            BabyBear::new(0xDEAD_BEEF), 4,
+        );
+        let (mut trace, pi) = NoteSpendingAir::generate_trace(&witness);
+        let air = NoteSpendingAir::new(witness.merkle_siblings.len());
+        let alpha = BabyBear::new(7);
+        trace[1][merkle_col::PARENT] = BabyBear::new(77777);
+        let c = air.eval_constraints(&trace[1], &trace[2], &pi, alpha);
+        assert_ne!(c, BabyBear::ZERO, "Tampered Merkle parent must be detected");
     }
 
     #[test]

@@ -757,6 +757,45 @@ impl AgentWallet {
         u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
             % pyana_circuit::field::BABYBEAR_P
     }
+
+    // =========================================================================
+    // Pipeline / Eventual-Send
+    // =========================================================================
+
+    /// Submit a pipeline of turns for execution, resolving dependencies in
+    /// topological order. Returns one receipt per turn in pipeline order.
+    ///
+    /// Turns that fail cause all their dependents to fail. Independent turns
+    /// may still succeed (partial pipeline success).
+    pub fn submit_pipeline(
+        &mut self,
+        pipeline: pyana_turn::Pipeline,
+        executor: &pyana_turn::TurnExecutor,
+        ledger: &mut pyana_cell::Ledger,
+    ) -> Vec<Result<pyana_turn::TurnReceipt, pyana_turn::PipelineError>> {
+        let results = pyana_turn::execute_pipeline(pipeline, ledger, executor);
+
+        // Append successful receipts to this wallet's chain.
+        for result in &results {
+            if let Ok(receipt) = result {
+                if receipt.agent == self.cell_id("default") {
+                    self.append_receipt(receipt.clone());
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Create an EventualRef pointing to a specific output slot of a turn.
+    ///
+    /// This is a helper for constructing pipelines: you hash a turn and then
+    /// create a reference that downstream turns can use to target outputs of
+    /// this turn.
+    pub fn eventual_ref(turn: &mut pyana_turn::Turn, slot: u32) -> pyana_turn::EventualRef {
+        let turn_hash = turn.hash();
+        pyana_turn::EventualRef::new(turn_hash, slot)
+    }
 }
 
 impl Default for AgentWallet {
@@ -797,6 +836,8 @@ mod tests {
             action_count: 1,
             previous_receipt_hash: None,
             agent,
+            routing_directives: Vec::new(),
+            executor_signature: None,
         }
     }
 

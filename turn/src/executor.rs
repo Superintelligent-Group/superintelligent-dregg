@@ -306,6 +306,8 @@ impl TurnExecutor {
             action_count: turn.call_forest.action_count(),
             previous_receipt_hash: None,
             agent: turn.agent,
+            routing_directives: Vec::new(),
+            executor_signature: None,
         };
 
         TurnResult::Committed {
@@ -1246,6 +1248,112 @@ impl TurnExecutor {
             // are updated by the note layer above the executor.
             Effect::NoteSpend { .. } => Ok(()),
             Effect::NoteCreate { .. } => Ok(()),
+
+            // PipelinedSend is resolved at pipeline time, not during turn execution.
+            Effect::PipelinedSend { .. } => Ok(()),
+
+            // === Sealer/Unsealer effects (E-style rights amplification) ===
+
+            Effect::CreateSealPair { sealer_holder, unsealer_holder } => {
+                if ledger.get(sealer_holder).is_none() {
+                    return Err((
+                        TurnError::CellNotFound { id: *sealer_holder },
+                        path.to_vec(),
+                    ));
+                }
+                if ledger.get(unsealer_holder).is_none() {
+                    return Err((
+                        TurnError::CellNotFound { id: *unsealer_holder },
+                        path.to_vec(),
+                    ));
+                }
+
+                let pair = pyana_cell::SealPair::generate();
+
+                // Grant sealer capability (breadstuff = sealer_key).
+                let sealer_cap_id = Self::seal_capability_id(&pair.id, true);
+                let sealer_cell = ledger.get_mut(sealer_holder).unwrap();
+                let sealer_slot = sealer_cell.capabilities.grant_with_breadstuff(
+                    sealer_cap_id,
+                    pyana_cell::AuthRequired::None,
+                    Some(pair.sealer_key),
+                );
+                journal.record_grant_capability(*sealer_holder, sealer_slot);
+
+                // Grant unsealer capability (breadstuff = sealer_key for symmetric decrypt).
+                let unsealer_cap_id = Self::seal_capability_id(&pair.id, false);
+                let unsealer_cell = ledger.get_mut(unsealer_holder).unwrap();
+                let unsealer_slot = unsealer_cell.capabilities.grant_with_breadstuff(
+                    unsealer_cap_id,
+                    pyana_cell::AuthRequired::None,
+                    Some(pair.sealer_key),
+                );
+                journal.record_grant_capability(*unsealer_holder, unsealer_slot);
+
+                Ok(())
+            }
+
+            Effect::Seal { pair_id, capability } => {
+                let sealer_cap_id = Self::seal_capability_id(pair_id, true);
+                let actor_cell = ledger.get(actor).ok_or_else(|| {
+                    (TurnError::CellNotFound { id: *actor }, path.to_vec())
+                })?;
+                let _sealer_cap = actor_cell.capabilities.lookup_by_target(&sealer_cap_id)
+                    .ok_or_else(|| {
+                        (TurnError::CapabilityNotHeld { actor: *actor, target: sealer_cap_id }, path.to_vec())
+                    })?;
+                let _ = capability;
+                Ok(())
+            }
+
+            Effect::Unseal { sealed_box, recipient } => {
+                if ledger.get(recipient).is_none() {
+                    return Err((
+                        TurnError::CellNotFound { id: *recipient },
+                        path.to_vec(),
+                    ));
+                }
+
+                let unsealer_cap_id = Self::seal_capability_id(&sealed_box.pair_id, false);
+                let actor_cell = ledger.get(actor).ok_or_else(|| {
+                    (TurnError::CellNotFound { id: *actor }, path.to_vec())
+                })?;
+                let unsealer_cap = actor_cell.capabilities.lookup_by_target(&unsealer_cap_id)
+                    .ok_or_else(|| {
+                        (TurnError::CapabilityNotHeld { actor: *actor, target: unsealer_cap_id }, path.to_vec())
+                    })?;
+                let sealer_key = unsealer_cap.breadstuff.ok_or_else(|| {
+                    (TurnError::InvalidAuthorization {
+                        reason: "unsealer capability missing key material".to_string(),
+                    }, path.to_vec())
+                })?;
+
+                let mut pair = pyana_cell::SealPair::from_keys(sealer_key, sealer_key);
+                pair.id = sealed_box.pair_id;
+
+                match pair.unseal(sealed_box) {
+                    Ok(cap) => {
+                        let recipient_cell = ledger.get_mut(recipient).ok_or_else(|| {
+                            (TurnError::CellNotFound { id: *recipient }, path.to_vec())
+                        })?;
+                        let granted_slot = recipient_cell.capabilities.grant_with_breadstuff(
+                            cap.target,
+                            cap.permissions.clone(),
+                            cap.breadstuff,
+                        );
+                        journal.record_grant_capability(*recipient, granted_slot);
+                        Ok(())
+                    }
+                    Err(_) => {
+                        Err((
+                            TurnError::InvalidAuthorization {
+                                reason: "sealed box decryption/verification failed".to_string(),
+                            },
+                            path.to_vec(),
+                        ))
+                    }
+                }
+            }
         }
     }
 
@@ -1320,6 +1428,10 @@ impl TurnExecutor {
             Effect::SetVerificationKey { .. } => self.costs.effect_base,
             Effect::NoteSpend { .. } => self.costs.proof_verify, // note spends carry a proof
             Effect::NoteCreate { .. } => self.costs.effect_base,
+            Effect::PipelinedSend { .. } => self.costs.effect_base,
+            Effect::CreateSealPair { .. } => self.costs.effect_base,
+            Effect::Seal { .. } => self.costs.effect_base,
+            Effect::Unseal { .. } => self.costs.effect_base,
         };
         base.saturating_add(extra).saturating_add(
             (effect.data_bytes() as u64).saturating_mul(self.costs.per_byte),
@@ -1598,4 +1710,79 @@ impl TurnExecutor {
 
         delta
     }
+
+    /// Derive a synthetic CellId for a seal pair's sealer or unsealer capability.
+    fn seal_capability_id(pair_id: &[u8; 32], is_sealer: bool) -> CellId {
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-seal capability-id v1");
+        hasher.update(pair_id);
+        hasher.update(if is_sealer { b"sealer" } else { b"unsealer" });
+        CellId::from_bytes(*hasher.finalize().as_bytes())
+    }
+}
+
+// ─── Pipeline Execution ──────────────────────────────────────────────────────
+
+use crate::eventual::{Pipeline, PipelineError};
+
+/// Execute a pipeline of turns against a ledger in topological order.
+pub fn execute_pipeline(
+    pipeline: Pipeline,
+    ledger: &mut Ledger,
+    executor: &TurnExecutor,
+) -> Vec<Result<TurnReceipt, PipelineError>> {
+    let n = pipeline.turns.len();
+    if n == 0 {
+        return vec![];
+    }
+
+    let topo_order = match pipeline.topological_order() {
+        Ok(order) => order,
+        Err(cycle) => {
+            return vec![Err(PipelineError::Cycle(cycle)); n];
+        }
+    };
+
+    let mut results: Vec<Option<Result<TurnReceipt, PipelineError>>> = vec![None; n];
+    let mut failed: Vec<bool> = vec![false; n];
+
+    for &idx in &topo_order {
+        let deps = pipeline.dependencies_of(idx);
+        let mut dep_failed = None;
+        for dep_idx in &deps {
+            if failed[*dep_idx] {
+                dep_failed = Some(*dep_idx);
+                break;
+            }
+        }
+
+        if let Some(failed_dep) = dep_failed {
+            failed[idx] = true;
+            results[idx] = Some(Err(PipelineError::DependencyFailed {
+                failed_index: failed_dep,
+                dependent_index: idx,
+            }));
+            continue;
+        }
+
+        let turn = &pipeline.turns[idx];
+        let result = executor.execute(turn, ledger);
+
+        match result {
+            TurnResult::Committed { receipt, .. } => {
+                results[idx] = Some(Ok(receipt));
+            }
+            TurnResult::Rejected { reason, .. } => {
+                failed[idx] = true;
+                results[idx] = Some(Err(PipelineError::UnresolvedRef {
+                    eventual_ref: crate::eventual::EventualRef::new([0u8; 32], 0),
+                    reason: format!("turn execution failed: {}", reason),
+                }));
+            }
+        }
+    }
+
+    results
+        .into_iter()
+        .map(|r| r.unwrap_or(Err(PipelineError::Empty)))
+        .collect()
 }

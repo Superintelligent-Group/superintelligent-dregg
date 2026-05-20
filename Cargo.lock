@@ -4263,8 +4263,10 @@ name = "pyana-cell"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "chacha20poly1305",
  "pyana-types",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4399,6 +4401,7 @@ dependencies = [
  "blake3",
  "getrandom 0.4.2",
  "globset",
+ "postcard",
  "pyana-cell",
  "pyana-trace",
  "serde",

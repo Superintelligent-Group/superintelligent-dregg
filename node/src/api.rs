@@ -302,6 +302,8 @@ async fn post_submit_turn(
         memo: req.memo,
         valid_until: None,
         call_forest: CallForest::new(),
+        depends_on: vec![],
+        previous_receipt_hash: None,
     };
 
     // Sign the turn.

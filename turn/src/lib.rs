@@ -39,9 +39,11 @@ pub mod action;
 pub mod builder;
 pub mod composer;
 pub mod error;
+pub mod eventual;
 pub mod executor;
 pub mod forest;
 pub(crate) mod journal;
+pub mod routing;
 pub mod turn;
 pub mod verify;
 
@@ -53,7 +55,9 @@ pub use action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, 
 pub use builder::{ActionBuilder, TurnBuilder};
 pub use composer::{ComposeError, SignedFragment, TurnComposer};
 pub use error::TurnError;
-pub use executor::{ComputronCosts, ProofVerifier, TurnExecutor};
+pub use eventual::{CycleError, EventualRef, Pipeline, PipelineError, Target, TurnOutput};
+pub use executor::{ComputronCosts, ProofVerifier, TurnExecutor, execute_pipeline};
 pub use forest::{CallForest, CallTree};
+pub use routing::RoutingDirective;
 pub use turn::{Turn, TurnReceipt, TurnResult};
-pub use verify::{VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_extends};
+pub use verify::{VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_chain_with_keys, verify_receipt_extends, sign_receipt};

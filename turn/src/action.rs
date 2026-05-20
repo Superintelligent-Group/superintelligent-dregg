@@ -4,7 +4,7 @@
 //! Each action targets a cell, specifies a method, carries authorization, declares
 //! preconditions, and produces effects.
 
-use pyana_cell::{CellId, CapabilityRef, NoteCommitment, Nullifier, Preconditions};
+use pyana_cell::{CellId, CapabilityRef, NoteCommitment, Nullifier, Preconditions, SealedBox};
 use pyana_cell::state::FieldElement;
 use serde::{Deserialize, Serialize};
 
@@ -199,6 +199,34 @@ pub enum Effect {
         /// Encrypted note content (only recipient can decrypt).
         encrypted_note: Vec<u8>,
     },
+    /// Create a new sealer/unsealer pair for partition-tolerant capability transfer.
+    CreateSealPair {
+        /// Cell that will hold the sealer capability.
+        sealer_holder: CellId,
+        /// Cell that will hold the unsealer capability.
+        unsealer_holder: CellId,
+    },
+    /// Seal a capability into an opaque box.
+    Seal {
+        /// The pair to seal with.
+        pair_id: [u8; 32],
+        /// The capability to seal.
+        capability: CapabilityRef,
+    },
+    /// Unseal a box, recovering the original capability.
+    Unseal {
+        /// The sealed box to open.
+        sealed_box: SealedBox,
+        /// The cell that should receive the unsealed capability.
+        recipient: CellId,
+    },
+    /// Pipelined send: dispatch an action to the result of a pending turn.
+    PipelinedSend {
+        /// The eventual target — resolved during pipeline execution.
+        target: crate::eventual::EventualRef,
+        /// The action to send to the resolved target.
+        action: Box<Action>,
+    },
 }
 
 /// An event emitted by an action.
@@ -357,6 +385,30 @@ impl Effect {
                 hasher.update(&(encrypted_note.len() as u64).to_le_bytes());
                 hasher.update(encrypted_note);
             }
+            Effect::CreateSealPair { sealer_holder, unsealer_holder } => {
+                hasher.update(&[13u8]);
+                hasher.update(sealer_holder.as_bytes());
+                hasher.update(unsealer_holder.as_bytes());
+            }
+            Effect::Seal { pair_id, capability } => {
+                hasher.update(&[14u8]);
+                hasher.update(pair_id);
+                hasher.update(capability.target.as_bytes());
+                hasher.update(&capability.slot.to_le_bytes());
+            }
+            Effect::Unseal { sealed_box, recipient } => {
+                hasher.update(&[15u8]);
+                hasher.update(&sealed_box.pair_id);
+                hasher.update(&sealed_box.commitment);
+                hasher.update(&sealed_box.nonce);
+                hasher.update(recipient.as_bytes());
+            }
+            Effect::PipelinedSend { target, action } => {
+                hasher.update(&[16u8]);
+                hasher.update(&target.source_turn);
+                hasher.update(&target.output_slot.to_le_bytes());
+                hasher.update(&action.hash());
+            }
         }
         *hasher.finalize().as_bytes()
     }
@@ -379,6 +431,12 @@ impl Effect {
             Effect::NoteCreate { encrypted_note, .. } => {
                 32 + 8 + 8 + encrypted_note.len() // commitment + value + asset_type + ciphertext
             }
+            Effect::CreateSealPair { .. } => 32 + 32,
+            Effect::Seal { .. } => 32 + 32 + 4,
+            Effect::Unseal { sealed_box, .. } => {
+                32 + 32 + 32 + sealed_box.ciphertext.len() + 32
+            }
+            Effect::PipelinedSend { .. } => 32 + 4 + 32,
         }
     }
 
