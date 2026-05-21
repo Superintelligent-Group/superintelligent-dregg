@@ -67,16 +67,16 @@
 //! - [`mock_prover`]: Constraint evaluator for testing.
 //! - [`stark`]: Real STARK prover/verifier (FRI + Merkle + Fiat-Shamir).
 
+pub mod derivation_air;
 pub mod field;
+pub mod fold_air;
+pub mod ivc;
+pub mod merkle_air;
+pub mod mock_prover;
+pub mod multi_step_air;
 pub mod poseidon2;
 pub mod poseidon2_air;
-pub mod merkle_air;
-pub mod derivation_air;
-pub mod multi_step_air;
-pub mod fold_air;
 pub mod presentation;
-pub mod mock_prover;
-pub mod ivc;
 
 pub mod note_spending_air;
 pub mod stark;
@@ -97,16 +97,18 @@ mod tests;
 
 // Re-export primary types.
 pub use field::BabyBear;
-pub use mock_prover::{Air, MockProof, MockProver, MockProofResult};
-pub use presentation::{PresentationAir, PresentationProof, PresentationWitness, PresentationVerification, RealPresentationProof, AuthorizationProof, prove_authorization};
-pub use multi_step_air::{
-    MultiStepDerivationAir, MultiStepStarkAir, MultiStepWitness, ALLOW_PREDICATE,
-    prove_authorization_stark, verify_authorization_stark,
-};
 pub use ivc::{
-    IvcProof, IvcBuilder, IvcVerification, IvcPresentationProof,
-    prove_ivc, verify_ivc, FoldDelta,
+    FoldDelta, IvcBuilder, IvcPresentationProof, IvcProof, IvcVerification, prove_ivc, verify_ivc,
+};
+pub use mock_prover::{Air, MockProof, MockProofResult, MockProver};
+pub use multi_step_air::{
+    ALLOW_PREDICATE, MultiStepDerivationAir, MultiStepStarkAir, MultiStepWitness,
+    prove_authorization_stark, verify_authorization_stark,
 };
 pub use note_spending_air::{
     NoteSpendingAir, NoteSpendingWitness, prove_note_spend, verify_note_spend,
+};
+pub use presentation::{
+    AuthorizationProof, PresentationAir, PresentationProof, PresentationVerification,
+    PresentationWitness, RealPresentationProof, prove_authorization,
 };

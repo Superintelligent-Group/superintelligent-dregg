@@ -67,16 +67,21 @@ pub mod transport;
 pub mod types;
 
 // Re-export primary types.
-pub use consensus::{ConsensusConfig, ConsensusError, ConsensusOrchestrator, ConsensusState, ReconfigurationProposal, ReconfigurationVotes};
+pub use consensus::{
+    ConsensusConfig, ConsensusError, ConsensusOrchestrator, ConsensusState,
+    ReconfigurationProposal, ReconfigurationVotes,
+};
 pub use node::{Federation, FederationNode};
-pub use revocation::{RevocationTree, RevocationVerifier, RevocationVerification};
-pub use threshold::{FederationCommittee, MemberSecret, ThresholdQC, ThresholdError, generate_test_committee};
+pub use revocation::{RevocationTree, RevocationVerification, RevocationVerifier};
+pub use threshold::{
+    FederationCommittee, MemberSecret, ThresholdError, ThresholdQC, generate_test_committee,
+};
 pub use transport::{
-    FederationTransport, LocalTransport, TcpFederationTransport, NetworkConsensusNode,
-    TransportError, FederationEnvelope,
+    FederationEnvelope, FederationTransport, LocalTransport, NetworkConsensusNode,
+    TcpFederationTransport, TransportError,
 };
 pub use types::{
-    AttestedRoot, ConsensusMessage, NodeIdentity, PublicKey, QuorumCertificate,
-    RevocationBlock, RevocationEvent, RevocationProof, Signature, SigningKey, Token, Vote,
-    generate_keypair, sign, verify,
+    AttestedRoot, ConsensusMessage, NodeIdentity, PublicKey, QuorumCertificate, RevocationBlock,
+    RevocationEvent, RevocationProof, Signature, SigningKey, Token, Vote, generate_keypair, sign,
+    verify, verify_attested_root_with_committee, verify_via_receipt_chain,
 };

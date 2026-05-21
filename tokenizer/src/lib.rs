@@ -19,13 +19,13 @@
 //! └──────────────────┘          └───────────────────────┘
 //! ```
 
+pub mod client;
 pub mod encrypt;
 pub mod error;
 pub mod protocol;
 pub mod service;
-pub mod client;
 
+pub use client::TokenizerClient;
 pub use encrypt::{SealedSecret, TokenizerKeypair};
 pub use error::TokenizerError;
 pub use service::TokenizerService;
-pub use client::TokenizerClient;

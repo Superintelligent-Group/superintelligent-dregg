@@ -11,13 +11,13 @@
 
 #![allow(dead_code)]
 
-use ed25519_dalek::{SigningKey, Signer};
+use ed25519_dalek::{Signer, SigningKey};
 use pyana_cell::note::Note;
 use pyana_cell::nullifier_set::NullifierSet;
 use pyana_cell::{CellId, Preconditions};
+use pyana_turn::CallForest;
 use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
 use pyana_turn::composer::{SignedFragment, TurnComposer};
-use pyana_turn::CallForest;
 use pyana_turn::executor::TurnExecutor;
 
 /// A sealed bid: the commitment is public, the details are private.
@@ -88,16 +88,26 @@ fn main() {
     let asset_usdc: u64 = 0x05DC_0000_0000_0002;
 
     println!("Participants:");
-    println!("  Alice:   {:02x}{:02x}{:02x}{:02x}... (wants to BUY ETH)",
-        alice_pubkey[0], alice_pubkey[1], alice_pubkey[2], alice_pubkey[3]);
-    println!("  Bob:     {:02x}{:02x}{:02x}{:02x}... (wants to SELL ETH)",
-        bob_pubkey[0], bob_pubkey[1], bob_pubkey[2], bob_pubkey[3]);
-    println!("  Carol:   {:02x}{:02x}{:02x}{:02x}... (wants to BUY ETH, lower price)",
-        carol_pubkey[0], carol_pubkey[1], carol_pubkey[2], carol_pubkey[3]);
-    println!("  Dave:    {:02x}{:02x}{:02x}{:02x}... (wants to SELL ETH, higher price)",
-        dave_pubkey[0], dave_pubkey[1], dave_pubkey[2], dave_pubkey[3]);
-    println!("  Matcher: {:02x}{:02x}{:02x}{:02x}...",
-        matcher_pubkey[0], matcher_pubkey[1], matcher_pubkey[2], matcher_pubkey[3]);
+    println!(
+        "  Alice:   {:02x}{:02x}{:02x}{:02x}... (wants to BUY ETH)",
+        alice_pubkey[0], alice_pubkey[1], alice_pubkey[2], alice_pubkey[3]
+    );
+    println!(
+        "  Bob:     {:02x}{:02x}{:02x}{:02x}... (wants to SELL ETH)",
+        bob_pubkey[0], bob_pubkey[1], bob_pubkey[2], bob_pubkey[3]
+    );
+    println!(
+        "  Carol:   {:02x}{:02x}{:02x}{:02x}... (wants to BUY ETH, lower price)",
+        carol_pubkey[0], carol_pubkey[1], carol_pubkey[2], carol_pubkey[3]
+    );
+    println!(
+        "  Dave:    {:02x}{:02x}{:02x}{:02x}... (wants to SELL ETH, higher price)",
+        dave_pubkey[0], dave_pubkey[1], dave_pubkey[2], dave_pubkey[3]
+    );
+    println!(
+        "  Matcher: {:02x}{:02x}{:02x}{:02x}...",
+        matcher_pubkey[0], matcher_pubkey[1], matcher_pubkey[2], matcher_pubkey[3]
+    );
     println!();
     println!("Assets:");
     println!("  ETH:  0x{:016x}", asset_eth);
@@ -183,11 +193,20 @@ fn main() {
     ];
 
     for (i, c) in order_book_commitments.iter().enumerate() {
-        println!("  Bid {}: commitment {:02x}{:02x}{:02x}{:02x}... (contents HIDDEN)",
-            i + 1, c.0[0], c.0[1], c.0[2], c.0[3]);
+        println!(
+            "  Bid {}: commitment {:02x}{:02x}{:02x}{:02x}... (contents HIDDEN)",
+            i + 1,
+            c.0[0],
+            c.0[1],
+            c.0[2],
+            c.0[3]
+        );
     }
     println!();
-    println!("  Order book has {} sealed bids. No prices/quantities are visible.", order_book_commitments.len());
+    println!(
+        "  Order book has {} sealed bids. No prices/quantities are visible.",
+        order_book_commitments.len()
+    );
     println!();
 
     // =======================================================================
@@ -220,7 +239,10 @@ fn main() {
     let match_quantity = std::cmp::min(alice_revealed.bid.quantity, bob_revealed.bid.quantity);
 
     println!("  MATCH FOUND!");
-    println!("    Execution price: {} USDC per ETH (midpoint)", match_price);
+    println!(
+        "    Execution price: {} USDC per ETH (midpoint)",
+        match_price
+    );
     println!("    Quantity: {} ETH", match_quantity);
     println!("    Total: {} USDC", match_price * match_quantity);
     println!();
@@ -310,8 +332,10 @@ fn main() {
     temp_forest.add_root(bob_action.clone());
     let forest_root = temp_forest.hash();
 
-    let alice_signing_msg = TurnExecutor::compute_partial_signing_message(&alice_action, 0, &forest_root);
-    let bob_signing_msg = TurnExecutor::compute_partial_signing_message(&bob_action, 1, &forest_root);
+    let alice_signing_msg =
+        TurnExecutor::compute_partial_signing_message(&alice_action, 0, &forest_root);
+    let bob_signing_msg =
+        TurnExecutor::compute_partial_signing_message(&bob_action, 1, &forest_root);
 
     let alice_sig = alice_revealed.signing_key.sign(&alice_signing_msg);
     let bob_sig = bob_revealed.signing_key.sign(&bob_signing_msg);
@@ -331,8 +355,12 @@ fn main() {
         signer: bob_pubkey,
     };
 
-    composer.add_fragment(alice_fragment).expect("Alice fragment valid");
-    composer.add_fragment(bob_fragment).expect("Bob fragment valid");
+    composer
+        .add_fragment(alice_fragment)
+        .expect("Alice fragment valid");
+    composer
+        .add_fragment(bob_fragment)
+        .expect("Bob fragment valid");
 
     let composed = composer.compose();
     match &composed {
@@ -349,13 +377,21 @@ fn main() {
     println!();
 
     // Record nullifiers as spent
-    nullifier_set.insert(alice_nullifier).expect("Alice nullifier accepted");
-    nullifier_set.insert(bob_nullifier).expect("Bob nullifier accepted");
+    nullifier_set
+        .insert(alice_nullifier)
+        .expect("Alice nullifier accepted");
+    nullifier_set
+        .insert(bob_nullifier)
+        .expect("Bob nullifier accepted");
 
-    println!("  Alice's bid nullifier spent: {:02x}{:02x}{:02x}{:02x}...",
-        alice_nullifier.0[0], alice_nullifier.0[1], alice_nullifier.0[2], alice_nullifier.0[3]);
-    println!("  Bob's bid nullifier spent: {:02x}{:02x}{:02x}{:02x}...",
-        bob_nullifier.0[0], bob_nullifier.0[1], bob_nullifier.0[2], bob_nullifier.0[3]);
+    println!(
+        "  Alice's bid nullifier spent: {:02x}{:02x}{:02x}{:02x}...",
+        alice_nullifier.0[0], alice_nullifier.0[1], alice_nullifier.0[2], alice_nullifier.0[3]
+    );
+    println!(
+        "  Bob's bid nullifier spent: {:02x}{:02x}{:02x}{:02x}...",
+        bob_nullifier.0[0], bob_nullifier.0[1], bob_nullifier.0[2], bob_nullifier.0[3]
+    );
     println!();
 
     // =======================================================================
@@ -367,10 +403,14 @@ fn main() {
     let carol_nullifier = carol_bid_note.nullifier(&carol_spending_key);
     let dave_nullifier = dave_bid_note.nullifier(&_dave_spending_key);
 
-    assert!(!nullifier_set.contains(&carol_nullifier),
-        "Carol's bid should NOT be spent");
-    assert!(!nullifier_set.contains(&dave_nullifier),
-        "Dave's bid should NOT be spent");
+    assert!(
+        !nullifier_set.contains(&carol_nullifier),
+        "Carol's bid should NOT be spent"
+    );
+    assert!(
+        !nullifier_set.contains(&dave_nullifier),
+        "Dave's bid should NOT be spent"
+    );
 
     println!("  Carol's bid: STILL SEALED (nullifier not in set) [PASS]");
     println!("  Dave's bid:  STILL SEALED (nullifier not in set) [PASS]");
@@ -378,9 +418,13 @@ fn main() {
     println!("  Key privacy properties:");
     println!("  - Carol's bid price (1800) was NEVER revealed to anyone");
     println!("  - Dave's bid price (2100) was NEVER revealed to anyone");
-    println!("  - Only the commitments {:02x}{:02x}... and {:02x}{:02x}... are public",
-        carol_bid.commitment.0[0], carol_bid.commitment.0[1],
-        dave_bid.commitment.0[0], dave_bid.commitment.0[1]);
+    println!(
+        "  - Only the commitments {:02x}{:02x}... and {:02x}{:02x}... are public",
+        carol_bid.commitment.0[0],
+        carol_bid.commitment.0[1],
+        dave_bid.commitment.0[0],
+        dave_bid.commitment.0[1]
+    );
     println!("  - An observer cannot determine bid direction, price, or quantity");
     println!("  - Unmatched bids can be reused in future matching rounds");
     println!();
@@ -414,13 +458,25 @@ fn main() {
     for action in [&alice_action, &bob_action] {
         for effect in &action.effects {
             match effect {
-                Effect::NoteSpend { value, asset_type, .. } => {
-                    if *asset_type == asset_eth { eth_in += value; }
-                    if *asset_type == asset_usdc { usdc_in += value; }
+                Effect::NoteSpend {
+                    value, asset_type, ..
+                } => {
+                    if *asset_type == asset_eth {
+                        eth_in += value;
+                    }
+                    if *asset_type == asset_usdc {
+                        usdc_in += value;
+                    }
                 }
-                Effect::NoteCreate { value, asset_type, .. } => {
-                    if *asset_type == asset_eth { eth_out += value; }
-                    if *asset_type == asset_usdc { usdc_out += value; }
+                Effect::NoteCreate {
+                    value, asset_type, ..
+                } => {
+                    if *asset_type == asset_eth {
+                        eth_out += value;
+                    }
+                    if *asset_type == asset_usdc {
+                        usdc_out += value;
+                    }
                 }
                 _ => {}
             }

@@ -71,12 +71,8 @@ fn eval_contains(collection: &Term, element: &Term) -> bool {
             if c == e {
                 return true;
             }
-            let c_str = core::str::from_utf8(c)
-                .unwrap_or("")
-                .trim_end_matches('\0');
-            let e_str = core::str::from_utf8(e)
-                .unwrap_or("")
-                .trim_end_matches('\0');
+            let c_str = core::str::from_utf8(c).unwrap_or("").trim_end_matches('\0');
+            let e_str = core::str::from_utf8(e).unwrap_or("").trim_end_matches('\0');
             if !e_str.is_empty() {
                 c_str.contains(e_str)
             } else {
@@ -176,10 +172,7 @@ mod tests {
     fn test_member_of_exact_match() {
         // Same hash = member
         let hash = symbol_from_str("action_hash_abc");
-        let check = Check::MemberOf(
-            Term::Const(hash),
-            Term::Const(hash),
-        );
+        let check = Check::MemberOf(Term::Const(hash), Term::Const(hash));
         assert!(eval_check(&check, &Substitution::empty()));
     }
 
@@ -200,10 +193,7 @@ mod tests {
         // the full 32-byte comparison will fail.
         let write_hash = symbol_from_str("write");
         let threadwrite_hash = symbol_from_str("threadwrite");
-        let check = Check::MemberOf(
-            Term::Const(threadwrite_hash),
-            Term::Const(write_hash),
-        );
+        let check = Check::MemberOf(Term::Const(threadwrite_hash), Term::Const(write_hash));
         assert!(!eval_check(&check, &Substitution::empty()));
     }
 
@@ -231,10 +221,7 @@ mod tests {
     #[test]
     fn test_member_of_type_mismatch() {
         // Const vs Int = always false
-        let check = Check::MemberOf(
-            Term::Const(symbol_from_str("something")),
-            Term::Int(42),
-        );
+        let check = Check::MemberOf(Term::Const(symbol_from_str("something")), Term::Int(42));
         assert!(!eval_check(&check, &Substitution::empty()));
     }
 }

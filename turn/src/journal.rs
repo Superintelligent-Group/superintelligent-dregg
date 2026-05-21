@@ -6,8 +6,7 @@
 //! to restore the ledger to its exact pre-turn state.
 
 use pyana_cell::{
-    CapabilityRef, CellId, Ledger, Permissions, VerificationKey,
-    state::FieldElement,
+    CapabilityRef, CellId, Ledger, Permissions, VerificationKey, state::FieldElement,
 };
 
 /// A single undo entry in the journal.
@@ -21,21 +20,12 @@ pub(crate) enum JournalEntry {
     },
     /// A cell's balance was changed (by transfer or fee deduction).
     /// Records the old balance.
-    SetBalance {
-        cell: CellId,
-        old_balance: u64,
-    },
+    SetBalance { cell: CellId, old_balance: u64 },
     /// A cell's nonce was incremented. Records the old nonce.
-    SetNonce {
-        cell: CellId,
-        old_nonce: u64,
-    },
+    SetNonce { cell: CellId, old_nonce: u64 },
     /// A capability was granted to a cell. Records the slot that was assigned,
     /// so we can revoke it on rollback.
-    GrantCapability {
-        cell: CellId,
-        slot: u32,
-    },
+    GrantCapability { cell: CellId, slot: u32 },
     /// A capability was revoked from a cell. Records the full capability
     /// so we can re-grant it on rollback.
     RevokeCapability {
@@ -43,14 +33,9 @@ pub(crate) enum JournalEntry {
         old_cap: CapabilityRef,
     },
     /// A new cell was created. Records the cell ID so we can remove it on rollback.
-    CreateCell {
-        cell: CellId,
-    },
+    CreateCell { cell: CellId },
     /// A cell's proved_state flag was changed. Records the old value.
-    SetProvedState {
-        cell: CellId,
-        old_value: bool,
-    },
+    SetProvedState { cell: CellId, old_value: bool },
     /// A cell's permissions were changed. Records the old permissions.
     SetPermissions {
         cell: CellId,
@@ -92,27 +77,35 @@ impl LedgerJournal {
 
     /// Record a field change.
     pub fn record_set_field(&mut self, cell: CellId, index: usize, old_value: FieldElement) {
-        self.entries.push(JournalEntry::SetField { cell, index, old_value });
+        self.entries.push(JournalEntry::SetField {
+            cell,
+            index,
+            old_value,
+        });
     }
 
     /// Record a balance change.
     pub fn record_set_balance(&mut self, cell: CellId, old_balance: u64) {
-        self.entries.push(JournalEntry::SetBalance { cell, old_balance });
+        self.entries
+            .push(JournalEntry::SetBalance { cell, old_balance });
     }
 
     /// Record a nonce change.
     pub fn record_set_nonce(&mut self, cell: CellId, old_nonce: u64) {
-        self.entries.push(JournalEntry::SetNonce { cell, old_nonce });
+        self.entries
+            .push(JournalEntry::SetNonce { cell, old_nonce });
     }
 
     /// Record a capability grant (so it can be revoked on rollback).
     pub fn record_grant_capability(&mut self, cell: CellId, slot: u32) {
-        self.entries.push(JournalEntry::GrantCapability { cell, slot });
+        self.entries
+            .push(JournalEntry::GrantCapability { cell, slot });
     }
 
     /// Record a capability revocation (so it can be re-granted on rollback).
     pub fn record_revoke_capability(&mut self, cell: CellId, old_cap: CapabilityRef) {
-        self.entries.push(JournalEntry::RevokeCapability { cell, old_cap });
+        self.entries
+            .push(JournalEntry::RevokeCapability { cell, old_cap });
     }
 
     /// Record a cell creation (so it can be removed on rollback).
@@ -122,17 +115,22 @@ impl LedgerJournal {
 
     /// Record a proved_state change.
     pub fn record_set_proved_state(&mut self, cell: CellId, old_value: bool) {
-        self.entries.push(JournalEntry::SetProvedState { cell, old_value });
+        self.entries
+            .push(JournalEntry::SetProvedState { cell, old_value });
     }
 
     /// Record a permissions change.
     pub fn record_set_permissions(&mut self, cell: CellId, old_permissions: Permissions) {
-        self.entries.push(JournalEntry::SetPermissions { cell, old_permissions });
+        self.entries.push(JournalEntry::SetPermissions {
+            cell,
+            old_permissions,
+        });
     }
 
     /// Record a verification key change.
     pub fn record_set_verification_key(&mut self, cell: CellId, old_vk: Option<VerificationKey>) {
-        self.entries.push(JournalEntry::SetVerificationKey { cell, old_vk });
+        self.entries
+            .push(JournalEntry::SetVerificationKey { cell, old_vk });
     }
 
     /// Roll back all recorded changes in reverse order.
@@ -142,7 +140,11 @@ impl LedgerJournal {
     pub fn rollback(self, ledger: &mut Ledger) {
         for entry in self.entries.into_iter().rev() {
             match entry {
-                JournalEntry::SetField { cell, index, old_value } => {
+                JournalEntry::SetField {
+                    cell,
+                    index,
+                    old_value,
+                } => {
                     if let Some(c) = ledger.get_mut(&cell) {
                         c.state.fields[index] = old_value;
                     }
@@ -178,7 +180,10 @@ impl LedgerJournal {
                         c.state.proved_state = old_value;
                     }
                 }
-                JournalEntry::SetPermissions { cell, old_permissions } => {
+                JournalEntry::SetPermissions {
+                    cell,
+                    old_permissions,
+                } => {
                     if let Some(c) = ledger.get_mut(&cell) {
                         c.permissions = old_permissions;
                     }

@@ -148,7 +148,11 @@ mod tests {
     fn fact_arity() {
         assert_eq!(Fact::nullary(FieldElement::from_symbol("alive")).arity(), 0);
         assert_eq!(
-            Fact::unary(FieldElement::from_symbol("exists"), FieldElement::from_u64(1)).arity(),
+            Fact::unary(
+                FieldElement::from_symbol("exists"),
+                FieldElement::from_u64(1)
+            )
+            .arity(),
             1
         );
         assert_eq!(

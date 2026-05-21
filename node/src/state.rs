@@ -4,6 +4,7 @@
 //! Arc<RwLock<>> for concurrent access from HTTP handlers and the
 //! federation sync background task.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -31,6 +32,8 @@ pub enum NodeEvent {
     Revocation { token_id: String },
     /// A new receipt was appended to the local chain.
     Receipt { hash: String },
+    /// An intent was received (from WS or HTTP) and added to the pool.
+    Intent { intent: serde_json::Value },
 }
 
 /// Shared node state accessible from all async tasks.
@@ -53,6 +56,8 @@ pub struct NodeStateInner {
     pub peers: Vec<String>,
     /// Whether the wallet is unlocked for signing operations.
     pub unlocked: bool,
+    /// Local intent pool: id -> intent JSON.
+    pub intent_pool: HashMap<String, serde_json::Value>,
 }
 
 /// Summary of the node's sync state for the status endpoint.
@@ -77,8 +82,8 @@ impl NodeState {
     /// Create a new NodeState from a data directory path and peer list.
     pub fn new(data_dir: &Path, peers: Vec<String>) -> Result<Self, String> {
         let db_path = data_dir.join("pyana.redb");
-        let store = PersistentStore::open(&db_path)
-            .map_err(|e| format!("failed to open store: {e}"))?;
+        let store =
+            PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?;
 
         let wallet = AgentWallet::new();
         let ledger = Ledger::new();
@@ -91,6 +96,7 @@ impl NodeState {
                 store,
                 peers,
                 unlocked: false,
+                intent_pool: HashMap::new(),
             })),
             events_tx,
         })
@@ -104,8 +110,8 @@ impl NodeState {
         key_bytes: [u8; 32],
     ) -> Result<Self, String> {
         let db_path = data_dir.join("pyana.redb");
-        let store = PersistentStore::open(&db_path)
-            .map_err(|e| format!("failed to open store: {e}"))?;
+        let store =
+            PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?;
 
         let wallet = AgentWallet::from_key_bytes(key_bytes);
         let ledger = Ledger::new();
@@ -118,6 +124,7 @@ impl NodeState {
                 store,
                 peers,
                 unlocked: false,
+                intent_pool: HashMap::new(),
             })),
             events_tx,
         })

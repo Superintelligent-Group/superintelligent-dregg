@@ -31,9 +31,18 @@ fn main() {
     );
 
     println!("Participants:");
-    println!("  Alice (minter): {:02x}{:02x}{:02x}{:02x}...", alice_pubkey[0], alice_pubkey[1], alice_pubkey[2], alice_pubkey[3]);
-    println!("  Bob:            {:02x}{:02x}{:02x}{:02x}...", bob_pubkey[0], bob_pubkey[1], bob_pubkey[2], bob_pubkey[3]);
-    println!("  Carol:          {:02x}{:02x}{:02x}{:02x}...", carol_pubkey[0], carol_pubkey[1], carol_pubkey[2], carol_pubkey[3]);
+    println!(
+        "  Alice (minter): {:02x}{:02x}{:02x}{:02x}...",
+        alice_pubkey[0], alice_pubkey[1], alice_pubkey[2], alice_pubkey[3]
+    );
+    println!(
+        "  Bob:            {:02x}{:02x}{:02x}{:02x}...",
+        bob_pubkey[0], bob_pubkey[1], bob_pubkey[2], bob_pubkey[3]
+    );
+    println!(
+        "  Carol:          {:02x}{:02x}{:02x}{:02x}...",
+        carol_pubkey[0], carol_pubkey[1], carol_pubkey[2], carol_pubkey[3]
+    );
     println!("  NFT asset_id:   0x{:016x}", asset_id);
     println!();
 
@@ -52,12 +61,17 @@ fn main() {
     let alice_commitment = nft_note_alice.commitment();
     let _alice_position: u64 = 0; // First note in the tree
 
-    println!("  Created note with commitment: {:02x}{:02x}{:02x}{:02x}...",
-        alice_commitment.0[0], alice_commitment.0[1], alice_commitment.0[2], alice_commitment.0[3]);
+    println!(
+        "  Created note with commitment: {:02x}{:02x}{:02x}{:02x}...",
+        alice_commitment.0[0], alice_commitment.0[1], alice_commitment.0[2], alice_commitment.0[3]
+    );
     println!("  Owner: Alice");
     println!("  Asset ID: 0x{:016x}", nft_note_alice.fields[0]);
     println!("  Edition: #{}", nft_note_alice.fields[2]);
-    println!("  Is fungible: {} (correct for NFT)", nft_note_alice.is_fungible());
+    println!(
+        "  Is fungible: {} (correct for NFT)",
+        nft_note_alice.is_fungible()
+    );
     println!();
 
     // =======================================================================
@@ -67,11 +81,15 @@ fn main() {
 
     // Alice computes and reveals her nullifier (proves she owns the note)
     let nullifier_alice = nft_note_alice.nullifier(&alice_spending_key);
-    println!("  Alice reveals nullifier: {:02x}{:02x}{:02x}{:02x}...",
-        nullifier_alice.0[0], nullifier_alice.0[1], nullifier_alice.0[2], nullifier_alice.0[3]);
+    println!(
+        "  Alice reveals nullifier: {:02x}{:02x}{:02x}{:02x}...",
+        nullifier_alice.0[0], nullifier_alice.0[1], nullifier_alice.0[2], nullifier_alice.0[3]
+    );
 
     // Insert nullifier into the set (spend the note)
-    nullifier_set.insert(nullifier_alice).expect("First spend should succeed");
+    nullifier_set
+        .insert(nullifier_alice)
+        .expect("First spend should succeed");
     println!("  Nullifier accepted (note is now spent)");
 
     // Create new note with same asset_id but Bob as owner
@@ -80,8 +98,10 @@ fn main() {
     let bob_commitment = nft_note_bob.commitment();
     let _bob_position: u64 = 1; // Second note in the tree
 
-    println!("  Created new note for Bob: {:02x}{:02x}{:02x}{:02x}...",
-        bob_commitment.0[0], bob_commitment.0[1], bob_commitment.0[2], bob_commitment.0[3]);
+    println!(
+        "  Created new note for Bob: {:02x}{:02x}{:02x}{:02x}...",
+        bob_commitment.0[0], bob_commitment.0[1], bob_commitment.0[2], bob_commitment.0[3]
+    );
     println!();
 
     // =======================================================================
@@ -89,20 +109,30 @@ fn main() {
     // =======================================================================
     println!("--- Step 3: VERIFY (identity preserved) ---");
 
-    assert_eq!(nft_note_alice.fields[0], nft_note_bob.fields[0],
-        "Asset ID must be preserved across transfers");
+    assert_eq!(
+        nft_note_alice.fields[0], nft_note_bob.fields[0],
+        "Asset ID must be preserved across transfers"
+    );
     assert_eq!(nft_note_alice.fields[0], asset_id);
-    assert_ne!(nft_note_alice.owner, nft_note_bob.owner,
-        "Owner must change on transfer");
-    assert_ne!(alice_commitment, bob_commitment,
-        "Commitments must differ (different owner + randomness)");
+    assert_ne!(
+        nft_note_alice.owner, nft_note_bob.owner,
+        "Owner must change on transfer"
+    );
+    assert_ne!(
+        alice_commitment, bob_commitment,
+        "Commitments must differ (different owner + randomness)"
+    );
 
-    println!("  Asset ID preserved: 0x{:016x} == 0x{:016x} [PASS]",
-        nft_note_alice.fields[0], nft_note_bob.fields[0]);
+    println!(
+        "  Asset ID preserved: 0x{:016x} == 0x{:016x} [PASS]",
+        nft_note_alice.fields[0], nft_note_bob.fields[0]
+    );
     println!("  Owner changed: Alice -> Bob [PASS]");
     println!("  Commitments differ: [PASS]");
-    println!("  Original note is spent (nullifier in set): {} [PASS]",
-        nullifier_set.contains(&nullifier_alice));
+    println!(
+        "  Original note is spent (nullifier in set): {} [PASS]",
+        nullifier_set.contains(&nullifier_alice)
+    );
     println!();
 
     // =======================================================================
@@ -117,8 +147,10 @@ fn main() {
     match double_spend_result {
         Err(pyana_cell::note::NoteError::DoubleSpend { nullifier }) => {
             println!("  REJECTED: double-spend detected!");
-            println!("  Nullifier {:02x}{:02x}{:02x}{:02x}... already in set",
-                nullifier.0[0], nullifier.0[1], nullifier.0[2], nullifier.0[3]);
+            println!(
+                "  Nullifier {:02x}{:02x}{:02x}{:02x}... already in set",
+                nullifier.0[0], nullifier.0[1], nullifier.0[2], nullifier.0[3]
+            );
         }
         _ => panic!("Should have been rejected as double-spend!"),
     }
@@ -126,7 +158,10 @@ fn main() {
     // Also demonstrate non-membership proof for Bob's note (proving it's NOT spent)
     let nullifier_bob = nft_note_bob.nullifier(&bob_spending_key);
     let non_membership = nullifier_set.prove_non_membership(&nullifier_bob);
-    assert!(non_membership.is_some(), "Should be able to prove Bob's note is NOT spent");
+    assert!(
+        non_membership.is_some(),
+        "Should be able to prove Bob's note is NOT spent"
+    );
     let proof = non_membership.unwrap();
     let root = nullifier_set.root();
     assert!(NullifierSet::verify_non_membership(&proof, &root));
@@ -140,46 +175,74 @@ fn main() {
 
     // Bob transfers to Carol
     let nullifier_bob_spend = nft_note_bob.nullifier(&bob_spending_key);
-    nullifier_set.insert(nullifier_bob_spend).expect("Bob's spend should succeed");
+    nullifier_set
+        .insert(nullifier_bob_spend)
+        .expect("Bob's spend should succeed");
 
     let nft_note_carol = Note::with_randomness(carol_pubkey, transfer_fields, [0x44u8; 32]);
     let carol_commitment = nft_note_carol.commitment();
     let _carol_position: u64 = 2;
 
     println!("  Bob transfers NFT to Carol");
-    println!("  Bob reveals nullifier: {:02x}{:02x}{:02x}{:02x}...",
-        nullifier_bob_spend.0[0], nullifier_bob_spend.0[1], nullifier_bob_spend.0[2], nullifier_bob_spend.0[3]);
-    println!("  New note for Carol: {:02x}{:02x}{:02x}{:02x}...",
-        carol_commitment.0[0], carol_commitment.0[1], carol_commitment.0[2], carol_commitment.0[3]);
+    println!(
+        "  Bob reveals nullifier: {:02x}{:02x}{:02x}{:02x}...",
+        nullifier_bob_spend.0[0],
+        nullifier_bob_spend.0[1],
+        nullifier_bob_spend.0[2],
+        nullifier_bob_spend.0[3]
+    );
+    println!(
+        "  New note for Carol: {:02x}{:02x}{:02x}{:02x}...",
+        carol_commitment.0[0], carol_commitment.0[1], carol_commitment.0[2], carol_commitment.0[3]
+    );
     println!();
 
     // The provenance chain:
     println!("  PROVENANCE CHAIN (nullifier history):");
     println!("  ┌─────────────────────────────────────────────────────┐");
     println!("  │ Mint (Alice)                                        │");
-    println!("  │   commitment: {:02x}{:02x}{:02x}{:02x}...                      │",
-        alice_commitment.0[0], alice_commitment.0[1], alice_commitment.0[2], alice_commitment.0[3]);
+    println!(
+        "  │   commitment: {:02x}{:02x}{:02x}{:02x}...                      │",
+        alice_commitment.0[0], alice_commitment.0[1], alice_commitment.0[2], alice_commitment.0[3]
+    );
     println!("  │           |                                         │");
-    println!("  │   nullifier: {:02x}{:02x}{:02x}{:02x}... (spent by Alice)      │",
-        nullifier_alice.0[0], nullifier_alice.0[1], nullifier_alice.0[2], nullifier_alice.0[3]);
+    println!(
+        "  │   nullifier: {:02x}{:02x}{:02x}{:02x}... (spent by Alice)      │",
+        nullifier_alice.0[0], nullifier_alice.0[1], nullifier_alice.0[2], nullifier_alice.0[3]
+    );
     println!("  │           v                                         │");
     println!("  │ Transfer -> Bob                                     │");
-    println!("  │   commitment: {:02x}{:02x}{:02x}{:02x}...                      │",
-        bob_commitment.0[0], bob_commitment.0[1], bob_commitment.0[2], bob_commitment.0[3]);
+    println!(
+        "  │   commitment: {:02x}{:02x}{:02x}{:02x}...                      │",
+        bob_commitment.0[0], bob_commitment.0[1], bob_commitment.0[2], bob_commitment.0[3]
+    );
     println!("  │           |                                         │");
-    println!("  │   nullifier: {:02x}{:02x}{:02x}{:02x}... (spent by Bob)        │",
-        nullifier_bob_spend.0[0], nullifier_bob_spend.0[1], nullifier_bob_spend.0[2], nullifier_bob_spend.0[3]);
+    println!(
+        "  │   nullifier: {:02x}{:02x}{:02x}{:02x}... (spent by Bob)        │",
+        nullifier_bob_spend.0[0],
+        nullifier_bob_spend.0[1],
+        nullifier_bob_spend.0[2],
+        nullifier_bob_spend.0[3]
+    );
     println!("  │           v                                         │");
     println!("  │ Transfer -> Carol                                   │");
-    println!("  │   commitment: {:02x}{:02x}{:02x}{:02x}...                      │",
-        carol_commitment.0[0], carol_commitment.0[1], carol_commitment.0[2], carol_commitment.0[3]);
+    println!(
+        "  │   commitment: {:02x}{:02x}{:02x}{:02x}...                      │",
+        carol_commitment.0[0], carol_commitment.0[1], carol_commitment.0[2], carol_commitment.0[3]
+    );
     println!("  │   (current owner, unspent)                          │");
     println!("  └─────────────────────────────────────────────────────┘");
     println!();
 
     // Final state
-    println!("  Nullifier set size: {} (2 transfers completed)", nullifier_set.len());
-    println!("  Asset identity preserved through all transfers: 0x{:016x}", asset_id);
+    println!(
+        "  Nullifier set size: {} (2 transfers completed)",
+        nullifier_set.len()
+    );
+    println!(
+        "  Asset identity preserved through all transfers: 0x{:016x}",
+        asset_id
+    );
     assert_eq!(nft_note_carol.fields[0], asset_id);
     println!();
     println!("=== NFT Demo Complete ===");

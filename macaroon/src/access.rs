@@ -14,10 +14,10 @@ use std::any::Any;
 /// This is intentionally minimal — the macaroon library doesn't prescribe
 /// what an "access" looks like. That's the consumer's domain.
 pub trait Access: Any + Send + Sync {
-  /// Return self as `Any` for downcasting by caveat implementations.
-  fn as_any(&self) -> &dyn Any;
+    /// Return self as `Any` for downcasting by caveat implementations.
+    fn as_any(&self) -> &dyn Any;
 
-  /// Current timestamp (Unix seconds) for validity window checks.
-  /// Returns 0 if time-based checks are not applicable.
-  fn now(&self) -> i64;
+    /// Current timestamp (Unix seconds) for validity window checks.
+    /// Returns 0 if time-based checks are not applicable.
+    fn now(&self) -> i64;
 }

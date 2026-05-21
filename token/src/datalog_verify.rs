@@ -22,9 +22,9 @@ use pyana_trace::{
 
 use crate::error::TokenError;
 use crate::factset::caveat_set_to_factset;
+use crate::format::TokenFormat;
 use crate::pyana_caveats;
 use crate::traits::{AuthRequest, Capability, TokenClearance};
-use crate::format::TokenFormat;
 
 use pyana_macaroon::caveat::CaveatSet;
 
@@ -403,7 +403,11 @@ fn auth_request_to_trace(request: &AuthRequest) -> Result<TraceRequest, TokenErr
     let app_id = request.app_id.as_deref().map(symbol_from_str);
     let service = request.service.as_deref().map(symbol_from_str);
     let action = request.action.as_deref().map(symbol_from_str);
-    let features: Vec<[u8; 32]> = request.features.iter().map(|f| symbol_from_str(f)).collect();
+    let features: Vec<[u8; 32]> = request
+        .features
+        .iter()
+        .map(|f| symbol_from_str(f))
+        .collect();
     let user_id = request.user_id.as_deref().map(symbol_from_str);
 
     let now = request.now.unwrap_or_else(|| {
@@ -876,10 +880,8 @@ pub fn verify_token_datalog_full(
     let is_empty = caveats.is_empty(); // unrestricted root token
 
     // Determine if the request targets a restricted dimension
-    let request_targets_restricted_app =
-        request.app_id.is_some() && has_app_caveats;
-    let request_targets_restricted_service =
-        request.service.is_some() && has_service_caveats;
+    let request_targets_restricted_app = request.app_id.is_some() && has_app_caveats;
+    let request_targets_restricted_service = request.service.is_some() && has_service_caveats;
 
     // If the request targets a restricted dimension, run Datalog
     if request_targets_restricted_app || request_targets_restricted_service || is_empty {
@@ -908,9 +910,9 @@ pub fn verify_token_datalog_full(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pyana_caveats::*;
     use pyana_macaroon::caveat::CaveatSet;
     use pyana_macaroon::caveat::WireCaveat;
-    use crate::pyana_caveats::*;
 
     // --- Comparison tests: verify BOTH paths give the same answer ---
 
@@ -931,7 +933,7 @@ mod tests {
     fn assert_paths_agree(caveat_set: &CaveatSet, request: &AuthRequest) {
         let (old, new) = verify_both(caveat_set, request);
         match (&old, &new) {
-            (Ok(_), Ok(_)) => {} // Both allow -- good
+            (Ok(_), Ok(_)) => {}   // Both allow -- good
             (Err(_), Err(_)) => {} // Both deny -- good
             (Ok(_), Err(e)) => panic!(
                 "DISAGREEMENT: old path ALLOWS, new path DENIES with: {:?}",
@@ -1243,10 +1245,7 @@ mod tests {
         let mut set = CaveatSet::new();
         set.push(WireCaveat::new(
             CAV_FEATURE_GLOB,
-            encode_feature_glob(
-                &["src/**".into()],
-                &["src/components/secrets.ts".into()],
-            ),
+            encode_feature_glob(&["src/**".into()], &["src/components/secrets.ts".into()]),
         ));
 
         let request = AuthRequest {

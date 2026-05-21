@@ -41,9 +41,19 @@ fn main() {
     let silos = vec![silo_a, silo_b, silo_c, silo_d];
     let byzantine_tolerance = 1; // tolerate 1 Byzantine silo
 
-    println!("Agent:    {:02x}{:02x}{:02x}{:02x}...", agent.as_bytes()[0], agent.as_bytes()[1], agent.as_bytes()[2], agent.as_bytes()[3]);
+    println!(
+        "Agent:    {:02x}{:02x}{:02x}{:02x}...",
+        agent.as_bytes()[0],
+        agent.as_bytes()[1],
+        agent.as_bytes()[2],
+        agent.as_bytes()[3]
+    );
     println!("Budget:   {} computrons", total_budget);
-    println!("Silos:    {} (Byzantine tolerance f={})", silos.len(), byzantine_tolerance);
+    println!(
+        "Silos:    {} (Byzantine tolerance f={})",
+        silos.len(),
+        byzantine_tolerance
+    );
     println!("Required: 3f+1 = {} silos", 3 * byzantine_tolerance + 1);
     println!();
 
@@ -55,16 +65,40 @@ fn main() {
 
     let ceiling = coord.compute_slice_ceiling();
     println!("  Slice formula: ceiling = balance * (f+1) / (2f+1)");
-    println!("  ceiling = {} * {} / {} = {}", total_budget, byzantine_tolerance + 1, 2 * byzantine_tolerance + 1, ceiling);
+    println!(
+        "  ceiling = {} * {} / {} = {}",
+        total_budget,
+        byzantine_tolerance + 1,
+        2 * byzantine_tolerance + 1,
+        ceiling
+    );
     println!();
     println!("  Per-silo budget slices (each silo can spend up to ceiling independently):");
-    println!("    Silo A: ceiling = {}, spent = 0, remaining = {}", ceiling, ceiling);
-    println!("    Silo B: ceiling = {}, spent = 0, remaining = {}", ceiling, ceiling);
-    println!("    Silo C: ceiling = {}, spent = 0, remaining = {}", ceiling, ceiling);
-    println!("    Silo D: ceiling = {}, spent = 0, remaining = {}", ceiling, ceiling);
+    println!(
+        "    Silo A: ceiling = {}, spent = 0, remaining = {}",
+        ceiling, ceiling
+    );
+    println!(
+        "    Silo B: ceiling = {}, spent = 0, remaining = {}",
+        ceiling, ceiling
+    );
+    println!(
+        "    Silo C: ceiling = {}, spent = 0, remaining = {}",
+        ceiling, ceiling
+    );
+    println!(
+        "    Silo D: ceiling = {}, spent = 0, remaining = {}",
+        ceiling, ceiling
+    );
     println!();
-    println!("  Total allocated: {} (sum of all ceilings)", coord.total_allocated);
-    println!("  NOTE: total_allocated ({}) > total_balance ({}) is expected!", coord.total_allocated, total_budget);
+    println!(
+        "  Total allocated: {} (sum of all ceilings)",
+        coord.total_allocated
+    );
+    println!(
+        "  NOTE: total_allocated ({}) > total_balance ({}) is expected!",
+        coord.total_allocated, total_budget
+    );
     println!("  The Stingray invariant guarantees correctness even with over-allocation.");
     println!();
 
@@ -80,33 +114,62 @@ fn main() {
     // Silo A: 3 debits totaling 200
     println!("  [Silo A] Spending locally (no coordination with B or C):");
     for amount in [80, 70, 50] {
-        coord.try_debit(silo_a, amount, debit_digest(tx_counter)).unwrap();
+        coord
+            .try_debit(silo_a, amount, debit_digest(tx_counter))
+            .unwrap();
         tx_counter += 1;
-        println!("    debit {} computrons -> remaining: {}", amount, coord.remaining(&silo_a).unwrap());
+        println!(
+            "    debit {} computrons -> remaining: {}",
+            amount,
+            coord.remaining(&silo_a).unwrap()
+        );
     }
     println!();
 
     // Silo B: 2 debits totaling 300
     println!("  [Silo B] Spending locally (no coordination with A or C):");
     for amount in [150, 150] {
-        coord.try_debit(silo_b, amount, debit_digest(tx_counter)).unwrap();
+        coord
+            .try_debit(silo_b, amount, debit_digest(tx_counter))
+            .unwrap();
         tx_counter += 1;
-        println!("    debit {} computrons -> remaining: {}", amount, coord.remaining(&silo_b).unwrap());
+        println!(
+            "    debit {} computrons -> remaining: {}",
+            amount,
+            coord.remaining(&silo_b).unwrap()
+        );
     }
     println!();
 
     // Silo C: 1 debit of 100
     println!("  [Silo C] Spending locally (no coordination with A or B):");
-    coord.try_debit(silo_c, 100, debit_digest(tx_counter)).unwrap();
+    coord
+        .try_debit(silo_c, 100, debit_digest(tx_counter))
+        .unwrap();
     tx_counter += 1;
-    println!("    debit 100 computrons -> remaining: {}", coord.remaining(&silo_c).unwrap());
+    println!(
+        "    debit 100 computrons -> remaining: {}",
+        coord.remaining(&silo_c).unwrap()
+    );
     println!();
 
     println!("  Summary after parallel spending:");
-    println!("    Silo A: spent 200, remaining {}", coord.remaining(&silo_a).unwrap());
-    println!("    Silo B: spent 300, remaining {}", coord.remaining(&silo_b).unwrap());
-    println!("    Silo C: spent 100, remaining {}", coord.remaining(&silo_c).unwrap());
-    println!("    Silo D: spent 0,   remaining {}", coord.remaining(&silo_d).unwrap());
+    println!(
+        "    Silo A: spent 200, remaining {}",
+        coord.remaining(&silo_a).unwrap()
+    );
+    println!(
+        "    Silo B: spent 300, remaining {}",
+        coord.remaining(&silo_b).unwrap()
+    );
+    println!(
+        "    Silo C: spent 100, remaining {}",
+        coord.remaining(&silo_c).unwrap()
+    );
+    println!(
+        "    Silo D: spent 0,   remaining {}",
+        coord.remaining(&silo_d).unwrap()
+    );
     println!("    Total spent across all silos: {}", coord.total_spent());
     println!();
     println!("  KEY POINT: All 6 debits required ZERO coordination between silos!");
@@ -120,8 +183,13 @@ fn main() {
     // Demonstrate what happens when a silo tries to exceed its ceiling.
     let remaining_a = coord.remaining(&silo_a).unwrap();
     println!("  Silo A remaining: {}", remaining_a);
-    println!("  Attempting to spend {} (more than remaining)...", remaining_a + 1);
-    let err = coord.try_debit(silo_a, remaining_a + 1, debit_digest(tx_counter)).unwrap_err();
+    println!(
+        "  Attempting to spend {} (more than remaining)...",
+        remaining_a + 1
+    );
+    let err = coord
+        .try_debit(silo_a, remaining_a + 1, debit_digest(tx_counter))
+        .unwrap_err();
     tx_counter += 1;
     println!("  REJECTED: {}", err);
     println!();
@@ -140,10 +208,26 @@ fn main() {
     let cert_c = coord.silo_states[&silo_c].certificate(silo_c);
     let cert_d = coord.silo_states[&silo_d].certificate(silo_d);
 
-    println!("    Silo A certificate: spent {} ({} debits)", cert_a.total_spent, cert_a.debits.len());
-    println!("    Silo B certificate: spent {} ({} debits)", cert_b.total_spent, cert_b.debits.len());
-    println!("    Silo C certificate: spent {} ({} debits)", cert_c.total_spent, cert_c.debits.len());
-    println!("    Silo D certificate: spent {} ({} debits)", cert_d.total_spent, cert_d.debits.len());
+    println!(
+        "    Silo A certificate: spent {} ({} debits)",
+        cert_a.total_spent,
+        cert_a.debits.len()
+    );
+    println!(
+        "    Silo B certificate: spent {} ({} debits)",
+        cert_b.total_spent,
+        cert_b.debits.len()
+    );
+    println!(
+        "    Silo C certificate: spent {} ({} debits)",
+        cert_c.total_spent,
+        cert_c.debits.len()
+    );
+    println!(
+        "    Silo D certificate: spent {} ({} debits)",
+        cert_d.total_spent,
+        cert_d.debits.len()
+    );
     println!();
 
     let old_balance = coord.total_balance;
@@ -161,12 +245,37 @@ fn main() {
     println!();
 
     let new_ceiling = coord.compute_slice_ceiling();
-    println!("  New slice distribution (budget version {}):", coord.version);
-    println!("    New ceiling: {} * {} / {} = {}", coord.total_balance, byzantine_tolerance + 1, 2 * byzantine_tolerance + 1, new_ceiling);
-    println!("    Silo A: ceiling = {}, remaining = {}", new_ceiling, coord.remaining(&silo_a).unwrap());
-    println!("    Silo B: ceiling = {}, remaining = {}", new_ceiling, coord.remaining(&silo_b).unwrap());
-    println!("    Silo C: ceiling = {}, remaining = {}", new_ceiling, coord.remaining(&silo_c).unwrap());
-    println!("    Silo D: ceiling = {}, remaining = {}", new_ceiling, coord.remaining(&silo_d).unwrap());
+    println!(
+        "  New slice distribution (budget version {}):",
+        coord.version
+    );
+    println!(
+        "    New ceiling: {} * {} / {} = {}",
+        coord.total_balance,
+        byzantine_tolerance + 1,
+        2 * byzantine_tolerance + 1,
+        new_ceiling
+    );
+    println!(
+        "    Silo A: ceiling = {}, remaining = {}",
+        new_ceiling,
+        coord.remaining(&silo_a).unwrap()
+    );
+    println!(
+        "    Silo B: ceiling = {}, remaining = {}",
+        new_ceiling,
+        coord.remaining(&silo_b).unwrap()
+    );
+    println!(
+        "    Silo C: ceiling = {}, remaining = {}",
+        new_ceiling,
+        coord.remaining(&silo_c).unwrap()
+    );
+    println!(
+        "    Silo D: ceiling = {}, remaining = {}",
+        new_ceiling,
+        coord.remaining(&silo_d).unwrap()
+    );
     println!();
 
     // ─── Step 5: Post-Rebalance Spending ─────────────────────────────────────
@@ -174,12 +283,22 @@ fn main() {
     println!();
     println!("  Silo A can now spend again from its fresh slice!");
 
-    coord.try_debit(silo_a, 50, debit_digest(tx_counter)).unwrap();
+    coord
+        .try_debit(silo_a, 50, debit_digest(tx_counter))
+        .unwrap();
     tx_counter += 1;
-    println!("    Silo A: debit 50 -> remaining {}", coord.remaining(&silo_a).unwrap());
+    println!(
+        "    Silo A: debit 50 -> remaining {}",
+        coord.remaining(&silo_a).unwrap()
+    );
 
-    coord.try_debit(silo_b, 30, debit_digest(tx_counter)).unwrap();
-    println!("    Silo B: debit 30 -> remaining {}", coord.remaining(&silo_b).unwrap());
+    coord
+        .try_debit(silo_b, 30, debit_digest(tx_counter))
+        .unwrap();
+    println!(
+        "    Silo B: debit 30 -> remaining {}",
+        coord.remaining(&silo_b).unwrap()
+    );
     println!();
 
     // ─── Step 6: Byzantine Safety Guarantee ──────────────────────────────────
@@ -190,8 +309,8 @@ fn main() {
     println!();
 
     // Use a separate coordinator to demonstrate Byzantine behavior in isolation.
-    let mut byz_coord = BudgetCoordinator::new(agent, total_budget, silos.clone(), byzantine_tolerance)
-        .unwrap();
+    let mut byz_coord =
+        BudgetCoordinator::new(agent, total_budget, silos.clone(), byzantine_tolerance).unwrap();
     let byz_ceiling = byz_coord.compute_slice_ceiling();
 
     // Byzantine silo spends everything it can
@@ -208,22 +327,39 @@ fn main() {
     // Spend the remainder
     let byz_remainder = byz_coord.remaining(&silo_d).unwrap();
     if byz_remainder > 0 {
-        byz_coord.try_debit(silo_d, byz_remainder, debit_digest(byz_tx)).unwrap();
+        byz_coord
+            .try_debit(silo_d, byz_remainder, debit_digest(byz_tx))
+            .unwrap();
         byzantine_spent += byz_remainder;
     }
 
-    println!("  Byzantine Silo D spent its full ceiling: {} computrons", byzantine_spent);
+    println!(
+        "  Byzantine Silo D spent its full ceiling: {} computrons",
+        byzantine_spent
+    );
     assert_eq!(byzantine_spent, byz_ceiling);
-    println!("  Ceiling was: {} -- the silo CANNOT spend more than this.", byz_ceiling);
+    println!(
+        "  Ceiling was: {} -- the silo CANNOT spend more than this.",
+        byz_ceiling
+    );
     println!();
     println!("  Even if the Byzantine silo lies about its spending, the protocol");
     println!("  guarantees:");
     println!("    - Its certificate cannot claim more than the ceiling");
     println!("    - Honest silos independently track their own spending");
     println!("    - Total confirmed spend is bounded by: balance + f * ceiling");
-    println!("      = {} + {} * {} = {}", total_budget, byzantine_tolerance, byz_ceiling, total_budget + (byzantine_tolerance as u64) * byz_ceiling);
+    println!(
+        "      = {} + {} * {} = {}",
+        total_budget,
+        byzantine_tolerance,
+        byz_ceiling,
+        total_budget + (byzantine_tolerance as u64) * byz_ceiling
+    );
     println!();
-    println!("  In the worst case, the overspend ({}) is bounded and recoverable.", byz_ceiling);
+    println!(
+        "  In the worst case, the overspend ({}) is bounded and recoverable.",
+        byz_ceiling
+    );
     println!("  No Byzantine silo can drain the entire system's balance.");
     println!();
 
@@ -233,7 +369,10 @@ fn main() {
     println!("  1. LOCAL FAST PATH: Each silo debits from its local slice with zero");
     println!("     coordination. This is the common case for agent execution metering.");
     println!();
-    println!("  2. BOUNDED OVERSPEND: Even with f={} Byzantine silos, the maximum", byzantine_tolerance);
+    println!(
+        "  2. BOUNDED OVERSPEND: Even with f={} Byzantine silos, the maximum",
+        byzantine_tolerance
+    );
     println!("     unconfirmed spend is bounded by the ceiling formula:");
     println!("     ceiling = balance * (f+1) / (2f+1)");
     println!();

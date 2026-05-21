@@ -18,12 +18,7 @@ fn make_event(token_id: [u8; 32], seq: u64, ts: i64) -> UsageEvent {
 }
 
 /// Helper: create a usage event with a specific action.
-fn make_event_with_action(
-    token_id: [u8; 32],
-    seq: u64,
-    ts: i64,
-    action: &str,
-) -> UsageEvent {
+fn make_event_with_action(token_id: [u8; 32], seq: u64, ts: i64, action: &str) -> UsageEvent {
     let action_hash = blake3::hash(action.as_bytes());
     let verifier = blake3::hash(b"test-verifier");
     UsageEvent::new(
@@ -53,7 +48,12 @@ fn end_to_end_budget_enforcement() {
         .record_use(make_event_with_action(token_id, 1, 1010, "write /api/data"))
         .expect("second use should succeed");
     let receipt3 = enforcer
-        .record_use(make_event_with_action(token_id, 2, 1020, "delete /api/data"))
+        .record_use(make_event_with_action(
+            token_id,
+            2,
+            1020,
+            "delete /api/data",
+        ))
         .expect("third use should succeed");
 
     // All receipts should have valid inclusion proofs.
@@ -162,7 +162,8 @@ fn end_to_end_multi_token() {
     let token_b = *token_b_hash.as_bytes();
 
     let mut enforcer_a = BudgetEnforcer::new(token_a, BudgetSpec::total(5));
-    let mut enforcer_b = BudgetEnforcer::new(token_b, BudgetSpec::windowed(2, Duration::from_secs(60)));
+    let mut enforcer_b =
+        BudgetEnforcer::new(token_b, BudgetSpec::windowed(2, Duration::from_secs(60)));
 
     // Alice uses her token 3 times.
     for i in 0..3 {
@@ -246,7 +247,8 @@ fn historical_roots_consistent() {
     for (i, expected) in expected_roots.iter().enumerate() {
         let historical = log.historical_root(i + 1).unwrap();
         assert_eq!(
-            historical, *expected,
+            historical,
+            *expected,
             "Historical root mismatch at size {}",
             i + 1
         );
@@ -462,9 +464,7 @@ fn zero_budget() {
     assert!(!enforcer.can_use(1000));
     assert_eq!(enforcer.remaining(1000), 0);
 
-    let err = enforcer
-        .record_use(make_event(token, 0, 1000))
-        .unwrap_err();
+    let err = enforcer.record_use(make_event(token, 0, 1000)).unwrap_err();
     assert_eq!(err.budget_limit, 0);
     assert_eq!(err.uses_consumed, 0);
 }
@@ -476,7 +476,9 @@ fn large_budget() {
     let mut enforcer = BudgetEnforcer::new(token, BudgetSpec::total(u64::MAX));
 
     for i in 0..50 {
-        enforcer.record_use(make_event(token, i, 1000 + i as i64)).unwrap();
+        enforcer
+            .record_use(make_event(token, i, 1000 + i as i64))
+            .unwrap();
     }
 
     assert!(enforcer.can_use(2000));

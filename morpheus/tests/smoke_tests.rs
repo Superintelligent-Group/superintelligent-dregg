@@ -1,7 +1,7 @@
 use ark_std::test_rng;
+use hints::{F, GlobalData};
 use pyana_morpheus::test_harness::{MockHarness, TxGenPolicy};
 use pyana_morpheus::*;
-use hints::{F, GlobalData};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

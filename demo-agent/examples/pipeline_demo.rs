@@ -11,19 +11,21 @@
 //! that reference outputs of earlier turns, and the executor resolves them
 //! in causal order — all in a single network round-trip.
 
+use pyana_cell::Preconditions;
 use pyana_cell::{AuthRequired, CellId, Ledger, Permissions};
 use pyana_turn::{
-    Action, Authorization, CallForest, ComputronCosts, CommitmentMode,
-    DelegationMode, Effect, Pipeline, PipelineError, TurnExecutor,
-    Turn, execute_pipeline,
+    Action, Authorization, CallForest, CommitmentMode, ComputronCosts, DelegationMode, Effect,
+    EventualRef, Pipeline, PipelineError, Turn, TurnExecutor, execute_pipeline,
 };
-use pyana_cell::Preconditions;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn short_hex(bytes: &[u8]) -> String {
     if bytes.len() >= 4 {
-        format!("{:02x}{:02x}{:02x}{:02x}", bytes[0], bytes[1], bytes[2], bytes[3])
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     } else {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -55,7 +57,7 @@ fn make_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> Turn {
         authorization: Authorization::None,
         preconditions: Preconditions::default(),
         effects,
-        may_delegate: DelegationMode::ParentsOwn,
+        may_delegate: DelegationMode::ParentsOwn, // allows children to target other cells (chain-walking not yet implemented)
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
     };
@@ -98,8 +100,14 @@ fn main() {
     }
 
     println!("Setup:");
-    println!("  Alice: {} (balance: 1,000,000)", short_hex(id_alice.as_bytes()));
-    println!("  Bob:   {} (balance: 1,000,000)", short_hex(id_bob.as_bytes()));
+    println!(
+        "  Alice: {} (balance: 1,000,000)",
+        short_hex(id_alice.as_bytes())
+    );
+    println!(
+        "  Bob:   {} (balance: 1,000,000)",
+        short_hex(id_bob.as_bytes())
+    );
     println!();
 
     // ─── Scenario 1: Successful 3-turn pipeline ─────────────────────────────
@@ -109,20 +117,38 @@ fn main() {
     println!("  Turn C: (depends on B) Alice sets her state field[0]\n");
 
     // Turn A: Alice transfers 500 to Bob.
-    let turn_a = make_turn(id_alice, 0, vec![
-        Effect::Transfer { from: id_alice, to: id_bob, amount: 500 },
-    ]);
+    let turn_a = make_turn(
+        id_alice,
+        0,
+        vec![Effect::Transfer {
+            from: id_alice,
+            to: id_bob,
+            amount: 500,
+        }],
+    );
 
     // Turn B: Bob transfers 100 back to Alice (depends on A completing).
-    let turn_b = make_turn(id_bob, 0, vec![
-        Effect::Transfer { from: id_bob, to: id_alice, amount: 100 },
-    ]);
+    let turn_b = make_turn(
+        id_bob,
+        0,
+        vec![Effect::Transfer {
+            from: id_bob,
+            to: id_alice,
+            amount: 100,
+        }],
+    );
 
     // Turn C: Alice sets her state field (depends on B completing).
     let state_value = *blake3::hash(b"pipeline-complete").as_bytes();
-    let turn_c = make_turn(id_alice, 1, vec![
-        Effect::SetField { cell: id_alice, index: 0, value: state_value },
-    ]);
+    let turn_c = make_turn(
+        id_alice,
+        1,
+        vec![Effect::SetField {
+            cell: id_alice,
+            index: 0,
+            value: state_value,
+        }],
+    );
 
     // Build the pipeline with dependencies: A <- B <- C
     let mut pipeline = Pipeline::new();
@@ -153,7 +179,10 @@ fn main() {
         };
         match result {
             Ok(receipt) => {
-                println!("    Turn {label}: COMMITTED (hash: {})", short_hex(&receipt.turn_hash));
+                println!(
+                    "    Turn {label}: COMMITTED (hash: {})",
+                    short_hex(&receipt.turn_hash)
+                );
             }
             Err(e) => {
                 println!("    Turn {label}: FAILED ({e})");
@@ -166,15 +195,24 @@ fn main() {
     let bob_balance = ledger.get(&id_bob).unwrap().state.balance;
     println!();
     println!("  Final balances:");
-    println!("    Alice: {} (1,000,000 - 500 + 100 = 999,600)", alice_balance);
-    println!("    Bob:   {} (1,000,000 + 500 - 100 = 1,000,400)", bob_balance);
+    println!(
+        "    Alice: {} (1,000,000 - 500 + 100 = 999,600)",
+        alice_balance
+    );
+    println!(
+        "    Bob:   {} (1,000,000 + 500 - 100 = 1,000,400)",
+        bob_balance
+    );
     assert_eq!(alice_balance, 1_000_000 - 500 + 100);
     assert_eq!(bob_balance, 1_000_000 + 500 - 100);
 
     // Verify state was set.
     let alice_field0 = ledger.get(&id_alice).unwrap().state.fields[0];
     assert_eq!(alice_field0, state_value);
-    println!("    Alice field[0]: {} (set by Turn C)", short_hex(&alice_field0));
+    println!(
+        "    Alice field[0]: {} (set by Turn C)",
+        short_hex(&alice_field0)
+    );
     println!();
     println!("  All 3 turns committed in one pipeline submission!");
     println!();
@@ -193,19 +231,37 @@ fn main() {
     ledger2.insert_cell(cell_bob2).unwrap();
 
     // Turn A: Alice transfers 100 to Bob (will succeed).
-    let turn_a2 = make_turn(id_alice, 0, vec![
-        Effect::Transfer { from: id_alice, to: id_bob, amount: 100 },
-    ]);
+    let turn_a2 = make_turn(
+        id_alice,
+        0,
+        vec![Effect::Transfer {
+            from: id_alice,
+            to: id_bob,
+            amount: 100,
+        }],
+    );
 
     // Turn B: Bob tries to transfer way too much (will fail).
-    let turn_b2 = make_turn(id_bob, 0, vec![
-        Effect::Transfer { from: id_bob, to: id_alice, amount: 999_999_999 },
-    ]);
+    let turn_b2 = make_turn(
+        id_bob,
+        0,
+        vec![Effect::Transfer {
+            from: id_bob,
+            to: id_alice,
+            amount: 999_999_999,
+        }],
+    );
 
     // Turn C: Alice transfers 50 to Bob (depends on B, so will be skipped).
-    let turn_c2 = make_turn(id_alice, 1, vec![
-        Effect::Transfer { from: id_alice, to: id_bob, amount: 50 },
-    ]);
+    let turn_c2 = make_turn(
+        id_alice,
+        1,
+        vec![Effect::Transfer {
+            from: id_alice,
+            to: id_bob,
+            amount: 50,
+        }],
+    );
 
     let mut pipeline2 = Pipeline::new();
     let ia2 = pipeline2.add_turn(turn_a2);
@@ -226,7 +282,10 @@ fn main() {
         };
         match result {
             Ok(receipt) => {
-                println!("    Turn {label}: COMMITTED (hash: {})", short_hex(&receipt.turn_hash));
+                println!(
+                    "    Turn {label}: COMMITTED (hash: {})",
+                    short_hex(&receipt.turn_hash)
+                );
             }
             Err(e) => {
                 println!("    Turn {label}: FAILED ({e})");
@@ -248,8 +307,13 @@ fn main() {
     }
 
     match &results2[2] {
-        Err(PipelineError::DependencyFailed { failed_index, dependent_index }) => {
-            println!("  Turn C skipped: dependency turn[{failed_index}] failed, so turn[{dependent_index}] cannot run");
+        Err(PipelineError::DependencyFailed {
+            failed_index,
+            dependent_index,
+        }) => {
+            println!(
+                "  Turn C skipped: dependency turn[{failed_index}] failed, so turn[{dependent_index}] cannot run"
+            );
         }
         other => panic!("expected DependencyFailed, got {:?}", other),
     }
@@ -286,22 +350,52 @@ fn main() {
     ledger3.insert_cell(cell_d3).unwrap();
 
     // A: Alice pays Bob and Carol
-    let turn_da = make_turn(id_alice, 0, vec![
-        Effect::Transfer { from: id_alice, to: id_bob, amount: 200 },
-        Effect::Transfer { from: id_alice, to: id_c, amount: 300 },
-    ]);
+    let turn_da = make_turn(
+        id_alice,
+        0,
+        vec![
+            Effect::Transfer {
+                from: id_alice,
+                to: id_bob,
+                amount: 200,
+            },
+            Effect::Transfer {
+                from: id_alice,
+                to: id_c,
+                amount: 300,
+            },
+        ],
+    );
     // B: Bob pays D (depends on A)
-    let turn_db = make_turn(id_bob, 0, vec![
-        Effect::Transfer { from: id_bob, to: id_d, amount: 50 },
-    ]);
+    let turn_db = make_turn(
+        id_bob,
+        0,
+        vec![Effect::Transfer {
+            from: id_bob,
+            to: id_d,
+            amount: 50,
+        }],
+    );
     // C: Carol pays D (depends on A)
-    let turn_dc = make_turn(id_c, 0, vec![
-        Effect::Transfer { from: id_c, to: id_d, amount: 75 },
-    ]);
+    let turn_dc = make_turn(
+        id_c,
+        0,
+        vec![Effect::Transfer {
+            from: id_c,
+            to: id_d,
+            amount: 75,
+        }],
+    );
     // D: D acknowledges receipt (depends on B and C)
-    let turn_dd = make_turn(id_d, 0, vec![
-        Effect::SetField { cell: id_d, index: 0, value: *blake3::hash(b"acknowledged").as_bytes() },
-    ]);
+    let turn_dd = make_turn(
+        id_d,
+        0,
+        vec![Effect::SetField {
+            cell: id_d,
+            index: 0,
+            value: *blake3::hash(b"acknowledged").as_bytes(),
+        }],
+    );
 
     let mut pipeline3 = Pipeline::new();
     let i3a = pipeline3.add_turn(turn_da);
@@ -314,7 +408,10 @@ fn main() {
     pipeline3.add_dependency(i3d, i3c); // D depends on C
 
     let order3 = pipeline3.topological_order().unwrap();
-    println!("  Topological order: {:?} (A={i3a}, B={i3b}, C={i3c}, D={i3d})", order3);
+    println!(
+        "  Topological order: {:?} (A={i3a}, B={i3b}, C={i3c}, D={i3d})",
+        order3
+    );
     assert!(pipeline3.validate().is_ok());
 
     let results3 = execute_pipeline(pipeline3, &mut ledger3, &executor);
@@ -324,7 +421,10 @@ fn main() {
     for (i, result) in results3.iter().enumerate() {
         match result {
             Ok(receipt) => {
-                println!("    Turn {}: COMMITTED (computrons: {})", labels[i], receipt.computrons_used);
+                println!(
+                    "    Turn {}: COMMITTED (computrons: {})",
+                    labels[i], receipt.computrons_used
+                );
             }
             Err(e) => {
                 println!("    Turn {}: FAILED ({e})", labels[i]);
@@ -340,8 +440,126 @@ fn main() {
 
     let d_field = ledger3.get(&id_d).unwrap().state.fields[0];
     assert_eq!(d_field, *blake3::hash(b"acknowledged").as_bytes());
-    println!("  D's state field[0] set to hash('acknowledged'): {}", short_hex(&d_field));
+    println!(
+        "  D's state field[0] set to hash('acknowledged'): {}",
+        short_hex(&d_field)
+    );
     println!("  Diamond dependency resolved correctly!\n");
+
+    // ─── Scenario 4: EventualRef + PipelinedSend ─────────────────────────────
+    println!("--- Scenario 4: EventualRef Resolution (PipelinedSend) ---\n");
+    println!("  Turn A: Alice creates a new cell");
+    println!("  Turn B: (depends on A) PipelinedSend targets the EventualRef");
+    println!("          The inner action sets Alice's field[1] after resolution\n");
+
+    let mut ledger4 = Ledger::new();
+    let cell_alice4 = make_open_cell(pk_alice, 1_000_000);
+    ledger4.insert_cell(cell_alice4).unwrap();
+
+    // Turn A: Create a new cell.
+    let new_pk = [88u8; 32];
+    let new_token = [0u8; 32];
+    let turn4_a = make_turn(
+        id_alice,
+        0,
+        vec![Effect::CreateCell {
+            public_key: new_pk,
+            token_id: new_token,
+            balance: 0,
+        }],
+    );
+
+    // Compute Turn A's hash for the EventualRef.
+    let turn4_a_hash = {
+        let mut t = turn4_a.clone();
+        t.hash()
+    };
+
+    // Turn B: PipelinedSend with EventualRef targeting Turn A's output (slot 0).
+    // The inner action targets Alice (the agent) and sets her field[1].
+    // This proves the PipelinedSend was resolved and the inner action executed.
+    let eref = EventualRef::new(turn4_a_hash, 0);
+    let resolved_marker = *blake3::hash(b"eventual-resolved").as_bytes();
+    let inner_action = Action {
+        target: id_alice, // targets the agent — no capability needed
+        method: [0u8; 32],
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Preconditions::default(),
+        effects: vec![Effect::SetField {
+            cell: id_alice,
+            index: 1,
+            value: resolved_marker,
+        }],
+        may_delegate: DelegationMode::ParentsOwn, // allows children to target other cells (chain-walking not yet implemented)
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+
+    let turn4_b = make_turn(
+        id_alice,
+        1,
+        vec![Effect::PipelinedSend {
+            target: eref.clone(),
+            action: Box::new(inner_action),
+        }],
+    );
+
+    let mut pipeline4 = Pipeline::new();
+    let i4a = pipeline4.add_turn(turn4_a);
+    let i4b = pipeline4.add_turn(turn4_b);
+    pipeline4.add_dependency(i4b, i4a);
+
+    assert!(pipeline4.validate().is_ok());
+
+    println!(
+        "  EventualRef: source_turn={}, output_slot={}",
+        short_hex(&eref.source_turn),
+        eref.output_slot
+    );
+
+    let results4 = execute_pipeline(pipeline4, &mut ledger4, &executor);
+
+    println!("  Results:");
+    for (i, result) in results4.iter().enumerate() {
+        let label = if i == 0 { "A" } else { "B" };
+        match result {
+            Ok(receipt) => {
+                println!(
+                    "    Turn {label}: COMMITTED (hash: {})",
+                    short_hex(&receipt.turn_hash)
+                );
+            }
+            Err(e) => {
+                println!("    Turn {label}: FAILED ({e})");
+            }
+        }
+    }
+
+    assert!(results4[0].is_ok(), "Turn A should succeed");
+    assert!(results4[1].is_ok(), "Turn B should succeed");
+
+    // Verify the EventualRef was resolved and inner action executed.
+    let alice4_field1 = ledger4.get(&id_alice).unwrap().state.fields[1];
+    assert_eq!(alice4_field1, resolved_marker);
+    println!();
+    println!(
+        "  Alice field[1] = hash('eventual-resolved'): {}",
+        short_hex(&alice4_field1)
+    );
+    println!("  EventualRef successfully resolved! PipelinedSend executed the inner action.");
+
+    // Verify the new cell was created.
+    let new_cell_id = CellId::derive_raw(&new_pk, &new_token);
+    assert!(
+        ledger4.get(&new_cell_id).is_some(),
+        "new cell should exist"
+    );
+    println!(
+        "  New cell created: {}",
+        short_hex(new_cell_id.as_bytes())
+    );
+    println!();
 
     println!("=== Pipeline Demo Complete ===");
     println!();
@@ -349,8 +567,11 @@ fn main() {
     println!("  - Scenario 1: 3-turn linear pipeline (A->B->C) executed atomically");
     println!("  - Scenario 2: Failure in B propagates to C, but A still commits");
     println!("  - Scenario 3: Diamond dependency (fan-out + fan-in) resolves correctly");
+    println!("  - Scenario 4: EventualRef resolution (PipelinedSend resolved + executed)");
     println!();
     println!("This demonstrates E-style promise pipelining: submit multiple turns");
     println!("with dependency edges in a single round-trip. The executor resolves");
     println!("them in topological order, building a resolution table as it goes.");
+    println!("EventualRefs in PipelinedSend effects are resolved to concrete CellIds");
+    println!("before execution, enabling true promise-pipelined workflows.");
 }

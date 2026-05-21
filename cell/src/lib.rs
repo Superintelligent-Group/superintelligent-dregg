@@ -12,6 +12,7 @@
 
 pub mod capability;
 pub mod cell;
+pub mod delegation;
 pub mod id;
 pub mod ledger;
 pub mod note;
@@ -28,6 +29,7 @@ mod tests;
 // Re-exports for convenience.
 pub use capability::{CapabilityRef, CapabilitySet, is_attenuation};
 pub use cell::{Cell, VerificationKey};
+pub use delegation::DelegatedRef;
 pub use id::CellId;
 pub use ledger::{CellStateDelta, Ledger, LedgerDelta, LedgerError, MembershipProof, Side};
 pub use note::{Note, NoteCommitment, NoteError, Nullifier, PositionedNote};
@@ -38,4 +40,6 @@ pub use preconditions::{
 };
 pub use program::{CellProgram, ProgramError, StateConstraint};
 pub use seal::{SealError, SealPair, SealedBox, test_seal_pair};
-pub use state::{CellState, FieldElement, FieldVisibility, FIELD_ZERO, PublicFieldView, STATE_SLOTS};
+pub use state::{
+    CellState, FIELD_ZERO, FieldElement, FieldVisibility, PublicFieldView, STATE_SLOTS,
+};

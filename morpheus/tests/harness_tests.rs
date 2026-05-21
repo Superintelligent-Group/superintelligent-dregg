@@ -1,11 +1,11 @@
 use ark_serialize::CanonicalSerialize;
 use ark_std::test_rng;
+use hints::{F, GlobalData};
 use pyana_morpheus::test_harness::MockHarness;
 use pyana_morpheus::{
     BlockKey, BlockType, Identity, Message, MorpheusProcess, Signed, SlotNum, ThreshPartial,
     ThreshSigned, ViewNum, VoteData,
 };
-use hints::{F, GlobalData};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

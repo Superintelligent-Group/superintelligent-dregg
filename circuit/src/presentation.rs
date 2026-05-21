@@ -694,11 +694,7 @@ impl PresentationBuilder {
     }
 
     /// Set the issuer membership proof.
-    pub fn set_issuer_membership(
-        mut self,
-        membership: MerkleWitness,
-        key_hash: BabyBear,
-    ) -> Self {
+    pub fn set_issuer_membership(mut self, membership: MerkleWitness, key_hash: BabyBear) -> Self {
         self.issuer_membership = Some(membership);
         self.issuer_key_hash = key_hash;
         self
@@ -808,7 +804,11 @@ impl RealPresentationProof {
         }
 
         // Fall back to linear AIR for backward compatibility with old proofs
-        match stark::verify(&MerkleStarkAir, &self.issuer_membership_stark_proof, &issuer_public_inputs) {
+        match stark::verify(
+            &MerkleStarkAir,
+            &self.issuer_membership_stark_proof,
+            &issuer_public_inputs,
+        ) {
             Ok(()) => PresentationVerification::Valid,
             Err(_) => PresentationVerification::InvalidIssuerProof,
         }
@@ -817,7 +817,8 @@ impl RealPresentationProof {
     /// Get the total proof size in bytes.
     pub fn total_proof_size_bytes(&self) -> usize {
         let stark_bytes = stark::proof_to_bytes(&self.issuer_membership_stark_proof).len();
-        let mock_bytes: usize = self.fold_proofs
+        let mock_bytes: usize = self
+            .fold_proofs
             .iter()
             .map(|p| p.simulated_proof_size_bytes)
             .sum::<usize>()
@@ -908,7 +909,8 @@ pub fn create_stark_compatible_witness(leaf_hash: BabyBear, depth: usize) -> Mer
             BabyBear::new((i * 3 + 3) as u32),
         ];
         // Use algebraic binding: parent = current + sib0 + sib1 + sib2 + position
-        let parent = current + siblings[0] + siblings[1] + siblings[2] + BabyBear::new(position as u32);
+        let parent =
+            current + siblings[0] + siblings[1] + siblings[2] + BabyBear::new(position as u32);
         levels.push(MerkleLevelWitness { position, siblings });
         current = parent;
     }
@@ -1014,12 +1016,21 @@ pub fn create_test_presentation() -> PresentationWitness {
     let final_root = BabyBear::new(333333);
 
     // Build tree for fold1
-    let f1_hash = hash_fact(BabyBear::new(10), &[BabyBear::new(20), BabyBear::new(30), BabyBear::ZERO]);
+    let f1_hash = hash_fact(
+        BabyBear::new(10),
+        &[BabyBear::new(20), BabyBear::new(30), BabyBear::ZERO],
+    );
     let (initial_root, f1_proofs) = build_shared_tree(&[f1_hash], 4);
 
     // Build tree for fold2
-    let f2a_hash = hash_fact(BabyBear::new(40), &[BabyBear::new(50), BabyBear::ZERO, BabyBear::ZERO]);
-    let f2b_hash = hash_fact(BabyBear::new(60), &[BabyBear::new(70), BabyBear::new(80), BabyBear::ZERO]);
+    let f2a_hash = hash_fact(
+        BabyBear::new(40),
+        &[BabyBear::new(50), BabyBear::ZERO, BabyBear::ZERO],
+    );
+    let f2b_hash = hash_fact(
+        BabyBear::new(60),
+        &[BabyBear::new(70), BabyBear::new(80), BabyBear::ZERO],
+    );
     let (mid_root, f2_proofs) = build_shared_tree(&[f2a_hash, f2b_hash], 4);
 
     let fold1 = FoldWitness {
@@ -1255,7 +1266,10 @@ mod tests {
 
         // Generate real STARK proof
         let proof = air.prove_stark();
-        assert!(proof.is_some(), "Real STARK proof generation should succeed");
+        assert!(
+            proof.is_some(),
+            "Real STARK proof generation should succeed"
+        );
 
         let proof = proof.unwrap();
         assert!(!proof.fold_proofs.is_empty());
@@ -1347,7 +1361,11 @@ mod tests {
                 num_body_atoms: 1,
                 num_variables: 1,
                 head_predicate: BabyBear::new(300),
-                head_terms: [(true, BabyBear::new(0)), (false, BabyBear::ZERO), (false, BabyBear::ZERO)],
+                head_terms: [
+                    (true, BabyBear::new(0)),
+                    (false, BabyBear::ZERO),
+                    (false, BabyBear::ZERO),
+                ],
                 body_atoms: vec![],
                 equal_checks: vec![],
                 memberof_checks: vec![],
@@ -1392,11 +1410,17 @@ mod tests {
 
         // Generate the Poseidon2 STARK proof
         let stark_proof = generate_merkle_poseidon2_stark_proof(&p2_issuer);
-        assert!(stark_proof.is_some(), "Poseidon2 STARK proof generation should succeed");
+        assert!(
+            stark_proof.is_some(),
+            "Poseidon2 STARK proof generation should succeed"
+        );
 
         let proof = stark_proof.unwrap();
         let proof_bytes = crate::stark::proof_to_bytes(&proof);
-        assert!(proof_bytes.len() > 1000, "Poseidon2 STARK proof should be > 1KB");
+        assert!(
+            proof_bytes.len() > 1000,
+            "Poseidon2 STARK proof should be > 1KB"
+        );
         println!(
             "Poseidon2 STARK Merkle proof: {} bytes ({:.1} KiB)",
             proof_bytes.len(),
@@ -1405,13 +1429,13 @@ mod tests {
 
         // Verify with real STARK verifier using MerklePoseidon2StarkAir
         use crate::poseidon2_air::MerklePoseidon2StarkAir;
-        let pi: Vec<BabyBear> = proof
-            .public_inputs
-            .iter()
-            .map(|&v| BabyBear(v))
-            .collect();
+        let pi: Vec<BabyBear> = proof.public_inputs.iter().map(|&v| BabyBear(v)).collect();
         let result = crate::stark::verify(&MerklePoseidon2StarkAir, &proof, &pi);
-        assert!(result.is_ok(), "Poseidon2 STARK proof should verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Poseidon2 STARK proof should verify: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1421,18 +1445,10 @@ mod tests {
 
         // Verify with wrong root
         use crate::poseidon2_air::MerklePoseidon2StarkAir;
-        let mut pi: Vec<BabyBear> = proof
-            .public_inputs
-            .iter()
-            .map(|&v| BabyBear(v))
-            .collect();
+        let mut pi: Vec<BabyBear> = proof.public_inputs.iter().map(|&v| BabyBear(v)).collect();
         // Tamper: change the root
         pi[1] = BabyBear::new(999999);
-        let result = crate::stark::verify(
-            &MerklePoseidon2StarkAir,
-            &proof,
-            &pi,
-        );
+        let result = crate::stark::verify(&MerklePoseidon2StarkAir, &proof, &pi);
         assert!(result.is_err(), "Should reject wrong federation root");
     }
 }

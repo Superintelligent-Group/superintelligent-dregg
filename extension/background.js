@@ -484,12 +484,64 @@ function matchIntentLocally(intent, tokens, now) {
   return null;
 }
 
+/**
+ * Compute a deterministic intent ID aligned with the Rust intent engine.
+ *
+ * When WASM is available, delegates to `compute_intent_id` which uses the
+ * exact same postcard + BLAKE3 computation as `Intent::compute_id()` in Rust.
+ *
+ * When WASM is unavailable, falls back to deterministic SHA-256 over canonical
+ * JSON (no random nonce). The returned ID is prefixed with "js:" so the node
+ * knows to recompute the canonical BLAKE3 ID on receipt.
+ */
 async function computeIntentId(kind, matchSpec, expiry) {
-  const data = JSON.stringify({ kind, matchSpec, expiry, nonce: Math.random() });
-  const encoded = new TextEncoder().encode(data);
+  // Build the canonical input matching the Rust Intent structure.
+  const intentInput = {
+    kind: kind === 'need' ? 'Need' : kind === 'offer' ? 'Offer' : 'Query',
+    actions: (matchSpec?.actions || []).map(a => ({
+      action: a.action || null,
+      resource: a.resource || null,
+    })),
+    constraints: (matchSpec?.constraints || []).map(c => {
+      if (c.type === 'appId') return { AppId: c.value };
+      if (c.type === 'service') return { Service: c.value };
+      if (c.type === 'userId') return { UserId: c.value };
+      if (c.type === 'notExpiredAt') return { NotExpiredAt: c.value };
+      if (c.type === 'feature') return { Feature: c.value };
+      if (c.type === 'oauthProvider') return { OAuthProvider: c.value };
+      return { predicate: c.type || '', value: c.value || '' };
+    }),
+    min_budget: matchSpec?.minBudget || null,
+    resource_pattern: matchSpec?.resourcePattern || null,
+    expiry: expiry,
+    creator: matchSpec?.creator || null,
+    proof_of_stake: matchSpec?.proofOfStake || null,
+  };
+
+  // Prefer WASM: produces the exact same ID as the Rust node.
+  if (wasm && wasm.compute_intent_id) {
+    try {
+      return wasm.compute_intent_id(JSON.stringify(intentInput));
+    } catch (e) {
+      console.warn('[pyana] WASM compute_intent_id failed, using SHA-256 fallback:', e.message);
+    }
+  }
+
+  // Fallback: deterministic SHA-256 (no random nonce). Prefix with "js:" so
+  // the receiving node knows this is not a canonical BLAKE3 ID and will
+  // recompute on receipt.
+  const canonical = JSON.stringify({
+    kind: intentInput.kind,
+    actions: intentInput.actions,
+    constraints: intentInput.constraints,
+    min_budget: intentInput.min_budget,
+    resource_pattern: intentInput.resource_pattern,
+    expiry: intentInput.expiry,
+  });
+  const encoded = new TextEncoder().encode(canonical);
   const hashBuffer = await crypto.subtle.digest('SHA-256', encoded);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  return 'js:' + hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function gcIntentPool() {

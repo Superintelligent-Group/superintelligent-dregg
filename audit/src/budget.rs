@@ -131,10 +131,7 @@ impl BudgetEnforcer {
     ///
     /// Returns an `AuditReceipt` on success, or `BudgetExhausted` if the
     /// budget would be exceeded.
-    pub fn record_use(
-        &mut self,
-        event: UsageEvent,
-    ) -> Result<AuditReceipt, BudgetExhausted> {
+    pub fn record_use(&mut self, event: UsageEvent) -> Result<AuditReceipt, BudgetExhausted> {
         // Verify the event is for our token.
         assert_eq!(
             event.token_id, self.token_id,
@@ -311,7 +308,9 @@ mod tests {
         let mut enforcer = BudgetEnforcer::new(token, BudgetSpec::total(5));
 
         for i in 0..3 {
-            enforcer.record_use(make_event(token, i, 1000 + i as i64)).unwrap();
+            enforcer
+                .record_use(make_event(token, i, 1000 + i as i64))
+                .unwrap();
         }
 
         let proof = enforcer.prove_budget_status(1003);

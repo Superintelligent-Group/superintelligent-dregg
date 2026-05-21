@@ -35,7 +35,7 @@
 //! representing a root token with unlimited access.
 
 use pyana_commit::{Fact, FactSet, FieldElement, SymbolTable};
-use pyana_token::{Attenuation, AuthToken, MacaroonToken};
+use pyana_token::MacaroonToken;
 use pyana_token::pyana_caveats::{self, PyanaGrant};
 
 // Re-export the canonical implementations from token::factset.
@@ -174,9 +174,7 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
             facts
         }
 
-        PyanaGrant::Budget {
-            id, limit, ..
-        } => {
+        PyanaGrant::Budget { id, limit, .. } => {
             let pred = symbols.intern("budget");
             let id_fe = symbols.intern(id);
             let limit_fe = FieldElement::from_u64(*limit);
@@ -396,10 +394,22 @@ mod tests {
         let valid_pred = FieldElement::from_symbol("valid_until");
         let user_pred = FieldElement::from_symbol("confine_user");
 
-        assert_eq!(factset.iter().filter(|f| f.predicate == app_pred).count(), 1);
-        assert_eq!(factset.iter().filter(|f| f.predicate == svc_pred).count(), 1);
-        assert_eq!(factset.iter().filter(|f| f.predicate == valid_pred).count(), 1);
-        assert_eq!(factset.iter().filter(|f| f.predicate == user_pred).count(), 1);
+        assert_eq!(
+            factset.iter().filter(|f| f.predicate == app_pred).count(),
+            1
+        );
+        assert_eq!(
+            factset.iter().filter(|f| f.predicate == svc_pred).count(),
+            1
+        );
+        assert_eq!(
+            factset.iter().filter(|f| f.predicate == valid_pred).count(),
+            1
+        );
+        assert_eq!(
+            factset.iter().filter(|f| f.predicate == user_pred).count(),
+            1
+        );
 
         // Symbol table should resolve all predicates.
         assert_eq!(symbols.resolve(app_pred), Some("app"));
@@ -438,7 +448,10 @@ mod tests {
         let grant = PyanaGrant::Organization(42);
         let facts = grant_to_facts(&grant, &mut symbols);
         assert_eq!(facts.len(), 1);
-        assert_eq!(facts[0].predicate, FieldElement::from_symbol("organization"));
+        assert_eq!(
+            facts[0].predicate,
+            FieldElement::from_symbol("organization")
+        );
         assert_eq!(facts[0].terms[0], FieldElement::from_u64(42));
     }
 
@@ -499,8 +512,14 @@ mod tests {
         let action_allowed_pred = FieldElement::from_symbol("action_allowed");
         let app_registered_pred = FieldElement::from_symbol("app_registered");
 
-        let action_facts: Vec<_> = facts.iter().filter(|f| f.predicate == action_allowed_pred).collect();
-        let app_facts: Vec<_> = facts.iter().filter(|f| f.predicate == app_registered_pred).collect();
+        let action_facts: Vec<_> = facts
+            .iter()
+            .filter(|f| f.predicate == action_allowed_pred)
+            .collect();
+        let app_facts: Vec<_> = facts
+            .iter()
+            .filter(|f| f.predicate == app_registered_pred)
+            .collect();
 
         assert_eq!(action_facts.len(), 2);
         assert_eq!(app_facts.len(), 1);
@@ -538,8 +557,14 @@ mod tests {
         let svc_action_pred = FieldElement::from_symbol("svc_action_allowed");
         let svc_registered_pred = FieldElement::from_symbol("svc_registered");
 
-        let action_facts: Vec<_> = facts.iter().filter(|f| f.predicate == svc_action_pred).collect();
-        let svc_facts: Vec<_> = facts.iter().filter(|f| f.predicate == svc_registered_pred).collect();
+        let action_facts: Vec<_> = facts
+            .iter()
+            .filter(|f| f.predicate == svc_action_pred)
+            .collect();
+        let svc_facts: Vec<_> = facts
+            .iter()
+            .filter(|f| f.predicate == svc_registered_pred)
+            .collect();
 
         assert_eq!(action_facts.len(), 3);
         assert_eq!(svc_facts.len(), 1);
@@ -556,7 +581,10 @@ mod tests {
         let facts = grant_to_facts_secure(&grant, &mut symbols);
 
         let action_allowed_pred = FieldElement::from_symbol("action_allowed");
-        let action_facts: Vec<_> = facts.iter().filter(|f| f.predicate == action_allowed_pred).collect();
+        let action_facts: Vec<_> = facts
+            .iter()
+            .filter(|f| f.predicate == action_allowed_pred)
+            .collect();
 
         assert_eq!(action_facts.len(), 1);
         let write_hash = FieldElement::from_symbol("write");
@@ -609,8 +637,14 @@ mod tests {
         let svc_action_pred = FieldElement::from_symbol("svc_action_allowed");
         let user_pred = FieldElement::from_symbol("confine_user");
 
-        let app_actions = factset.iter().filter(|f| f.predicate == action_allowed_pred).count();
-        let svc_actions = factset.iter().filter(|f| f.predicate == svc_action_pred).count();
+        let app_actions = factset
+            .iter()
+            .filter(|f| f.predicate == action_allowed_pred)
+            .count();
+        let svc_actions = factset
+            .iter()
+            .filter(|f| f.predicate == svc_action_pred)
+            .count();
         let user_facts = factset.iter().filter(|f| f.predicate == user_pred).count();
 
         assert_eq!(app_actions, 2); // read + write

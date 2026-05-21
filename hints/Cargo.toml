@@ -55,3 +55,6 @@ path = "examples/save_committee.rs"
 [[example]]
 name = "measure_simple"
 path = "examples/measure_simple.rs"
+
+[lints]
+workspace = true

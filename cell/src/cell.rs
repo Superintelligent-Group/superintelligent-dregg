@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::capability::CapabilitySet;
+use crate::delegation::DelegatedRef;
 use crate::id::CellId;
 use crate::permissions::Permissions;
 use crate::program::CellProgram;
@@ -42,8 +43,13 @@ pub struct Cell {
     pub permissions: Permissions,
     /// Optional verification key for ZK proof validation.
     pub verification_key: Option<VerificationKey>,
-    /// Optional parent/supervisor cell that can manage this cell.
+    /// Optional parent/supervisor cell. Planned for delegation chain walking
+    /// (child inherits parent's capabilities). Not yet enforced by the executor.
     pub delegate: Option<CellId>,
+    /// Rich delegation snapshot: point-in-time copy of the parent's c-list.
+    /// Used for snapshot+refresh E-style delegation. The child acts using this
+    /// snapshot; acceptors check freshness via `max_staleness`.
+    pub delegation: Option<DelegatedRef>,
     /// Which token domain this cell belongs to.
     pub token_id: [u8; 32],
     /// The c-list: what other cells this cell can reference.
@@ -64,6 +70,7 @@ impl Cell {
             permissions: Permissions::default(),
             verification_key: None,
             delegate: None,
+            delegation: None,
             token_id,
             capabilities: CapabilitySet::new(),
             program: CellProgram::None,
@@ -80,6 +87,7 @@ impl Cell {
             permissions: Permissions::default(),
             verification_key: None,
             delegate: None,
+            delegation: None,
             token_id,
             capabilities: CapabilitySet::new(),
             program: CellProgram::None,
@@ -96,6 +104,42 @@ impl Cell {
             permissions: Permissions::default(),
             verification_key: None,
             delegate: Some(self.id),
+            delegation: None,
+            token_id: child_token_id,
+            capabilities: CapabilitySet::new(),
+            program: CellProgram::None,
+        }
+    }
+
+    /// Create a child cell with snapshot+refresh delegation from this cell.
+    ///
+    /// The child inherits a point-in-time snapshot of the parent's c-list.
+    /// The snapshot epoch and refresh timestamp are set by the caller.
+    pub fn spawn_child_with_delegation(
+        &self,
+        child_public_key: [u8; 32],
+        child_token_id: [u8; 32],
+        delegation_epoch: u64,
+        refreshed_at: u64,
+        max_staleness: u64,
+    ) -> Cell {
+        let id = CellId::derive_raw(&child_public_key, &child_token_id);
+        let snapshot: Vec<crate::capability::CapabilityRef> =
+            self.capabilities.iter().cloned().collect();
+        Cell {
+            id,
+            public_key: child_public_key,
+            state: CellState::default(),
+            permissions: Permissions::default(),
+            verification_key: None,
+            delegate: Some(self.id),
+            delegation: Some(DelegatedRef::new(
+                self.id,
+                snapshot,
+                delegation_epoch,
+                refreshed_at,
+                max_staleness,
+            )),
             token_id: child_token_id,
             capabilities: CapabilitySet::new(),
             program: CellProgram::None,

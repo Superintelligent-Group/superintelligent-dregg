@@ -162,10 +162,7 @@ impl FactSet {
     }
 
     /// Get facts matching a predicate.
-    pub fn facts_with_predicate(
-        &self,
-        predicate: crate::field::FieldElement,
-    ) -> Vec<&Fact> {
+    pub fn facts_with_predicate(&self, predicate: crate::field::FieldElement) -> Vec<&Fact> {
         self.facts
             .iter()
             .filter(|f| f.predicate == predicate)
@@ -330,11 +327,7 @@ mod tests {
 
     #[test]
     fn from_facts_constructor() {
-        let facts = vec![
-            make_fact("a", 1),
-            make_fact("b", 2),
-            make_fact("c", 3),
-        ];
+        let facts = vec![make_fact("a", 1), make_fact("b", 2), make_fact("c", 3)];
         let mut fs = FactSet::from_facts(facts.clone());
         assert_eq!(fs.len(), 3);
         let root = fs.root();

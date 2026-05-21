@@ -90,11 +90,7 @@ impl CausalDag {
     /// Returns an error if:
     /// - The turn already exists (duplicate).
     /// - Any dependency is missing from the DAG.
-    pub fn insert(
-        &mut self,
-        turn_hash: [u8; 32],
-        deps: &[[u8; 32]],
-    ) -> Result<(), CausalError> {
+    pub fn insert(&mut self, turn_hash: [u8; 32], deps: &[[u8; 32]]) -> Result<(), CausalError> {
         if self.all_turns.contains(&turn_hash) {
             return Err(CausalError::Duplicate(turn_hash));
         }
@@ -106,10 +102,7 @@ impl CausalDag {
             .copied()
             .collect();
         if !missing.is_empty() {
-            return Err(CausalError::MissingDeps {
-                turn_hash,
-                missing,
-            });
+            return Err(CausalError::MissingDeps { turn_hash, missing });
         }
 
         // Insert the turn.
@@ -332,11 +325,7 @@ impl CausalDag {
         // Compute in-degree from the dependency sets.
         let mut in_deg: HashMap<[u8; 32], usize> = HashMap::new();
         for turn in &self.all_turns {
-            let dep_count = self
-                .dependencies
-                .get(turn)
-                .map(|d| d.len())
-                .unwrap_or(0);
+            let dep_count = self.dependencies.get(turn).map(|d| d.len()).unwrap_or(0);
             in_deg.insert(*turn, dep_count);
         }
 
@@ -376,10 +365,7 @@ impl CausalDag {
 
 /// Format a hash in short hex for display (first 4 bytes + ellipsis).
 pub fn hex_short(h: &[u8; 32]) -> String {
-    format!(
-        "{:02x}{:02x}{:02x}{:02x}...",
-        h[0], h[1], h[2], h[3]
-    )
+    format!("{:02x}{:02x}{:02x}{:02x}...", h[0], h[1], h[2], h[3])
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

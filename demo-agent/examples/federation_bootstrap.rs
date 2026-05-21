@@ -7,13 +7,10 @@
 //! 4. Epoch reconfiguration: add a 4th node, remove a node
 //! 5. Verify the attested root is verifiable by external parties
 
+use pyana_federation::types::{AttestedRoot, PublicKey, RevocationEvent, Signature};
 use pyana_federation::{
-    ConsensusConfig, ConsensusOrchestrator, ConsensusState,
-    Federation, ReconfigurationProposal,
+    ConsensusConfig, ConsensusOrchestrator, ConsensusState, Federation, ReconfigurationProposal,
     generate_keypair, sign,
-};
-use pyana_federation::types::{
-    AttestedRoot, PublicKey, RevocationEvent, Signature,
 };
 
 fn short_hex(bytes: &[u8]) -> String {
@@ -52,15 +49,20 @@ fn main() {
     // Build the attested root structure (unsigned initially).
     let mut genesis_root = AttestedRoot {
         merkle_root: genesis_merkle_root,
+        note_tree_root: None,
+        nullifier_set_root: None,
         height: genesis_height,
         timestamp: genesis_timestamp,
-        qc: None,
+        threshold_qc: None,
         quorum_signatures: Vec::new(),
         threshold: 2, // 2-of-3 quorum for genesis
     };
 
     println!("  Genesis root created:");
-    println!("    merkle_root: {} (empty tree)", short_hex(&genesis_merkle_root));
+    println!(
+        "    merkle_root: {} (empty tree)",
+        short_hex(&genesis_merkle_root)
+    );
     println!("    height: {}", genesis_height);
     println!("    timestamp: {}", genesis_timestamp);
     println!("    threshold: 2 of 3");
@@ -110,7 +112,10 @@ fn main() {
     let (_, unknown_pk) = generate_keypair();
     let wrong_keys = vec![unknown_pk, pk_beta, pk_gamma];
     let external_invalid = genesis_root.is_valid(&wrong_keys);
-    println!("    is_valid(wrong_keys): {} [PASS - correctly rejected]", external_invalid);
+    println!(
+        "    is_valid(wrong_keys): {} [PASS - correctly rejected]",
+        external_invalid
+    );
     assert!(!external_invalid);
     println!();
 
@@ -129,7 +134,10 @@ fn main() {
     let mut orchestrator = ConsensusOrchestrator::new(config.clone());
 
     println!("  Current epoch: {}", orchestrator.config.epoch);
-    println!("  Current members: {} (threshold: {})", orchestrator.config.num_nodes, orchestrator.config.threshold);
+    println!(
+        "  Current members: {} (threshold: {})",
+        orchestrator.config.num_nodes, orchestrator.config.threshold
+    );
 
     // Generate a 4th node keypair.
     let (sk_delta, pk_delta) = generate_keypair();
@@ -153,11 +161,22 @@ fn main() {
     println!("  Reconfiguration proposed by alpha (epoch 0 -> 1)");
 
     // Collect votes from beta and gamma.
-    let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
-    orchestrator.vote_reconfiguration(proposal_hash, &sk_beta).unwrap();
-    orchestrator.vote_reconfiguration(proposal_hash, &sk_gamma).unwrap();
+    let proposal_hash = orchestrator
+        .pending_reconfig
+        .as_ref()
+        .unwrap()
+        .proposal_hash;
+    orchestrator
+        .vote_reconfiguration(proposal_hash, &sk_beta)
+        .unwrap();
+    orchestrator
+        .vote_reconfiguration(proposal_hash, &sk_gamma)
+        .unwrap();
 
-    println!("  Votes: alpha (proposer) + beta + gamma = 3/{} [QUORUM]", config.threshold);
+    println!(
+        "  Votes: alpha (proposer) + beta + gamma = 3/{} [QUORUM]",
+        config.threshold
+    );
     assert!(orchestrator.reconfig_has_quorum());
 
     // Run a consensus round to trigger the epoch boundary.
@@ -173,8 +192,14 @@ fn main() {
 
     println!("  Consensus round finalized (block height 1)");
     println!("  Epoch advanced: {} -> {}", 0, orchestrator.config.epoch);
-    println!("  New member count: {} (was 3)", orchestrator.config.num_nodes);
-    println!("  New threshold: {} (BFT: f={})", orchestrator.config.threshold, orchestrator.config.max_faults);
+    println!(
+        "  New member count: {} (was 3)",
+        orchestrator.config.num_nodes
+    );
+    println!(
+        "  New threshold: {} (BFT: f={})",
+        orchestrator.config.threshold, orchestrator.config.max_faults
+    );
     assert_eq!(orchestrator.config.epoch, 1);
     assert_eq!(orchestrator.config.num_nodes, 4);
     assert!(orchestrator.config.members.contains(&pk_delta));
@@ -208,11 +233,22 @@ fn main() {
     println!("  Reconfiguration proposed: remove gamma");
 
     // With 4 nodes, threshold is 3. Need 3 votes.
-    let proposal_hash2 = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
-    orchestrator.vote_reconfiguration(proposal_hash2, &sk_beta).unwrap();
-    orchestrator.vote_reconfiguration(proposal_hash2, &sk_delta).unwrap();
+    let proposal_hash2 = orchestrator
+        .pending_reconfig
+        .as_ref()
+        .unwrap()
+        .proposal_hash;
+    orchestrator
+        .vote_reconfiguration(proposal_hash2, &sk_beta)
+        .unwrap();
+    orchestrator
+        .vote_reconfiguration(proposal_hash2, &sk_delta)
+        .unwrap();
     assert!(orchestrator.reconfig_has_quorum());
-    println!("  Votes: alpha + beta + delta = 3/{} [QUORUM]", orchestrator.config.threshold);
+    println!(
+        "  Votes: alpha + beta + delta = 3/{} [QUORUM]",
+        orchestrator.config.threshold
+    );
 
     // Trigger epoch transition.
     states[0].submit_revocation(RevocationEvent {
@@ -224,8 +260,14 @@ fn main() {
     assert!(round2.is_some());
 
     println!("  Epoch advanced: 1 -> {}", orchestrator.config.epoch);
-    println!("  Members: {} (alpha, beta, delta)", orchestrator.config.num_nodes);
-    println!("  Gamma removed: {}", !orchestrator.config.members.contains(&pk_gamma));
+    println!(
+        "  Members: {} (alpha, beta, delta)",
+        orchestrator.config.num_nodes
+    );
+    println!(
+        "  Gamma removed: {}",
+        !orchestrator.config.members.contains(&pk_gamma)
+    );
     assert_eq!(orchestrator.config.epoch, 2);
     assert_eq!(orchestrator.config.num_nodes, 3);
     assert!(!orchestrator.config.members.contains(&pk_gamma));
@@ -252,7 +294,11 @@ fn main() {
     println!("    {}", attested);
     println!("    merkle_root: {}", short_hex(&attested.merkle_root));
     println!("    height: {}", attested.height);
-    println!("    signatures: {}/{}", attested.quorum_signatures.len(), attested.threshold);
+    println!(
+        "    signatures: {}/{}",
+        attested.quorum_signatures.len(),
+        attested.threshold
+    );
 
     // External party verifies using known federation keys.
     let federation_keys: Vec<PublicKey> = fed.nodes.iter().map(|n| n.identity.public_key).collect();

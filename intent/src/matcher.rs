@@ -12,8 +12,7 @@
 //! the intent's MatchSpec without revealing the token itself.
 
 use crate::{
-    ActionPattern, CommitmentId, Constraint, Intent, IntentKind, Match, MatchSpec,
-    VerificationMode,
+    ActionPattern, CommitmentId, Constraint, Intent, IntentKind, Match, MatchSpec, VerificationMode,
 };
 
 /// Sensitivity level for a held capability.
@@ -179,7 +178,11 @@ fn actions_match(token: &HeldCapability, patterns: &[ActionPattern]) -> bool {
             // Wildcard resource on token means it matches anything
             if token.resource == "*" || pattern.resource.is_none() {
                 // Just need the action
-                if !token.actions.iter().any(|a| a == required_action || a == "*") {
+                if !token
+                    .actions
+                    .iter()
+                    .any(|a| a == required_action || a == "*")
+                {
                     return false;
                 }
             } else {
@@ -188,7 +191,10 @@ fn actions_match(token: &HeldCapability, patterns: &[ActionPattern]) -> bool {
                     .resource
                     .as_ref()
                     .is_none_or(|r| resource_matches(&token.resource, r));
-                let action_ok = token.actions.iter().any(|a| a == required_action || a == "*");
+                let action_ok = token
+                    .actions
+                    .iter()
+                    .any(|a| a == required_action || a == "*");
                 if !resource_ok || !action_ok {
                     return false;
                 }
@@ -622,13 +628,7 @@ mod tests {
             vec![],
         );
         let our_id = CommitmentId([0xBB; 32]);
-        let result = match_intent(
-            &intent,
-            &[token],
-            our_id,
-            VerificationMode::Selective,
-            100,
-        );
+        let result = match_intent(&intent, &[token], our_id, VerificationMode::Selective, 100);
         match result {
             MatchResult::Matched { matched, .. } => {
                 assert!(matched.proof.is_some());

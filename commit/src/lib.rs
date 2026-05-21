@@ -48,6 +48,7 @@ pub mod field;
 pub mod fold;
 pub mod hash;
 pub mod merkle;
+pub mod poseidon2_tree;
 pub mod state;
 pub mod symbol;
 
@@ -58,6 +59,9 @@ pub use field::FieldElement;
 pub use fold::{FoldDelta, FoldDeltaBuilder, FoldVerification, verify_fold_chain};
 pub use hash::{HASH_ARITY, hash_leaf, hash_node};
 pub use merkle::{MerkleProof, MerkleTree, NonMembershipProof, SurvivalWitness};
+pub use poseidon2_tree::{
+    Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field, hash_bytes_to_field,
+};
 pub use state::{StateCommitment, TokenState};
 pub use symbol::SymbolTable;
 

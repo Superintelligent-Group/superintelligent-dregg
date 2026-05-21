@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use pyana_cell::preconditions::CellStatePrecondition;
 use pyana_cell::{Cell, CellId, Ledger, Preconditions};
-use pyana_turn::action::{Action, Authorization, DelegationMode, Effect};
+use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect};
 use pyana_turn::{CallForest, ComputronCosts, Turn};
 
 use crate::atomic::{AtomicForest, AtomicForestBuilder, Coordinator, Decision, Participant, Vote};
@@ -92,6 +92,8 @@ fn make_transfer_turn(
         preconditions: Preconditions::default(),
         effects: vec![Effect::Transfer { from, to, amount }],
         may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
     };
     forest.add_root(action);
     Turn {
@@ -101,6 +103,8 @@ fn make_transfer_turn(
         fee,
         memo: Some("test transfer".to_string()),
         valid_until: None,
+        depends_on: vec![],
+        previous_receipt_hash: None,
     }
 }
 
@@ -119,6 +123,8 @@ fn make_set_field_turn(agent: CellId, index: usize, value: [u8; 32], nonce: u64)
             value,
         }],
         may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
     };
     forest.add_root(action);
     Turn {
@@ -128,6 +134,8 @@ fn make_set_field_turn(agent: CellId, index: usize, value: [u8; 32], nonce: u64)
         fee: 0,
         memo: None,
         valid_until: None,
+        depends_on: vec![],
+        previous_receipt_hash: None,
     }
 }
 
@@ -142,6 +150,8 @@ fn make_noop_turn(agent: CellId, nonce: u64) -> Turn {
         preconditions: Preconditions::default(),
         effects: vec![Effect::IncrementNonce { cell: agent }],
         may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
     };
     forest.add_root(action);
     Turn {
@@ -151,6 +161,8 @@ fn make_noop_turn(agent: CellId, nonce: u64) -> Turn {
         fee: 0,
         memo: None,
         valid_until: None,
+        depends_on: vec![],
+        previous_receipt_hash: None,
     }
 }
 
@@ -453,7 +465,14 @@ mod causal_ledger {
         let ct = CausalTurn::new(turn, vec![], node_a, 1); // sequence should be 0
 
         let err = cl.apply_causal_turn(&ct).unwrap_err();
-        assert!(matches!(err, CoordError::SequenceGap { expected: 0, got: 1, .. }));
+        assert!(matches!(
+            err,
+            CoordError::SequenceGap {
+                expected: 0,
+                got: 1,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -609,23 +628,23 @@ mod atomic_forest_tests {
                 amount: 500,
             }],
             may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
         });
 
         let af = AtomicForest::new(
             vec![node_id(1), node_id(2)],
             forest,
-            vec![
-                (
-                    cell_a.id,
-                    Preconditions {
-                        cell_state: Some(CellStatePrecondition {
-                            min_balance: Some(500),
-                            ..Default::default()
-                        }),
+            vec![(
+                cell_a.id,
+                Preconditions {
+                    cell_state: Some(CellStatePrecondition {
+                        min_balance: Some(500),
                         ..Default::default()
-                    },
-                ),
-            ],
+                    }),
+                    ..Default::default()
+                },
+            )],
             cell_a.id,
             0,
         );
@@ -661,6 +680,8 @@ mod atomic_forest_tests {
             preconditions: Preconditions::default(),
             effects: vec![Effect::IncrementNonce { cell: cell_a.id }],
             may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
         });
 
         let af = AtomicForest::new(vec![], forest, vec![], cell_a.id, 0);
@@ -681,6 +702,8 @@ mod atomic_forest_tests {
             preconditions: Preconditions::default(),
             effects: vec![Effect::IncrementNonce { cell: cell_a.id }],
             may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
         });
 
         let mut builder = AtomicForestBuilder::new();
@@ -711,7 +734,14 @@ mod coordinator_tests {
     use super::*;
     use crate::atomic::CoordinatorState;
 
-    fn setup_two_party() -> (Ledger, CellId, CellId, AtomicForest, Vec<[u8; 32]>, HashMap<[u8; 32], [u8; 32]>) {
+    fn setup_two_party() -> (
+        Ledger,
+        CellId,
+        CellId,
+        AtomicForest,
+        Vec<[u8; 32]>,
+        HashMap<[u8; 32], [u8; 32]>,
+    ) {
         let mut ledger = Ledger::new();
         let cell_a = make_cell(1, 10000);
         let cell_b = make_cell(2, 5000);
@@ -732,6 +762,8 @@ mod coordinator_tests {
                 amount: 500,
             }],
             may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
         });
 
         let af = AtomicForest::new(
@@ -748,10 +780,7 @@ mod coordinator_tests {
                         ..Default::default()
                     },
                 ),
-                (
-                    id_b,
-                    Preconditions::default(),
-                ),
+                (id_b, Preconditions::default()),
             ],
             id_a,
             0,
@@ -766,7 +795,13 @@ mod coordinator_tests {
     #[test]
     fn propose_from_idle() {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
-        let mut coord = Coordinator::new(node_id(1), 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
 
         let msg = coord.propose(af).unwrap();
         assert_eq!(msg.coordinator, node_id(1));
@@ -776,14 +811,23 @@ mod coordinator_tests {
     #[test]
     fn propose_not_idle_error() {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
-        let mut coord = Coordinator::new(node_id(1), 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
         coord.propose(af.clone()).unwrap();
 
         // Try to propose again while already proposing.
         let err = coord.propose(af).unwrap_err();
         assert!(matches!(
             err,
-            CoordError::InvalidCoordinatorState { expected: "Idle", actual: "Proposing" }
+            CoordError::InvalidCoordinatorState {
+                expected: "Idle",
+                actual: "Proposing"
+            }
         ));
     }
 
@@ -792,20 +836,50 @@ mod coordinator_tests {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
 
         // Threshold 0.
-        let mut coord = Coordinator::new(node_id(1), 0, zero_costs(), TEST_MAX_BUDGET, participant_keys.clone());
+        let mut coord = Coordinator::new(
+            node_id(1),
+            0,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys.clone(),
+        );
         let err = coord.propose(af.clone()).unwrap_err();
-        assert!(matches!(err, CoordError::InvalidThreshold { threshold: 0, participants: 2 }));
+        assert!(matches!(
+            err,
+            CoordError::InvalidThreshold {
+                threshold: 0,
+                participants: 2
+            }
+        ));
 
         // Threshold 3 > 2 participants.
-        let mut coord = Coordinator::new(node_id(1), 3, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            3,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
         let err = coord.propose(af).unwrap_err();
-        assert!(matches!(err, CoordError::InvalidThreshold { threshold: 3, participants: 2 }));
+        assert!(matches!(
+            err,
+            CoordError::InvalidThreshold {
+                threshold: 3,
+                participants: 2
+            }
+        ));
     }
 
     #[test]
     fn full_commit_path() {
         let (mut ledger, id_a, id_b, af, signing_keys, participant_keys) = setup_two_party();
-        let mut coord = Coordinator::new(node_id(1), 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
 
         // Propose.
         coord.propose(af.clone()).unwrap();
@@ -835,7 +909,13 @@ mod coordinator_tests {
     #[test]
     fn abort_on_no_vote() {
         let (_, _, _, af, signing_keys, participant_keys) = setup_two_party();
-        let mut coord = Coordinator::new(node_id(1), 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
 
         coord.propose(af.clone()).unwrap();
 
@@ -858,7 +938,13 @@ mod coordinator_tests {
     #[test]
     fn unknown_participant_error() {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
-        let mut coord = Coordinator::new(node_id(1), 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
         coord.propose(af).unwrap();
 
         // Unknown node votes.
@@ -871,7 +957,13 @@ mod coordinator_tests {
     #[test]
     fn duplicate_vote_error() {
         let (_, _, _, af, signing_keys, participant_keys) = setup_two_party();
-        let mut coord = Coordinator::new(node_id(1), 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
         coord.propose(af.clone()).unwrap();
 
         let sig = Vote::sign(&af.hash, &signing_keys[0]);
@@ -887,7 +979,13 @@ mod coordinator_tests {
     #[test]
     fn commit_without_threshold_error() {
         let (mut ledger, _, _, af, signing_keys, participant_keys) = setup_two_party();
-        let mut coord = Coordinator::new(node_id(1), 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
         coord.propose(af.clone()).unwrap();
 
         // Only one vote.
@@ -896,14 +994,26 @@ mod coordinator_tests {
 
         // Try to commit with only 1/2 votes.
         let err = coord.commit(&mut ledger).unwrap_err();
-        assert!(matches!(err, CoordError::ThresholdNotMet { required: 2, received: 1 }));
+        assert!(matches!(
+            err,
+            CoordError::ThresholdNotMet {
+                required: 2,
+                received: 1
+            }
+        ));
     }
 
     #[test]
     fn threshold_one_of_two() {
         let (mut ledger, id_a, id_b, af, signing_keys, participant_keys) = setup_two_party();
         // Only need 1 of 2 to commit.
-        let mut coord = Coordinator::new(node_id(1), 1, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            1,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
 
         coord.propose(af.clone()).unwrap();
 
@@ -922,7 +1032,13 @@ mod coordinator_tests {
     #[test]
     fn coordinator_reset() {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
-        let mut coord = Coordinator::new(node_id(1), 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
         coord.propose(af).unwrap();
         assert!(matches!(coord.state, CoordinatorState::Proposing { .. }));
 
@@ -933,25 +1049,41 @@ mod coordinator_tests {
     #[test]
     fn invalid_signature_rejected() {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
-        let mut coord = Coordinator::new(node_id(1), 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
         coord.propose(af.clone()).unwrap();
 
         // Fabricate a bad signature (all zeros).
         let bad_sig = [0u8; 64];
-        let err = coord.receive_vote(node_id(1), Vote::yes(bad_sig)).unwrap_err();
+        let err = coord
+            .receive_vote(node_id(1), Vote::yes(bad_sig))
+            .unwrap_err();
         assert!(matches!(err, CoordError::InvalidVoteSignature { .. }));
     }
 
     #[test]
     fn wrong_key_signature_rejected() {
         let (_, _, _, af, _, participant_keys) = setup_two_party();
-        let mut coord = Coordinator::new(node_id(1), 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord = Coordinator::new(
+            node_id(1),
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys,
+        );
         coord.propose(af.clone()).unwrap();
 
         // Sign with the wrong key (node 2's key for node 1's vote).
         let (wrong_sk, _) = make_keypair(2);
         let wrong_sig = Vote::sign(&af.hash, &wrong_sk);
-        let err = coord.receive_vote(node_id(1), Vote::yes(wrong_sig)).unwrap_err();
+        let err = coord
+            .receive_vote(node_id(1), Vote::yes(wrong_sig))
+            .unwrap_err();
         assert!(matches!(err, CoordError::InvalidVoteSignature { .. }));
     }
 
@@ -973,7 +1105,14 @@ mod participant_tests {
     use crate::atomic::CommitMessage;
     use pyana_turn::TurnReceipt;
 
-    fn setup_participant_scenario() -> (Ledger, CellId, CellId, AtomicForest, Vec<[u8; 32]>, HashMap<[u8; 32], [u8; 32]>) {
+    fn setup_participant_scenario() -> (
+        Ledger,
+        CellId,
+        CellId,
+        AtomicForest,
+        Vec<[u8; 32]>,
+        HashMap<[u8; 32], [u8; 32]>,
+    ) {
         let mut ledger = Ledger::new();
         let cell_a = make_cell(1, 10000);
         let cell_b = make_cell(2, 5000);
@@ -993,6 +1132,8 @@ mod participant_tests {
                 amount: 500,
             }],
             may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
         });
 
         let af = AtomicForest::new(
@@ -1009,10 +1150,7 @@ mod participant_tests {
                         ..Default::default()
                     },
                 ),
-                (
-                    id_b,
-                    Preconditions::default(),
-                ),
+                (id_b, Preconditions::default()),
             ],
             id_a,
             0,
@@ -1027,7 +1165,8 @@ mod participant_tests {
     #[test]
     fn participant_votes_yes_when_preconditions_met() {
         let (ledger, id_a, _, af, signing_keys, _) = setup_participant_scenario();
-        let participant = Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger, zero_costs());
+        let participant =
+            Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger, zero_costs());
 
         let vote = participant.evaluate_proposal(&af);
         assert!(vote.is_yes());
@@ -1040,7 +1179,8 @@ mod participant_tests {
         // Drain A's balance so precondition (min_balance: 500) fails.
         ledger.get_mut(&id_a).unwrap().state.balance = 100;
 
-        let participant = Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger, zero_costs());
+        let participant =
+            Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger, zero_costs());
         let vote = participant.evaluate_proposal(&af);
         assert!(vote.is_no());
     }
@@ -1062,7 +1202,8 @@ mod participant_tests {
     #[test]
     fn participant_applies_commit() {
         let (ledger, id_a, id_b, af, signing_keys, _) = setup_participant_scenario();
-        let mut participant = Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger, zero_costs());
+        let mut participant =
+            Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger, zero_costs());
 
         let receipt = participant.apply_commit(&af).unwrap();
         assert_eq!(receipt.action_count, 1);
@@ -1075,7 +1216,13 @@ mod participant_tests {
     #[test]
     fn participant_verifies_commit_signatures() {
         let (ledger, id_a, _, af, signing_keys, participant_keys) = setup_participant_scenario();
-        let participant = Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger.clone(), zero_costs());
+        let participant = Participant::with_costs(
+            id_a,
+            node_id(1),
+            signing_keys[0],
+            ledger.clone(),
+            zero_costs(),
+        );
 
         // Build valid commit message with real Ed25519 signatures.
         let sig_1 = Vote::sign(&af.hash, &signing_keys[0]);
@@ -1092,11 +1239,12 @@ mod participant_tests {
                 effects_hash: [0u8; 32],
                 computrons_used: 0,
                 action_count: 1,
+                previous_receipt_hash: None,
+                agent: id_a,
+                routing_directives: vec![],
+                executor_signature: None,
             },
-            signatures: vec![
-                (node_id(1), sig_1),
-                (node_id(2), sig_2),
-            ],
+            signatures: vec![(node_id(1), sig_1), (node_id(2), sig_2)],
         };
 
         assert!(participant.verify_commit(&commit, &af, &participant_keys));
@@ -1181,6 +1329,8 @@ mod integration {
                 amount: 500,
             }],
             may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
         });
 
         let af = AtomicForest::new(
@@ -1197,27 +1347,42 @@ mod integration {
                         ..Default::default()
                     },
                 ),
-                (
-                    bob_id2,
-                    Preconditions::default(),
-                ),
+                (bob_id2, Preconditions::default()),
             ],
             alice_id2,
             0,
         );
 
         // [2/4] Voting.
-        let mut coordinator = Coordinator::new(node_a, 2, zero_costs(), TEST_MAX_BUDGET, participant_keys.clone());
+        let mut coordinator = Coordinator::new(
+            node_a,
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys.clone(),
+        );
         coordinator.propose(af.clone()).unwrap();
 
         // Node A evaluates and votes.
-        let participant_a = Participant::with_costs(alice_id2, node_a, signing_keys[0], atomic_ledger.clone(), zero_costs());
+        let participant_a = Participant::with_costs(
+            alice_id2,
+            node_a,
+            signing_keys[0],
+            atomic_ledger.clone(),
+            zero_costs(),
+        );
         let vote_a = participant_a.evaluate_proposal(&af);
         assert!(vote_a.is_yes());
         coordinator.receive_vote(node_a, vote_a).unwrap();
 
         // Node B evaluates and votes.
-        let participant_b = Participant::with_costs(bob_id2, node_b, signing_keys[1], atomic_ledger.clone(), zero_costs());
+        let participant_b = Participant::with_costs(
+            bob_id2,
+            node_b,
+            signing_keys[1],
+            atomic_ledger.clone(),
+            zero_costs(),
+        );
         let vote_b = participant_b.evaluate_proposal(&af);
         assert!(vote_b.is_yes());
         let decision = coordinator.receive_vote(node_b, vote_b).unwrap();
@@ -1252,6 +1417,8 @@ mod integration {
                 amount: 500,
             }],
             may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
         });
 
         let af2 = AtomicForest::new(
@@ -1274,17 +1441,35 @@ mod integration {
             0,
         );
 
-        let mut coord2 = Coordinator::new(node_a, 2, zero_costs(), TEST_MAX_BUDGET, participant_keys.clone());
+        let mut coord2 = Coordinator::new(
+            node_a,
+            2,
+            zero_costs(),
+            TEST_MAX_BUDGET,
+            participant_keys.clone(),
+        );
         coord2.propose(af2.clone()).unwrap();
 
         // Alice votes yes (her precondition is fine).
-        let part_a = Participant::with_costs(alice_id3, node_a, signing_keys[0], fail_ledger.clone(), zero_costs());
+        let part_a = Participant::with_costs(
+            alice_id3,
+            node_a,
+            signing_keys[0],
+            fail_ledger.clone(),
+            zero_costs(),
+        );
         let va = part_a.evaluate_proposal(&af2);
         assert!(va.is_yes());
         coord2.receive_vote(node_a, va).unwrap();
 
         // Bob votes no (his min_balance precondition fails).
-        let part_b = Participant::with_costs(bob_id3, node_b, signing_keys[1], fail_ledger.clone(), zero_costs());
+        let part_b = Participant::with_costs(
+            bob_id3,
+            node_b,
+            signing_keys[1],
+            fail_ledger.clone(),
+            zero_costs(),
+        );
         let vb = part_b.evaluate_proposal(&af2);
         assert!(vb.is_no());
 
@@ -1302,10 +1487,15 @@ mod integration {
     #[test]
     fn causal_then_atomic_on_same_ledger() {
         let mut ledger = Ledger::new();
-        let cell_a = make_cell(1, 10000);
+        let mut cell_a = make_cell(1, 10000);
         let cell_b = make_cell(2, 5000);
+        let id_b = cell_b.id;
+        // Grant cell_a a capability to reach cell_b (needed for cross-cell actions).
+        cell_a
+            .capabilities
+            .grant(id_b, pyana_cell::AuthRequired::None);
         let id_a = ledger.insert_cell(cell_a).unwrap();
-        let id_b = ledger.insert_cell(cell_b).unwrap();
+        ledger.insert_cell(cell_b).unwrap();
 
         let node_a = node_id(1);
         let node_b = node_id(2);
@@ -1328,7 +1518,7 @@ mod integration {
 
         let mut forest = CallForest::new();
         forest.add_root(Action {
-            target: id_a,
+            target: id_b,
             method: *blake3::hash(b"atomic_swap").as_bytes(),
             args: vec![],
             authorization: Authorization::None,
@@ -1339,6 +1529,8 @@ mod integration {
                 amount: 2000,
             }],
             may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
         });
 
         let af = AtomicForest::new(
@@ -1361,7 +1553,8 @@ mod integration {
             0,
         );
 
-        let mut coord = Coordinator::new(node_a, 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord =
+            Coordinator::new(node_a, 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
         coord.propose(af.clone()).unwrap();
 
         // Both vote yes.
@@ -1405,10 +1598,20 @@ mod integration {
             authorization: Authorization::None,
             preconditions: Preconditions::default(),
             effects: vec![
-                Effect::Transfer { from: id_a, to: id_b, amount: 100 },
-                Effect::Transfer { from: id_a, to: id_c, amount: 100 },
+                Effect::Transfer {
+                    from: id_a,
+                    to: id_b,
+                    amount: 100,
+                },
+                Effect::Transfer {
+                    from: id_a,
+                    to: id_c,
+                    amount: 100,
+                },
             ],
             may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
         });
 
         let af = AtomicForest::new(
@@ -1433,7 +1636,8 @@ mod integration {
         );
 
         // Threshold 2 of 3 (majority).
-        let mut coord = Coordinator::new(node_a, 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord =
+            Coordinator::new(node_a, 2, zero_costs(), TEST_MAX_BUDGET, participant_keys);
         coord.propose(af.clone()).unwrap();
 
         // A votes yes.
@@ -1478,24 +1682,19 @@ mod integration {
             preconditions: Preconditions::default(),
             effects: vec![Effect::IncrementNonce { cell: id_a }],
             may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
         });
 
-        let af = AtomicForest::new(
-            vec![node_a, node_b, node_c],
-            forest,
-            vec![],
-            id_a,
-            0,
-        );
+        let af = AtomicForest::new(vec![node_a, node_b, node_c], forest, vec![], id_a, 0);
 
         // Need all 3.
-        let mut coord = Coordinator::new(node_a, 3, zero_costs(), TEST_MAX_BUDGET, participant_keys);
+        let mut coord =
+            Coordinator::new(node_a, 3, zero_costs(), TEST_MAX_BUDGET, participant_keys);
         coord.propose(af.clone()).unwrap();
 
         // B votes no — now max possible yes is 2, but threshold is 3.
-        let decision = coord
-            .receive_vote(node_b, Vote::no("nope"))
-            .unwrap();
+        let decision = coord.receive_vote(node_b, Vote::no("nope")).unwrap();
         assert_eq!(decision, Some(Decision::Abort));
     }
 

@@ -25,15 +25,15 @@
 //! The verifier still needs access to the inner proofs for full soundness, but the
 //! aggregation proof provides a binding commitment to the sequence.
 
-use p3_air::{Air, AirBuilder, BaseAir};
 use p3_air::WindowAccess;
+use p3_air::{Air, AirBuilder, BaseAir};
 use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::dense::RowMajorMatrix;
 
 use crate::field::BabyBear;
-use crate::poseidon2::hash_4_to_1;
 use crate::plonky3_prover::{PyanaProof, create_config, to_p3, verify_plonky3};
+use crate::poseidon2::hash_4_to_1;
 
 // ============================================================================
 // Aggregation AIR
@@ -137,7 +137,11 @@ fn generate_aggregation_trace(
     let mut accumulator = BabyBear::ZERO;
 
     for (i, pi) in proof_public_inputs.iter().enumerate() {
-        assert_eq!(pi.len(), 2, "each proof must have 2 public inputs [leaf, root]");
+        assert_eq!(
+            pi.len(),
+            2,
+            "each proof must have 2 public inputs [leaf, root]"
+        );
         let leaf = pi[0];
         let root = pi[1];
 
@@ -184,7 +188,8 @@ pub fn prove_recursive(inputs: Vec<RecursionInput>) -> Result<RecursiveProof, St
     }
 
     // Step 2: Build aggregation trace
-    let proof_pis: Vec<Vec<BabyBear>> = inputs.iter()
+    let proof_pis: Vec<Vec<BabyBear>> = inputs
+        .iter()
         .map(|input| input.public_inputs.clone())
         .collect();
 
@@ -196,7 +201,8 @@ pub fn prove_recursive(inputs: Vec<RecursionInput>) -> Result<RecursiveProof, St
 
     let matrix = {
         let width = trace[0].len();
-        let values: Vec<P3BabyBear> = trace.iter()
+        let values: Vec<P3BabyBear> = trace
+            .iter()
             .flat_map(|row| row.iter().map(|&v| to_p3(v)))
             .collect();
         RowMajorMatrix::new(values, width)
@@ -232,7 +238,9 @@ pub fn verify_recursive(recursive_proof: &RecursiveProof) -> Result<(), String> 
     let air = AggregationAir;
 
     // Recompute expected public inputs for the aggregation proof
-    let proof_pis: Vec<Vec<BabyBear>> = recursive_proof.inner_proofs.iter()
+    let proof_pis: Vec<Vec<BabyBear>> = recursive_proof
+        .inner_proofs
+        .iter()
         .map(|input| input.public_inputs.clone())
         .collect();
     let (_, expected_public_inputs) = generate_aggregation_trace(&proof_pis);
@@ -240,8 +248,13 @@ pub fn verify_recursive(recursive_proof: &RecursiveProof) -> Result<(), String> 
     let p3_public: Vec<P3BabyBear> = expected_public_inputs.iter().map(|&v| to_p3(v)).collect();
 
     // Verify the aggregation proof
-    p3_uni_stark::verify(&config, &air, &recursive_proof.aggregation_proof, &p3_public)
-        .map_err(|e| format!("Aggregation proof verification failed: {:?}", e))?;
+    p3_uni_stark::verify(
+        &config,
+        &air,
+        &recursive_proof.aggregation_proof,
+        &p3_public,
+    )
+    .map_err(|e| format!("Aggregation proof verification failed: {:?}", e))?;
 
     // Verify each inner proof
     for (i, input) in recursive_proof.inner_proofs.iter().enumerate() {
@@ -290,7 +303,10 @@ mod tests {
         let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
         let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf, &siblings, &positions);
         let proof = prove_plonky3(&trace, &public_inputs);
-        RecursionInput { proof, public_inputs }
+        RecursionInput {
+            proof,
+            public_inputs,
+        }
     }
 
     #[test]
@@ -328,23 +344,33 @@ mod tests {
 
         // Verify the recursive proof
         let verify_result = verify_recursive(&recursive_proof);
-        assert!(verify_result.is_ok(), "Recursive verification failed: {:?}", verify_result.err());
+        assert!(
+            verify_result.is_ok(),
+            "Recursive verification failed: {:?}",
+            verify_result.err()
+        );
     }
 
     #[test]
     fn recursive_proof_four_proofs() {
-        let inputs: Vec<RecursionInput> = (1..=4)
-            .map(|i| make_test_proof(i * 1000))
-            .collect();
+        let inputs: Vec<RecursionInput> = (1..=4).map(|i| make_test_proof(i * 1000)).collect();
 
         let result = prove_recursive(inputs);
-        assert!(result.is_ok(), "4-proof recursion failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "4-proof recursion failed: {:?}",
+            result.err()
+        );
 
         let recursive_proof = result.unwrap();
         assert_eq!(recursive_proof.num_proofs, 4);
 
         let verify_result = verify_recursive(&recursive_proof);
-        assert!(verify_result.is_ok(), "4-proof recursive verification failed: {:?}", verify_result.err());
+        assert!(
+            verify_result.is_ok(),
+            "4-proof recursive verification failed: {:?}",
+            verify_result.err()
+        );
     }
 
     #[test]
@@ -353,6 +379,10 @@ mod tests {
         let input2 = make_test_proof(6666);
 
         let result = aggregate_pair(input1, input2);
-        assert!(result.is_ok(), "Pair aggregation failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Pair aggregation failed: {:?}",
+            result.err()
+        );
     }
 }

@@ -8,14 +8,13 @@
 //! It provides the highest-level API for agent operations: execute effects,
 //! spawn sub-agents with attenuated capabilities, and manage the local cell.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use pyana_cell::{Cell, CellId, Ledger};
 use pyana_token::{Attenuation, AuthToken};
 use pyana_turn::{
-    Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect,
-    Turn, TurnExecutor, TurnReceipt, TurnResult,
-    action::symbol,
+    Action, Authorization, BudgetGate, BudgetSlice, CallForest, ComputronCosts, DelegationMode,
+    Effect, Turn, TurnExecutor, TurnReceipt, TurnResult, action::symbol,
 };
 use pyana_types::PublicKey;
 
@@ -29,14 +28,19 @@ use crate::wallet::{AgentWallet, DelegatedToken, HeldToken};
 /// - Turn construction and execution
 /// - Sub-agent spawning with attenuated capabilities
 ///
+/// The wallet is held behind an `Arc<RwLock<...>>` so that the runtime can
+/// append receipts after successful turn execution (mutating the receipt chain
+/// and IVC state), while still allowing shared read access for signing and
+/// token operations.
+///
 /// # Example
 ///
 /// ```no_run
 /// use pyana_sdk::{AgentWallet, AgentRuntime, Effect};
 /// use pyana_types::CellId;
-/// use std::sync::{Arc, Mutex};
+/// use std::sync::{Arc, RwLock};
 ///
-/// let wallet = Arc::new(AgentWallet::new());
+/// let wallet = Arc::new(RwLock::new(AgentWallet::new()));
 /// let runtime = AgentRuntime::new(wallet, "my-domain");
 ///
 /// // Execute effects against the local ledger
@@ -45,8 +49,8 @@ use crate::wallet::{AgentWallet, DelegatedToken, HeldToken};
 /// ]).unwrap();
 /// ```
 pub struct AgentRuntime {
-    /// The agent's wallet.
-    wallet: Arc<AgentWallet>,
+    /// The agent's wallet (read-write lock for receipt chain mutation).
+    wallet: Arc<RwLock<AgentWallet>>,
     /// The agent's cell ID in the local domain.
     cell_id: CellId,
     /// The domain this runtime operates in.
@@ -67,19 +71,27 @@ impl AgentRuntime {
     ///
     /// # Arguments
     ///
-    /// * `wallet` - Shared reference to the agent's wallet.
+    /// * `wallet` - Shared read-write reference to the agent's wallet.
     /// * `domain` - The domain this agent operates in (e.g., "compute", "storage").
-    pub fn new(wallet: Arc<AgentWallet>, domain: &str) -> Self {
-        let cell_id = wallet.cell_id(domain);
+    pub fn new(wallet: Arc<RwLock<AgentWallet>>, domain: &str) -> Self {
+        let cell_id;
+        let public_key;
+        {
+            let w = wallet.read().unwrap();
+            cell_id = w.cell_id(domain);
+            public_key = w.public_key();
+        }
         let mut ledger = Ledger::new();
 
         // Create the agent's cell with a generous initial balance for local use.
         let agent_cell = Cell::with_balance(
-            wallet.public_key().0,
+            public_key.0,
             *blake3::hash(domain.as_bytes()).as_bytes(),
             1_000_000, // 1M computrons initial balance
         );
-        ledger.insert_cell(agent_cell).expect("fresh ledger, no conflict");
+        ledger
+            .insert_cell(agent_cell)
+            .expect("fresh ledger, no conflict");
 
         let executor = TurnExecutor::new(ComputronCosts::default_costs());
 
@@ -98,11 +110,11 @@ impl AgentRuntime {
     /// Use this when the ledger is shared with other components or has been
     /// restored from persistent storage.
     pub fn with_ledger(
-        wallet: Arc<AgentWallet>,
+        wallet: Arc<RwLock<AgentWallet>>,
         domain: &str,
         ledger: Arc<Mutex<Ledger>>,
     ) -> Self {
-        let cell_id = wallet.cell_id(domain);
+        let cell_id = wallet.read().unwrap().cell_id(domain);
         let executor = TurnExecutor::new(ComputronCosts::default_costs());
 
         AgentRuntime {
@@ -133,6 +145,27 @@ impl AgentRuntime {
     /// Get the agent's current nonce.
     pub fn nonce(&self) -> u64 {
         *self.nonce.lock().unwrap()
+    }
+
+    /// Get a reference to the wallet (behind RwLock).
+    ///
+    /// Callers should use `.read().unwrap()` for read access or
+    /// `.write().unwrap()` for mutation (e.g., enabling IVC, minting tokens).
+    pub fn wallet(&self) -> &Arc<RwLock<AgentWallet>> {
+        &self.wallet
+    }
+
+    /// Attach a budget gate (Stingray bounded counter) to this runtime's executor.
+    ///
+    /// When set, each turn execution will check the silo's local budget slice
+    /// before proceeding. If the slice cannot cover the turn fee, the turn is
+    /// rejected with `TurnError::BudgetExhausted`.
+    ///
+    /// Call this when the agent's current silo has provided a budget slice via
+    /// the BudgetCoordinator.
+    pub fn set_budget_gate(&mut self, silo_id: u32, slice: BudgetSlice) {
+        self.executor
+            .set_budget_gate(BudgetGate::new(silo_id, slice));
     }
 
     /// Execute a list of effects against the local ledger.
@@ -169,9 +202,9 @@ impl AgentRuntime {
             balance_change: None,
         };
 
-        // Compute the signing message and sign with the wallet's key.
+        // Compute the signing message and sign with the wallet's key (read lock).
         let message = TurnExecutor::compute_signing_message(&action_unsigned);
-        let sig = self.wallet.sign_bytes(&message);
+        let sig = self.wallet.read().unwrap().sign_bytes(&message);
 
         // Rebuild the action with the signature attached.
         let action_signed = Action {
@@ -199,7 +232,12 @@ impl AgentRuntime {
         let result = self.executor.execute(&turn, &mut ledger);
 
         match result {
-            TurnResult::Committed { receipt, .. } => Ok(receipt),
+            TurnResult::Committed { receipt, .. } => {
+                // Append the receipt to the wallet's chain (write lock).
+                drop(ledger); // release ledger lock before taking wallet write lock
+                self.wallet.write().unwrap().append_receipt(receipt.clone());
+                Ok(receipt)
+            }
             TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
         }
     }
@@ -219,6 +257,10 @@ impl AgentRuntime {
                 if turn.nonce >= *n {
                     *n = turn.nonce + 1;
                 }
+                drop(n);
+                drop(ledger);
+                // Append the receipt to the wallet's chain (write lock).
+                self.wallet.write().unwrap().append_receipt(receipt.clone());
                 Ok(receipt)
             }
             TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
@@ -283,7 +325,7 @@ impl AgentRuntime {
             wallet: Arc::new(sub_wallet),
             cell_id: sub_cell_id,
             token: delegated_token,
-            parent: self.wallet.public_key(),
+            parent: self.wallet.read().unwrap().public_key(),
             domain: self.domain.clone(),
             ledger: self.ledger.clone(),
         })

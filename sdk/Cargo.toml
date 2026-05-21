@@ -30,3 +30,6 @@ zeroize = { workspace = true }
 [[example]]
 name = "agent_demo"
 path = "examples/agent_demo.rs"
+
+[lints]
+workspace = true

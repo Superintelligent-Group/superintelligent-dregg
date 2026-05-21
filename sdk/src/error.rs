@@ -1,8 +1,8 @@
 //! Error types for the pyana SDK.
 
+use pyana_bridge::AuthError;
 use pyana_token::TokenError;
 use pyana_turn::TurnError;
-use pyana_bridge::AuthError;
 
 /// Unified error type for SDK operations.
 #[derive(Debug, thiserror::Error)]

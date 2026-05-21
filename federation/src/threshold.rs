@@ -20,10 +20,9 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use serde::{Deserialize, Serialize};
 
 use hints::{
-    self, generate_hint, setup_universe, sign as bls_sign, sign_aggregate, verify_aggregate,
-    Aggregator, GlobalData, Hint, HintsError, PartialSignature, SecretKey as BlsSecretKey,
-    PublicKey as BlsPublicKey, Signature as BlsSignature, UniverseSetup, Verifier,
-    snark::F,
+    self, Aggregator, GlobalData, Hint, HintsError, PartialSignature, PublicKey as BlsPublicKey,
+    SecretKey as BlsSecretKey, Signature as BlsSignature, UniverseSetup, Verifier, generate_hint,
+    setup_universe, sign as bls_sign, sign_aggregate, snark::F, verify_aggregate,
 };
 
 // =============================================================================
@@ -80,7 +79,8 @@ impl Serialize for ThresholdQC {
 impl<'de> Deserialize<'de> for ThresholdQC {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        Self::from_bytes(&bytes).ok_or_else(|| serde::de::Error::custom("invalid ThresholdQC bytes"))
+        Self::from_bytes(&bytes)
+            .ok_or_else(|| serde::de::Error::custom("invalid ThresholdQC bytes"))
     }
 }
 
@@ -139,10 +139,7 @@ impl FederationCommittee {
     ///
     /// `num_members` must be <= 63 (since hints requires power-of-2 domain, and
     /// the max supported degree with random setup depends on the RNG).
-    pub fn new(
-        member_secrets: &[MemberSecret],
-        threshold: u64,
-    ) -> Result<Self, ThresholdError> {
+    pub fn new(member_secrets: &[MemberSecret], threshold: u64) -> Result<Self, ThresholdError> {
         let num_members = member_secrets.len();
         // hints requires domain size to be a power of 2, with exactly domain_size-1 parties.
         let domain_size = (num_members + 1).next_power_of_two();
@@ -190,7 +187,10 @@ impl FederationCommittee {
         let total_slots = domain_size - 1; // total participant slots expected by hints
 
         // Collect real member public keys
-        let mut pks: Vec<BlsPublicKey> = member_secrets.iter().map(|m| m.public_key.clone()).collect();
+        let mut pks: Vec<BlsPublicKey> = member_secrets
+            .iter()
+            .map(|m| m.public_key.clone())
+            .collect();
 
         // Generate hints for real members
         let mut all_hints: Vec<Hint> = member_secrets
@@ -232,11 +232,7 @@ impl FederationCommittee {
     }
 
     /// Sign a message as a committee member, producing a partial signature.
-    pub fn sign_share(
-        &self,
-        member: &MemberSecret,
-        message: &[u8],
-    ) -> PartialSignature {
+    pub fn sign_share(&self, member: &MemberSecret, message: &[u8]) -> PartialSignature {
         bls_sign(&member.secret_key, message)
     }
 

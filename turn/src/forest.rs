@@ -64,7 +64,11 @@ impl CallTree {
 
     /// Compute the total number of actions in this tree (including self).
     pub fn action_count(&self) -> usize {
-        1 + self.children.iter().map(|c| c.action_count()).sum::<usize>()
+        1 + self
+            .children
+            .iter()
+            .map(|c| c.action_count())
+            .sum::<usize>()
     }
 
     /// Compute the Merkle hash of this tree node.

@@ -16,3 +16,6 @@ pyana-types = { path = "../types" }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

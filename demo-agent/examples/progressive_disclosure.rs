@@ -8,7 +8,7 @@
 //! 5. Present in Fully Private mode: verifier sees only allow/deny + STARK proof
 //! 6. For each mode, show exactly what the verifier learns and what remains hidden
 
-use pyana_sdk::{AgentWallet, AuthorizationPresentation, VerificationMode, FactIndex};
+use pyana_sdk::{AgentWallet, AuthorizationPresentation, FactIndex, VerificationMode};
 use pyana_sdk::{Attenuation, AuthRequest};
 use pyana_trace::Conclusion;
 
@@ -24,8 +24,10 @@ fn main() {
 
     let mut wallet = AgentWallet::new();
     let pubkey = wallet.public_key();
-    println!("  Agent identity: {:02x}{:02x}{:02x}{:02x}...",
-        pubkey.0[0], pubkey.0[1], pubkey.0[2], pubkey.0[3]);
+    println!(
+        "  Agent identity: {:02x}{:02x}{:02x}{:02x}...",
+        pubkey.0[0], pubkey.0[1], pubkey.0[2], pubkey.0[3]
+    );
 
     // Mint a root token for our organization's infrastructure service.
     let root_key: [u8; 32] = *blake3::hash(b"acme-corp-root-secret-key-2026!!").as_bytes();
@@ -35,17 +37,19 @@ fn main() {
     // Attenuate with rich facts: app access, service access, features, user binding.
     // This simulates: "admin role on the 'deployments' app, read access to 'secrets' service,
     // with features 'top_secret_clearance' and 'budget_1000', confined to user 'agent-007'"
-    let attenuated = wallet.attenuate(&root_token, &Attenuation {
-        apps: vec![("deployments".into(), "rwcd".into())],  // admin role
-        services: vec![("secrets".into(), "r".into())],      // read-only secrets
-        features: vec![
-            "top_secret_clearance".into(),
-            "budget_1000".into(),
-        ],
-        confine_user: Some("agent-007".into()),
-        not_after: Some(1800000000), // expires 2027
-        ..Default::default()
-    }).expect("attenuation should succeed");
+    let attenuated = wallet
+        .attenuate(
+            &root_token,
+            &Attenuation {
+                apps: vec![("deployments".into(), "rwcd".into())], // admin role
+                services: vec![("secrets".into(), "r".into())],    // read-only secrets
+                features: vec!["top_secret_clearance".into(), "budget_1000".into()],
+                confine_user: Some("agent-007".into()),
+                not_after: Some(1800000000), // expires 2027
+                ..Default::default()
+            },
+        )
+        .expect("attenuation should succeed");
 
     println!("  Attenuated token created with:");
     println!("    - App: deployments (rwcd) -- represents admin role");
@@ -81,11 +85,7 @@ fn main() {
     println!("  The verifier holds the root key and trusts the local evaluation.");
     println!("  Latency: ~8 microseconds. No cryptographic proof generated.\n");
 
-    let trusted_result = wallet.authorize(
-        &attenuated,
-        &request,
-        VerificationMode::Trusted,
-    );
+    let trusted_result = wallet.authorize(&attenuated, &request, VerificationMode::Trusted);
 
     match trusted_result {
         Ok(AuthorizationPresentation::Trusted { clearance, trace }) => {
@@ -98,8 +98,10 @@ fn main() {
             }
             println!("  |   Capabilities:                                          |");
             for cap in &clearance.capabilities {
-                println!("  |     {}:{} -> actions={}",
-                    cap.resource_type, cap.resource_id, cap.actions);
+                println!(
+                    "  |     {}:{} -> actions={}",
+                    cap.resource_type, cap.resource_id, cap.actions
+                );
             }
             if let Some(expires) = clearance.expires_at {
                 println!("  |   Expires at: {:<43} |", expires);
@@ -112,17 +114,26 @@ fn main() {
             println!("  |   Steps: {:<48} |", trace.steps.len());
             match &trace.conclusion {
                 Conclusion::Allow { policy_rule_id } => {
-                    println!("  |   Conclusion: ALLOW (rule {}){}", policy_rule_id, " ".repeat(28));
+                    println!(
+                        "  |   Conclusion: ALLOW (rule {}){}",
+                        policy_rule_id,
+                        " ".repeat(28)
+                    );
                 }
                 Conclusion::Deny => {
                     println!("  |   Conclusion: DENY                                      |");
                 }
             }
             for (i, step) in trace.steps.iter().enumerate() {
-                println!("  |   Step {}: rule={}, derived fact predicate bytes[0..4]={:02x}{:02x}{:02x}{:02x}",
-                    i, step.rule_id,
-                    step.derived_fact.predicate[0], step.derived_fact.predicate[1],
-                    step.derived_fact.predicate[2], step.derived_fact.predicate[3]);
+                println!(
+                    "  |   Step {}: rule={}, derived fact predicate bytes[0..4]={:02x}{:02x}{:02x}{:02x}",
+                    i,
+                    step.rule_id,
+                    step.derived_fact.predicate[0],
+                    step.derived_fact.predicate[1],
+                    step.derived_fact.predicate[2],
+                    step.derived_fact.predicate[3]
+                );
             }
             println!("  +---------------------------------------------------------+");
             println!();
@@ -161,27 +172,50 @@ fn main() {
     );
 
     match selective_result {
-        Ok(AuthorizationPresentation::Selective { revealed_facts, proof, conclusion }) => {
-            println!("  [RESULT: {}]\n", if conclusion { "ALLOW" } else { "DENY" });
+        Ok(AuthorizationPresentation::Selective {
+            revealed_facts,
+            proof,
+            conclusion,
+        }) => {
+            println!(
+                "  [RESULT: {}]\n",
+                if conclusion { "ALLOW" } else { "DENY" }
+            );
             println!("  What the verifier LEARNS (selective):");
             println!("  +---------------------------------------------------------+");
-            println!("  | Conclusion: {:<45} |",
-                if conclusion { "ALLOW" } else { "DENY" });
-            println!("  | STARK proof: {} bytes{}", proof.len(),
-                " ".repeat(33usize.saturating_sub(proof.len().to_string().len())));
+            println!(
+                "  | Conclusion: {:<45} |",
+                if conclusion { "ALLOW" } else { "DENY" }
+            );
+            println!(
+                "  | STARK proof: {} bytes{}",
+                proof.len(),
+                " ".repeat(33usize.saturating_sub(proof.len().to_string().len()))
+            );
             println!("  | Revealed facts ({}):", revealed_facts.len());
             for fact in &revealed_facts {
                 // Show the predicate (first few bytes to identify it)
-                let pred_str: String = fact.predicate.iter()
+                let pred_str: String = fact
+                    .predicate
+                    .iter()
                     .take_while(|&&b| b != 0)
                     .map(|&b| b as char)
                     .collect();
-                println!("  |   predicate='{}' ({} terms)",
-                    if pred_str.is_empty() { format!("{:02x}{:02x}{:02x}{:02x}...",
-                        fact.predicate[0], fact.predicate[1],
-                        fact.predicate[2], fact.predicate[3])
-                    } else { pred_str },
-                    fact.terms.len());
+                println!(
+                    "  |   predicate='{}' ({} terms)",
+                    if pred_str.is_empty() {
+                        format!(
+                            "{:02x}{:02x}{:02x}{:02x}...",
+                            fact.predicate[0],
+                            fact.predicate[1],
+                            fact.predicate[2],
+                            fact.predicate[3]
+                        )
+                    } else {
+                        pred_str
+                    },
+                    fact.terms.len()
+                );
             }
             println!("  +---------------------------------------------------------+");
             println!();
@@ -217,21 +251,25 @@ fn main() {
     println!("  specific request.' No facts, no capabilities, no identity revealed.");
     println!("  Latency: ~500ms (full multi-step derivation proof).\n");
 
-    let private_result = wallet.authorize(
-        &attenuated,
-        &request,
-        VerificationMode::FullyPrivate,
-    );
+    let private_result = wallet.authorize(&attenuated, &request, VerificationMode::FullyPrivate);
 
     match private_result {
         Ok(AuthorizationPresentation::Private { proof, conclusion }) => {
-            println!("  [RESULT: {}]\n", if conclusion { "ALLOW" } else { "DENY" });
+            println!(
+                "  [RESULT: {}]\n",
+                if conclusion { "ALLOW" } else { "DENY" }
+            );
             println!("  What the verifier LEARNS:");
             println!("  +---------------------------------------------------------+");
-            println!("  | Conclusion: {:<45} |",
-                if conclusion { "ALLOW" } else { "DENY" });
-            println!("  | STARK proof: {} bytes{}", proof.len(),
-                " ".repeat(33usize.saturating_sub(proof.len().to_string().len())));
+            println!(
+                "  | Conclusion: {:<45} |",
+                if conclusion { "ALLOW" } else { "DENY" }
+            );
+            println!(
+                "  | STARK proof: {} bytes{}",
+                proof.len(),
+                " ".repeat(33usize.saturating_sub(proof.len().to_string().len()))
+            );
             println!("  | (That's it. One bit of authorization + proof of validity.) |");
             println!("  +---------------------------------------------------------+");
             println!();

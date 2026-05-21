@@ -181,7 +181,10 @@ mod tests {
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
-        assert!(matches!(err, ValidationError::TooManyActions { count: 65, max: 64 }));
+        assert!(matches!(
+            err,
+            ValidationError::TooManyActions { count: 65, max: 64 }
+        ));
     }
 
     #[test]
@@ -197,7 +200,10 @@ mod tests {
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
-        assert!(matches!(err, ValidationError::TooManyConstraints { count: 65, max: 64 }));
+        assert!(matches!(
+            err,
+            ValidationError::TooManyConstraints { count: 65, max: 64 }
+        ));
     }
 
     #[test]
@@ -228,7 +234,10 @@ mod tests {
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
-        assert!(matches!(err, ValidationError::ResourcePatternTooLong { .. }));
+        assert!(matches!(
+            err,
+            ValidationError::ResourcePatternTooLong { .. }
+        ));
     }
 
     #[test]
@@ -242,7 +251,10 @@ mod tests {
         };
         let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
         let err = validate_intent(&intent).unwrap_err();
-        assert!(matches!(err, ValidationError::ConstraintStringTooLong { .. }));
+        assert!(matches!(
+            err,
+            ValidationError::ConstraintStringTooLong { .. }
+        ));
     }
 
     #[test]
@@ -254,9 +266,8 @@ mod tests {
                 resource: None,
             })
             .collect();
-        let constraints: Vec<Constraint> = (0..64)
-            .map(|_| Constraint::Feature("f".into()))
-            .collect();
+        let constraints: Vec<Constraint> =
+            (0..64).map(|_| Constraint::Feature("f".into())).collect();
         let spec = MatchSpec {
             actions,
             constraints,

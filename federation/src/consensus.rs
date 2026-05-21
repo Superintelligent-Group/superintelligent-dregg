@@ -480,9 +480,7 @@ impl ConsensusOrchestrator {
         }
 
         // Check proposer is a current member (only if members are tracked).
-        if !self.config.members.is_empty()
-            && !self.config.members.contains(&proposal.proposer)
-        {
+        if !self.config.members.is_empty() && !self.config.members.contains(&proposal.proposer) {
             return Err(ConsensusError::NotAMember);
         }
 
@@ -535,9 +533,7 @@ impl ConsensusOrchestrator {
         let voter_pubkey = voter.public_key();
 
         // Check voter is a current member (only if members are tracked).
-        if !self.config.members.is_empty()
-            && !self.config.members.contains(&voter_pubkey)
-        {
+        if !self.config.members.is_empty() && !self.config.members.contains(&voter_pubkey) {
             return Err(ConsensusError::VoterNotMember);
         }
 
@@ -599,7 +595,10 @@ impl ConsensusOrchestrator {
                 }
             }
             // Retry with new view.
-            let new_view = states.iter().find(|s| s.is_online).map(|s| s.current_view)?;
+            let new_view = states
+                .iter()
+                .find(|s| s.is_online)
+                .map(|s| s.current_view)?;
             let new_leader = self.config.leader_for_view(new_view);
             if !states[new_leader].is_online {
                 // Still offline — try one more view change.
@@ -661,11 +660,7 @@ impl ConsensusOrchestrator {
         // If a threshold committee is available, collect BLS signature shares
         // from voting members and aggregate into a constant-size ThresholdQC.
         if let Some(ref committee) = self.committee {
-            let message = QuorumCertificate::vote_message(
-                &qc.block_hash,
-                qc.height,
-                qc.view,
-            );
+            let message = QuorumCertificate::vote_message(&qc.block_hash, qc.height, qc.view);
 
             // Collect BLS shares from all voters that have member secrets.
             let voter_ids: Vec<usize> = qc.votes.iter().map(|(id, _)| *id).collect();
@@ -869,7 +864,13 @@ mod tests {
     // =========================================================================
 
     /// Helper to set up a federation with explicit member keys.
-    fn setup_members(n: usize) -> (ConsensusConfig, Vec<ConsensusState>, Vec<(SigningKey, PublicKey)>) {
+    fn setup_members(
+        n: usize,
+    ) -> (
+        ConsensusConfig,
+        Vec<ConsensusState>,
+        Vec<(SigningKey, PublicKey)>,
+    ) {
         let keypairs: Vec<(SigningKey, PublicKey)> = (0..n).map(|_| generate_keypair()).collect();
         let members: Vec<PublicKey> = keypairs.iter().map(|(_, pk)| pk.clone()).collect();
         let config = ConsensusConfig::genesis(members);
@@ -948,12 +949,20 @@ mod tests {
         assert!(!orchestrator.reconfig_has_quorum());
 
         // Second vote.
-        let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
-        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[1].0).unwrap();
+        let proposal_hash = orchestrator
+            .pending_reconfig
+            .as_ref()
+            .unwrap()
+            .proposal_hash;
+        orchestrator
+            .vote_reconfiguration(proposal_hash, &keypairs[1].0)
+            .unwrap();
         assert!(!orchestrator.reconfig_has_quorum());
 
         // Third vote — quorum reached.
-        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[2].0).unwrap();
+        orchestrator
+            .vote_reconfiguration(proposal_hash, &keypairs[2].0)
+            .unwrap();
         assert!(orchestrator.reconfig_has_quorum());
     }
 
@@ -980,9 +989,17 @@ mod tests {
         orchestrator.propose_reconfiguration(proposal).unwrap();
 
         // Collect enough votes.
-        let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
-        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[1].0).unwrap();
-        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[2].0).unwrap();
+        let proposal_hash = orchestrator
+            .pending_reconfig
+            .as_ref()
+            .unwrap()
+            .proposal_hash;
+        orchestrator
+            .vote_reconfiguration(proposal_hash, &keypairs[1].0)
+            .unwrap();
+        orchestrator
+            .vote_reconfiguration(proposal_hash, &keypairs[2].0)
+            .unwrap();
         assert!(orchestrator.reconfig_has_quorum());
 
         // Now run a consensus round — reconfig should be applied after block finalization.
@@ -1042,9 +1059,17 @@ mod tests {
         orchestrator.propose_reconfiguration(proposal).unwrap();
 
         // For n=3, threshold=3 (all must agree). Proposer already voted.
-        let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
-        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[1].0).unwrap();
-        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[2].0).unwrap();
+        let proposal_hash = orchestrator
+            .pending_reconfig
+            .as_ref()
+            .unwrap()
+            .proposal_hash;
+        orchestrator
+            .vote_reconfiguration(proposal_hash, &keypairs[1].0)
+            .unwrap();
+        orchestrator
+            .vote_reconfiguration(proposal_hash, &keypairs[2].0)
+            .unwrap();
 
         // Run another round to trigger epoch transition.
         states[0].submit_revocation(RevocationEvent {
@@ -1082,9 +1107,17 @@ mod tests {
         orchestrator.propose_reconfiguration(proposal).unwrap();
 
         // Threshold for 4 nodes is 3. Proposer = 1 vote.
-        let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
-        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[1].0).unwrap();
-        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[2].0).unwrap();
+        let proposal_hash = orchestrator
+            .pending_reconfig
+            .as_ref()
+            .unwrap()
+            .proposal_hash;
+        orchestrator
+            .vote_reconfiguration(proposal_hash, &keypairs[1].0)
+            .unwrap();
+        orchestrator
+            .vote_reconfiguration(proposal_hash, &keypairs[2].0)
+            .unwrap();
         assert!(orchestrator.reconfig_has_quorum());
 
         // Run a round to trigger the transition.
@@ -1119,7 +1152,13 @@ mod tests {
         };
 
         let result = orchestrator.propose_reconfiguration(proposal);
-        assert_eq!(result, Err(ConsensusError::EpochMismatch { expected: 0, got: 1 }));
+        assert_eq!(
+            result,
+            Err(ConsensusError::EpochMismatch {
+                expected: 0,
+                got: 1
+            })
+        );
     }
 
     #[test]
@@ -1143,9 +1182,17 @@ mod tests {
         orchestrator.propose_reconfiguration(proposal).unwrap();
 
         // All 3 vote (threshold=3 for n=3).
-        let proposal_hash = orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
-        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[1].0).unwrap();
-        orchestrator.vote_reconfiguration(proposal_hash, &keypairs[2].0).unwrap();
+        let proposal_hash = orchestrator
+            .pending_reconfig
+            .as_ref()
+            .unwrap()
+            .proposal_hash;
+        orchestrator
+            .vote_reconfiguration(proposal_hash, &keypairs[1].0)
+            .unwrap();
+        orchestrator
+            .vote_reconfiguration(proposal_hash, &keypairs[2].0)
+            .unwrap();
 
         // Run a round to trigger the epoch boundary.
         states[0].submit_revocation(RevocationEvent {

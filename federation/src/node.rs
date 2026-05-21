@@ -95,11 +95,7 @@ impl FederationNode {
     }
 
     /// Update the attested root after consensus finalization.
-    pub fn update_attested_root(
-        &mut self,
-        qc: &QuorumCertificate,
-        nodes: &[NodeIdentity],
-    ) {
+    pub fn update_attested_root(&mut self, qc: &QuorumCertificate, nodes: &[NodeIdentity]) {
         let merkle_root = self.revocation_tree.root();
         let timestamp = current_timestamp();
 
@@ -107,9 +103,14 @@ impl FederationNode {
 
         self.attested_root = Some(AttestedRoot {
             merkle_root,
+            note_tree_root: None,
+            nullifier_set_root: None,
             height: qc.height,
             timestamp,
-            qc: qc.aggregate_qc.clone(),
+            threshold_qc: qc
+                .aggregate_qc
+                .as_ref()
+                .map(|q| pyana_types::ThresholdQC(q.to_bytes())),
             quorum_signatures,
             threshold: qc.threshold,
         });
@@ -174,7 +175,9 @@ impl Federation {
 
         let consensus_states: Vec<ConsensusState> = nodes
             .iter()
-            .map(|node| ConsensusState::new(node.identity.id, node.signing_key.clone(), config.clone()))
+            .map(|node| {
+                ConsensusState::new(node.identity.id, node.signing_key.clone(), config.clone())
+            })
             .collect();
 
         let orchestrator = ConsensusOrchestrator::new(config.clone());

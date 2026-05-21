@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use pyana_wire::codec;
-use pyana_wire::message::{AuthorizationRequest, WireMessage, PROTOCOL_VERSION};
+use pyana_wire::message::{AuthorizationRequest, PROTOCOL_VERSION, WireMessage};
 
 // =============================================================================
 // Message encoding/decoding benchmarks
@@ -67,7 +67,10 @@ fn bench_encode_decode(c: &mut Criterion) {
 
     // Report message sizes
     eprintln!("  [msg_size] Hello: {} bytes", hello_bytes.len());
-    eprintln!("  [msg_size] PresentToken(24K proof): {} bytes", present_bytes.len());
+    eprintln!(
+        "  [msg_size] PresentToken(24K proof): {} bytes",
+        present_bytes.len()
+    );
     eprintln!("  [msg_size] Revocation: {} bytes", revoke_bytes.len());
 
     group.finish();
@@ -112,7 +115,12 @@ fn bench_stark_over_wire(c: &mut Criterion) {
     use pyana_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
 
     // Generate a real STARK proof
-    let siblings = [[100u32, 200, 300], [400, 500, 600], [700, 800, 900], [1000, 1100, 1200]];
+    let siblings = [
+        [100u32, 200, 300],
+        [400, 500, 600],
+        [700, 800, 900],
+        [1000, 1100, 1200],
+    ];
     let positions = [0u32, 1, 2, 3];
     let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
     let air = MerkleStarkAir;

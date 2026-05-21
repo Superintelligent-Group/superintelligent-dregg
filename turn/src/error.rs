@@ -10,7 +10,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TurnError {
     /// The source cell doesn't have enough computrons for a transfer.
-    InsufficientBalance { cell: CellId, required: u64, available: u64 },
+    InsufficientBalance {
+        cell: CellId,
+        required: u64,
+        available: u64,
+    },
 
     /// The provided authorization doesn't satisfy the cell's permission requirements.
     PermissionDenied {
@@ -41,7 +45,10 @@ pub enum TurnError {
     BudgetExceeded { limit: u64, used: u64 },
 
     /// A child action tried to use delegation but the parent disallowed it.
-    DelegationDenied { parent: CellId, child_target: CellId },
+    DelegationDenied {
+        parent: CellId,
+        child_target: CellId,
+    },
 
     /// State field index out of bounds.
     InvalidFieldIndex { cell: CellId, index: usize },
@@ -63,28 +70,58 @@ pub enum TurnError {
     ExcessNotZero { excess: i64 },
 
     /// A balance_change would underflow the target cell's balance (withdrawal exceeds holdings).
-    BalanceChangeUnderflow { cell: CellId, current: u64, delta: i64 },
+    BalanceChangeUnderflow {
+        cell: CellId,
+        current: u64,
+        delta: i64,
+    },
 
     /// The cell's program rejected the state transition.
     ProgramViolation { cell: CellId, reason: String },
 
     /// Note conservation law violated: for a given asset type, the total value
     /// of spent notes does not equal the total value of created notes.
-    NoteConservationViolation { asset_type: u64, inputs: u64, outputs: u64 },
+    NoteConservationViolation {
+        asset_type: u64,
+        inputs: u64,
+        outputs: u64,
+    },
     /// Three-party introduction denied.
-    IntroductionDenied { introducer: CellId, recipient: CellId, target: CellId, reason: String },
+    IntroductionDenied {
+        introducer: CellId,
+        recipient: CellId,
+        target: CellId,
+        reason: String,
+    },
+
+    /// The silo's budget slice is exhausted (Stingray bounded counter).
+    /// The turn was rejected before execution because the BudgetGate's
+    /// local slice cannot cover the requested fee.
+    BudgetExhausted {
+        silo_id: u32,
+        requested: u64,
+        remaining: u64,
+    },
 }
 
 impl core::fmt::Display for TurnError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            TurnError::InsufficientBalance { cell, required, available } => {
+            TurnError::InsufficientBalance {
+                cell,
+                required,
+                available,
+            } => {
                 write!(
                     f,
                     "insufficient balance on cell {cell}: need {required}, have {available}"
                 )
             }
-            TurnError::PermissionDenied { cell, action, required } => {
+            TurnError::PermissionDenied {
+                cell,
+                action,
+                required,
+            } => {
                 write!(
                     f,
                     "permission denied on cell {cell} for action '{action}': requires {required:?}"
@@ -111,7 +148,10 @@ impl core::fmt::Display for TurnError {
             TurnError::BudgetExceeded { limit, used } => {
                 write!(f, "computron budget exceeded: limit={limit}, used={used}")
             }
-            TurnError::DelegationDenied { parent, child_target } => {
+            TurnError::DelegationDenied {
+                parent,
+                child_target,
+            } => {
                 write!(
                     f,
                     "delegation denied: parent {parent} does not delegate to child targeting {child_target}"
@@ -138,7 +178,11 @@ impl core::fmt::Display for TurnError {
                     "excess not zero at turn end: {excess} (conservation law violated)"
                 )
             }
-            TurnError::BalanceChangeUnderflow { cell, current, delta } => {
+            TurnError::BalanceChangeUnderflow {
+                cell,
+                current,
+                delta,
+            } => {
                 write!(
                     f,
                     "balance_change underflow on cell {cell}: balance={current}, delta={delta}"
@@ -147,14 +191,36 @@ impl core::fmt::Display for TurnError {
             TurnError::ProgramViolation { cell, reason } => {
                 write!(f, "program violation on cell {cell}: {reason}")
             }
-            TurnError::NoteConservationViolation { asset_type, inputs, outputs } => {
+            TurnError::NoteConservationViolation {
+                asset_type,
+                inputs,
+                outputs,
+            } => {
                 write!(
                     f,
                     "note conservation violated for asset {asset_type}: inputs={inputs}, outputs={outputs}"
                 )
             }
-            TurnError::IntroductionDenied { introducer, recipient, target, reason } => {
-                write!(f, "introduction denied: {introducer} cannot introduce {recipient} to {target}: {reason}")
+            TurnError::IntroductionDenied {
+                introducer,
+                recipient,
+                target,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "introduction denied: {introducer} cannot introduce {recipient} to {target}: {reason}"
+                )
+            }
+            TurnError::BudgetExhausted {
+                silo_id,
+                requested,
+                remaining,
+            } => {
+                write!(
+                    f,
+                    "budget exhausted on silo {silo_id}: requested {requested}, remaining {remaining}"
+                )
             }
         }
     }

@@ -42,19 +42,18 @@ use serde::{Deserialize, Serialize};
 // ============================================================================
 
 #[cfg(feature = "binius")]
-use binius_circuits::builder::{types::U, ConstraintSystemBuilder};
+use binius_circuits::builder::{ConstraintSystemBuilder, types::U};
 #[cfg(feature = "binius")]
 use binius_core::{
     constraint_system::{
-        self,
+        self, Proof as BiniusRawProof,
         channel::{Boundary, FlushDirection},
-        Proof as BiniusRawProof,
     },
     fiat_shamir::HasherChallenger,
     tower::CanonicalTowerFamily,
 };
 #[cfg(feature = "binius")]
-use binius_field::{BinaryField128b, BinaryField8b, TowerField};
+use binius_field::{BinaryField8b, BinaryField128b, TowerField};
 #[cfg(feature = "binius")]
 use binius_hal::make_portable_backend;
 #[cfg(feature = "binius")]
@@ -978,8 +977,14 @@ mod tests {
 
         let binius = &comparison[0];
         let stark = &comparison[1];
-        assert!(binius.1 < stark.1, "Binius depth-4 should be smaller than STARK");
-        assert!(binius.3 < stark.3, "Binius depth-16 should be smaller than STARK");
+        assert!(
+            binius.1 < stark.1,
+            "Binius depth-4 should be smaller than STARK"
+        );
+        assert!(
+            binius.3 < stark.3,
+            "Binius depth-16 should be smaller than STARK"
+        );
     }
 
     #[test]

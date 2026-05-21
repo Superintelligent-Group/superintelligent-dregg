@@ -72,7 +72,11 @@ impl Args {
                 "--peers" => {
                     i += 1;
                     if i < args.len() && !args[i].is_empty() {
-                        peers = args[i].split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                        peers = args[i]
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
                     }
                 }
                 "--node-role" => {
@@ -237,12 +241,20 @@ fn save_state(state_dir: &PathBuf, persisted: &PersistedState) -> anyhow::Result
     let path = state_dir.join(STATE_FILENAME);
     let data = serde_json::to_string_pretty(persisted)?;
     std::fs::write(&path, data)?;
-    info!("state snapshot saved to {} (counter={})", path.display(), persisted.snapshot_counter);
+    info!(
+        "state snapshot saved to {} (counter={})",
+        path.display(),
+        persisted.snapshot_counter
+    );
     Ok(())
 }
 
 /// Write discovery info for this node.
-fn write_discovery(discovery_path: &PathBuf, node_role: &str, listen_addr: &SocketAddr) -> anyhow::Result<()> {
+fn write_discovery(
+    discovery_path: &PathBuf,
+    node_role: &str,
+    listen_addr: &SocketAddr,
+) -> anyhow::Result<()> {
     let now = chrono_now_iso();
     let info = serde_json::json!({
         "node_id": format!("quic-{}", listen_addr),
@@ -364,7 +376,11 @@ pub enum RelayResponse {
     /// Intent pool contents.
     IntentPool(Vec<Intent>),
     /// Pool statistics.
-    PoolStats { total: usize, active: usize, expired: usize },
+    PoolStats {
+        total: usize,
+        active: usize,
+        expired: usize,
+    },
     /// Error response.
     Error { message: String },
 }
@@ -558,7 +574,10 @@ async fn handle_request(request: RelayRequest, state: &Arc<RwLock<RelayState>>) 
             let id = intent.id.clone();
             let mut state = state.write().await;
             state.intent_pool.push(intent);
-            info!("accepted intent {id} into pool (pool size: {})", state.intent_pool.len());
+            info!(
+                "accepted intent {id} into pool (pool size: {})",
+                state.intent_pool.len()
+            );
             RelayResponse::IntentAccepted { id }
         }
         RelayRequest::GetIntentPool => {
@@ -568,7 +587,9 @@ async fn handle_request(request: RelayRequest, state: &Arc<RwLock<RelayState>>) 
                 .unwrap_or_default()
                 .as_secs() as i64;
             // Return only non-expired intents.
-            let active: Vec<Intent> = state.intent_pool.iter()
+            let active: Vec<Intent> = state
+                .intent_pool
+                .iter()
                 .filter(|i| i.expires_at > now)
                 .cloned()
                 .collect();
@@ -581,9 +602,17 @@ async fn handle_request(request: RelayRequest, state: &Arc<RwLock<RelayState>>) 
                 .unwrap_or_default()
                 .as_secs() as i64;
             let total = state.intent_pool.len();
-            let active = state.intent_pool.iter().filter(|i| i.expires_at > now).count();
+            let active = state
+                .intent_pool
+                .iter()
+                .filter(|i| i.expires_at > now)
+                .count();
             let expired = total - active;
-            RelayResponse::PoolStats { total, active, expired }
+            RelayResponse::PoolStats {
+                total,
+                active,
+                expired,
+            }
         }
     }
 }
@@ -603,7 +632,10 @@ async fn gc_intent_pool(state: &Arc<RwLock<RelayState>>) {
     state.intent_pool.retain(|i| i.expires_at > now);
     let removed = before - state.intent_pool.len();
     if removed > 0 {
-        info!("GC'd {removed} expired intents from pool (remaining: {})", state.intent_pool.len());
+        info!(
+            "GC'd {removed} expired intents from pool (remaining: {})",
+            state.intent_pool.len()
+        );
     }
 }
 
@@ -612,7 +644,10 @@ async fn gc_intent_pool(state: &Arc<RwLock<RelayState>>) {
 // =============================================================================
 
 /// Generate a self-signed certificate for the QUIC endpoint.
-fn generate_self_signed_cert() -> anyhow::Result<(rustls::pki_types::CertificateDer<'static>, rustls::pki_types::PrivateKeyDer<'static>)> {
+fn generate_self_signed_cert() -> anyhow::Result<(
+    rustls::pki_types::CertificateDer<'static>,
+    rustls::pki_types::PrivateKeyDer<'static>,
+)> {
     let cert = rcgen::generate_simple_self_signed(vec!["pyana-relay.local".to_string()])?;
     let cert_der = rustls::pki_types::CertificateDer::from(cert.cert);
     let key_der = rustls::pki_types::PrivateKeyDer::try_from(cert.key_pair.serialize_der())
@@ -650,7 +685,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
-    info!("pyana-relay starting up (role: {}, intent_pool: {})", args.node_role, args.intent_pool);
+    info!(
+        "pyana-relay starting up (role: {}, intent_pool: {})",
+        args.node_role, args.intent_pool
+    );
 
     // Load root signing key for minting.
     let root_key = match std::env::var("PYANA_ROOT_KEY") {
@@ -746,7 +784,14 @@ async fn main() -> anyhow::Result<()> {
     println!("protocol: QUIC (quinn)");
     println!("role: {}", args.node_role);
     println!("intent_pool: {}", args.intent_pool);
-    println!("minting: {}", if state.read().await.root_key.is_some() { "enabled" } else { "disabled" });
+    println!(
+        "minting: {}",
+        if state.read().await.root_key.is_some() {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     println!("validators: {}", state.read().await.config.validators.len());
     println!("========================");
 
@@ -822,8 +867,9 @@ async fn main() -> anyhow::Result<()> {
         let usr1_state = state.clone();
         let usr1_state_dir = args.state_dir.clone();
         tokio::spawn(async move {
-            let mut sig = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::user_defined1())
-                .expect("failed to register SIGUSR1 handler");
+            let mut sig =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::user_defined1())
+                    .expect("failed to register SIGUSR1 handler");
             loop {
                 sig.recv().await;
                 info!("SIGUSR1 received — triggering state snapshot");

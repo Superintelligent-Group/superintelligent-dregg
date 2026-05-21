@@ -36,6 +36,7 @@
 //! - [`builder`]: TurnBuilder, ActionBuilder
 
 pub mod action;
+pub mod budget_gate;
 pub mod builder;
 pub mod composer;
 pub mod error;
@@ -52,12 +53,19 @@ mod tests;
 
 // Re-export primary types at crate root.
 pub use action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, Event};
+pub use budget_gate::{BudgetGate, BudgetSlice};
 pub use builder::{ActionBuilder, TurnBuilder};
 pub use composer::{ComposeError, SignedFragment, TurnComposer};
 pub use error::TurnError;
 pub use eventual::{CycleError, EventualRef, Pipeline, PipelineError, Target, TurnOutput};
-pub use executor::{ComputronCosts, ProofVerifier, ResolutionTable, TurnExecutor, execute_pipeline, resolve_eventual_ref};
+pub use executor::{
+    ComputronCosts, ProofVerifier, ResolutionTable, TurnExecutor, execute_pipeline,
+    resolve_eventual_ref,
+};
 pub use forest::{CallForest, CallTree};
 pub use routing::RoutingDirective;
 pub use turn::{Turn, TurnReceipt, TurnResult};
-pub use verify::{VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_chain_with_keys, verify_receipt_extends, sign_receipt};
+pub use verify::{
+    VerifyError, sign_receipt, verify_receipt_chain, verify_receipt_chain_head,
+    verify_receipt_chain_with_keys, verify_receipt_extends,
+};

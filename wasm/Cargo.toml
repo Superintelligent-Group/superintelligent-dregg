@@ -15,7 +15,7 @@ wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde-wasm-bindgen = "0.6"
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { workspace = true, features = ["wasm_js"] }
 getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 
@@ -28,8 +28,13 @@ pyana-circuit = { path = "../circuit", default-features = false, features = ["mo
 # Token crate without biscuit (biscuit-auth has complex deps)
 token = { path = "../token", default-features = false, features = ["macaroon", "datalog"] }
 
+blake3 = "1"
+postcard = { version = "1", features = ["alloc"] }
 js-sys = "0.3"
 
 [dependencies.web-sys]
 version = "0.3"
 features = ["Performance", "Window"]
+
+[lints]
+workspace = true

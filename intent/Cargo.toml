@@ -11,7 +11,7 @@ description = "Distributed intent engine for privacy-preserving capability disco
 
 [dependencies]
 blake3 = "1"
-getrandom = "0.4"
+getrandom = { workspace = true }
 postcard = { version = "1", features = ["alloc"] }
 pyana-cell = { path = "../cell" }
 pyana-trace = { path = "../trace" }
@@ -21,3 +21,6 @@ serde_json = { workspace = true }
 globset = { workspace = true }
 
 [dev-dependencies]
+
+[lints]
+workspace = true

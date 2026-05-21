@@ -126,10 +126,7 @@ fn step_2_issue_tokens(fed: &mut Federation) -> (MintedToken, MintedToken) {
 fn step_3_revoke_token(fed: &mut Federation, token_id: &str) {
     print_step(3, 6, "Revocation -- alpha.org revokes T1...");
 
-    println!(
-        "  {} alpha.org submits Revoke(T1) to consensus",
-        arrow()
-    );
+    println!("  {} alpha.org submits Revoke(T1) to consensus", arrow());
 
     // Submit the revocation.
     fed.submit_revocation(0, token_id);
@@ -139,11 +136,7 @@ fn step_3_revoke_token(fed: &mut Federation, token_id: &str) {
 
     match result {
         Some((block, qc)) => {
-            let voters: Vec<String> = qc
-                .votes
-                .iter()
-                .map(|(id, _)| format!("{}", id))
-                .collect();
+            let voters: Vec<String> = qc.votes.iter().map(|(id, _)| format!("{}", id)).collect();
             let _ = voters;
 
             println!(
@@ -165,11 +158,11 @@ fn step_3_revoke_token(fed: &mut Federation, token_id: &str) {
             );
 
             // Verify all online nodes updated their tree.
-            assert!(fed.roots_agree(), "BUG: nodes disagree on root after consensus");
-            println!(
-                "  {} All nodes updated their Merkle tree",
-                arrow()
+            assert!(
+                fed.roots_agree(),
+                "BUG: nodes disagree on root after consensus"
             );
+            println!("  {} All nodes updated their Merkle tree", arrow());
         }
         None => {
             println!(
@@ -190,37 +183,24 @@ fn step_4_verify_tokens(fed: &Federation, revoked_id: &str, valid_id: &str) {
     print_step(4, 6, "Verification with attested root...");
 
     // gamma.edu (node 2) verifies T2 (Bob's token).
-    println!(
-        "  {} gamma.edu verifies T2 (Bob's token): ",
-        arrow()
-    );
+    println!("  {} gamma.edu verifies T2 (Bob's token): ", arrow());
 
     let proof_t2 = fed.verify_non_membership_from(2, valid_id);
     match proof_t2 {
         Some(proof) => {
             let verification = RevocationVerifier::verify(&proof);
             if verification.valid {
-                println!(
-                    "      VALID {}",
-                    checkmark()
-                );
+                println!("      VALID {}", checkmark());
                 println!(
                     "      (non-membership proof for T2 against root {}...)",
                     hex_encode(&proof.attested_root.merkle_root[..4])
                 );
             } else {
-                println!(
-                    "      INVALID {} ({})",
-                    cross(),
-                    verification.reason
-                );
+                println!("      INVALID {} ({})", cross(), verification.reason);
             }
         }
         None => {
-            println!(
-                "      REVOKED {} (T2 IS in the revocation tree)",
-                cross()
-            );
+            println!("      REVOKED {} (T2 IS in the revocation tree)", cross());
         }
     }
 
@@ -235,26 +215,14 @@ fn step_4_verify_tokens(fed: &Federation, revoked_id: &str, valid_id: &str) {
         Some(proof) => {
             let verification = RevocationVerifier::verify(&proof);
             if verification.valid {
-                println!(
-                    "      VALID {} (unexpected!)",
-                    checkmark()
-                );
+                println!("      VALID {} (unexpected!)", checkmark());
             } else {
-                println!(
-                    "      REVOKED {} ({})",
-                    cross(),
-                    verification.reason
-                );
+                println!("      REVOKED {} ({})", cross(), verification.reason);
             }
         }
         None => {
-            println!(
-                "      REVOKED {}",
-                cross()
-            );
-            println!(
-                "      (T1 IS in the revocation tree -- cannot prove non-membership)"
-            );
+            println!("      REVOKED {}", cross());
+            println!("      (T1 IS in the revocation tree -- cannot prove non-membership)");
         }
     }
 
@@ -269,17 +237,11 @@ fn step_5_byzantine_fault(fed: &mut Federation, token_id: &str) {
     print_step(5, 6, "Byzantine fault tolerance...");
 
     // Crash delta.gov (node 3).
-    println!(
-        "  {} delta.gov goes offline (simulated crash)",
-        arrow()
-    );
+    println!("  {} delta.gov goes offline (simulated crash)", arrow());
     fed.crash_node(3);
 
     // Submit another revocation.
-    println!(
-        "  {} alpha.org submits Revoke(T2)",
-        arrow()
-    );
+    println!("  {} alpha.org submits Revoke(T2)", arrow());
     fed.submit_revocation(0, token_id);
 
     // Run consensus with a crashed node.
@@ -303,10 +265,7 @@ fn step_5_byzantine_fault(fed: &mut Federation, token_id: &str) {
             );
 
             // Verify both tokens are now revoked.
-            println!(
-                "  {} Verification: both T1 and T2 now revoked",
-                arrow()
-            );
+            println!("  {} Verification: both T1 and T2 now revoked", arrow());
 
             // Count revocations.
             let revocation_count = fed.nodes[0].revocation_tree.len();
@@ -325,10 +284,7 @@ fn step_5_byzantine_fault(fed: &mut Federation, token_id: &str) {
                 "  {} ERROR: consensus failed even with 1 fault tolerance",
                 arrow()
             );
-            println!(
-                "  {} (this would indicate a bug in the demo)",
-                arrow()
-            );
+            println!("  {} (this would indicate a bug in the demo)", arrow());
         }
     }
 
@@ -346,7 +302,11 @@ fn step_6_reconfiguration(fed: &mut Federation) {
     println!(
         "  {} Epoch 0: {{{}}} ({} nodes, threshold {})",
         arrow(),
-        fed.nodes.iter().map(|n| n.identity.name.as_str()).collect::<Vec<_>>().join(", "),
+        fed.nodes
+            .iter()
+            .map(|n| n.identity.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
         fed.config.num_nodes,
         fed.config.threshold
     );
@@ -402,12 +362,21 @@ fn step_6_reconfiguration(fed: &mut Federation) {
     fed.orchestrator.propose_reconfiguration(proposal).unwrap();
 
     // Collect votes from other members.
-    let proposal_hash = fed.orchestrator.pending_reconfig.as_ref().unwrap().proposal_hash;
+    let proposal_hash = fed
+        .orchestrator
+        .pending_reconfig
+        .as_ref()
+        .unwrap()
+        .proposal_hash;
 
     // Nodes 1, 2, 3 vote (we need threshold - 1 more votes since proposer already voted).
     for i in 1..fed.nodes.len() {
         let voter_sk = &fed.nodes[i].signing_key;
-        if fed.orchestrator.vote_reconfiguration(proposal_hash, voter_sk).is_ok() {
+        if fed
+            .orchestrator
+            .vote_reconfiguration(proposal_hash, voter_sk)
+            .is_ok()
+        {
             println!(
                 "  {} {} votes: approve reconfiguration",
                 arrow(),
@@ -440,7 +409,13 @@ fn step_6_reconfiguration(fed: &mut Federation) {
     println!(
         "  {} Members: [{}]",
         arrow(),
-        fed.orchestrator.config.members.iter().map(|pk| pk.short_hex()).collect::<Vec<_>>().join(", ")
+        fed.orchestrator
+            .config
+            .members
+            .iter()
+            .map(|pk| pk.short_hex())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
 
     // Now add the new node and do another round to show it works.
@@ -466,11 +441,8 @@ fn step_6_reconfiguration(fed: &mut Federation) {
     fed.nodes.push(epsilon_node);
 
     // Add a consensus state for the new node.
-    let mut new_state = pyana_federation::ConsensusState::new(
-        4,
-        epsilon_sk,
-        fed.orchestrator.config.clone(),
-    );
+    let mut new_state =
+        pyana_federation::ConsensusState::new(4, epsilon_sk, fed.orchestrator.config.clone());
     // Sync height/view.
     new_state.current_height = fed.consensus_states[0].current_height;
     new_state.current_view = fed.consensus_states[0].current_view;
@@ -513,9 +485,7 @@ fn print_header() {
         "\x1b[1m{}\x1b[0m",
         "==============================================================="
     );
-    println!(
-        "\x1b[1m  PYANA MULTI-NODE FEDERATION DEMO\x1b[0m"
-    );
+    println!("\x1b[1m  PYANA MULTI-NODE FEDERATION DEMO\x1b[0m");
     println!(
         "\x1b[1m{}\x1b[0m",
         "==============================================================="
@@ -531,9 +501,7 @@ fn print_footer(fed: &Federation) {
         "\x1b[1m{}\x1b[0m",
         "==============================================================="
     );
-    println!(
-        "\x1b[1m  Federation consensus demo complete.\x1b[0m"
-    );
+    println!("\x1b[1m  Federation consensus demo complete.\x1b[0m");
     println!(
         "\x1b[1m  {} nodes (epoch {}), {} revocations, {} blocks finalized,\x1b[0m",
         fed.orchestrator.config.num_nodes,

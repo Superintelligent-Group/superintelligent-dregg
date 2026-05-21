@@ -704,7 +704,13 @@ fn ledger_delta_invalid_field_index_fails() {
     };
 
     let err = ledger.apply_delta(&delta).unwrap_err();
-    assert_eq!(err, LedgerError::InvalidFieldIndex { cell_id: id, index: STATE_SLOTS });
+    assert_eq!(
+        err,
+        LedgerError::InvalidFieldIndex {
+            cell_id: id,
+            index: STATE_SLOTS
+        }
+    );
 }
 
 #[test]
@@ -993,7 +999,13 @@ fn preconditions_nonce_mismatch() {
     let mut state = CellState::new(0);
     state.nonce = 3;
     let err = pre.evaluate(&state, &default_eval_ctx()).unwrap_err();
-    assert_eq!(err, PreconditionError::NonceMismatch { expected: 5, actual: 3 });
+    assert_eq!(
+        err,
+        PreconditionError::NonceMismatch {
+            expected: 5,
+            actual: 3
+        }
+    );
 }
 
 #[test]
@@ -1022,7 +1034,10 @@ fn preconditions_min_balance_insufficient() {
     let err = pre.evaluate(&state, &default_eval_ctx()).unwrap_err();
     assert_eq!(
         err,
-        PreconditionError::InsufficientBalance { required: 1000, actual: 500 }
+        PreconditionError::InsufficientBalance {
+            required: 1000,
+            actual: 500
+        }
     );
 }
 
@@ -1091,9 +1106,18 @@ fn preconditions_network_min_height() {
     assert!(pre.evaluate(&state, &default_eval_ctx()).is_ok());
 
     // height=30 < 50 → fail.
-    let ctx = EvalContext { block_height: 30, timestamp: 0 };
+    let ctx = EvalContext {
+        block_height: 30,
+        timestamp: 0,
+    };
     let err = pre.evaluate(&state, &ctx).unwrap_err();
-    assert_eq!(err, PreconditionError::HeightTooLow { required: 50, actual: 30 });
+    assert_eq!(
+        err,
+        PreconditionError::HeightTooLow {
+            required: 50,
+            actual: 30
+        }
+    );
 }
 
 #[test]
@@ -1107,9 +1131,18 @@ fn preconditions_network_max_height() {
     };
     let state = CellState::new(0);
 
-    let ctx = EvalContext { block_height: 100, timestamp: 0 };
+    let ctx = EvalContext {
+        block_height: 100,
+        timestamp: 0,
+    };
     let err = pre.evaluate(&state, &ctx).unwrap_err();
-    assert_eq!(err, PreconditionError::HeightTooHigh { max: 50, actual: 100 });
+    assert_eq!(
+        err,
+        PreconditionError::HeightTooHigh {
+            max: 50,
+            actual: 100
+        }
+    );
 }
 
 #[test]
@@ -1119,7 +1152,10 @@ fn preconditions_time_range_valid() {
         ..Default::default()
     };
     let state = CellState::new(0);
-    let ctx = EvalContext { block_height: 100, timestamp: 1700000000 };
+    let ctx = EvalContext {
+        block_height: 100,
+        timestamp: 1700000000,
+    };
     assert!(pre.evaluate(&state, &ctx).is_ok());
 }
 
@@ -1130,7 +1166,10 @@ fn preconditions_time_range_expired() {
         ..Default::default()
     };
     let state = CellState::new(0);
-    let ctx = EvalContext { block_height: 100, timestamp: 1700000000 };
+    let ctx = EvalContext {
+        block_height: 100,
+        timestamp: 1700000000,
+    };
     let err = pre.evaluate(&state, &ctx).unwrap_err();
     assert_eq!(
         err,
@@ -1149,7 +1188,10 @@ fn preconditions_time_range_not_yet_valid() {
         ..Default::default()
     };
     let state = CellState::new(0);
-    let ctx = EvalContext { block_height: 100, timestamp: 1700000000 };
+    let ctx = EvalContext {
+        block_height: 100,
+        timestamp: 1700000000,
+    };
     let err = pre.evaluate(&state, &ctx).unwrap_err();
     matches!(err, PreconditionError::TimeOutOfRange { .. });
 }
@@ -1172,7 +1214,10 @@ fn preconditions_combined_all_pass() {
     let mut state = CellState::new(500);
     state.nonce = 3;
     state.fields[0] = field_from_u64(7);
-    let ctx = EvalContext { block_height: 100, timestamp: 1700000000 };
+    let ctx = EvalContext {
+        block_height: 100,
+        timestamp: 1700000000,
+    };
     assert!(pre.evaluate(&state, &ctx).is_ok());
 }
 
@@ -1189,7 +1234,13 @@ fn preconditions_combined_first_failure_reported() {
     let mut state = CellState::new(500);
     state.nonce = 1; // nonce mismatch — should be reported first.
     let err = pre.evaluate(&state, &default_eval_ctx()).unwrap_err();
-    assert_eq!(err, PreconditionError::NonceMismatch { expected: 3, actual: 1 });
+    assert_eq!(
+        err,
+        PreconditionError::NonceMismatch {
+            expected: 3,
+            actual: 1
+        }
+    );
 }
 
 #[test]
@@ -1265,10 +1316,18 @@ fn scenario_capability_delegation_chain() {
     let c_id = ledger.create_cell(test_key(3), default_token);
 
     // A can reach B.
-    ledger.get_mut(&a_id).unwrap().capabilities.grant(b_id, AuthRequired::Either);
+    ledger
+        .get_mut(&a_id)
+        .unwrap()
+        .capabilities
+        .grant(b_id, AuthRequired::Either);
 
     // B can reach C.
-    ledger.get_mut(&b_id).unwrap().capabilities.grant(c_id, AuthRequired::Signature);
+    ledger
+        .get_mut(&b_id)
+        .unwrap()
+        .capabilities
+        .grant(c_id, AuthRequired::Signature);
 
     // A cannot directly reach C (capability isolation).
     let a = ledger.get(&a_id).unwrap();

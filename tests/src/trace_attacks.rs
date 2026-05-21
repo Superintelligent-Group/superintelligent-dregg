@@ -7,12 +7,9 @@
 //! - Reordered derivation steps
 //! - References to nonexistent rules
 
-use pyana_trace::{
-    verify_trace, Evaluator, standard_policy,
-    symbol_from_str,
-};
-use pyana_trace::types::*;
 use pyana_trace::policy::minimal_policy;
+use pyana_trace::types::*;
+use pyana_trace::{Evaluator, standard_policy, symbol_from_str, verify_trace};
 
 // =============================================================================
 // Helper: create a valid trace we can then tamper with
@@ -108,7 +105,12 @@ fn two_step_trace() -> (Vec<Fact>, Vec<Rule>, AuthorizationTrace) {
     };
 
     let trace = eval.evaluate(&request);
-    assert_eq!(trace.conclusion, Conclusion::Allow { policy_rule_id: 101 });
+    assert_eq!(
+        trace.conclusion,
+        Conclusion::Allow {
+            policy_rule_id: 101
+        }
+    );
     assert_eq!(trace.steps.len(), 2);
     (facts, rules, trace)
 }
@@ -177,7 +179,12 @@ fn skip_final_step_but_claim_allow() {
     // Remove the last step but keep the conclusion as Allow
     trace.steps.pop();
     // Conclusion still says Allow but the allow fact was never derived
-    assert_eq!(trace.conclusion, Conclusion::Allow { policy_rule_id: 101 });
+    assert_eq!(
+        trace.conclusion,
+        Conclusion::Allow {
+            policy_rule_id: 101
+        }
+    );
 
     assert!(
         !verify_trace(&facts, &rules, &trace),
@@ -489,7 +496,9 @@ fn claim_wrong_policy_rule_id() {
     let (facts, rules, mut trace) = valid_app_access_trace();
 
     // Change the policy_rule_id to a different one
-    trace.conclusion = Conclusion::Allow { policy_rule_id: 999 };
+    trace.conclusion = Conclusion::Allow {
+        policy_rule_id: 999,
+    };
 
     assert!(
         !verify_trace(&facts, &rules, &trace),

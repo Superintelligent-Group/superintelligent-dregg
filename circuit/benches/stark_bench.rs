@@ -1,6 +1,6 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use pyana_circuit::field::BabyBear;
-use pyana_circuit::ivc::{create_test_chain, prove_ivc, verify_ivc, IvcBuilder};
+use pyana_circuit::ivc::{IvcBuilder, create_test_chain, prove_ivc, verify_ivc};
 use pyana_circuit::poseidon2::{Poseidon2State, hash_4_to_1, hash_many};
 use pyana_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
 
@@ -14,7 +14,13 @@ fn bench_stark_prove(c: &mut Criterion) {
     // Vary trace sizes: 4, 8, 16, 32 rows (must be power of 2 and >= 2 levels)
     for &depth in &[4, 8, 16, 32] {
         let siblings: Vec<[u32; 3]> = (0..depth)
-            .map(|i| [(i * 100 + 10) as u32, (i * 100 + 20) as u32, (i * 100 + 30) as u32])
+            .map(|i| {
+                [
+                    (i * 100 + 10) as u32,
+                    (i * 100 + 20) as u32,
+                    (i * 100 + 30) as u32,
+                ]
+            })
             .collect();
         let positions: Vec<u32> = (0..depth).map(|i| (i % 4) as u32).collect();
         let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
@@ -39,7 +45,13 @@ fn bench_stark_verify(c: &mut Criterion) {
 
     for &depth in &[4, 8, 16, 32] {
         let siblings: Vec<[u32; 3]> = (0..depth)
-            .map(|i| [(i * 100 + 10) as u32, (i * 100 + 20) as u32, (i * 100 + 30) as u32])
+            .map(|i| {
+                [
+                    (i * 100 + 10) as u32,
+                    (i * 100 + 20) as u32,
+                    (i * 100 + 30) as u32,
+                ]
+            })
             .collect();
         let positions: Vec<u32> = (0..depth).map(|i| (i % 4) as u32).collect();
         let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
@@ -68,7 +80,13 @@ fn bench_stark_proof_size(c: &mut Criterion) {
 
     for &depth in &[4, 8, 16, 32] {
         let siblings: Vec<[u32; 3]> = (0..depth)
-            .map(|i| [(i * 100 + 10) as u32, (i * 100 + 20) as u32, (i * 100 + 30) as u32])
+            .map(|i| {
+                [
+                    (i * 100 + 10) as u32,
+                    (i * 100 + 20) as u32,
+                    (i * 100 + 30) as u32,
+                ]
+            })
             .collect();
         let positions: Vec<u32> = (0..depth).map(|i| (i % 4) as u32).collect();
         let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
@@ -107,7 +125,12 @@ fn bench_poseidon2_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("poseidon2");
 
     // Single hash (4-to-1)
-    let input = [BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4)];
+    let input = [
+        BabyBear::new(1),
+        BabyBear::new(2),
+        BabyBear::new(3),
+        BabyBear::new(4),
+    ];
     group.bench_function("hash_4_to_1_single", |b| {
         b.iter(|| black_box(hash_4_to_1(&input)));
     });
@@ -117,7 +140,12 @@ fn bench_poseidon2_hash(c: &mut Criterion) {
         b.iter(|| {
             let mut acc = BabyBear::ZERO;
             for i in 0..100u32 {
-                let inp = [BabyBear::new(i), BabyBear::new(i + 1), BabyBear::new(i + 2), BabyBear::new(i + 3)];
+                let inp = [
+                    BabyBear::new(i),
+                    BabyBear::new(i + 1),
+                    BabyBear::new(i + 2),
+                    BabyBear::new(i + 3),
+                ];
                 acc = hash_4_to_1(&inp);
             }
             black_box(acc)
@@ -129,7 +157,12 @@ fn bench_poseidon2_hash(c: &mut Criterion) {
         b.iter(|| {
             let mut acc = BabyBear::ZERO;
             for i in 0..1000u32 {
-                let inp = [BabyBear::new(i), BabyBear::new(i + 1), BabyBear::new(i + 2), BabyBear::new(i + 3)];
+                let inp = [
+                    BabyBear::new(i),
+                    BabyBear::new(i + 1),
+                    BabyBear::new(i + 2),
+                    BabyBear::new(i + 3),
+                ];
                 acc = hash_4_to_1(&inp);
             }
             black_box(acc)
@@ -149,7 +182,10 @@ fn bench_poseidon2_hash(c: &mut Criterion) {
     // Poseidon2 permutation (raw)
     group.bench_function("permutation", |b| {
         let mut state = Poseidon2State::from_elements(&[
-            BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4),
+            BabyBear::new(1),
+            BabyBear::new(2),
+            BabyBear::new(3),
+            BabyBear::new(4),
         ]);
         b.iter(|| {
             state.permute();

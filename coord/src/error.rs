@@ -10,7 +10,6 @@ use pyana_turn::TurnError;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CoordError {
     // ── Layer 1: Causal Chaining Errors ──────────────────────────────────
-
     /// A causal dependency is missing from the local DAG.
     MissingDependency {
         /// The turn that has a missing dep.
@@ -20,14 +19,10 @@ pub enum CoordError {
     },
 
     /// A causal turn references a dependency cycle (should never happen with hashes).
-    CausalCycle {
-        turn_hash: [u8; 32],
-    },
+    CausalCycle { turn_hash: [u8; 32] },
 
     /// Duplicate turn: a turn with this hash already exists in the DAG.
-    DuplicateTurn {
-        hash: [u8; 32],
-    },
+    DuplicateTurn { hash: [u8; 32] },
 
     /// The per-node sequence number is not monotonically increasing.
     SequenceGap {
@@ -43,7 +38,6 @@ pub enum CoordError {
     },
 
     // ── Layer 2: Atomic Multi-Party Errors ───────────────────────────────
-
     /// The coordinator is not in the correct state for the requested operation.
     InvalidCoordinatorState {
         expected: &'static str,
@@ -57,20 +51,13 @@ pub enum CoordError {
     },
 
     /// Not enough participants voted Yes to reach the threshold.
-    ThresholdNotMet {
-        required: usize,
-        received: usize,
-    },
+    ThresholdNotMet { required: usize, received: usize },
 
     /// A participant is not listed in the atomic forest.
-    UnknownParticipant {
-        id: [u8; 32],
-    },
+    UnknownParticipant { id: [u8; 32] },
 
     /// A participant voted more than once.
-    DuplicateVote {
-        participant: [u8; 32],
-    },
+    DuplicateVote { participant: [u8; 32] },
 
     /// Precondition evaluation failed for a participant.
     PreconditionFailed {
@@ -91,18 +78,12 @@ pub enum CoordError {
     },
 
     /// A vote's Ed25519 signature failed verification.
-    InvalidVoteSignature {
-        participant: [u8; 32],
-    },
+    InvalidVoteSignature { participant: [u8; 32] },
 
     /// The proposed forest's estimated cost exceeds the coordinator's max budget.
-    BudgetExceeded {
-        estimated: u64,
-        max_budget: u64,
-    },
+    BudgetExceeded { estimated: u64, max_budget: u64 },
 
     // ── Underlying errors ────────────────────────────────────────────────
-
     /// A turn execution error from the turn executor.
     TurnExecution(TurnError),
 
@@ -113,7 +94,10 @@ pub enum CoordError {
 impl core::fmt::Display for CoordError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            CoordError::MissingDependency { turn_hash, dep_hash } => {
+            CoordError::MissingDependency {
+                turn_hash,
+                dep_hash,
+            } => {
                 write!(
                     f,
                     "missing causal dependency: turn {} needs dep {}",
@@ -127,7 +111,11 @@ impl core::fmt::Display for CoordError {
             CoordError::DuplicateTurn { hash } => {
                 write!(f, "duplicate turn: {}", hex4(hash))
             }
-            CoordError::SequenceGap { node_id, expected, got } => {
+            CoordError::SequenceGap {
+                node_id,
+                expected,
+                got,
+            } => {
                 write!(
                     f,
                     "sequence gap for node {}: expected {expected}, got {got}",
@@ -143,9 +131,15 @@ impl core::fmt::Display for CoordError {
                 )
             }
             CoordError::InvalidCoordinatorState { expected, actual } => {
-                write!(f, "invalid coordinator state: expected {expected}, in {actual}")
+                write!(
+                    f,
+                    "invalid coordinator state: expected {expected}, in {actual}"
+                )
             }
-            CoordError::ParticipantRejected { participant, reason } => {
+            CoordError::ParticipantRejected {
+                participant,
+                reason,
+            } => {
                 write!(f, "participant {} rejected: {reason}", hex4(participant))
             }
             CoordError::ThresholdNotMet { required, received } => {
@@ -157,21 +151,34 @@ impl core::fmt::Display for CoordError {
             CoordError::DuplicateVote { participant } => {
                 write!(f, "duplicate vote from participant: {}", hex4(participant))
             }
-            CoordError::PreconditionFailed { cell_id, description } => {
+            CoordError::PreconditionFailed {
+                cell_id,
+                description,
+            } => {
                 write!(f, "precondition failed for cell {cell_id}: {description}")
             }
             CoordError::EmptyForest => write!(f, "atomic forest is empty"),
             CoordError::NoParticipants => write!(f, "no participants in atomic turn"),
-            CoordError::InvalidThreshold { threshold, participants } => {
+            CoordError::InvalidThreshold {
+                threshold,
+                participants,
+            } => {
                 write!(
                     f,
                     "invalid threshold: {threshold} with {participants} participants"
                 )
             }
             CoordError::InvalidVoteSignature { participant } => {
-                write!(f, "invalid vote signature from participant: {}", hex4(participant))
+                write!(
+                    f,
+                    "invalid vote signature from participant: {}",
+                    hex4(participant)
+                )
             }
-            CoordError::BudgetExceeded { estimated, max_budget } => {
+            CoordError::BudgetExceeded {
+                estimated,
+                max_budget,
+            } => {
                 write!(
                     f,
                     "estimated cost {estimated} exceeds max budget {max_budget}"

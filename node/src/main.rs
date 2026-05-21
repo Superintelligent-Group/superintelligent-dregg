@@ -15,7 +15,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use tracing::{info, error};
+use tracing::{error, info};
 
 #[derive(Parser)]
 #[command(name = "pyana-node", about = "Pyana federation node daemon")]
@@ -84,7 +84,10 @@ async fn run_node(port: u16, peers: Vec<String>, data_dir: &str) {
     let data_path = expand_path(data_dir);
 
     if !data_path.exists() {
-        error!("data directory does not exist: {}. Run `pyana-node init` first.", data_path.display());
+        error!(
+            "data directory does not exist: {}. Run `pyana-node init` first.",
+            data_path.display()
+        );
         std::process::exit(1);
     }
 
@@ -115,9 +118,7 @@ async fn run_node(port: u16, peers: Vec<String>, data_dir: &str) {
         .await
         .expect("failed to bind HTTP listener");
 
-    axum::serve(listener, app)
-        .await
-        .expect("HTTP server error");
+    axum::serve(listener, app).await.expect("HTTP server error");
 }
 
 /// Initialize the data directory: create it and generate a keypair.
@@ -143,9 +144,16 @@ fn init_node(data_dir: &str) {
     // Derive public key for display.
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
     let public_key = signing_key.verifying_key();
-    let pk_hex: String = public_key.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+    let pk_hex: String = public_key
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
 
-    println!("Initialized pyana-node data directory: {}", data_path.display());
+    println!(
+        "Initialized pyana-node data directory: {}",
+        data_path.display()
+    );
     println!("Node public key: {pk_hex}");
     println!();
     println!("Start the node with:");

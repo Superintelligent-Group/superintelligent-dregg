@@ -54,6 +54,9 @@ pub use atomic::{
     AbortMessage, AtomicForest, CommitMessage, Coordinator, CoordinatorState, Decision,
     Participant, ProposeMessage, Vote,
 };
-pub use budget::{BudgetCoordinator, BudgetError, BudgetSlice, FastUnlockManager, UnlockCertificate, UnlockRequest};
+pub use budget::{
+    BudgetCoordinator, BudgetError, BudgetSlice, FastUnlockManager, UnlockCertificate,
+    UnlockRequest,
+};
 pub use causal::{CausalDag, CausalLedger, CausalTurn};
 pub use error::CoordError;

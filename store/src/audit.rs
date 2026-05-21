@@ -144,11 +144,7 @@ impl PersistentStore {
     }
 
     /// Get audit events in a sequence range (inclusive start, exclusive end).
-    pub fn audit_events_range(
-        &self,
-        start: u64,
-        end: u64,
-    ) -> Result<Vec<StoredAuditEvent>> {
+    pub fn audit_events_range(&self, start: u64, end: u64) -> Result<Vec<StoredAuditEvent>> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(tables::AUDIT_LOG)?;
 

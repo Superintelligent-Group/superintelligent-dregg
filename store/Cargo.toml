@@ -12,10 +12,11 @@ redb = "2"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
 blake3 = "1"
-getrandom = "0"
+getrandom = { workspace = true }
 pyana-types = { path = "../types" }
 pyana-commit = { path = "../commit" }
 pyana-cell = { path = "../cell" }
+pyana-circuit = { path = "../circuit" }
 
 [dev-dependencies]
 tempfile = "3"
@@ -23,3 +24,6 @@ tempfile = "3"
 [lib]
 name = "pyana_store"
 crate-type = ["rlib"]
+
+[lints]
+workspace = true

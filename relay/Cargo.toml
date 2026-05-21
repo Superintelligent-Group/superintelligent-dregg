@@ -39,3 +39,6 @@ blake3 = "1"
 
 # Utilities
 anyhow = "1"
+
+[lints]
+workspace = true

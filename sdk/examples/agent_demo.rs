@@ -10,10 +10,8 @@
 //! 6. Sub-agent executes a turn using the capability
 //! 7. Print the full audit trail
 
-use pyana_sdk::{
-    AgentWallet, AgentRuntime, Attenuation, AuthRequest, Effect,
-};
-use std::sync::Arc;
+use pyana_sdk::{AgentRuntime, AgentWallet, Attenuation, AuthRequest, Effect};
+use std::sync::{Arc, RwLock};
 
 fn main() {
     println!("=== Pyana Agent SDK Demo ===\n");
@@ -24,7 +22,10 @@ fn main() {
     let mut wallet = AgentWallet::new();
     println!("[1] Created agent wallet");
     println!("    Public key: {}", wallet.public_key());
-    println!("    Cell ID (compute domain): {}\n", wallet.cell_id("compute"));
+    println!(
+        "    Cell ID (compute domain): {}\n",
+        wallet.cell_id("compute")
+    );
 
     // -------------------------------------------------------------------------
     // Step 2: Mint a root token for the "compute" service.
@@ -70,7 +71,10 @@ fn main() {
         ..Default::default()
     };
     let verified = wallet.verify_token(&restricted_token, &monitoring_request);
-    println!("    Verification for app=monitoring, action=read: {}\n", verified);
+    println!(
+        "    Verification for app=monitoring, action=read: {}\n",
+        verified
+    );
 
     // -------------------------------------------------------------------------
     // Step 4: Delegate to a sub-agent with further restrictions.
@@ -80,14 +84,16 @@ fn main() {
         ..Default::default()
     };
 
-    let wallet_arc = Arc::new(wallet);
+    let wallet_arc = Arc::new(RwLock::new(wallet));
     let runtime = AgentRuntime::new(wallet_arc.clone(), "compute");
     println!("[4] Created agent runtime");
     println!("    Domain: {}", runtime.domain());
     println!("    Cell ID: {}", runtime.cell_id());
     println!("    Nonce: {}\n", runtime.nonce());
 
-    let sub_agent = runtime.spawn_sub_agent(&sub_restrictions, &root_token).unwrap();
+    let sub_agent = runtime
+        .spawn_sub_agent(&sub_restrictions, &root_token)
+        .unwrap();
     println!("    Spawned sub-agent");
     println!("    Sub-agent public key: {}", sub_agent.public_key());
     println!("    Sub-agent cell ID: {}", sub_agent.cell_id);
@@ -110,9 +116,9 @@ fn main() {
     // Step 6: Sub-agent executes a turn (increment its own nonce).
     // -------------------------------------------------------------------------
     println!("[6] Sub-agent executing turn...");
-    let effects = vec![
-        Effect::IncrementNonce { cell: sub_agent.cell_id },
-    ];
+    let effects = vec![Effect::IncrementNonce {
+        cell: sub_agent.cell_id,
+    }];
 
     match sub_agent.execute(effects) {
         Ok(receipt) => {
@@ -132,9 +138,9 @@ fn main() {
     // Step 7: Parent agent also executes a turn.
     // -------------------------------------------------------------------------
     println!("[7] Parent agent executing turn...");
-    let parent_effects = vec![
-        Effect::IncrementNonce { cell: runtime.cell_id() },
-    ];
+    let parent_effects = vec![Effect::IncrementNonce {
+        cell: runtime.cell_id(),
+    }];
 
     match runtime.execute(parent_effects) {
         Ok(receipt) => {
@@ -152,11 +158,14 @@ fn main() {
     // Audit Trail Summary
     // -------------------------------------------------------------------------
     println!("=== Audit Trail ===");
-    println!("  Parent agent: {}", wallet_arc.public_key());
+    println!("  Parent agent: {}", wallet_arc.read().unwrap().public_key());
     println!("  Sub-agent:    {}", sub_agent.public_key());
     println!("  Domain:       {}", runtime.domain());
     println!("  Root token:   {}", root_token.id);
-    println!("  Delegated:    {} -> {}", root_token.id, sub_agent.token.id);
+    println!(
+        "  Delegated:    {} -> {}",
+        root_token.id, sub_agent.token.id
+    );
     println!("  Restrictions: apps=[monitoring:r], sub-apps=[monitoring-sub:r]");
     println!("  Turns executed: 2 (1 parent, 1 sub-agent)");
     println!("\n=== Demo Complete ===");

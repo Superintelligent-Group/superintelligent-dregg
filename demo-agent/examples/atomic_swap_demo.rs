@@ -8,14 +8,14 @@
 //! 5. Conservation verified: 100 A in = 100 A out, 50 B in = 50 B out
 //! 6. Neither party needs to trust the other or the matcher
 
-use ed25519_dalek::{SigningKey, Signer};
+use ed25519_dalek::{Signer, SigningKey};
 use pyana_cell::note::Note;
 use pyana_cell::nullifier_set::NullifierSet;
 use pyana_cell::{CellId, Preconditions};
+use pyana_turn::CallForest;
 use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, symbol};
 use pyana_turn::composer::{SignedFragment, TurnComposer};
 use pyana_turn::executor::TurnExecutor;
-use pyana_turn::CallForest;
 
 /// Helper to create an Ed25519 signing key from seed bytes
 fn make_signing_key(seed: &[u8]) -> SigningKey {
@@ -48,12 +48,18 @@ fn main() {
     let asset_b: u64 = 0xBBBB_0000_0000_0002; // "Token B"
 
     println!("Participants:");
-    println!("  Alice: {:02x}{:02x}{:02x}{:02x}... (has 100 units of Asset A)",
-        alice_pubkey[0], alice_pubkey[1], alice_pubkey[2], alice_pubkey[3]);
-    println!("  Bob:   {:02x}{:02x}{:02x}{:02x}... (has 50 units of Asset B)",
-        bob_pubkey[0], bob_pubkey[1], bob_pubkey[2], bob_pubkey[3]);
-    println!("  Matcher: {:02x}{:02x}{:02x}{:02x}... (fee payer, assembles the swap)",
-        matcher_pubkey[0], matcher_pubkey[1], matcher_pubkey[2], matcher_pubkey[3]);
+    println!(
+        "  Alice: {:02x}{:02x}{:02x}{:02x}... (has 100 units of Asset A)",
+        alice_pubkey[0], alice_pubkey[1], alice_pubkey[2], alice_pubkey[3]
+    );
+    println!(
+        "  Bob:   {:02x}{:02x}{:02x}{:02x}... (has 50 units of Asset B)",
+        bob_pubkey[0], bob_pubkey[1], bob_pubkey[2], bob_pubkey[3]
+    );
+    println!(
+        "  Matcher: {:02x}{:02x}{:02x}{:02x}... (fee payer, assembles the swap)",
+        matcher_pubkey[0], matcher_pubkey[1], matcher_pubkey[2], matcher_pubkey[3]
+    );
     println!();
     println!("Assets:");
     println!("  Asset A: 0x{:016x}", asset_a);
@@ -65,31 +71,36 @@ fn main() {
 
     // Alice's note: 100 units of Asset A
     let alice_spending_key = blake3::derive_key("alice-note-spending-v1", &alice_pubkey);
-    let alice_note = Note::with_randomness(
-        alice_pubkey,
-        [asset_a, 100, 0, 0, 0, 0, 0, 0],
-        [0xA0u8; 32],
-    );
+    let alice_note =
+        Note::with_randomness(alice_pubkey, [asset_a, 100, 0, 0, 0, 0, 0, 0], [0xA0u8; 32]);
     let alice_commitment = alice_note.commitment();
     let _alice_position: u64 = 0;
     let alice_nullifier = alice_note.nullifier(&alice_spending_key);
 
     // Bob's note: 50 units of Asset B
     let bob_spending_key = blake3::derive_key("bob-note-spending-v1", &bob_pubkey);
-    let bob_note = Note::with_randomness(
-        bob_pubkey,
-        [asset_b, 50, 0, 0, 0, 0, 0, 0],
-        [0xB0u8; 32],
-    );
+    let bob_note = Note::with_randomness(bob_pubkey, [asset_b, 50, 0, 0, 0, 0, 0, 0], [0xB0u8; 32]);
     let bob_commitment = bob_note.commitment();
     let _bob_position: u64 = 1;
     let bob_nullifier = bob_note.nullifier(&bob_spending_key);
 
     println!("--- Pre-Swap State ---");
-    println!("  Alice's note: {} units of Asset A (commitment: {:02x}{:02x}{:02x}{:02x}...)",
-        alice_note.value(), alice_commitment.0[0], alice_commitment.0[1], alice_commitment.0[2], alice_commitment.0[3]);
-    println!("  Bob's note:   {} units of Asset B (commitment: {:02x}{:02x}{:02x}{:02x}...)",
-        bob_note.value(), bob_commitment.0[0], bob_commitment.0[1], bob_commitment.0[2], bob_commitment.0[3]);
+    println!(
+        "  Alice's note: {} units of Asset A (commitment: {:02x}{:02x}{:02x}{:02x}...)",
+        alice_note.value(),
+        alice_commitment.0[0],
+        alice_commitment.0[1],
+        alice_commitment.0[2],
+        alice_commitment.0[3]
+    );
+    println!(
+        "  Bob's note:   {} units of Asset B (commitment: {:02x}{:02x}{:02x}{:02x}...)",
+        bob_note.value(),
+        bob_commitment.0[0],
+        bob_commitment.0[1],
+        bob_commitment.0[2],
+        bob_commitment.0[3]
+    );
     println!();
 
     // =======================================================================
@@ -102,11 +113,8 @@ fn main() {
     let alice_cell_id = CellId::derive_raw(&alice_pubkey, &[0u8; 32]);
 
     // The note Alice wants to RECEIVE (50 units of Asset B, owned by Alice)
-    let alice_receives_note = Note::with_randomness(
-        alice_pubkey,
-        [asset_b, 50, 0, 0, 0, 0, 0, 0],
-        [0xA1u8; 32],
-    );
+    let alice_receives_note =
+        Note::with_randomness(alice_pubkey, [asset_b, 50, 0, 0, 0, 0, 0, 0], [0xA1u8; 32]);
     let alice_receives_commitment = alice_receives_note.commitment();
 
     // Alice's action: spend her note, create a new note for herself
@@ -138,11 +146,17 @@ fn main() {
     };
 
     println!("  Action effects:");
-    println!("    - NoteSpend: 100 units Asset A (nullifier: {:02x}{:02x}{:02x}{:02x}...)",
-        alice_nullifier.0[0], alice_nullifier.0[1], alice_nullifier.0[2], alice_nullifier.0[3]);
-    println!("    - NoteCreate: 50 units Asset B (commitment: {:02x}{:02x}{:02x}{:02x}...)",
-        alice_receives_commitment.0[0], alice_receives_commitment.0[1],
-        alice_receives_commitment.0[2], alice_receives_commitment.0[3]);
+    println!(
+        "    - NoteSpend: 100 units Asset A (nullifier: {:02x}{:02x}{:02x}{:02x}...)",
+        alice_nullifier.0[0], alice_nullifier.0[1], alice_nullifier.0[2], alice_nullifier.0[3]
+    );
+    println!(
+        "    - NoteCreate: 50 units Asset B (commitment: {:02x}{:02x}{:02x}{:02x}...)",
+        alice_receives_commitment.0[0],
+        alice_receives_commitment.0[1],
+        alice_receives_commitment.0[2],
+        alice_receives_commitment.0[3]
+    );
     println!("  Commitment mode: Partial (doesn't see Bob's actions)");
     println!("  Alice signs with Ed25519");
     println!();
@@ -156,11 +170,8 @@ fn main() {
     let bob_cell_id = CellId::derive_raw(&bob_pubkey, &[0u8; 32]);
 
     // The note Bob wants to RECEIVE (100 units of Asset A, owned by Bob)
-    let bob_receives_note = Note::with_randomness(
-        bob_pubkey,
-        [asset_a, 100, 0, 0, 0, 0, 0, 0],
-        [0xB1u8; 32],
-    );
+    let bob_receives_note =
+        Note::with_randomness(bob_pubkey, [asset_a, 100, 0, 0, 0, 0, 0, 0], [0xB1u8; 32]);
     let bob_receives_commitment = bob_receives_note.commitment();
 
     let bob_action = Action {
@@ -191,11 +202,17 @@ fn main() {
     };
 
     println!("  Action effects:");
-    println!("    - NoteSpend: 50 units Asset B (nullifier: {:02x}{:02x}{:02x}{:02x}...)",
-        bob_nullifier.0[0], bob_nullifier.0[1], bob_nullifier.0[2], bob_nullifier.0[3]);
-    println!("    - NoteCreate: 100 units Asset A (commitment: {:02x}{:02x}{:02x}{:02x}...)",
-        bob_receives_commitment.0[0], bob_receives_commitment.0[1],
-        bob_receives_commitment.0[2], bob_receives_commitment.0[3]);
+    println!(
+        "    - NoteSpend: 50 units Asset B (nullifier: {:02x}{:02x}{:02x}{:02x}...)",
+        bob_nullifier.0[0], bob_nullifier.0[1], bob_nullifier.0[2], bob_nullifier.0[3]
+    );
+    println!(
+        "    - NoteCreate: 100 units Asset A (commitment: {:02x}{:02x}{:02x}{:02x}...)",
+        bob_receives_commitment.0[0],
+        bob_receives_commitment.0[1],
+        bob_receives_commitment.0[2],
+        bob_receives_commitment.0[3]
+    );
     println!("  Commitment mode: Partial (doesn't see Alice's actions)");
     println!("  Bob signs with Ed25519");
     println!();
@@ -218,21 +235,35 @@ fn main() {
     temp_forest.add_root(bob_action.clone());
     let forest_root = temp_forest.hash();
 
-    println!("  Forest root: {:02x}{:02x}{:02x}{:02x}...",
-        forest_root[0], forest_root[1], forest_root[2], forest_root[3]);
+    println!(
+        "  Forest root: {:02x}{:02x}{:02x}{:02x}...",
+        forest_root[0], forest_root[1], forest_root[2], forest_root[3]
+    );
 
     // Compute the signing messages for each party
-    let alice_signing_msg = TurnExecutor::compute_partial_signing_message(&alice_action, 0, &forest_root);
-    let bob_signing_msg = TurnExecutor::compute_partial_signing_message(&bob_action, 1, &forest_root);
+    let alice_signing_msg =
+        TurnExecutor::compute_partial_signing_message(&alice_action, 0, &forest_root);
+    let bob_signing_msg =
+        TurnExecutor::compute_partial_signing_message(&bob_action, 1, &forest_root);
 
     // Alice and Bob sign their messages
     let alice_sig = alice_sk.sign(&alice_signing_msg);
     let bob_sig = bob_sk.sign(&bob_signing_msg);
 
-    println!("  Alice's signature: {:02x}{:02x}{:02x}{:02x}...",
-        alice_sig.to_bytes()[0], alice_sig.to_bytes()[1], alice_sig.to_bytes()[2], alice_sig.to_bytes()[3]);
-    println!("  Bob's signature:   {:02x}{:02x}{:02x}{:02x}...",
-        bob_sig.to_bytes()[0], bob_sig.to_bytes()[1], bob_sig.to_bytes()[2], bob_sig.to_bytes()[3]);
+    println!(
+        "  Alice's signature: {:02x}{:02x}{:02x}{:02x}...",
+        alice_sig.to_bytes()[0],
+        alice_sig.to_bytes()[1],
+        alice_sig.to_bytes()[2],
+        alice_sig.to_bytes()[3]
+    );
+    println!(
+        "  Bob's signature:   {:02x}{:02x}{:02x}{:02x}...",
+        bob_sig.to_bytes()[0],
+        bob_sig.to_bytes()[1],
+        bob_sig.to_bytes()[2],
+        bob_sig.to_bytes()[3]
+    );
 
     // Create signed fragments
     let alice_fragment = SignedFragment {
@@ -248,8 +279,12 @@ fn main() {
     };
 
     // Add fragments to composer
-    composer.add_fragment(alice_fragment).expect("Alice's fragment should be valid");
-    composer.add_fragment(bob_fragment).expect("Bob's fragment should be valid");
+    composer
+        .add_fragment(alice_fragment)
+        .expect("Alice's fragment should be valid");
+    composer
+        .add_fragment(bob_fragment)
+        .expect("Bob's fragment should be valid");
 
     println!("  Both fragments added to composer");
     println!();
@@ -263,8 +298,10 @@ fn main() {
     match &composed_turn {
         Ok(turn) => {
             println!("  Turn composed successfully!");
-            println!("  Agent (fee payer): {:02x}{:02x}{:02x}{:02x}...",
-                matcher_pubkey[0], matcher_pubkey[1], matcher_pubkey[2], matcher_pubkey[3]);
+            println!(
+                "  Agent (fee payer): {:02x}{:02x}{:02x}{:02x}...",
+                matcher_pubkey[0], matcher_pubkey[1], matcher_pubkey[2], matcher_pubkey[3]
+            );
             println!("  Action count: {}", turn.action_count());
             println!("  Fee: {} computrons", turn.fee);
             println!("  Memo: {:?}", turn.memo);
@@ -303,13 +340,25 @@ fn main() {
     for action in [&alice_action, &bob_action] {
         for effect in &action.effects {
             match effect {
-                Effect::NoteSpend { value, asset_type, .. } => {
-                    if *asset_type == asset_a { asset_a_in += value; }
-                    if *asset_type == asset_b { asset_b_in += value; }
+                Effect::NoteSpend {
+                    value, asset_type, ..
+                } => {
+                    if *asset_type == asset_a {
+                        asset_a_in += value;
+                    }
+                    if *asset_type == asset_b {
+                        asset_b_in += value;
+                    }
                 }
-                Effect::NoteCreate { value, asset_type, .. } => {
-                    if *asset_type == asset_a { asset_a_out += value; }
-                    if *asset_type == asset_b { asset_b_out += value; }
+                Effect::NoteCreate {
+                    value, asset_type, ..
+                } => {
+                    if *asset_type == asset_a {
+                        asset_a_out += value;
+                    }
+                    if *asset_type == asset_b {
+                        asset_b_out += value;
+                    }
                 }
                 _ => {}
             }
@@ -327,8 +376,12 @@ fn main() {
     println!("--- Step 6: DOUBLE-SPEND PROTECTION ---");
 
     // Record the nullifiers as spent
-    nullifier_set.insert(alice_nullifier).expect("Alice's nullifier should be accepted");
-    nullifier_set.insert(bob_nullifier).expect("Bob's nullifier should be accepted");
+    nullifier_set
+        .insert(alice_nullifier)
+        .expect("Alice's nullifier should be accepted");
+    nullifier_set
+        .insert(bob_nullifier)
+        .expect("Bob's nullifier should be accepted");
 
     println!("  Alice's nullifier recorded as spent");
     println!("  Bob's nullifier recorded as spent");
@@ -370,12 +423,20 @@ fn main() {
     // FINAL STATE
     // =======================================================================
     println!("--- Final State ---");
-    println!("  Alice: now owns 50 units of Asset B (commitment: {:02x}{:02x}{:02x}{:02x}...)",
-        alice_receives_commitment.0[0], alice_receives_commitment.0[1],
-        alice_receives_commitment.0[2], alice_receives_commitment.0[3]);
-    println!("  Bob:   now owns 100 units of Asset A (commitment: {:02x}{:02x}{:02x}{:02x}...)",
-        bob_receives_commitment.0[0], bob_receives_commitment.0[1],
-        bob_receives_commitment.0[2], bob_receives_commitment.0[3]);
+    println!(
+        "  Alice: now owns 50 units of Asset B (commitment: {:02x}{:02x}{:02x}{:02x}...)",
+        alice_receives_commitment.0[0],
+        alice_receives_commitment.0[1],
+        alice_receives_commitment.0[2],
+        alice_receives_commitment.0[3]
+    );
+    println!(
+        "  Bob:   now owns 100 units of Asset A (commitment: {:02x}{:02x}{:02x}{:02x}...)",
+        bob_receives_commitment.0[0],
+        bob_receives_commitment.0[1],
+        bob_receives_commitment.0[2],
+        bob_receives_commitment.0[3]
+    );
     println!("  Nullifiers spent: {}", nullifier_set.len());
     println!();
     println!("=== Atomic Swap Demo Complete ===");

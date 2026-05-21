@@ -115,11 +115,7 @@ impl BudgetSlice {
     ///
     /// Returns `Ok(())` if the debit succeeds (enough remaining).
     /// Returns `Err(BudgetError::SliceExhausted)` if the slice cannot cover the amount.
-    pub fn try_debit(
-        &mut self,
-        amount: u64,
-        digest: DebitDigest,
-    ) -> Result<(), BudgetError> {
+    pub fn try_debit(&mut self, amount: u64, digest: DebitDigest) -> Result<(), BudgetError> {
         if amount > self.remaining() {
             return Err(BudgetError::SliceExhausted {
                 agent: self.agent,
@@ -272,7 +268,10 @@ impl BudgetCoordinator {
         amount: u64,
         digest: DebitDigest,
     ) -> Result<(), BudgetError> {
-        let slice = self.silo_states.get_mut(&silo).ok_or(BudgetError::UnknownSilo { silo })?;
+        let slice = self
+            .silo_states
+            .get_mut(&silo)
+            .ok_or(BudgetError::UnknownSilo { silo })?;
         slice.try_debit(amount, digest)
     }
 
@@ -317,10 +316,7 @@ impl BudgetCoordinator {
     ///
     /// # Returns
     /// The total amount spent in this epoch (before redistribution).
-    pub fn rebalance(
-        &mut self,
-        certificates: &[SpendingCertificate],
-    ) -> Result<u64, BudgetError> {
+    pub fn rebalance(&mut self, certificates: &[SpendingCertificate]) -> Result<u64, BudgetError> {
         // Verify certificates.
         let mut seen_silos = HashMap::new();
         let mut total_spent: u64 = 0;
@@ -348,9 +344,10 @@ impl BudgetCoordinator {
             }
 
             // Certificate spending must not exceed the silo's ceiling.
-            let slice = self.silo_states.get(&cert.silo).ok_or(BudgetError::UnknownSilo {
-                silo: cert.silo,
-            })?;
+            let slice = self
+                .silo_states
+                .get(&cert.silo)
+                .ok_or(BudgetError::UnknownSilo { silo: cert.silo })?;
             if cert.total_spent > slice.ceiling {
                 return Err(BudgetError::CertificateExceedsCeiling {
                     silo: cert.silo,
@@ -591,28 +588,18 @@ pub enum BudgetError {
         requested: u64,
     },
     /// Not enough silos for the requested Byzantine tolerance.
-    InsufficientSilos {
-        have: usize,
-        need: usize,
-    },
+    InsufficientSilos { have: usize, need: usize },
     /// Unknown silo ID.
-    UnknownSilo {
-        silo: SiloId,
-    },
+    UnknownSilo { silo: SiloId },
     /// Certificate is for the wrong agent.
-    WrongAgent {
-        expected: CellId,
-        got: CellId,
-    },
+    WrongAgent { expected: CellId, got: CellId },
     /// Certificate version doesn't match current epoch.
     VersionMismatch {
         expected: BudgetVersion,
         got: BudgetVersion,
     },
     /// Duplicate spending certificate from the same silo.
-    DuplicateCertificate {
-        silo: SiloId,
-    },
+    DuplicateCertificate { silo: SiloId },
     /// A certificate claims more spending than the silo's ceiling allows.
     CertificateExceedsCeiling {
         silo: SiloId,
@@ -620,33 +607,25 @@ pub enum BudgetError {
         ceiling: u64,
     },
     /// Resources are already locked for this proposal.
-    AlreadyLocked {
-        proposal_id: [u8; 32],
-    },
+    AlreadyLocked { proposal_id: [u8; 32] },
     /// Lock has already been released.
-    AlreadyReleased {
-        proposal_id: [u8; 32],
-    },
+    AlreadyReleased { proposal_id: [u8; 32] },
     /// No lock exists for this proposal.
-    LockNotFound {
-        proposal_id: [u8; 32],
-    },
+    LockNotFound { proposal_id: [u8; 32] },
     /// Not enough votes to form an unlock certificate.
-    InsufficientUnlockVotes {
-        have: usize,
-        need: usize,
-    },
+    InsufficientUnlockVotes { have: usize, need: usize },
     /// A silo reports a conflict (it signed a commit for this proposal).
-    ConflictingUnlock {
-        silo: SiloId,
-        proposal_id: [u8; 32],
-    },
+    ConflictingUnlock { silo: SiloId, proposal_id: [u8; 32] },
 }
 
 impl core::fmt::Display for BudgetError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            BudgetError::SliceExhausted { agent, remaining, requested } => {
+            BudgetError::SliceExhausted {
+                agent,
+                remaining,
+                requested,
+            } => {
                 write!(
                     f,
                     "budget slice exhausted for agent {agent}: {remaining} remaining, {requested} requested"
@@ -657,7 +636,10 @@ impl core::fmt::Display for BudgetError {
             }
             BudgetError::UnknownSilo { .. } => write!(f, "unknown silo"),
             BudgetError::WrongAgent { expected, got } => {
-                write!(f, "certificate for wrong agent: expected {expected}, got {got}")
+                write!(
+                    f,
+                    "certificate for wrong agent: expected {expected}, got {got}"
+                )
             }
             BudgetError::VersionMismatch { expected, got } => {
                 write!(f, "budget version mismatch: expected {expected}, got {got}")
@@ -665,7 +647,9 @@ impl core::fmt::Display for BudgetError {
             BudgetError::DuplicateCertificate { .. } => {
                 write!(f, "duplicate spending certificate from silo")
             }
-            BudgetError::CertificateExceedsCeiling { claimed, ceiling, .. } => {
+            BudgetError::CertificateExceedsCeiling {
+                claimed, ceiling, ..
+            } => {
                 write!(
                     f,
                     "certificate claims {claimed} spent, but ceiling is {ceiling}"
@@ -678,7 +662,10 @@ impl core::fmt::Display for BudgetError {
                 write!(f, "insufficient unlock votes: have {have}, need {need}")
             }
             BudgetError::ConflictingUnlock { .. } => {
-                write!(f, "conflicting unlock: silo signed a commit for this proposal")
+                write!(
+                    f,
+                    "conflicting unlock: silo signed a commit for this proposal"
+                )
             }
         }
     }
@@ -697,12 +684,14 @@ mod tests {
     }
 
     fn test_silos(n: usize) -> Vec<SiloId> {
-        (0..n).map(|i| {
-            let mut id = [0u8; 32];
-            id[0] = i as u8;
-            id[1] = (i >> 8) as u8;
-            id
-        }).collect()
+        (0..n)
+            .map(|i| {
+                let mut id = [0u8; 32];
+                id[0] = i as u8;
+                id[1] = (i >> 8) as u8;
+                id
+            })
+            .collect()
     }
 
     fn test_digest(n: u64) -> DebitDigest {
@@ -735,7 +724,10 @@ mod tests {
     fn test_insufficient_silos() {
         let silos = test_silos(3); // Need 3*1+1 = 4 silos for f=1
         let result = BudgetCoordinator::new(test_agent(), 1000, silos, 1);
-        assert!(matches!(result, Err(BudgetError::InsufficientSilos { have: 3, need: 4 })));
+        assert!(matches!(
+            result,
+            Err(BudgetError::InsufficientSilos { have: 3, need: 4 })
+        ));
     }
 
     #[test]
@@ -776,7 +768,14 @@ mod tests {
 
         // Slice exhausted.
         let err = coord.try_debit(silo, 1, test_digest(3)).unwrap_err();
-        assert!(matches!(err, BudgetError::SliceExhausted { remaining: 0, requested: 1, .. }));
+        assert!(matches!(
+            err,
+            BudgetError::SliceExhausted {
+                remaining: 0,
+                requested: 1,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -821,7 +820,13 @@ mod tests {
         cert.version = 99; // Wrong version.
 
         let err = coord.rebalance(&[cert]).unwrap_err();
-        assert!(matches!(err, BudgetError::VersionMismatch { expected: 0, got: 99 }));
+        assert!(matches!(
+            err,
+            BudgetError::VersionMismatch {
+                expected: 0,
+                got: 99
+            }
+        ));
     }
 
     #[test]
@@ -917,13 +922,13 @@ mod tests {
             .map(|&voter| mgr.vote_unlock(&request, voter, false))
             .collect();
 
-        let certificate = UnlockCertificate {
-            request,
-            votes,
-        };
+        let certificate = UnlockCertificate { request, votes };
 
         let err = mgr.apply_unlock_certificate(&certificate).unwrap_err();
-        assert!(matches!(err, BudgetError::InsufficientUnlockVotes { have: 2, need: 3 }));
+        assert!(matches!(
+            err,
+            BudgetError::InsufficientUnlockVotes { have: 2, need: 3 }
+        ));
     }
 
     #[test]
@@ -948,10 +953,7 @@ mod tests {
         votes.push(mgr.vote_unlock(&request, silos[1], true)); // CONFLICT
         votes.push(mgr.vote_unlock(&request, silos[2], false));
 
-        let certificate = UnlockCertificate {
-            request,
-            votes,
-        };
+        let certificate = UnlockCertificate { request, votes };
 
         let err = mgr.apply_unlock_certificate(&certificate).unwrap_err();
         assert!(matches!(err, BudgetError::ConflictingUnlock { .. }));
@@ -984,7 +986,9 @@ mod tests {
         coord.try_debit(silo, amount, test_digest(1)).unwrap();
 
         // Lock the computrons pending the 2PC outcome.
-        unlock_mgr.lock(proposal, test_agent(), amount, silo, coord.version).unwrap();
+        unlock_mgr
+            .lock(proposal, test_agent(), amount, silo, coord.version)
+            .unwrap();
 
         // The 2PC aborts. Fast unlock to reclaim.
         let request = UnlockRequest {

@@ -63,7 +63,8 @@ fn verify_step(step: &DerivationStep, known_facts: &[Fact], rules: &[Rule]) -> b
         let fact = &known_facts[fact_idx];
 
         // Try to unify this body atom with the fact
-        let Some(new_subst) = Evaluator::unify_atom_with_fact(body_atom, fact, &reconstructed_subst)
+        let Some(new_subst) =
+            Evaluator::unify_atom_with_fact(body_atom, fact, &reconstructed_subst)
         else {
             return false;
         };
@@ -76,7 +77,11 @@ fn verify_step(step: &DerivationStep, known_facts: &[Fact], rules: &[Rule]) -> b
     }
 
     // 5. Check constraints pass
-    if !rule.checks.iter().all(|c| check::eval_check(c, &step.substitution)) {
+    if !rule
+        .checks
+        .iter()
+        .all(|c| check::eval_check(c, &step.substitution))
+    {
         return false;
     }
 
@@ -110,26 +115,20 @@ fn substitutions_consistent(claimed: &Substitution, reconstructed: &Substitution
                 return false;
             }
         }
-        // It's OK if the claimed substitution has extra bindings
-        // as long as nothing conflicts.
     }
     true
 }
 
 /// Verify the conclusion is consistent with the derived facts.
-fn verify_conclusion(
-    facts: &[Fact],
-    steps: &[DerivationStep],
-    conclusion: &Conclusion,
-) -> bool {
+fn verify_conclusion(facts: &[Fact], steps: &[DerivationStep], conclusion: &Conclusion) -> bool {
     let allow_pred = predicates::allow();
 
     match conclusion {
         Conclusion::Allow { policy_rule_id } => {
             // There must be an allow fact derived by the claimed rule
-            let has_allow_in_steps = steps.iter().any(|s| {
-                s.derived_fact.predicate == allow_pred && s.rule_id == *policy_rule_id
-            });
+            let has_allow_in_steps = steps
+                .iter()
+                .any(|s| s.derived_fact.predicate == allow_pred && s.rule_id == *policy_rule_id);
             let has_allow_in_base =
                 facts.iter().any(|f| f.predicate == allow_pred) && *policy_rule_id == 0;
             has_allow_in_steps || has_allow_in_base
@@ -137,8 +136,7 @@ fn verify_conclusion(
         Conclusion::Deny => {
             // No allow fact should exist
             let no_allow_in_facts = !facts.iter().any(|f| f.predicate == allow_pred);
-            let no_allow_in_steps =
-                !steps.iter().any(|s| s.derived_fact.predicate == allow_pred);
+            let no_allow_in_steps = !steps.iter().any(|s| s.derived_fact.predicate == allow_pred);
             no_allow_in_facts && no_allow_in_steps
         }
     }

@@ -342,9 +342,7 @@ impl Air for IvcAir {
             // First row's old_root must match the initial_root public input.
             Constraint {
                 name: "initial_root_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::OLD_ROOT] - public_inputs[0]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::OLD_ROOT] - public_inputs[0]),
             },
             // First row's step_count must be 1.
             Constraint {
@@ -367,23 +365,17 @@ impl Air for IvcAir {
             // Last row's new_root must match the final_root public input.
             Constraint {
                 name: "final_root_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::NEW_ROOT] - public_inputs[1]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::NEW_ROOT] - public_inputs[1]),
             },
             // Last row's step_count must match the public input step_count.
             Constraint {
                 name: "step_count_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::STEP_COUNT] - public_inputs[2]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::STEP_COUNT] - public_inputs[2]),
             },
             // Last row's new_hash must match the public accumulated_hash.
             Constraint {
                 name: "accumulated_hash_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::NEW_HASH] - public_inputs[3]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::NEW_HASH] - public_inputs[3]),
             },
         ]
     }
@@ -486,7 +478,13 @@ pub fn prove_ivc(initial_root: BabyBear, deltas: Vec<FoldDelta>) -> Option<IvcPr
         num_rows: step_count as usize,
         num_cols: IVC_AIR_WIDTH,
         num_public_inputs: 4,
-        trace_digest: compute_ivc_digest(initial_root, final_root, step_count, accumulated_hash, &trace_commitment),
+        trace_digest: compute_ivc_digest(
+            initial_root,
+            final_root,
+            step_count,
+            accumulated_hash,
+            &trace_commitment,
+        ),
         public_inputs: vec![
             initial_root,
             final_root,
@@ -531,10 +529,7 @@ fn ivc_proof_size(step_count: u32) -> usize {
 /// In real IVC, this would recursively verify the previous proof inside the
 /// new circuit. In mock mode, we rebuild the hash chain (which is O(1) per step
 /// since we only need the accumulated_hash from the previous proof).
-pub fn fold_and_accumulate(
-    prev: &AccumulatedProof,
-    delta: &FoldDelta,
-) -> Option<AccumulatedProof> {
+pub fn fold_and_accumulate(prev: &AccumulatedProof, delta: &FoldDelta) -> Option<AccumulatedProof> {
     // Check root continuity first (cheap check before trace generation)
     if delta.fold.old_root != prev.current_root {
         return None;
@@ -552,11 +547,7 @@ pub fn fold_and_accumulate(
     let new_root = delta.fold.new_root;
 
     // Extend the hash chain
-    let new_hash = extend_accumulated_hash(
-        prev.accumulated_hash,
-        new_root,
-        new_step_count,
-    );
+    let new_hash = extend_accumulated_hash(prev.accumulated_hash, new_root, new_step_count);
 
     // Build the mock proof directly from the already-verified trace (no re-generation).
     let num_rows = fold_trace.len();
@@ -575,9 +566,8 @@ pub fn fold_and_accumulate(
     };
     let security_bits = 128;
     let fri_queries = security_bits / 2;
-    let simulated_proof_size_bytes = num_cols * log_rows * fri_queries * 4
-        + fold_public_inputs.len() * 4
-        + 32;
+    let simulated_proof_size_bytes =
+        num_cols * log_rows * fri_queries * 4 + fold_public_inputs.len() * 4 + 32;
     let proof = MockProof {
         num_rows,
         num_cols,
@@ -635,10 +625,7 @@ pub fn initial_accumulation(initial_root: BabyBear) -> AccumulatedProof {
 }
 
 /// Finalize an accumulated proof into an IVC proof for verification.
-pub fn finalize_ivc(
-    initial_root: BabyBear,
-    accumulated: &AccumulatedProof,
-) -> IvcProof {
+pub fn finalize_ivc(initial_root: BabyBear, accumulated: &AccumulatedProof) -> IvcProof {
     let trace_commitment = accumulated.trace_commitment;
 
     let proof = MockProof {
@@ -774,10 +761,7 @@ pub fn verify_ivc(proof: &IvcProof, expected_initial_root: Option<BabyBear>) -> 
 /// Verify an IVC proof given the full chain of intermediate roots.
 /// This is a stronger check used in testing: it recomputes the accumulated hash
 /// from the root chain and compares.
-pub fn verify_ivc_with_roots(
-    proof: &IvcProof,
-    intermediate_roots: &[BabyBear],
-) -> IvcVerification {
+pub fn verify_ivc_with_roots(proof: &IvcProof, intermediate_roots: &[BabyBear]) -> IvcVerification {
     // Basic verification first
     let result = verify_ivc(proof, None);
     if result != IvcVerification::Valid {
@@ -978,9 +962,7 @@ impl IvcBuilder {
 pub mod recursive_ivc {
     use super::*;
     use crate::plonky3_prover::PyanaProof;
-    use crate::plonky3_verifier_air::{
-        RecursiveIvcStep, build_recursive_ivc_chain, RecursionMode,
-    };
+    use crate::plonky3_verifier_air::{RecursionMode, RecursiveIvcStep, build_recursive_ivc_chain};
 
     /// An IVC builder that supports both hash-chain and recursive modes.
     ///
@@ -1164,7 +1146,9 @@ mod tests {
             .iter()
             .map(|d| {
                 let air = FoldAir::new(d.fold.clone());
-                MockProof::generate(&air).unwrap().simulated_proof_size_bytes
+                MockProof::generate(&air)
+                    .unwrap()
+                    .simulated_proof_size_bytes
             })
             .sum();
 
@@ -1196,7 +1180,9 @@ mod tests {
             .iter()
             .map(|d| {
                 let air = FoldAir::new(d.fold.clone());
-                MockProof::generate(&air).unwrap().simulated_proof_size_bytes
+                MockProof::generate(&air)
+                    .unwrap()
+                    .simulated_proof_size_bytes
             })
             .sum();
 
@@ -1274,8 +1260,7 @@ mod tests {
     #[test]
     fn ivc_verify_with_roots() {
         let (initial_root, deltas) = create_test_chain(4);
-        let intermediate_roots: Vec<BabyBear> =
-            deltas.iter().map(|d| d.fold.new_root).collect();
+        let intermediate_roots: Vec<BabyBear> = deltas.iter().map(|d| d.fold.new_root).collect();
 
         let ivc_proof = prove_ivc(initial_root, deltas).unwrap();
 
@@ -1350,7 +1335,10 @@ mod tests {
         assert_eq!(proof_incremental.step_count, proof_air.step_count);
         assert_eq!(proof_incremental.initial_root, proof_air.initial_root);
         assert_eq!(proof_incremental.final_root, proof_air.final_root);
-        assert_eq!(proof_incremental.accumulated_hash, proof_air.accumulated_hash);
+        assert_eq!(
+            proof_incremental.accumulated_hash,
+            proof_air.accumulated_hash
+        );
 
         // The incremental path produces a proof verified via digest binding
         assert_eq!(
@@ -1387,18 +1375,10 @@ mod tests {
         let r2 = BabyBear::new(200);
 
         // Order 1: r1 then r2
-        let h_12 = extend_accumulated_hash(
-            extend_accumulated_hash(h, r1, 1),
-            r2,
-            2,
-        );
+        let h_12 = extend_accumulated_hash(extend_accumulated_hash(h, r1, 1), r2, 2);
 
         // Order 2: r2 then r1
-        let h_21 = extend_accumulated_hash(
-            extend_accumulated_hash(h, r2, 1),
-            r1,
-            2,
-        );
+        let h_21 = extend_accumulated_hash(extend_accumulated_hash(h, r2, 1), r1, 2);
 
         // Different orderings must produce different hashes
         assert_ne!(h_12, h_21);
@@ -1407,7 +1387,7 @@ mod tests {
     #[test]
     fn ivc_presentation_proof() {
         use crate::derivation_air::{CircuitRule, DerivationAir, DerivationWitness};
-        use crate::merkle_air::{create_test_witness, MerkleAir};
+        use crate::merkle_air::{MerkleAir, create_test_witness};
         use crate::poseidon2::hash_fact;
 
         let (initial_root, deltas) = create_test_chain(3);
@@ -1485,7 +1465,9 @@ mod tests {
                 .iter()
                 .map(|d| {
                     let air = FoldAir::new(d.fold.clone());
-                    MockProof::generate(&air).unwrap().simulated_proof_size_bytes
+                    MockProof::generate(&air)
+                        .unwrap()
+                        .simulated_proof_size_bytes
                 })
                 .sum();
 

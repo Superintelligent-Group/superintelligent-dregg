@@ -66,7 +66,9 @@ impl NullifierSet {
 
     /// Check if a nullifier is in the set (note is spent).
     pub fn contains(&self, nullifier: &Nullifier) -> bool {
-        self.nullifiers.binary_search_by(|n| n.0.cmp(&nullifier.0)).is_ok()
+        self.nullifiers
+            .binary_search_by(|n| n.0.cmp(&nullifier.0))
+            .is_ok()
     }
 
     /// Prove non-membership (note is NOT spent).

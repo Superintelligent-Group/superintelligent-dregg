@@ -21,8 +21,11 @@ pyana-cell = { path = "../cell" }
 hints = { path = "../hints" }
 token = { path = "../token", default-features = false, features = ["macaroon"] }
 blake3 = "1"
-getrandom = "0.3"
+getrandom = { workspace = true }
 
 [[example]]
 name = "bench_summary"
 path = "../benches/summary.rs"
+
+[lints]
+workspace = true

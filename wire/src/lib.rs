@@ -63,11 +63,11 @@ pub mod prelude {
     pub use crate::codec::{CodecError, FrameStats, MAX_MESSAGE_SIZE};
     pub use crate::connection::{ConnectionError, ConnectionPool, ConnectionStats, PeerConnection};
     pub use crate::message::{
-        AuthorizationRequest, PublicKey, Signature, ThresholdQC, WireMessage, error_codes,
-        PROTOCOL_VERSION,
+        AuthorizationRequest, PROTOCOL_VERSION, PublicKey, Signature, ThresholdQC, WireMessage,
+        error_codes,
     };
     pub use crate::server::{
-        MinSizeVerifier, NoopVerifier, ProofVerifier, RejectAllVerifier, SiloConfig,
-        SiloServer, SiloState, StarkVerifier, VerificationMode,
+        MinSizeVerifier, NoopVerifier, ProofVerifier, RejectAllVerifier, SiloConfig, SiloServer,
+        SiloState, StarkVerifier, VerificationMode,
     };
 }

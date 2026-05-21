@@ -60,17 +60,15 @@
 //! - [ ] Proof-of-work verification for query phase
 //! - [ ] Variable-depth FRI (currently assumes fixed layer count)
 
-use p3_air::{Air, AirBuilder, BaseAir};
 use p3_air::WindowAccess;
+use p3_air::{Air, AirBuilder, BaseAir};
 use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::dense::RowMajorMatrix;
 
 use crate::field::BabyBear;
+use crate::plonky3_prover::{PyanaProof, create_config, to_p3, verify_plonky3};
 use crate::poseidon2::{hash_4_to_1, hash_many};
-use crate::plonky3_prover::{
-    PyanaProof, create_config, to_p3, verify_plonky3,
-};
 
 // ============================================================================
 // Constants
@@ -195,7 +193,9 @@ pub struct RecursiveVerifierAir {
 impl RecursiveVerifierAir {
     /// Create a new recursive verifier AIR.
     pub fn new(num_inner_public_inputs: usize) -> Self {
-        Self { num_inner_public_inputs }
+        Self {
+            num_inner_public_inputs,
+        }
     }
 }
 
@@ -327,10 +327,7 @@ impl RecursiveProver {
     /// For the simplified recursion (single query), we simulate the extraction using
     /// the public inputs as a seed (since we cannot directly access Plonky3 proof internals
     /// through the type-erased generic API).
-    pub fn extract_witness(
-        _proof: &PyanaProof,
-        public_inputs: &[BabyBear],
-    ) -> VerifierWitness {
+    pub fn extract_witness(_proof: &PyanaProof, public_inputs: &[BabyBear]) -> VerifierWitness {
         // The witness extraction simulates what the verifier does:
         // replay the Fiat-Shamir transcript to derive challenges,
         // then extract the relevant query data.
@@ -608,8 +605,7 @@ impl RecursiveProver {
         for (layer, &(even, odd, folded)) in witness.fri_layer_values.iter().enumerate() {
             let beta = witness.fri_betas[layer];
             let prev_acc = trace.last().unwrap()[col::CHALLENGE_ACC];
-            let challenge_acc =
-                hash_4_to_1(&[prev_acc, folded, beta, BabyBear::new(layer as u32)]);
+            let challenge_acc = hash_4_to_1(&[prev_acc, folded, beta, BabyBear::new(layer as u32)]);
 
             let mut row = vec![BabyBear::ZERO; VERIFIER_AIR_WIDTH];
             row[col::DATA0] = even;
@@ -634,10 +630,8 @@ impl RecursiveProver {
             } else {
                 BabyBear::ZERO
             };
-            let constraint_eval = pos
-                * (pos - BabyBear::ONE)
-                * (pos - BabyBear::new(2))
-                * (pos - BabyBear::new(3));
+            let constraint_eval =
+                pos * (pos - BabyBear::ONE) * (pos - BabyBear::new(2)) * (pos - BabyBear::new(3));
             let challenge_acc = hash_4_to_1(&[
                 prev_acc,
                 witness.quotient_value,
@@ -747,8 +741,7 @@ impl RecursiveProver {
         let witness = Self::extract_witness(prev_proof, prev_public_inputs);
 
         // Step 3: Generate the verifier trace
-        let (verifier_trace, verifier_public_inputs) =
-            Self::generate_verifier_trace(&witness);
+        let (verifier_trace, verifier_public_inputs) = Self::generate_verifier_trace(&witness);
 
         // Step 4: Prove the verifier trace with Plonky3
         // The AIR's public inputs are exactly: [inner_pi..., final_challenge_acc]
@@ -762,8 +755,7 @@ impl RecursiveProver {
             .collect();
         let matrix = RowMajorMatrix::new(values, width);
 
-        let p3_public: Vec<P3BabyBear> =
-            verifier_public_inputs.iter().map(|&v| to_p3(v)).collect();
+        let p3_public: Vec<P3BabyBear> = verifier_public_inputs.iter().map(|&v| to_p3(v)).collect();
 
         let proof = p3_uni_stark::prove(&config, &air, matrix, &p3_public);
 
@@ -933,8 +925,8 @@ pub fn build_recursive_ivc_chain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::poseidon2_air::{create_poseidon2_test_witness, generate_merkle_poseidon2_trace};
     use crate::plonky3_prover::prove_plonky3;
+    use crate::poseidon2_air::{create_poseidon2_test_witness, generate_merkle_poseidon2_trace};
 
     /// Helper: create a proven Merkle membership proof.
     fn make_test_proof(leaf_val: u32) -> (PyanaProof, Vec<BabyBear>) {
@@ -990,9 +982,12 @@ mod tests {
         for (i, row) in trace.iter().enumerate() {
             let expected = row[col::DATA0] + row[col::DATA2] * row[col::DATA1];
             assert_eq!(
-                row[col::DATA3], expected,
+                row[col::DATA3],
+                expected,
                 "FRI fold constraint failed at row {}: DATA3={:?}, expected={:?}",
-                i, row[col::DATA3], expected
+                i,
+                row[col::DATA3],
+                expected
             );
         }
     }
@@ -1144,7 +1139,10 @@ mod tests {
         // Different proofs should produce different proof commitments
         let comm1 = vpi1.last().unwrap();
         let comm2 = vpi2.last().unwrap();
-        assert_ne!(comm1, comm2, "Different proofs must have different commitments");
+        assert_ne!(
+            comm1, comm2,
+            "Different proofs must have different commitments"
+        );
     }
 
     #[test]

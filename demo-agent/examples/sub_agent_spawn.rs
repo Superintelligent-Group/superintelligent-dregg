@@ -12,16 +12,15 @@
 
 use pyana_bridge::BridgePresentationBuilder;
 use pyana_bridge::present::{bytes_to_babybear, hash_index, verify_presentation};
-use pyana_cell::{AuthRequired, CellId, Ledger, Permissions};
 use pyana_cell::cell::Cell;
+use pyana_cell::{AuthRequired, CellId, Ledger, Permissions};
 use pyana_circuit::BabyBear;
 use pyana_circuit::poseidon2;
-use pyana_token::{AuthRequest, AuthToken, Attenuation, BudgetSpec, MacaroonToken};
-use pyana_turn::{
-    ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult,
-    TurnReceipt,
-};
+use pyana_token::{Attenuation, AuthRequest, AuthToken, BudgetSpec, MacaroonToken};
 use pyana_turn::verify::verify_receipt_chain;
+use pyana_turn::{
+    ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnReceipt, TurnResult,
+};
 
 /// Compute the Poseidon2-based federation root for a given issuer key.
 fn compute_poseidon2_federation_root(issuer_key: &[u8; 32]) -> BabyBear {
@@ -52,7 +51,10 @@ fn compute_poseidon2_federation_root(issuer_key: &[u8; 32]) -> BabyBear {
 
 fn short_hex(bytes: &[u8]) -> String {
     if bytes.len() >= 4 {
-        format!("{:02x}{:02x}{:02x}{:02x}...", bytes[0], bytes[1], bytes[2], bytes[3])
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}...",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     } else {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -102,11 +104,8 @@ fn main() {
 
     // The parent's root token is unrestricted -- it can access any service.
     // This models a platform-level orchestrator with full authority.
-    let parent_token = MacaroonToken::mint(
-        issuer_key,
-        b"parent-orchestrator-v1",
-        "platform.internal",
-    );
+    let parent_token =
+        MacaroonToken::mint(issuer_key, b"parent-orchestrator-v1", "platform.internal");
 
     println!("  Parent token scope:");
     println!("    Services: UNRESTRICTED (can access any service)");
@@ -193,12 +192,19 @@ fn main() {
             action: Some("rw".into()),
             user_id: Some(agent.name.into()),
             now: Some(1750000000),
-            budget_states: [(format!("{}-budget", agent.name), 3000)].into_iter().collect(),
+            budget_states: [(format!("{}-budget", agent.name), 3000)]
+                .into_iter()
+                .collect(),
             request_cost: Some(500),
             ..Default::default()
         };
         let result = agent.token.verify(&req);
-        assert!(result.is_ok(), "{} should be authorized for {}", agent.name, agent.service);
+        assert!(
+            result.is_ok(),
+            "{} should be authorized for {}",
+            agent.name,
+            agent.service
+        );
         println!("  {} authorized for {} [PASS]", agent.name, agent.service);
     }
     println!();
@@ -215,12 +221,17 @@ fn main() {
         action: Some("rw".into()),
         user_id: Some(compute_agent.name.into()),
         now: Some(1750000000),
-        budget_states: [(format!("{}-budget", compute_agent.name), 3000)].into_iter().collect(),
+        budget_states: [(format!("{}-budget", compute_agent.name), 3000)]
+            .into_iter()
+            .collect(),
         request_cost: Some(100),
         ..Default::default()
     };
     let cross_result = compute_agent.token.verify(&cross_service_req);
-    assert!(cross_result.is_err(), "compute-worker should NOT access storage");
+    assert!(
+        cross_result.is_err(),
+        "compute-worker should NOT access storage"
+    );
     println!("  compute-worker -> storage: DENIED (wrong service) [PASS]");
 
     // Attempt 2: storage-worker tries to access network
@@ -230,12 +241,17 @@ fn main() {
         action: Some("rw".into()),
         user_id: Some(storage_agent.name.into()),
         now: Some(1750000000),
-        budget_states: [(format!("{}-budget", storage_agent.name), 3000)].into_iter().collect(),
+        budget_states: [(format!("{}-budget", storage_agent.name), 3000)]
+            .into_iter()
+            .collect(),
         request_cost: Some(100),
         ..Default::default()
     };
     let cross_result_2 = storage_agent.token.verify(&cross_req_2);
-    assert!(cross_result_2.is_err(), "storage-worker should NOT access network");
+    assert!(
+        cross_result_2.is_err(),
+        "storage-worker should NOT access network"
+    );
     println!("  storage-worker -> network: DENIED (wrong service) [PASS]");
 
     // Attempt 3: network-worker tries to impersonate compute-worker
@@ -245,12 +261,17 @@ fn main() {
         action: Some("rw".into()),
         user_id: Some("compute-worker".into()), // Wrong user!
         now: Some(1750000000),
-        budget_states: [(format!("{}-budget", network_agent.name), 3000)].into_iter().collect(),
+        budget_states: [(format!("{}-budget", network_agent.name), 3000)]
+            .into_iter()
+            .collect(),
         request_cost: Some(100),
         ..Default::default()
     };
     let impersonate_result = network_agent.token.verify(&impersonate_req);
-    assert!(impersonate_result.is_err(), "network-worker should NOT impersonate compute-worker");
+    assert!(
+        impersonate_result.is_err(),
+        "network-worker should NOT impersonate compute-worker"
+    );
     println!("  network-worker as compute-worker: DENIED (user confinement) [PASS]");
     println!();
 
@@ -278,7 +299,10 @@ fn main() {
     let target_id = target_cell.id;
     ledger.insert_cell(target_cell).unwrap();
 
-    println!("  Target cell: {} (shared result aggregator)", short_id(&target_id));
+    println!(
+        "  Target cell: {} (shared result aggregator)",
+        short_id(&target_id)
+    );
 
     // We use a shared parent agent cell for the receipt chain
     let parent_cell_key = *blake3::hash(b"parent-orchestrator:cell").as_bytes();
@@ -294,11 +318,16 @@ fn main() {
         access: AuthRequired::None,
     };
     // Grant the parent cell a capability to reach the target cell
-    parent_cell.capabilities.grant(target_id, AuthRequired::None);
+    parent_cell
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     let parent_cell_id = parent_cell.id;
     ledger.insert_cell(parent_cell).unwrap();
 
-    println!("  Parent cell: {} (orchestrator, has capability to target)", short_id(&parent_cell_id));
+    println!(
+        "  Parent cell: {} (orchestrator, has capability to target)",
+        short_id(&parent_cell_id)
+    );
     println!();
 
     // Execute each sub-agent's turn
@@ -308,13 +337,15 @@ fn main() {
 
     for (i, agent) in sub_agents.iter().enumerate() {
         // Build a turn: sub-agent writes its result to the target cell
-        let result_hash = *blake3::hash(
-            format!("{}:result:success:{}", agent.name, i).as_bytes()
-        ).as_bytes();
+        let result_hash =
+            *blake3::hash(format!("{}:result:success:{}", agent.name, i).as_bytes()).as_bytes();
 
         let mut turn_builder = TurnBuilder::new(parent_cell_id, i as u64);
         turn_builder.set_fee(10000);
-        turn_builder.set_memo(format!("sub-agent {} executes on {}", agent.name, agent.service));
+        turn_builder.set_memo(format!(
+            "sub-agent {} executes on {}",
+            agent.name, agent.service
+        ));
         {
             let action = turn_builder.action(target_id, &format!("{}_task", agent.service));
             action.delegation(DelegationMode::None);
@@ -329,8 +360,15 @@ fn main() {
         let result = executor.execute(&turn, &mut ledger);
 
         match result {
-            TurnResult::Committed { receipt, computrons_used, .. } => {
-                println!("  {} turn COMMITTED ({} computrons)", agent.name, computrons_used);
+            TurnResult::Committed {
+                receipt,
+                computrons_used,
+                ..
+            } => {
+                println!(
+                    "  {} turn COMMITTED ({} computrons)",
+                    agent.name, computrons_used
+                );
                 println!("    Turn hash: {}", short_hex(&receipt.turn_hash));
                 println!("    Result written to target field[{}]", i);
                 receipts.push(receipt);
@@ -359,26 +397,35 @@ fn main() {
             // The receipts are from same agent (parent_cell_id) but the hash chain
             // linking depends on the executor wiring previous_receipt_hash correctly.
             // For this demo, we verify the structural properties manually.
-            println!("  Receipt chain structure: {} (expected for independent turns)", e);
+            println!(
+                "  Receipt chain structure: {} (expected for independent turns)",
+                e
+            );
         }
     }
 
     // Verify state continuity across sub-agent turns
     println!("  Per-receipt state transitions:");
     for (i, receipt) in receipts.iter().enumerate() {
-        println!("    Receipt {}: pre={} -> post={}",
-            i, short_hex(&receipt.pre_state_hash), short_hex(&receipt.post_state_hash));
+        println!(
+            "    Receipt {}: pre={} -> post={}",
+            i,
+            short_hex(&receipt.pre_state_hash),
+            short_hex(&receipt.post_state_hash)
+        );
     }
     println!();
 
     // Verify the target cell has all three results
     let target = ledger.get(&target_id).unwrap();
     for (i, agent) in sub_agents.iter().enumerate() {
-        let expected = *blake3::hash(
-            format!("{}:result:success:{}", agent.name, i).as_bytes()
-        ).as_bytes();
-        assert_eq!(target.state.fields[i], expected,
-            "{} result should be in target field[{}]", agent.name, i);
+        let expected =
+            *blake3::hash(format!("{}:result:success:{}", agent.name, i).as_bytes()).as_bytes();
+        assert_eq!(
+            target.state.fields[i], expected,
+            "{} result should be in target field[{}]",
+            agent.name, i
+        );
     }
     println!("  All sub-agent results verified in target cell [PASS]");
     println!("    field[0] = compute-worker result");
@@ -412,7 +459,11 @@ fn main() {
         };
         builder.add_attenuation(&sub_att);
 
-        assert!(builder.verify_chain(), "Fold chain must be valid for {}", agent.name);
+        assert!(
+            builder.verify_chain(),
+            "Fold chain must be valid for {}",
+            agent.name
+        );
 
         let req = AuthRequest {
             service: Some(agent.service.into()),
@@ -425,11 +476,15 @@ fn main() {
         match proof {
             Ok(presentation) => {
                 let valid = verify_presentation(&presentation);
-                let stark_ok = presentation.verify_issuer_stark()
+                let stark_ok = presentation
+                    .verify_issuer_stark()
                     .map(|r| r.is_ok())
                     .unwrap_or(false);
                 println!("  {} proof:", agent.name);
-                println!("    Chain depth: {} (root -> sub-agent)", presentation.chain_length);
+                println!(
+                    "    Chain depth: {} (root -> sub-agent)",
+                    presentation.chain_length
+                );
                 println!("    Proof size: {}", presentation.proof_size_display());
                 println!("    Valid: {} | STARK: {}", valid, stark_ok);
             }

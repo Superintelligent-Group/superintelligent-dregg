@@ -39,7 +39,6 @@ jobs:
         id: relay
         env:
           PYANA_ROOT_KEY: ${{ secrets.PYANA_ROOT_KEY }}
-          PYANA_RELAY_SECRET_KEY: ${{ secrets.PYANA_RELAY_SECRET_KEY }}
           PYANA_VALIDATORS: ${{ secrets.PYANA_VALIDATORS }}
           PYANA_THRESHOLD: ${{ vars.PYANA_THRESHOLD || '1' }}
         run: |

@@ -40,3 +40,6 @@ crate-type = ["lib"]
 [[bench]]
 name = "token_bench"
 harness = false
+
+[lints]
+workspace = true

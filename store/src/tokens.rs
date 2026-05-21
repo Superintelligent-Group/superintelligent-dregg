@@ -112,11 +112,7 @@ impl PersistentStore {
     ///
     /// Loads the chain, appends the step, updates the current_root, and saves.
     /// Returns an error if no chain exists for the token_id.
-    pub fn append_fold_step(
-        &self,
-        token_id: &[u8; 32],
-        step: StoredFoldStep,
-    ) -> Result<()> {
+    pub fn append_fold_step(&self, token_id: &[u8; 32], step: StoredFoldStep) -> Result<()> {
         let mut chain = self
             .load_token_chain(token_id)?
             .ok_or(StoreError::NotFound)?;

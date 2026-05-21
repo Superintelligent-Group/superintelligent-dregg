@@ -165,9 +165,15 @@ impl FederationBridge {
         let quorum_signatures = cached.qc.quorum_signatures(nodes);
         Some(AttestedRoot {
             merkle_root: cached.root,
+            note_tree_root: None,
+            nullifier_set_root: None,
             height: cached.height,
             timestamp: cached.timestamp,
-            qc: cached.qc.aggregate_qc.clone(),
+            threshold_qc: cached
+                .qc
+                .aggregate_qc
+                .as_ref()
+                .map(|q| pyana_types::ThresholdQC(q.to_bytes())),
             quorum_signatures,
             threshold: cached.qc.threshold,
         })
@@ -222,7 +228,10 @@ impl RevocationHandler for FederationBridge {
 impl std::fmt::Debug for FederationBridge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FederationBridge")
-            .field("latest_root", &self.latest_root.read().unwrap().as_ref().map(|r| r.height))
+            .field(
+                "latest_root",
+                &self.latest_root.read().unwrap().as_ref().map(|r| r.height),
+            )
             .finish()
     }
 }
@@ -239,8 +248,7 @@ mod tests {
     };
 
     /// Helper: set up a 4-node federation with local transports.
-    fn setup_federation(
-    ) -> (
+    fn setup_federation() -> (
         ConsensusConfig,
         Vec<Arc<Mutex<NetworkConsensusNode>>>,
         Vec<Arc<FederationBridge>>,
@@ -366,7 +374,7 @@ mod tests {
     #[tokio::test]
     async fn federation_qc_served_via_wire_server() {
         use crate::connection::PeerConnection;
-        use crate::message::{WireMessage, PROTOCOL_VERSION};
+        use crate::message::{PROTOCOL_VERSION, WireMessage};
         use crate::server::{NoopVerifier, SiloConfig, SiloServer};
 
         let (config, _nodes, bridges) = setup_federation();
@@ -387,8 +395,7 @@ mod tests {
         assert!(finalized.is_some(), "should have finalized");
 
         // Create a SiloServer with the federation bridge as its revocation handler.
-        let silo_config =
-            SiloConfig::new("federation-silo").with_verifier(Arc::new(NoopVerifier));
+        let silo_config = SiloConfig::new("federation-silo").with_verifier(Arc::new(NoopVerifier));
         let server = SiloServer::new("127.0.0.1:0".parse().unwrap(), silo_config)
             .with_revocation_handler(bridges[leader_id].clone() as Arc<dyn RevocationHandler>);
 

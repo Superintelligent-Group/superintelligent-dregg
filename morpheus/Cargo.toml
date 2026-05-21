@@ -24,3 +24,5 @@ name = "pyana_morpheus"
 crate-type = ["rlib"]
 
 [features]
+[lints]
+workspace = true

@@ -18,7 +18,7 @@
 //! Matcher:     composes both + adds deposit actions → single atomic turn
 //! ```
 
-use ed25519_dalek::{Signature, VerifyingKey, Verifier};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use pyana_cell::CellId;
 
 use crate::action::{Action, CommitmentMode};
@@ -31,7 +31,10 @@ use crate::turn::Turn;
 pub enum ComposeError {
     /// A fragment contains an action with Full commitment mode.
     /// Fragments must use Partial commitment for composability.
-    FullCommitmentInFragment { fragment_index: usize, action_index: usize },
+    FullCommitmentInFragment {
+        fragment_index: usize,
+        action_index: usize,
+    },
 
     /// Signature verification failed for a fragment's action.
     InvalidSignature {
@@ -54,27 +57,41 @@ pub enum ComposeError {
     EmptyComposition,
 
     /// A fragment action is missing authorization.
-    MissingAuthorization { fragment_index: usize, action_index: usize },
+    MissingAuthorization {
+        fragment_index: usize,
+        action_index: usize,
+    },
 }
 
 impl core::fmt::Display for ComposeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ComposeError::FullCommitmentInFragment { fragment_index, action_index } => {
+            ComposeError::FullCommitmentInFragment {
+                fragment_index,
+                action_index,
+            } => {
                 write!(
                     f,
                     "fragment {fragment_index}, action {action_index}: \
                      must use CommitmentMode::Partial for composability"
                 )
             }
-            ComposeError::InvalidSignature { fragment_index, action_index, reason } => {
+            ComposeError::InvalidSignature {
+                fragment_index,
+                action_index,
+                reason,
+            } => {
                 write!(
                     f,
                     "fragment {fragment_index}, action {action_index}: \
                      signature verification failed: {reason}"
                 )
             }
-            ComposeError::SignatureCountMismatch { fragment_index, actions, signatures } => {
+            ComposeError::SignatureCountMismatch {
+                fragment_index,
+                actions,
+                signatures,
+            } => {
                 write!(
                     f,
                     "fragment {fragment_index}: {actions} actions but {signatures} signatures"
@@ -86,7 +103,10 @@ impl core::fmt::Display for ComposeError {
             ComposeError::EmptyComposition => {
                 write!(f, "no fragments to compose")
             }
-            ComposeError::MissingAuthorization { fragment_index, action_index } => {
+            ComposeError::MissingAuthorization {
+                fragment_index,
+                action_index,
+            } => {
                 write!(
                     f,
                     "fragment {fragment_index}, action {action_index}: missing authorization"
@@ -253,23 +273,20 @@ impl TurnComposer {
                     }
                 })?;
 
-                verifying_key.verify(&signing_message, &signature).map_err(|_| {
-                    ComposeError::InvalidSignature {
+                verifying_key
+                    .verify(&signing_message, &signature)
+                    .map_err(|_| ComposeError::InvalidSignature {
                         fragment_index: frag_idx,
                         action_index: action_idx,
                         reason: "Ed25519 signature verification failed".to_string(),
-                    }
-                })?;
+                    })?;
 
                 position += 1;
             }
         }
 
         // Phase 4: Check balance_change conservation (excess must sum to zero).
-        let total_excess: i64 = all_actions
-            .iter()
-            .filter_map(|a| a.balance_change)
-            .sum();
+        let total_excess: i64 = all_actions.iter().filter_map(|a| a.balance_change).sum();
 
         if total_excess != 0 {
             return Err(ComposeError::ExcessImbalance { total_excess });

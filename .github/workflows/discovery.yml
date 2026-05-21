@@ -26,52 +26,48 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
 
-      - name: Download Node 1 state
-        uses: actions/download-artifact@v4
-        with:
-          name: federation-node-1-state
-          path: /tmp/node-1-state
-        continue-on-error: true
+      - name: Ensure federation-state branch exists
+        run: |
+          if ! git ls-remote --heads origin federation-state | grep -q federation-state; then
+            git checkout --orphan federation-state
+            git rm -rf . 2>/dev/null || true
+            mkdir -p nodes
+            echo '{}' > nodes/.gitkeep
+            git config user.name "pyana-federation[bot]"
+            git config user.email "federation@pyana.dev"
+            git add .
+            git commit -m "Initialize federation-state branch"
+            git push origin federation-state
+            git checkout main
+          fi
 
-      - name: Download Node 2 state
-        uses: actions/download-artifact@v4
-        with:
-          name: federation-node-2-state
-          path: /tmp/node-2-state
-        continue-on-error: true
-
-      - name: Download Node 3 state
-        uses: actions/download-artifact@v4
-        with:
-          name: federation-node-3-state
-          path: /tmp/node-3-state
-        continue-on-error: true
-
-      - name: Download Intent Service state
-        uses: actions/download-artifact@v4
-        with:
-          name: intent-service-state
-          path: /tmp/intent-state
-        continue-on-error: true
+      - name: Read federation state
+        run: |
+          git fetch origin federation-state || true
+          mkdir -p /tmp/nodes
+          for f in node-1 node-2 node-3 intent-service; do
+            git show "origin/federation-state:nodes/${f}.json" > "/tmp/nodes/${f}.json" 2>/dev/null || echo '{}' > "/tmp/nodes/${f}.json"
+          done
+          echo "Node state files:"
+          ls -la /tmp/nodes/
 
       - name: Assemble discovery.json
         run: |
           #!/bin/bash
           set -euo pipefail
 
-          DISCOVERY='{"federation":[],"intent_service":null,"updated_at":"","commit":""}'
-
-          # Helper: read node discovery info from state dir
+          # Helper: read node discovery info from state file
           read_node_info() {
-            local state_dir="$1"
+            local state_file="$1"
             local role="$2"
 
-            if [ -f "$state_dir/discovery.json" ]; then
+            if [ -f "$state_file" ] && [ -s "$state_file" ]; then
               local node_id ticket last_seen
-              node_id=$(jq -r '.node_id // empty' "$state_dir/discovery.json" 2>/dev/null || echo "")
-              ticket=$(jq -r '.ticket // empty' "$state_dir/discovery.json" 2>/dev/null || echo "")
-              last_seen=$(jq -r '.last_seen // empty' "$state_dir/discovery.json" 2>/dev/null || echo "")
+              node_id=$(jq -r '.node_id // empty' "$state_file" 2>/dev/null || echo "")
+              ticket=$(jq -r '.ticket // empty' "$state_file" 2>/dev/null || echo "")
+              last_seen=$(jq -r '.last_seen // empty' "$state_file" 2>/dev/null || echo "")
 
               if [ -n "$node_id" ]; then
                 echo "{\"node_id\":\"$node_id\",\"ticket\":\"$ticket\",\"last_seen\":\"$last_seen\",\"role\":\"$role\"}"
@@ -85,14 +81,14 @@ jobs:
 
           # Read each node's state
           for i in 1 2 3; do
-            if info=$(read_node_info "/tmp/node-$i-state" "node-$i"); then
+            if info=$(read_node_info "/tmp/nodes/node-$i.json" "node-$i"); then
               NODES=$(echo "$NODES" | jq ". + [$info]")
             fi
           done
 
           # Read intent service
           INTENT_SERVICE="null"
-          if info=$(read_node_info "/tmp/intent-state" "intent-service"); then
+          if info=$(read_node_info "/tmp/nodes/intent-service.json" "intent-service"); then
             INTENT_SERVICE="$info"
           fi
 
@@ -100,6 +96,7 @@ jobs:
           UPDATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           COMMIT="${GITHUB_SHA:-unknown}"
 
+          mkdir -p site
           jq -n \
             --argjson federation "$NODES" \
             --argjson intent_service "$INTENT_SERVICE" \
@@ -115,7 +112,32 @@ jobs:
           echo "Generated discovery.json:"
           cat site/discovery.json
 
-      - name: Check for changes
+      - name: Publish discovery to federation-state branch
+        run: |
+          git fetch origin federation-state || true
+          git worktree add /tmp/fed-state federation-state 2>/dev/null || {
+            git worktree add --detach /tmp/fed-state
+            cd /tmp/fed-state
+            git checkout --orphan federation-state
+            git rm -rf . 2>/dev/null || true
+            mkdir -p nodes
+            echo '{}' > nodes/.gitkeep
+            git config user.name "pyana-federation[bot]"
+            git config user.email "federation@pyana.dev"
+            git add .
+            git commit -m "Initialize federation-state branch"
+          }
+          cd /tmp/fed-state
+          cp "$GITHUB_WORKSPACE/site/discovery.json" discovery.json
+          git add discovery.json
+          git diff --cached --quiet || {
+            git config user.name "pyana-federation[bot]"
+            git config user.email "federation@pyana.dev"
+            git commit -m "Update discovery.json [skip ci]"
+            git push origin federation-state
+          }
+
+      - name: Check for changes on main
         id: diff
         run: |
           if git diff --quiet site/discovery.json 2>/dev/null; then
@@ -124,7 +146,7 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Commit and push discovery.json
+      - name: Commit and push discovery.json to main
         if: steps.diff.outputs.changed == 'true'
         run: |
           git config user.name "pyana-federation[bot]"
@@ -133,11 +155,3 @@ jobs:
           git commit -m "chore(federation): update discovery.json [skip ci]"
           git push
         continue-on-error: true
-
-      - name: Upload discovery artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: federation-discovery
-          path: site/discovery.json
-          retention-days: 7
-          overwrite: true

@@ -47,7 +47,6 @@ pub struct DerivationStep {
     pub signature: [u8; 64],
 }
 
-
 // =============================================================================
 // Trace Verification
 // =============================================================================
@@ -183,11 +182,7 @@ mod tests {
             &auth1,
             vec![FederationRole::Issuer, FederationRole::Verifier],
         );
-        fed.add_member(
-            "partner.org",
-            &auth2,
-            vec![FederationRole::Verifier],
-        );
+        fed.add_member("partner.org", &auth2, vec![FederationRole::Verifier]);
         fed.compute_root();
         (auth1, auth2, fed)
     }
@@ -207,10 +202,7 @@ mod tests {
     #[test]
     fn test_verify_attenuated_trace() {
         let (auth1, _auth2, fed) = setup_federation();
-        let facts = vec![
-            Fact::app("frontend", "rw"),
-            Fact::app("backend", "rw"),
-        ];
+        let facts = vec![Fact::app("frontend", "rw"), Fact::app("backend", "rw")];
         let rules = vec![Rule::allow_app(), Rule::deny_default()];
         let token = auth1.mint_token(facts, rules);
 
@@ -237,7 +229,11 @@ mod tests {
 
         let result = verify_trace(&attenuated.derivation_trace, &attenuated.state_root, &fed);
         assert!(!result.valid);
-        assert!(result.failure_reason.unwrap().contains("not a federation member"));
+        assert!(
+            result
+                .failure_reason
+                .unwrap()
+                .contains("not a federation member")
+        );
     }
-
 }

@@ -8,9 +8,9 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-// Re-export canonical cryptographic primitives from pyana-types.
+// Re-export canonical cryptographic primitives and AttestedRoot from pyana-types.
 pub use pyana_types::{
-    PublicKey, Signature, SigningKey, generate_keypair, hex_encode, sign, verify,
+    AttestedRoot, PublicKey, Signature, SigningKey, generate_keypair, hex_encode, sign, verify,
 };
 
 // =============================================================================
@@ -161,10 +161,7 @@ impl QuorumCertificate {
     ///
     /// This is the preferred verification path: checks the constant-size
     /// aggregate BLS signature against the committee's verifier key.
-    pub fn verify_with_committee(
-        &self,
-        committee: &crate::threshold::FederationCommittee,
-    ) -> bool {
+    pub fn verify_with_committee(&self, committee: &crate::threshold::FederationCommittee) -> bool {
         match &self.aggregate_qc {
             Some(qc) => {
                 let message = Self::vote_message(&self.block_hash, self.height, self.view);
@@ -197,179 +194,77 @@ impl QuorumCertificate {
         self.votes
             .iter()
             .filter_map(|(voter_id, sig)| {
-                nodes.get(*voter_id).map(|node| (node.public_key.clone(), sig.clone()))
+                nodes
+                    .get(*voter_id)
+                    .map(|node| (node.public_key.clone(), sig.clone()))
             })
             .collect()
     }
 }
 
 // =============================================================================
-// Attested Root
+// Attested Root (re-exported from pyana-types, with federation-specific helpers)
 // =============================================================================
 
-/// An attested revocation root: the Merkle root agreed upon by consensus,
-/// with cryptographic proof that a quorum of federation nodes approved it.
+/// Verify an attested root using the threshold committee.
 ///
-/// Supports two attestation modes:
-/// - **Threshold QC** (preferred): A single constant-size BLS aggregate signature
-///   from the `hints` crate, regardless of committee size.
-/// - **Individual signatures** (legacy/fallback): N individual Ed25519 signatures
-///   collected into a Vec.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AttestedRoot {
-    /// The Merkle root of the revocation tree after applying all finalized blocks.
-    pub merkle_root: [u8; 32],
-    /// The block height at which this root was computed.
-    pub height: u64,
-    /// Unix timestamp (seconds) when the block was finalized.
-    pub timestamp: i64,
-    /// The threshold aggregate QC (constant-size, preferred).
-    /// When present, this is the authoritative attestation.
-    pub qc: Option<crate::threshold::ThresholdQC>,
-    /// The individual quorum signatures attesting to this root (legacy).
-    /// Used when threshold QC is not available.
-    pub quorum_signatures: Vec<(PublicKey, Signature)>,
-    /// The threshold of signatures required for validity.
-    pub threshold: usize,
-}
-
-impl AttestedRoot {
-    /// Verify that this attested root has sufficient valid signatures.
-    ///
-    /// If a threshold QC is present, verifies it against the provided committee.
-    /// Otherwise falls back to verifying individual Ed25519 signatures against
-    /// the provided set of known federation public keys.
-    pub fn is_valid_with_keys(&self, known_keys: &[PublicKey]) -> bool {
-        // If we have a threshold QC, individual signatures are not needed for validity.
-        // The QC alone is sufficient (verified separately via verify_with_committee).
-        if self.qc.is_some() {
-            return true;
-        }
-        if self.quorum_signatures.len() < self.threshold {
-            return false;
-        }
-        let message = self.signing_message();
-        for (pubkey, sig) in &self.quorum_signatures {
-            // Each signer must be a known federation member.
-            if !known_keys.contains(pubkey) {
-                return false;
-            }
-            // The signature must be cryptographically valid.
-            if !pubkey.verify(&message, sig) {
-                return false;
+/// This is the preferred verification path: checks the constant-size
+/// aggregate BLS signature against the committee's verifier key.
+///
+/// Deserializes the opaque `ThresholdQC` bytes stored in the `AttestedRoot`
+/// into the federation's rich `ThresholdQC` type for BLS verification.
+pub fn verify_attested_root_with_committee(
+    root: &AttestedRoot,
+    committee: &crate::threshold::FederationCommittee,
+) -> bool {
+    match &root.threshold_qc {
+        Some(opaque_qc) => {
+            // Deserialize the opaque bytes into the federation ThresholdQC.
+            match crate::threshold::ThresholdQC::from_bytes(&opaque_qc.0) {
+                Some(qc) => {
+                    let message = root.signing_message();
+                    committee.verify(&qc, &message).is_ok()
+                }
+                None => false,
             }
         }
-        true
-    }
-
-    /// Verify this attested root using the threshold committee.
-    ///
-    /// This is the preferred verification path: checks the constant-size
-    /// aggregate BLS signature against the committee's verifier key.
-    pub fn verify_with_committee(
-        &self,
-        committee: &crate::threshold::FederationCommittee,
-    ) -> bool {
-        match &self.qc {
-            Some(qc) => {
-                let message = self.signing_message();
-                committee.verify(qc, &message).is_ok()
-            }
-            None => false,
-        }
-    }
-
-    /// Verify with full cryptographic check against known keys.
-    ///
-    /// Alias for `is_valid_with_keys()`.
-    pub fn is_valid(&self, known_keys: &[PublicKey]) -> bool {
-        self.is_valid_with_keys(known_keys)
-    }
-
-    /// Check if this root has sufficient signatures (count-only, no crypto).
-    ///
-    /// Use `is_valid()` or `is_valid_with_keys()` for full cryptographic verification.
-    pub fn has_quorum(&self) -> bool {
-        if self.qc.is_some() {
-            return true;
-        }
-        self.quorum_signatures.len() >= self.threshold
-    }
-
-    /// Compute the canonical message that quorum members sign.
-    pub fn signing_message(&self) -> Vec<u8> {
-        let mut msg = Vec::new();
-        msg.extend_from_slice(b"pyana-attested-root-v1");
-        msg.extend_from_slice(&self.merkle_root);
-        msg.extend_from_slice(&self.height.to_le_bytes());
-        msg.extend_from_slice(&self.timestamp.to_le_bytes());
-        msg
-    }
-
-    /// Short hex of the Merkle root for display.
-    pub fn root_hex(&self) -> String {
-        hex_encode(&self.merkle_root[..4])
+        None => false,
     }
 }
 
-impl AttestedRoot {
-    /// Verify an agent's state using a receipt chain as an alternative to
-    /// Merkle membership proof.
-    ///
-    /// This is the "federation exit" path: an agent with a valid receipt chain
-    /// can prove their state without the federation vouching for it. The chain
-    /// proves that the state was produced by a sequence of valid, executor-checked
-    /// turns from genesis.
-    ///
-    /// # Arguments
-    ///
-    /// * `receipts` - The agent's full receipt chain from genesis.
-    /// * `expected_post_state` - The state commitment the chain should prove.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if the receipt chain is valid and its head matches the expected
-    /// state commitment. This is equivalent to a Merkle membership proof for the
-    /// purposes of state verification.
-    pub fn verify_via_receipt_chain(
-        receipts: &[pyana_turn::TurnReceipt],
-        expected_post_state: Option<[u8; 32]>,
-    ) -> Result<(), pyana_turn::VerifyError> {
-        let head_state = pyana_turn::verify_receipt_chain_head(receipts)?;
-        if let Some(expected) = expected_post_state {
-            if head_state != expected {
-                return Err(pyana_turn::VerifyError::StateChainBreak {
-                    index: receipts.len() - 1,
-                    expected_pre_state: expected,
-                    actual_pre_state: head_state,
-                });
-            }
-        }
-        Ok(())
-    }
-}
-
-impl fmt::Display for AttestedRoot {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.qc.is_some() {
-            write!(
-                f,
-                "AttestedRoot(root={}, height={}, threshold_qc=yes, threshold={})",
-                self.root_hex(),
-                self.height,
-                self.threshold
-            )
-        } else {
-            write!(
-                f,
-                "AttestedRoot(root={}, height={}, sigs={}/{})",
-                self.root_hex(),
-                self.height,
-                self.quorum_signatures.len(),
-                self.threshold
-            )
+/// Verify an agent's state using a receipt chain as an alternative to
+/// Merkle membership proof.
+///
+/// This is the "federation exit" path: an agent with a valid receipt chain
+/// can prove their state without the federation vouching for it. The chain
+/// proves that the state was produced by a sequence of valid, executor-checked
+/// turns from genesis.
+///
+/// # Arguments
+///
+/// * `receipts` - The agent's full receipt chain from genesis.
+/// * `expected_post_state` - The state commitment the chain should prove.
+///
+/// # Returns
+///
+/// `Ok(())` if the receipt chain is valid and its head matches the expected
+/// state commitment. This is equivalent to a Merkle membership proof for the
+/// purposes of state verification.
+pub fn verify_via_receipt_chain(
+    receipts: &[pyana_turn::TurnReceipt],
+    expected_post_state: Option<[u8; 32]>,
+) -> Result<(), pyana_turn::VerifyError> {
+    let head_state = pyana_turn::verify_receipt_chain_head(receipts)?;
+    if let Some(expected) = expected_post_state {
+        if head_state != expected {
+            return Err(pyana_turn::VerifyError::StateChainBreak {
+                index: receipts.len() - 1,
+                expected_pre_state: expected,
+                actual_pre_state: head_state,
+            });
         }
     }
+    Ok(())
 }
 
 // =============================================================================

@@ -6,17 +6,18 @@
 //! - A standalone trace verifier
 //! - Standard policy rules for the pyana authorization model
 
-pub mod types;
 pub mod check;
 pub mod eval;
-pub mod verify;
 pub mod policy;
+pub mod types;
+pub mod verify;
 
-pub use types::*;
 pub use check::eval_check;
 pub use eval::Evaluator;
+#[allow(deprecated)]
+pub use policy::{legacy_policy, secure_policy, standard_policy};
+pub use types::*;
 pub use verify::verify_trace;
-pub use policy::{standard_policy, secure_policy};
 
 #[cfg(test)]
 mod tests;

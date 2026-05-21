@@ -82,20 +82,27 @@ async fn main() {
     // =========================================================================
     println!("[2/5] Federation handshake...");
 
-    let mut conn = PeerConnection::connect(&partner_addr.to_string()).await.unwrap();
+    let mut conn = PeerConnection::connect(&partner_addr.to_string())
+        .await
+        .unwrap();
 
     let acme_node_id = *blake3::hash(b"acme.corp").as_bytes();
     let hello = WireMessage::Hello {
         node_id: acme_node_id,
         node_name: "acme.corp".to_string(),
         protocol_version: PROTOCOL_VERSION,
-        capabilities: vec!["present".to_string(), "revoke".to_string(), "sync".to_string()],
+        capabilities: vec![
+            "present".to_string(),
+            "revoke".to_string(),
+            "sync".to_string(),
+        ],
     };
 
     let hello_stats = pyana_wire::codec::FrameStats::for_message(&hello).unwrap();
     println!(
         "  \u{2192} acme.corp \u{2192} partner.org: Hello ({} capabilities, {})",
-        3, hello_stats.size_display()
+        3,
+        hello_stats.size_display()
     );
 
     conn.send(hello).await.unwrap();
@@ -126,14 +133,13 @@ async fn main() {
 
     // Generate a REAL STARK proof using pyana-circuit
     let proof = generate_real_stark_proof();
-    println!("  \u{2192} Generated real STARK proof: {}", format_size(proof.len()));
+    println!(
+        "  \u{2192} Generated real STARK proof: {}",
+        format_size(proof.len())
+    );
 
-    let request = AuthorizationRequest::new(
-        "api/v2/secrets/vault-7",
-        "read",
-        "alice@acme.corp",
-    )
-    .with_scopes(vec!["org:acme".to_string(), "team:platform".to_string()]);
+    let request = AuthorizationRequest::new("api/v2/secrets/vault-7", "read", "alice@acme.corp")
+        .with_scopes(vec!["org:acme".to_string(), "team:platform".to_string()]);
 
     // Get the federation root that partner expects
     // (In a real system, acme would have synced this via AttestedRoot exchange)
@@ -161,7 +167,9 @@ async fn main() {
         } => {
             println!("  \u{2192} partner.org verifies proof against federation root");
             if *accepted {
-                println!("  \u{2192} partner.org \u{2192} acme.corp: PresentationResult {{ accepted: true }}");
+                println!(
+                    "  \u{2192} partner.org \u{2192} acme.corp: PresentationResult {{ accepted: true }}"
+                );
             } else {
                 println!(
                     "  \u{2192} partner.org \u{2192} acme.corp: PresentationResult {{ accepted: false, reason: {:?} }}",
@@ -184,7 +192,9 @@ async fn main() {
     // =========================================================================
     println!("[4/5] Revocation propagation...");
 
-    let mut conn = PeerConnection::connect(&partner_addr.to_string()).await.unwrap();
+    let mut conn = PeerConnection::connect(&partner_addr.to_string())
+        .await
+        .unwrap();
 
     let token_id = "token-123-expired";
     // Create a 64-byte signature (in production this would be a real Ed25519 sig)
@@ -201,9 +211,7 @@ async fn main() {
         authority_sig,
     };
 
-    println!(
-        "  \u{2192} acme.corp \u{2192} partner.org: SubmitRevocation(\"{token_id}\")"
-    );
+    println!("  \u{2192} acme.corp \u{2192} partner.org: SubmitRevocation(\"{token_id}\")");
 
     conn.send(revoke_msg).await.unwrap();
     let ack = conn.recv().await.unwrap();
@@ -233,9 +241,7 @@ async fn main() {
         token_id: check_token.to_string(),
     };
 
-    println!(
-        "  \u{2192} acme.corp \u{2192} partner.org: RequestNonMembership(\"{check_token}\")"
-    );
+    println!("  \u{2192} acme.corp \u{2192} partner.org: RequestNonMembership(\"{check_token}\")");
 
     conn.send(non_member_msg).await.unwrap();
     let nm_response = conn.recv().await.unwrap();
@@ -259,7 +265,9 @@ async fn main() {
                     "  \u{2192} partner.org \u{2192} acme.corp: NonMembershipResponse (no proof data, root: {}, height: {height})",
                     short_hex(root, 4),
                 );
-                println!("  \u{2192} Token \"{token_id}\" is NOT revoked (node lacks revocation tree for proof generation)");
+                println!(
+                    "  \u{2192} Token \"{token_id}\" is NOT revoked (node lacks revocation tree for proof generation)"
+                );
             }
         }
         other => {
@@ -274,9 +282,7 @@ async fn main() {
     };
 
     println!();
-    println!(
-        "  \u{2192} acme.corp \u{2192} partner.org: RequestNonMembership(\"{token_id}\")"
-    );
+    println!("  \u{2192} acme.corp \u{2192} partner.org: RequestNonMembership(\"{token_id}\")");
 
     conn.send(revoked_check).await.unwrap();
     let revoked_response = conn.recv().await.unwrap();
@@ -289,7 +295,9 @@ async fn main() {
                 println!(
                     "  \u{2192} partner.org \u{2192} acme.corp: NonMembershipResponse (no proof)"
                 );
-                println!("  \u{2192} Token \"{token_id}\" IS revoked (no non-membership proof available)");
+                println!(
+                    "  \u{2192} Token \"{token_id}\" IS revoked (no non-membership proof available)"
+                );
             } else {
                 println!("  \u{2192} Unexpected: proof provided for revoked token");
             }
@@ -306,7 +314,10 @@ async fn main() {
     let elapsed = start.elapsed();
     println!();
     println!("--------------------------------------------------------------------------");
-    println!("  Demo completed in {:.1}ms", elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "  Demo completed in {:.1}ms",
+        elapsed.as_secs_f64() * 1000.0
+    );
     println!();
     println!("  Wire protocol stats:");
     println!("    - Messages exchanged: 10");
@@ -324,7 +335,7 @@ async fn main() {
 /// This produces a cryptographically valid Merkle membership proof that will pass
 /// full STARK verification (Merkle commitments, FRI low-degree test, Fiat-Shamir).
 fn generate_real_stark_proof() -> Vec<u8> {
-    use pyana_circuit::stark::{MerkleStarkAir, generate_merkle_trace, prove, proof_to_bytes};
+    use pyana_circuit::stark::{MerkleStarkAir, generate_merkle_trace, proof_to_bytes, prove};
 
     // Create a 4-level Merkle membership witness
     let siblings = [

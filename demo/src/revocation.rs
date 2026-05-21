@@ -123,11 +123,7 @@ impl RevocationRegistry {
     }
 
     /// Verify a non-membership proof against the current accumulator state.
-    pub fn verify_non_membership(
-        &self,
-        proof: &NonMembershipProof,
-        issuer: &PublicKey,
-    ) -> bool {
+    pub fn verify_non_membership(&self, proof: &NonMembershipProof, issuer: &PublicKey) -> bool {
         match self.get(issuer) {
             Some(acc) => acc.verify_non_membership(proof),
             None => false,

@@ -266,8 +266,7 @@ impl MockProof {
         let log_rows = (num_rows as f64).log2().ceil() as usize;
         let security_bits = 128;
         let fri_queries = security_bits / 2; // ~64 queries
-        let simulated_proof_size_bytes =
-            num_cols * log_rows * fri_queries * 4 // FRI layers
+        let simulated_proof_size_bytes = num_cols * log_rows * fri_queries * 4 // FRI layers
             + public_inputs.len() * 4 // public inputs
             + 32; // root commitment
 

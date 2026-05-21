@@ -12,12 +12,11 @@
 //! - DFT: Radix2DitParallel (parallel NTT)
 //! - FRI: log_blowup=2 (4x), 50 queries, 16 PoW bits
 
-use p3_air::{Air, AirBuilder, BaseAir};
 use p3_air::WindowAccess;
+use p3_air::{Air, AirBuilder, BaseAir};
 use p3_baby_bear::{
-    BabyBear as P3BabyBear,
-    Poseidon2BabyBear,
-    default_babybear_poseidon2_16, default_babybear_poseidon2_24,
+    BabyBear as P3BabyBear, Poseidon2BabyBear, default_babybear_poseidon2_16,
+    default_babybear_poseidon2_24,
 };
 use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
@@ -66,7 +65,8 @@ type EF = BinomialExtensionField<P3BabyBear, 4>;
 type PyanaDft = Radix2DitParallel<P3BabyBear>;
 
 /// The FRI-based polynomial commitment scheme.
-type PyanaPcs = TwoAdicFriPcs<P3BabyBear, PyanaDft, PyanaMmcs, ExtensionMmcs<P3BabyBear, EF, PyanaMmcs>>;
+type PyanaPcs =
+    TwoAdicFriPcs<P3BabyBear, PyanaDft, PyanaMmcs, ExtensionMmcs<P3BabyBear, EF, PyanaMmcs>>;
 
 /// The challenger (Fiat-Shamir) using Poseidon2 duplex sponge.
 type PyanaChallenger = DuplexChallenger<P3BabyBear, Perm24, 24, 16>;
@@ -187,7 +187,8 @@ pub fn from_p3(val: P3BabyBear) -> BabyBear {
 /// Convert our trace (Vec<Vec<BabyBear>>) to a Plonky3 RowMajorMatrix.
 fn trace_to_matrix(trace: &[Vec<BabyBear>]) -> RowMajorMatrix<P3BabyBear> {
     let width = trace[0].len();
-    let values: Vec<P3BabyBear> = trace.iter()
+    let values: Vec<P3BabyBear> = trace
+        .iter()
         .flat_map(|row| row.iter().map(|&v| to_p3(v)))
         .collect();
     RowMajorMatrix::new(values, width)
@@ -197,10 +198,7 @@ fn trace_to_matrix(trace: &[Vec<BabyBear>]) -> RowMajorMatrix<P3BabyBear> {
 ///
 /// Takes the same inputs as the legacy prover: a trace and public inputs.
 /// Returns a Plonky3 proof object that can be verified with `verify_plonky3`.
-pub fn prove_plonky3(
-    trace: &[Vec<BabyBear>],
-    public_inputs: &[BabyBear],
-) -> PyanaProof {
+pub fn prove_plonky3(trace: &[Vec<BabyBear>], public_inputs: &[BabyBear]) -> PyanaProof {
     let config = create_config();
     let air = P3MerklePoseidon2Air;
 
@@ -213,10 +211,7 @@ pub fn prove_plonky3(
 /// Verify a Plonky3 proof for MerklePoseidon2 membership.
 ///
 /// Returns Ok(()) if the proof is valid, Err with details otherwise.
-pub fn verify_plonky3(
-    proof: &PyanaProof,
-    public_inputs: &[BabyBear],
-) -> Result<(), String> {
+pub fn verify_plonky3(proof: &PyanaProof, public_inputs: &[BabyBear]) -> Result<(), String> {
     let config = create_config();
     let air = P3MerklePoseidon2Air;
 
@@ -263,7 +258,11 @@ mod tests {
 
         let proof = prove_plonky3(&trace, &public_inputs);
         let result = verify_plonky3(&proof, &public_inputs);
-        assert!(result.is_ok(), "Plonky3 verification failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Plonky3 verification failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -309,7 +308,11 @@ mod tests {
         let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
 
         let result = prove_membership_plonky3(leaf, &siblings, &positions);
-        assert!(result.is_ok(), "End-to-end membership proof failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "End-to-end membership proof failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]

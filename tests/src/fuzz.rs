@@ -3,15 +3,13 @@
 //! Uses deterministic randomness (getrandom seeded from iteration index)
 //! to generate random inputs and verify system invariants hold.
 
-use pyana_circuit::field::{BabyBear, BABYBEAR_P};
-use pyana_circuit::poseidon2::{hash_4_to_1, hash_2_to_1, hash_many, hash_fact};
-use pyana_commit::{
-    FactSet, FieldElement, FoldDeltaBuilder, TokenState, verify_fold_chain,
-};
+use pyana_circuit::field::{BABYBEAR_P, BabyBear};
+use pyana_circuit::poseidon2::{hash_2_to_1, hash_4_to_1, hash_fact, hash_many};
 use pyana_commit::Fact as CommitFact;
-use pyana_trace::{verify_trace, Evaluator, symbol_from_str};
-use pyana_trace::types::*;
+use pyana_commit::{FactSet, FieldElement, FoldDeltaBuilder, TokenState, verify_fold_chain};
 use pyana_trace::policy::minimal_policy;
+use pyana_trace::types::*;
+use pyana_trace::{Evaluator, symbol_from_str, verify_trace};
 
 // =============================================================================
 // Deterministic random number generation
@@ -24,7 +22,9 @@ struct Rng {
 
 impl Rng {
     fn new(seed: u64) -> Self {
-        Self { state: seed.wrapping_add(1) } // avoid zero state
+        Self {
+            state: seed.wrapping_add(1),
+        } // avoid zero state
     }
 
     fn next_u64(&mut self) -> u64 {
@@ -64,7 +64,15 @@ fn field_addition_commutative() {
     for _ in 0..10000 {
         let a = rng.next_field();
         let b = rng.next_field();
-        assert_eq!(a + b, b + a, "Addition must be commutative: {} + {} != {} + {}", a, b, b, a);
+        assert_eq!(
+            a + b,
+            b + a,
+            "Addition must be commutative: {} + {} != {} + {}",
+            a,
+            b,
+            b,
+            a
+        );
     }
 }
 
@@ -75,11 +83,7 @@ fn field_addition_associative() {
         let a = rng.next_field();
         let b = rng.next_field();
         let c = rng.next_field();
-        assert_eq!(
-            (a + b) + c,
-            a + (b + c),
-            "Addition must be associative"
-        );
+        assert_eq!((a + b) + c, a + (b + c), "Addition must be associative");
     }
 }
 
@@ -115,11 +119,7 @@ fn field_distributive() {
         let a = rng.next_field();
         let b = rng.next_field();
         let c = rng.next_field();
-        assert_eq!(
-            a * (b + c),
-            a * b + a * c,
-            "Distributive law must hold"
-        );
+        assert_eq!(a * (b + c), a * b + a * c, "Distributive law must hold");
     }
 }
 

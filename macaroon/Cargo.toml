@@ -29,3 +29,6 @@ crate-type = ["lib"]
 [[bench]]
 name = "macaroon_bench"
 harness = false
+
+[lints]
+workspace = true

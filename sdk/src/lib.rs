@@ -41,24 +41,27 @@
 //! }).unwrap();
 //! ```
 
-pub mod wallet;
 pub mod client;
-pub mod runtime;
 pub mod error;
+pub mod runtime;
+pub mod wallet;
 
 // Re-export primary types at crate root for convenience.
-pub use wallet::{
-    AgentWallet, HeldToken, DelegatedToken, SignedTurn,
-    VerificationMode, AuthorizationPresentation, FactIndex,
-};
-pub use client::{SiloClient, PresentationResult};
-pub use runtime::{AgentRuntime, SubAgent};
+pub use client::{PresentationResult, SiloClient};
 pub use error::SdkError;
+pub use runtime::{AgentRuntime, SubAgent};
+pub use wallet::{
+    AgentWallet, AuthorizationPresentation, DelegatedToken, FactIndex, HeldToken, SignedTurn,
+    VerificationMode,
+};
 
 // Re-export commonly needed types from dependencies so users don't need
 // to add them separately.
-pub use pyana_types::{PublicKey, Signature};
 pub use pyana_cell::{CellId, Ledger};
+pub use pyana_circuit::{BabyBear, IvcProof, verify_ivc};
 pub use pyana_token::{Attenuation, AuthRequest, AuthToken};
-pub use pyana_turn::{Turn, TurnReceipt, TurnBuilder, Effect};
-pub use pyana_turn::{VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_extends};
+pub use pyana_turn::{Effect, Turn, TurnBuilder, TurnReceipt};
+pub use pyana_turn::{
+    VerifyError, verify_receipt_chain, verify_receipt_chain_head, verify_receipt_extends,
+};
+pub use pyana_types::{PublicKey, Signature};

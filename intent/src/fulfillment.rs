@@ -11,8 +11,8 @@
 //! - Selective mode: proof that specific requirements are met
 //! - Private mode: STARK proof of capability satisfaction (reveals nothing extra)
 
-use crate::{CommitmentId, Intent, Match, VerificationMode};
 use crate::matcher::HeldCapability;
+use crate::{CommitmentId, Intent, Match, VerificationMode};
 
 /// A completed fulfillment: an attenuated token + proof ready for delivery.
 #[derive(Clone, Debug)]
@@ -272,13 +272,7 @@ mod tests {
             min_budget: None,
             resource_pattern: resource_pattern.map(String::from),
         };
-        Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0xAA; 32]),
-            5000,
-            None,
-        )
+        Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None)
     }
 
     #[test]
@@ -293,7 +287,13 @@ mod tests {
         let token = source_token();
         let our_id = CommitmentId([0xBB; 32]);
 
-        let result = fulfill(&intent, &matched, &token, our_id, &FulfillOptions::default());
+        let result = fulfill(
+            &intent,
+            &matched,
+            &token,
+            our_id,
+            &FulfillOptions::default(),
+        );
 
         // Should only grant "read", not "write" or "delete"
         assert_eq!(result.granted_actions, vec!["read".to_string()]);
@@ -311,7 +311,13 @@ mod tests {
         let token = source_token(); // has "documents/*"
         let our_id = CommitmentId([0xBB; 32]);
 
-        let result = fulfill(&intent, &matched, &token, our_id, &FulfillOptions::default());
+        let result = fulfill(
+            &intent,
+            &matched,
+            &token,
+            our_id,
+            &FulfillOptions::default(),
+        );
 
         // Should narrow to the intent's requested pattern
         assert_eq!(result.granted_resource, "documents/reports/*");
@@ -329,7 +335,13 @@ mod tests {
         let token = source_token(); // token expires at 10000
         let our_id = CommitmentId([0xBB; 32]);
 
-        let result = fulfill(&intent, &matched, &token, our_id, &FulfillOptions::default());
+        let result = fulfill(
+            &intent,
+            &matched,
+            &token,
+            our_id,
+            &FulfillOptions::default(),
+        );
 
         // Expiry should be capped at intent's expiry (5000), not token's (10000)
         assert_eq!(result.expiry, Some(5000));
@@ -373,7 +385,13 @@ mod tests {
         let token = source_token();
         let our_id = CommitmentId([0xBB; 32]);
 
-        let result = fulfill(&intent, &matched, &token, our_id, &FulfillOptions::default());
+        let result = fulfill(
+            &intent,
+            &matched,
+            &token,
+            our_id,
+            &FulfillOptions::default(),
+        );
         assert!(result.token_data.is_some());
 
         // Should be valid JSON
@@ -420,7 +438,13 @@ mod tests {
         };
         let our_id = CommitmentId([0xBB; 32]);
 
-        let result = fulfill(&intent, &matched, &token, our_id, &FulfillOptions::default());
+        let result = fulfill(
+            &intent,
+            &matched,
+            &token,
+            our_id,
+            &FulfillOptions::default(),
+        );
 
         // Even though source is wildcard, only grant what's requested
         assert_eq!(

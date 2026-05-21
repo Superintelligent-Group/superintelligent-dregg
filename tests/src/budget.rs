@@ -6,10 +6,8 @@
 //! - Concurrent usage from multiple verifiers
 //! - Budget race conditions
 
-use pyana_audit::{
-    AuditLog, BudgetEnforcer, BudgetExhausted, BudgetSpec, LogSnapshot, UsageEvent,
-};
 use pyana_audit::proofs::{BudgetProof, ConsistencyProof, CountProof};
+use pyana_audit::{AuditLog, BudgetEnforcer, BudgetExhausted, BudgetSpec, LogSnapshot, UsageEvent};
 
 use std::time::Duration;
 
@@ -74,7 +72,10 @@ fn fake_snapshot_with_smaller_size_detected() {
 
     // Should fail because we only have 5 events
     let result = log.prove_consistency(&fake_snapshot);
-    assert!(result.is_none(), "Cannot prove consistency for a fake future snapshot");
+    assert!(
+        result.is_none(),
+        "Cannot prove consistency for a fake future snapshot"
+    );
 }
 
 #[test]
@@ -100,7 +101,10 @@ fn consistency_proof_detects_wrong_old_root() {
     };
 
     let result = log.prove_consistency(&fake_snapshot);
-    assert!(result.is_none(), "Fake root must not produce a consistency proof");
+    assert!(
+        result.is_none(),
+        "Fake root must not produce a consistency proof"
+    );
 }
 
 #[test]
@@ -321,7 +325,9 @@ fn budget_proof_detects_count_manipulation() {
     let mut enforcer = BudgetEnforcer::new(token, BudgetSpec::total(10));
 
     for i in 0..4 {
-        enforcer.record_use(make_event(token, i, 1000 + i as i64)).unwrap();
+        enforcer
+            .record_use(make_event(token, i, 1000 + i as i64))
+            .unwrap();
     }
 
     let mut proof = enforcer.prove_budget_status(1004);
@@ -339,7 +345,9 @@ fn budget_proof_arithmetic_tamper() {
     let mut enforcer = BudgetEnforcer::new(token, BudgetSpec::total(10));
 
     for i in 0..3 {
-        enforcer.record_use(make_event(token, i, 1000 + i as i64)).unwrap();
+        enforcer
+            .record_use(make_event(token, i, 1000 + i as i64))
+            .unwrap();
     }
 
     let mut proof = enforcer.prove_budget_status(1003);
@@ -347,7 +355,10 @@ fn budget_proof_arithmetic_tamper() {
 
     // Tamper: wrong arithmetic (remaining != limit - consumed)
     proof.remaining = 99;
-    assert!(!proof.verify(), "Wrong arithmetic in budget proof must fail");
+    assert!(
+        !proof.verify(),
+        "Wrong arithmetic in budget proof must fail"
+    );
 }
 
 #[test]
@@ -457,7 +468,10 @@ fn range_proof_valid_when_all_in_range() {
 
     // All events are in [999, 1005]
     let proof = log.prove_range(&token, 999, 1005);
-    assert!(proof.verify(), "Range proof with all events in range must verify");
+    assert!(
+        proof.verify(),
+        "Range proof with all events in range must verify"
+    );
 }
 
 // =============================================================================

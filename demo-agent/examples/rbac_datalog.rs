@@ -9,8 +9,8 @@
 //! 6. Use `pyana-trace` (the Datalog evaluator) directly, showing derivation traces
 //! 7. Prove one of the decisions in a STARK (using prove_authorization_stark)
 
-use pyana_circuit::field::BabyBear;
 use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+use pyana_circuit::field::BabyBear;
 use pyana_circuit::multi_step_air::{
     ALLOW_PREDICATE, build_multi_step_witness, prove_authorization_stark,
     verify_authorization_stark,
@@ -18,8 +18,8 @@ use pyana_circuit::multi_step_air::{
 use pyana_circuit::poseidon2::hash_fact;
 use pyana_circuit::stark::proof_to_bytes;
 use pyana_trace::{
-    Atom, AuthorizationRequest, AuthorizationTrace, Check, Conclusion, Evaluator, Fact, Rule,
-    Term, symbol_from_str, verify_trace,
+    Atom, AuthorizationRequest, AuthorizationTrace, Check, Conclusion, Evaluator, Fact, Rule, Term,
+    symbol_from_str, verify_trace,
 };
 
 // ============================================================================
@@ -239,21 +239,9 @@ fn evaluate_and_print(
     let trace = evaluator.evaluate(request);
     let decision = conclusion_str(&trace.conclusion);
 
-    let user = request
-        .user_id
-        .as_ref()
-        .map(|s| sym_str(s))
-        .unwrap_or("?");
-    let action = request
-        .action
-        .as_ref()
-        .map(|s| sym_str(s))
-        .unwrap_or("?");
-    let service = request
-        .service
-        .as_ref()
-        .map(|s| sym_str(s))
-        .unwrap_or("*");
+    let user = request.user_id.as_ref().map(|s| sym_str(s)).unwrap_or("?");
+    let action = request.action.as_ref().map(|s| sym_str(s)).unwrap_or("?");
+    let service = request.service.as_ref().map(|s| sym_str(s)).unwrap_or("*");
 
     println!(
         "  {} => {} (user={}, action={}, resource={})",
@@ -275,7 +263,10 @@ fn evaluate_and_print(
 
     // Verify the trace
     let valid = verify_trace(facts, rules, &trace);
-    println!("    Trace verification: {}", if valid { "PASS" } else { "FAIL" });
+    println!(
+        "    Trace verification: {}",
+        if valid { "PASS" } else { "FAIL" }
+    );
     println!();
 
     trace
@@ -293,9 +284,15 @@ fn main() {
     println!("  Users: alice (admin), bob (editor), carol (viewer)");
     println!();
     println!("  Policy rules:");
-    println!("    Rule 100: allow() :- has_role($user, \"admin\"), request_user($user), request_action($act)");
-    println!("    Rule 102: allow() :- has_role($user, $role), role_permission($role, $resource, $actions),");
-    println!("                         request_user($user), request_action($act), $actions.contains($act)");
+    println!(
+        "    Rule 100: allow() :- has_role($user, \"admin\"), request_user($user), request_action($act)"
+    );
+    println!(
+        "    Rule 102: allow() :- has_role($user, $role), role_permission($role, $resource, $actions),"
+    );
+    println!(
+        "                         request_user($user), request_action($act), $actions.contains($act)"
+    );
     println!();
 
     let facts = rbac_facts();
@@ -545,8 +542,8 @@ fn main() {
             num_variables: 2,
             head_predicate: allow_pred,
             head_terms: [
-                (true, BabyBear::new(0)),  // $user -> bob
-                (true, BabyBear::new(1)),  // $role -> editor
+                (true, BabyBear::new(0)), // $user -> bob
+                (true, BabyBear::new(1)), // $role -> editor
                 (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {

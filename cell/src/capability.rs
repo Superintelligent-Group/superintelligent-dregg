@@ -123,7 +123,6 @@ impl CapabilitySet {
     pub fn lookup_by_target(&self, target: &CellId) -> Option<&CapabilityRef> {
         self.refs.iter().find(|r| &r.target == target)
     }
-
 }
 
 impl Default for CapabilitySet {

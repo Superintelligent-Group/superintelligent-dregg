@@ -19,10 +19,10 @@
 
 use std::collections::HashMap;
 
-use crate::{CommitmentId, Intent, IntentKind, Match, MatchSpec};
 use crate::fulfillment::Fulfillment;
 use crate::matcher::{HeldCapability, MatchResult, match_intent};
 use crate::validation::{self, ValidationError};
+use crate::{CommitmentId, Intent, IntentKind, Match, MatchSpec};
 
 /// Maximum intents allowed per creator per minute.
 pub const MAX_INTENTS_PER_CREATOR_PER_MINUTE: usize = 10;
@@ -63,7 +63,11 @@ impl std::fmt::Display for ReceiveError {
             Self::OwnIntent => write!(f, "intent is from this wallet"),
             Self::Invalid(e) => write!(f, "validation error: {e}"),
             Self::MissingStake => write!(f, "intent lacks valid stake commitment for gossip"),
-            Self::RateLimited { creator, count, max } => {
+            Self::RateLimited {
+                creator,
+                count,
+                max,
+            } => {
                 write!(
                     f,
                     "creator {:?} rate limited: {count} intents exceeds max {max}",
@@ -219,7 +223,9 @@ impl IntentPool {
     /// - Size validation (reject oversized intents)
     /// - Rate limiting (per-creator flood protection)
     pub fn receive_intent(&mut self, intent: Intent, now: u64) -> Option<Match> {
-        self.receive_intent_checked(intent, now, true).ok().flatten()
+        self.receive_intent_checked(intent, now, true)
+            .ok()
+            .flatten()
     }
 
     /// Receive an intent with full error reporting.
@@ -304,7 +310,11 @@ impl IntentPool {
     /// Receive a local intent (from the wallet's own page) without stake requirement.
     ///
     /// Local intents skip the stake check but still undergo validation and rate limiting.
-    pub fn receive_local_intent(&mut self, intent: Intent, now: u64) -> Result<Option<Match>, ReceiveError> {
+    pub fn receive_local_intent(
+        &mut self,
+        intent: Intent,
+        now: u64,
+    ) -> Result<Option<Match>, ReceiveError> {
         self.receive_intent_checked(intent, now, false)
     }
 
@@ -425,7 +435,8 @@ impl IntentPool {
 
         // Store the pending commitment (keyed by commitment hash for reveal lookup)
         let commitment_key = Self::hash_commitment(&commitment);
-        self.pending_commitments.insert(commitment_key, commitment.clone());
+        self.pending_commitments
+            .insert(commitment_key, commitment.clone());
 
         commitment
     }
@@ -596,8 +607,8 @@ impl std::error::Error for CommitRevealError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ActionPattern, CommitmentId, IntentKind, MatchSpec};
     use crate::matcher::Sensitivity;
+    use crate::{ActionPattern, CommitmentId, IntentKind, MatchSpec};
 
     /// A valid (non-zero) stake commitment for testing gossip-received intents.
     fn valid_stake() -> Option<pyana_cell::NoteCommitment> {
@@ -741,13 +752,7 @@ mod tests {
         pool.intents.insert(intent.id, intent);
 
         // Add intent that expires at t=500
-        let intent2 = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x55; 32]),
-            500,
-            None,
-        );
+        let intent2 = Intent::new(IntentKind::Need, spec, CommitmentId([0x55; 32]), 500, None);
         pool.intents.insert(intent2.id, intent2);
 
         assert_eq!(pool.len(), 2);
@@ -800,13 +805,7 @@ mod tests {
             min_budget: None,
             resource_pattern: None,
         };
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x77; 32]),
-            9999,
-            None,
-        );
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x77; 32]), 9999, None);
         pool.intents.insert(intent.id, intent);
 
         // No matches yet (no tokens)
@@ -867,7 +866,13 @@ mod tests {
             min_budget: None,
             resource_pattern: None,
         };
-        let i1 = Intent::new(IntentKind::Need, spec1.clone(), CommitmentId([0xA0; 32]), 200, None);
+        let i1 = Intent::new(
+            IntentKind::Need,
+            spec1.clone(),
+            CommitmentId([0xA0; 32]),
+            200,
+            None,
+        );
         let i2 = Intent::new(IntentKind::Need, spec1, CommitmentId([0xB0; 32]), 500, None);
 
         pool.intents.insert(i1.id, i1);
@@ -896,13 +901,7 @@ mod tests {
             resource_pattern: None,
         };
         // Intent with no stake
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0x22; 32]),
-            9999,
-            None,
-        );
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, None);
 
         // Gossip path (require_stake=true) should reject
         let result = pool.receive_intent_checked(intent.clone(), 100, true);
@@ -952,13 +951,7 @@ mod tests {
                 min_budget: None,
                 resource_pattern: None,
             };
-            let intent = Intent::new(
-                IntentKind::Need,
-                spec,
-                creator,
-                9999,
-                valid_stake(),
-            );
+            let intent = Intent::new(IntentKind::Need, spec, creator, 9999, valid_stake());
             let result = pool.receive_intent_checked(intent, 100, true);
             assert!(result.is_ok(), "intent {i} should succeed");
         }
@@ -1030,7 +1023,13 @@ mod tests {
             min_budget: None,
             resource_pattern: None,
         };
-        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0x22; 32]), 9999, valid_stake());
+        let intent = Intent::new(
+            IntentKind::Need,
+            spec,
+            CommitmentId([0x22; 32]),
+            9999,
+            valid_stake(),
+        );
         let result = pool.receive_intent_checked(intent, 100, true);
         assert!(matches!(result, Err(ReceiveError::Invalid(_))));
     }

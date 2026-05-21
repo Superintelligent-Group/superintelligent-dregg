@@ -13,20 +13,18 @@
 //! the token chain, capabilities, or any private data — only the public
 //! inputs (federation root, request predicate, timestamp) are visible.
 
-use pyana_circuit::{
-    BabyBear, PresentationAir, PresentationProof, PresentationVerification,
-    PresentationWitness, RealPresentationProof,
-};
 use pyana_circuit::derivation_air::{CircuitRule, DerivationWitness};
 use pyana_circuit::fold_air::{FoldWitness, RemovedFact};
 use pyana_circuit::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
 use pyana_circuit::poseidon2;
 use pyana_circuit::stark;
-use pyana_commit::{
-    Fact, FieldElement, FoldDelta, SymbolTable, TokenState,
+use pyana_circuit::{
+    BabyBear, PresentationAir, PresentationProof, PresentationVerification, PresentationWitness,
+    RealPresentationProof,
 };
-use pyana_commit::merkle::{MerkleTree, MerkleProof};
-use pyana_token::{AuthRequest, Attenuation, MacaroonToken};
+use pyana_commit::merkle::{MerkleProof, MerkleTree};
+use pyana_commit::{Fact, FieldElement, FoldDelta, SymbolTable, TokenState};
+use pyana_token::{Attenuation, AuthRequest, MacaroonToken};
 use pyana_trace::{AuthorizationTrace, Conclusion, Term as TraceTerm, symbol_from_str};
 
 use crate::authorize::{self, AuthError};
@@ -154,9 +152,9 @@ impl BridgePresentationProof {
     ///
     /// Returns `None` if this proof was generated via the mock `prove()` path.
     pub fn issuer_proof_bytes(&self) -> Option<Vec<u8>> {
-        self.real_stark_proof.as_ref().map(|real| {
-            stark::proof_to_bytes(&real.issuer_membership_stark_proof)
-        })
+        self.real_stark_proof
+            .as_ref()
+            .map(|real| stark::proof_to_bytes(&real.issuer_membership_stark_proof))
     }
 
     /// Verify the real STARK issuer membership proof (if present).
@@ -333,8 +331,7 @@ impl BridgePresentationBuilder {
             }
         } else {
             // Subsequent attenuation: add restrictions as checks.
-            let result =
-                further_attenuation_delta(current_state, &new_facts, &self.symbols);
+            let result = further_attenuation_delta(current_state, &new_facts, &self.symbols);
             match result {
                 Some((new_state, delta)) => {
                     // Add the new restriction facts to the authorization state.
@@ -419,10 +416,7 @@ impl BridgePresentationBuilder {
     ///
     /// A `BridgePresentationProof` containing the proof and metadata,
     /// or an error if authorization fails or the proof cannot be generated.
-    pub fn prove(
-        &mut self,
-        request: &AuthRequest,
-    ) -> Result<BridgePresentationProof, AuthError> {
+    pub fn prove(&mut self, request: &AuthRequest) -> Result<BridgePresentationProof, AuthError> {
         // 1. Get the final state.
         let final_step = self.chain.last().ok_or(AuthError::EmptyState)?;
         let final_state = &final_step.state;
@@ -442,9 +436,9 @@ impl BridgePresentationBuilder {
         let air = PresentationAir::new(circuit_witness.clone());
         let verification = air.verify_all();
 
-        let circuit_proof = air.prove().ok_or_else(|| {
-            AuthError::InvalidRequest("proof generation failed".into())
-        })?;
+        let circuit_proof = air
+            .prove()
+            .ok_or_else(|| AuthError::InvalidRequest("proof generation failed".into()))?;
 
         Ok(BridgePresentationProof {
             circuit_proof,
@@ -505,9 +499,9 @@ impl BridgePresentationBuilder {
         })?;
 
         // Also generate the mock proof for backward-compatible API consumers.
-        let circuit_proof = air.prove().ok_or_else(|| {
-            AuthError::InvalidRequest("proof generation failed".into())
-        })?;
+        let circuit_proof = air
+            .prove()
+            .ok_or_else(|| AuthError::InvalidRequest("proof generation failed".into()))?;
 
         Ok(BridgePresentationProof {
             circuit_proof,
@@ -549,14 +543,14 @@ impl BridgePresentationBuilder {
         let air = PresentationAir::new(circuit_witness.clone());
         let verification = air.verify_all();
 
-        let stark_proof = air.prove_stark().ok_or_else(|| {
-            AuthError::InvalidRequest("STARK proof generation failed".into())
-        })?;
+        let stark_proof = air
+            .prove_stark()
+            .ok_or_else(|| AuthError::InvalidRequest("STARK proof generation failed".into()))?;
 
         // Also generate the mock proof for backward-compatible API consumers.
-        let circuit_proof = air.prove().ok_or_else(|| {
-            AuthError::InvalidRequest("proof generation failed".into())
-        })?;
+        let circuit_proof = air
+            .prove()
+            .ok_or_else(|| AuthError::InvalidRequest("proof generation failed".into()))?;
 
         Ok(BridgePresentationProof {
             circuit_proof,
@@ -605,14 +599,14 @@ impl BridgePresentationBuilder {
         let air = PresentationAir::new(circuit_witness.clone());
         let verification = air.verify_all();
 
-        let _ivc_proof = air.prove_ivc().ok_or_else(|| {
-            AuthError::InvalidRequest("IVC proof generation failed".into())
-        })?;
+        let _ivc_proof = air
+            .prove_ivc()
+            .ok_or_else(|| AuthError::InvalidRequest("IVC proof generation failed".into()))?;
 
         // Generate the standard circuit_proof for API compatibility.
-        let circuit_proof = air.prove().ok_or_else(|| {
-            AuthError::InvalidRequest("proof generation failed".into())
-        })?;
+        let circuit_proof = air
+            .prove()
+            .ok_or_else(|| AuthError::InvalidRequest("proof generation failed".into()))?;
 
         Ok(BridgePresentationProof {
             circuit_proof,
@@ -873,63 +867,64 @@ impl BridgePresentationBuilder {
             .iter()
             .find(|s| s.derived_fact.predicate == symbol_from_str("allow"));
 
-        let (body_fact_hashes, substitution, derived_pred, derived_terms) = if let Some(step) = allow_step {
-            let body_hashes: Vec<BabyBear> = step
-                .body_fact_indices
-                .iter()
-                .map(|&idx| {
-                    // Hash the actual body fact using Poseidon2 for circuit compatibility.
-                    if let Some(fact) = reconstructed_facts.get(idx) {
-                        let pred_bb = bytes_to_babybear(&fact.predicate);
-                        let mut term_bbs = [BabyBear::ZERO; 3];
-                        for (i, term) in fact.terms.iter().take(3).enumerate() {
-                            term_bbs[i] = match term {
-                                TraceTerm::Const(sym) => bytes_to_babybear(sym),
-                                TraceTerm::Int(v) => BabyBear::from_u64(*v as u64),
-                                TraceTerm::Var(_) => BabyBear::ZERO,
-                            };
+        let (body_fact_hashes, substitution, derived_pred, derived_terms) =
+            if let Some(step) = allow_step {
+                let body_hashes: Vec<BabyBear> = step
+                    .body_fact_indices
+                    .iter()
+                    .map(|&idx| {
+                        // Hash the actual body fact using Poseidon2 for circuit compatibility.
+                        if let Some(fact) = reconstructed_facts.get(idx) {
+                            let pred_bb = bytes_to_babybear(&fact.predicate);
+                            let mut term_bbs = [BabyBear::ZERO; 3];
+                            for (i, term) in fact.terms.iter().take(3).enumerate() {
+                                term_bbs[i] = match term {
+                                    TraceTerm::Const(sym) => bytes_to_babybear(sym),
+                                    TraceTerm::Int(v) => BabyBear::from_u64(*v as u64),
+                                    TraceTerm::Var(_) => BabyBear::ZERO,
+                                };
+                            }
+                            poseidon2::hash_fact(pred_bb, &term_bbs)
+                        } else {
+                            // Index out of range — use a non-zero sentinel.
+                            BabyBear::new(1)
                         }
-                        poseidon2::hash_fact(pred_bb, &term_bbs)
-                    } else {
-                        // Index out of range — use a non-zero sentinel.
-                        BabyBear::new(1)
-                    }
-                })
-                .collect();
+                    })
+                    .collect();
 
-            let subst: Vec<BabyBear> = step
-                .substitution
-                .bindings
-                .iter()
-                .map(|(_, term)| match term {
-                    TraceTerm::Const(sym) => bytes_to_babybear(sym),
-                    TraceTerm::Int(i) => BabyBear::from_u64(*i as u64),
-                    TraceTerm::Var(_) => BabyBear::ZERO,
-                })
-                .collect();
+                let subst: Vec<BabyBear> = step
+                    .substitution
+                    .bindings
+                    .iter()
+                    .map(|(_, term)| match term {
+                        TraceTerm::Const(sym) => bytes_to_babybear(sym),
+                        TraceTerm::Int(i) => BabyBear::from_u64(*i as u64),
+                        TraceTerm::Var(_) => BabyBear::ZERO,
+                    })
+                    .collect();
 
-            let pred = bytes_to_babybear(&step.derived_fact.predicate);
-            let mut terms = [BabyBear::ZERO; 3];
-            for (i, term) in step.derived_fact.terms.iter().take(3).enumerate() {
-                terms[i] = match term {
-                    TraceTerm::Const(sym) => bytes_to_babybear(sym),
-                    TraceTerm::Int(v) => BabyBear::from_u64(*v as u64),
-                    TraceTerm::Var(_) => BabyBear::ZERO,
-                };
-            }
+                let pred = bytes_to_babybear(&step.derived_fact.predicate);
+                let mut terms = [BabyBear::ZERO; 3];
+                for (i, term) in step.derived_fact.terms.iter().take(3).enumerate() {
+                    terms[i] = match term {
+                        TraceTerm::Const(sym) => bytes_to_babybear(sym),
+                        TraceTerm::Int(v) => BabyBear::from_u64(*v as u64),
+                        TraceTerm::Var(_) => BabyBear::ZERO,
+                    };
+                }
 
-            (body_hashes, subst, pred, terms)
-        } else {
-            // No derivation step found — this shouldn't happen for Allow conclusions.
-            // Fall back to a minimal witness.
-            let allow_sym = symbol_from_str("allow");
-            (
-                vec![BabyBear::new(rule_id)],
-                vec![],
-                bytes_to_babybear(&allow_sym),
-                [BabyBear::ZERO; 3],
-            )
-        };
+                (body_hashes, subst, pred, terms)
+            } else {
+                // No derivation step found — this shouldn't happen for Allow conclusions.
+                // Fall back to a minimal witness.
+                let allow_sym = symbol_from_str("allow");
+                (
+                    vec![BabyBear::new(rule_id)],
+                    vec![],
+                    bytes_to_babybear(&allow_sym),
+                    [BabyBear::ZERO; 3],
+                )
+            };
 
         // Ensure we have at least one body hash.
         let body_fact_hashes = if body_fact_hashes.is_empty() {
@@ -1001,21 +996,39 @@ impl BridgePresentationBuilder {
         // 2. Request facts (same injection as the evaluator performs).
         let req = &trace.request;
         if let Some(app_id) = &req.app_id {
-            facts.push(TraceFact::new(symbol_from_str("request_app"), vec![Term::Const(*app_id)]));
+            facts.push(TraceFact::new(
+                symbol_from_str("request_app"),
+                vec![Term::Const(*app_id)],
+            ));
         }
         if let Some(service) = &req.service {
-            facts.push(TraceFact::new(symbol_from_str("request_service"), vec![Term::Const(*service)]));
+            facts.push(TraceFact::new(
+                symbol_from_str("request_service"),
+                vec![Term::Const(*service)],
+            ));
         }
         if let Some(action) = &req.action {
-            facts.push(TraceFact::new(symbol_from_str("request_action"), vec![Term::Const(*action)]));
+            facts.push(TraceFact::new(
+                symbol_from_str("request_action"),
+                vec![Term::Const(*action)],
+            ));
         }
         for feature in &req.features {
-            facts.push(TraceFact::new(symbol_from_str("request_feature"), vec![Term::Const(*feature)]));
+            facts.push(TraceFact::new(
+                symbol_from_str("request_feature"),
+                vec![Term::Const(*feature)],
+            ));
         }
         if let Some(user_id) = &req.user_id {
-            facts.push(TraceFact::new(symbol_from_str("request_user"), vec![Term::Const(*user_id)]));
+            facts.push(TraceFact::new(
+                symbol_from_str("request_user"),
+                vec![Term::Const(*user_id)],
+            ));
         }
-        facts.push(TraceFact::new(symbol_from_str("request_time"), vec![Term::Int(req.now)]));
+        facts.push(TraceFact::new(
+            symbol_from_str("request_time"),
+            vec![Term::Int(req.now)],
+        ));
 
         // 3. Derived facts from prior steps (in order).
         for step in &trace.steps {
@@ -1033,7 +1046,10 @@ impl BridgePresentationBuilder {
     ///
     /// The computed root is checked against the expected `federation_root`; if they
     /// don't match, the proof is considered invalid (returns Err).
-    pub fn build_issuer_membership(&self, issuer_key_hash: BabyBear) -> Result<MerkleWitness, AuthError> {
+    pub fn build_issuer_membership(
+        &self,
+        issuer_key_hash: BabyBear,
+    ) -> Result<MerkleWitness, AuthError> {
         // Production path: use real federation tree if available.
         if let Some(tree) = &self.federation_tree {
             return self.build_issuer_membership_from_tree(tree, issuer_key_hash);
@@ -1279,7 +1295,8 @@ pub fn hash_index(level: usize, sibling_idx: usize, key: &[u8; 32]) -> u32 {
     hasher.update(key);
     let hash = hasher.finalize();
     let bytes = hash.as_bytes();
-    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) % (pyana_circuit::field::BABYBEAR_P)
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        % (pyana_circuit::field::BABYBEAR_P)
 }
 
 /// Verify a presentation proof's public inputs.
@@ -1439,7 +1456,10 @@ mod tests {
         let mut bytes2 = [0u8; 32];
         bytes2[16] = 1; // Change a byte in the middle (was invisible to old 4-byte truncation).
         let h3 = bytes_to_babybear(&bytes2);
-        assert_ne!(h1, h3, "bytes differing only beyond byte 3 must produce different hashes");
+        assert_ne!(
+            h1, h3,
+            "bytes differing only beyond byte 3 must produce different hashes"
+        );
     }
 
     #[test]
@@ -1576,7 +1596,10 @@ mod tests {
             expected_root_bb,
         );
         let result = builder.build_issuer_membership_poseidon2(issuer_hash);
-        assert!(result.is_ok(), "Poseidon2 proof should succeed with matching root");
+        assert!(
+            result.is_ok(),
+            "Poseidon2 proof should succeed with matching root"
+        );
 
         let witness = result.unwrap();
         assert_eq!(witness.leaf_hash, issuer_hash);
@@ -1614,11 +1637,8 @@ mod tests {
         let mut fed_root_bytes = [0u8; 32];
         fed_root_bytes[..4].copy_from_slice(&fed_root_bb.0.to_le_bytes());
 
-        let mut builder = BridgePresentationBuilder::new_with_root_bb(
-            key,
-            fed_root_bytes,
-            fed_root_bb,
-        );
+        let mut builder =
+            BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
         let token = MacaroonToken::mint(key, b"kid-p2", "pyana.dev");
         builder.set_root_token(token);
 
@@ -1638,11 +1658,17 @@ mod tests {
         );
 
         let proof = proof.unwrap();
-        assert!(proof.has_real_stark_proof(), "Should have a real STARK proof");
+        assert!(
+            proof.has_real_stark_proof(),
+            "Should have a real STARK proof"
+        );
 
         // Verify the STARK proof cryptographically
         let stark_verify = proof.verify_issuer_stark();
-        assert!(stark_verify.is_some(), "Should have a STARK proof to verify");
+        assert!(
+            stark_verify.is_some(),
+            "Should have a STARK proof to verify"
+        );
         assert!(
             stark_verify.unwrap().is_ok(),
             "Poseidon2 STARK proof should verify"

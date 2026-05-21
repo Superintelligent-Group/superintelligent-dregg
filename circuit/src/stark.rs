@@ -10,7 +10,7 @@
 //! The key property: `prove()` produces bytes that a separate `verify()` can
 //! check WITHOUT seeing the original trace/witness. A tampered trace fails.
 
-use crate::field::{BabyBear, BABYBEAR_P};
+use crate::field::{BABYBEAR_P, BabyBear};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -26,29 +26,39 @@ fn poly_eval(coeffs: &[BabyBear], x: BabyBear) -> BabyBear {
 }
 
 #[allow(dead_code)]
-fn find_generator() -> BabyBear { BabyBear::new(31) }
+fn find_generator() -> BabyBear {
+    BabyBear::new(31)
+}
 
 #[allow(dead_code)]
 fn root_of_order(n: u32) -> Option<BabyBear> {
     let g = find_generator();
     let order = BABYBEAR_P - 1;
-    if order % n != 0 { return None; }
+    if order % n != 0 {
+        return None;
+    }
     let exp = order / n;
     let root = g.pow(exp);
-    if root.pow(n) != BabyBear::ONE { return None; }
+    if root.pow(n) != BabyBear::ONE {
+        return None;
+    }
     Some(root)
 }
 
 fn interpolate(xs: &[BabyBear], ys: &[BabyBear]) -> Vec<BabyBear> {
     let n = xs.len();
     assert_eq!(n, ys.len());
-    if n == 0 { return vec![]; }
+    if n == 0 {
+        return vec![];
+    }
     let mut result = vec![BabyBear::ZERO; n];
     for i in 0..n {
         let mut basis = vec![BabyBear::ONE];
         let mut denom = BabyBear::ONE;
         for j in 0..n {
-            if i == j { continue; }
+            if i == j {
+                continue;
+            }
             let mut new_basis = vec![BabyBear::ZERO; basis.len() + 1];
             for k in 0..basis.len() {
                 new_basis[k + 1] = new_basis[k + 1] + basis[k];
@@ -59,7 +69,9 @@ fn interpolate(xs: &[BabyBear], ys: &[BabyBear]) -> Vec<BabyBear> {
         }
         let scale = ys[i] * denom.inverse().unwrap();
         for k in 0..basis.len() {
-            if k < result.len() { result[k] = result[k] + basis[k] * scale; }
+            if k < result.len() {
+                result[k] = result[k] + basis[k] * scale;
+            }
         }
     }
     result
@@ -79,7 +91,9 @@ fn hash_leaf(value: BabyBear) -> [u8; 32] {
 fn hash_leaf_multi(values: &[BabyBear]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"stark-leaf:");
-    for v in values { hasher.update(&v.0.to_le_bytes()); }
+    for v in values {
+        hasher.update(&v.0.to_le_bytes());
+    }
     *hasher.finalize().as_bytes()
 }
 
@@ -92,7 +106,10 @@ fn hash_node(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
 }
 
 #[derive(Clone, Debug)]
-struct MerkleTree { nodes: Vec<[u8; 32]>, num_leaves: usize }
+struct MerkleTree {
+    nodes: Vec<[u8; 32]>,
+    num_leaves: usize,
+}
 
 impl MerkleTree {
     fn new(leaf_hashes: Vec<[u8; 32]>) -> Self {
@@ -111,10 +128,15 @@ impl MerkleTree {
             level_start += level_size;
             level_size /= 2;
         }
-        Self { nodes, num_leaves: n }
+        Self {
+            nodes,
+            num_leaves: n,
+        }
     }
 
-    fn root(&self) -> [u8; 32] { *self.nodes.last().unwrap() }
+    fn root(&self) -> [u8; 32] {
+        *self.nodes.last().unwrap()
+    }
 
     fn prove(&self, index: usize) -> Vec<[u8; 32]> {
         assert!(index < self.num_leaves);
@@ -131,11 +153,20 @@ impl MerkleTree {
         path
     }
 
-    fn verify_proof(root: &[u8; 32], leaf_hash: &[u8; 32], index: usize, path: &[[u8; 32]]) -> bool {
+    fn verify_proof(
+        root: &[u8; 32],
+        leaf_hash: &[u8; 32],
+        index: usize,
+        path: &[[u8; 32]],
+    ) -> bool {
         let mut current = *leaf_hash;
         let mut idx = index;
         for sibling in path {
-            current = if idx & 1 == 0 { hash_node(&current, sibling) } else { hash_node(sibling, &current) };
+            current = if idx & 1 == 0 {
+                hash_node(&current, sibling)
+            } else {
+                hash_node(sibling, &current)
+            };
             idx >>= 1;
         }
         &current == root
@@ -147,7 +178,10 @@ impl MerkleTree {
 // ============================================================================
 
 #[derive(Clone)]
-struct Transcript { hasher: blake3::Hasher, counter: u64 }
+struct Transcript {
+    hasher: blake3::Hasher,
+    counter: u64,
+}
 
 impl Transcript {
     fn new(domain_sep: &[u8]) -> Self {
@@ -157,9 +191,15 @@ impl Transcript {
         Self { hasher, counter: 0 }
     }
     #[allow(dead_code)]
-    fn absorb_bytes(&mut self, data: &[u8]) { self.hasher.update(data); }
-    fn absorb_field(&mut self, val: BabyBear) { self.hasher.update(&val.0.to_le_bytes()); }
-    fn absorb_hash(&mut self, h: &[u8; 32]) { self.hasher.update(h); }
+    fn absorb_bytes(&mut self, data: &[u8]) {
+        self.hasher.update(data);
+    }
+    fn absorb_field(&mut self, val: BabyBear) {
+        self.hasher.update(&val.0.to_le_bytes());
+    }
+    fn absorb_hash(&mut self, h: &[u8; 32]) {
+        self.hasher.update(h);
+    }
     fn squeeze_field(&mut self) -> BabyBear {
         self.counter += 1;
         let mut sh = self.hasher.clone();
@@ -176,7 +216,9 @@ impl Transcript {
         sh.update(&self.counter.to_le_bytes());
         let hash = sh.finalize();
         let bytes = hash.as_bytes();
-        let val = u64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]]);
+        let val = u64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]);
         (val as usize) % bound
     }
 }
@@ -231,23 +273,45 @@ pub struct FriLayerQuery {
 
 pub trait StarkAir {
     fn width(&self) -> usize;
-    fn eval_constraints(&self, local: &[BabyBear], next: &[BabyBear], public_inputs: &[BabyBear], alpha: BabyBear) -> BabyBear;
+    fn eval_constraints(
+        &self,
+        local: &[BabyBear],
+        next: &[BabyBear],
+        public_inputs: &[BabyBear],
+        alpha: BabyBear,
+    ) -> BabyBear;
     fn constraint_degree(&self) -> usize;
     /// Whether this AIR uses Merkle chain continuity (col5=parent, col0=current).
     /// Override to false for AIRs without this layout.
-    fn has_chain_continuity(&self) -> bool { true }
+    fn has_chain_continuity(&self) -> bool {
+        true
+    }
 }
 
 pub struct MerkleStarkAir;
 pub type MerkleLinearAir = MerkleStarkAir;
 
 impl StarkAir for MerkleStarkAir {
-    fn width(&self) -> usize { 6 }
-    fn constraint_degree(&self) -> usize { 4 }
-    fn eval_constraints(&self, local: &[BabyBear], _next: &[BabyBear], _public_inputs: &[BabyBear], alpha: BabyBear) -> BabyBear {
-        let (current, sib0, sib1, sib2, position, parent) = (local[0], local[1], local[2], local[3], local[4], local[5]);
+    fn width(&self) -> usize {
+        6
+    }
+    fn constraint_degree(&self) -> usize {
+        4
+    }
+    fn eval_constraints(
+        &self,
+        local: &[BabyBear],
+        _next: &[BabyBear],
+        _public_inputs: &[BabyBear],
+        alpha: BabyBear,
+    ) -> BabyBear {
+        let (current, sib0, sib1, sib2, position, parent) =
+            (local[0], local[1], local[2], local[3], local[4], local[5]);
         let c1 = parent - (current + sib0 + sib1 + sib2 + position);
-        let c2 = position * (position - BabyBear::ONE) * (position - BabyBear::new(2)) * (position - BabyBear::new(3));
+        let c2 = position
+            * (position - BabyBear::ONE)
+            * (position - BabyBear::new(2))
+            * (position - BabyBear::new(3));
         c1 + alpha * c2
     }
 }
@@ -256,7 +320,11 @@ impl StarkAir for MerkleStarkAir {
 // STARK Prover
 // ============================================================================
 
-pub fn prove(air: &dyn StarkAir, trace: &[Vec<BabyBear>], public_inputs: &[BabyBear]) -> StarkProof {
+pub fn prove(
+    air: &dyn StarkAir,
+    trace: &[Vec<BabyBear>],
+    public_inputs: &[BabyBear],
+) -> StarkProof {
     let num_rows = trace.len();
     let num_cols = air.width();
     assert!(num_rows >= 2 && num_rows.is_power_of_two());
@@ -272,17 +340,24 @@ pub fn prove(air: &dyn StarkAir, trace: &[Vec<BabyBear>], public_inputs: &[BabyB
 
     let mut trace_evals = Vec::with_capacity(num_cols);
     for poly in &trace_polys {
-        trace_evals.push(eval_points.iter().map(|&x| poly_eval(poly, x)).collect::<Vec<_>>());
+        trace_evals.push(
+            eval_points
+                .iter()
+                .map(|&x| poly_eval(poly, x))
+                .collect::<Vec<_>>(),
+        );
     }
 
-    let trace_leaves: Vec<[u8; 32]> = (0..domain_size).map(|i| {
-        hash_leaf_multi(&trace_evals.iter().map(|col| col[i]).collect::<Vec<_>>())
-    }).collect();
+    let trace_leaves: Vec<[u8; 32]> = (0..domain_size)
+        .map(|i| hash_leaf_multi(&trace_evals.iter().map(|col| col[i]).collect::<Vec<_>>()))
+        .collect();
     let trace_tree = MerkleTree::new(trace_leaves);
 
     let mut transcript = Transcript::new(b"merkle-stark");
     transcript.absorb_hash(&trace_tree.root());
-    for pi in public_inputs { transcript.absorb_field(*pi); }
+    for pi in public_inputs {
+        transcript.absorb_field(*pi);
+    }
     let alpha = transcript.squeeze_field();
 
     let mut constraint_evals = Vec::with_capacity(domain_size);
@@ -297,15 +372,22 @@ pub fn prove(air: &dyn StarkAir, trace: &[Vec<BabyBear>], public_inputs: &[BabyB
     for i in 0..domain_size {
         let x = eval_points[i];
         let mut z = BabyBear::ONE;
-        for &tp in &trace_points { z = z * (x - tp); }
-        quotient_evals.push(if z == BabyBear::ZERO { BabyBear::ZERO } else { constraint_evals[i] * z.inverse().unwrap() });
+        for &tp in &trace_points {
+            z = z * (x - tp);
+        }
+        quotient_evals.push(if z == BabyBear::ZERO {
+            BabyBear::ZERO
+        } else {
+            constraint_evals[i] * z.inverse().unwrap()
+        });
     }
 
     let constraint_leaves: Vec<[u8; 32]> = quotient_evals.iter().map(|&v| hash_leaf(v)).collect();
     let constraint_tree = MerkleTree::new(constraint_leaves);
     transcript.absorb_hash(&constraint_tree.root());
 
-    let (fri_commitments, fri_trees, fri_layer_evals, fri_final_poly) = fri_commit(&quotient_evals, &eval_points, &mut transcript);
+    let (fri_commitments, fri_trees, fri_layer_evals, fri_final_poly) =
+        fri_commit(&quotient_evals, &eval_points, &mut transcript);
 
     let mut query_proofs = Vec::with_capacity(NUM_QUERIES);
     for _ in 0..NUM_QUERIES {
@@ -319,7 +401,11 @@ pub fn prove(air: &dyn StarkAir, trace: &[Vec<BabyBear>], public_inputs: &[BabyB
         let constraint_path = constraint_tree.prove(idx);
 
         let first_half = domain_size / 2;
-        let constraint_sibling_pos = if idx < first_half { idx + first_half } else { idx - first_half };
+        let constraint_sibling_pos = if idx < first_half {
+            idx + first_half
+        } else {
+            idx - first_half
+        };
         let constraint_sibling_value = quotient_evals[constraint_sibling_pos].0;
         let constraint_sibling_path = constraint_tree.prove(constraint_sibling_pos);
 
@@ -328,30 +414,59 @@ pub fn prove(air: &dyn StarkAir, trace: &[Vec<BabyBear>], public_inputs: &[BabyB
         for (li, tree) in fri_trees.iter().enumerate() {
             let half = tree.num_leaves / 2;
             let qpos = qpos_in_layer % tree.num_leaves;
-            let spos = if qpos < half { qpos + half } else { qpos - half };
+            let spos = if qpos < half {
+                qpos + half
+            } else {
+                qpos - half
+            };
             fri_layers.push(FriLayerQuery {
-                query_pos: qpos, query_value: fri_layer_evals[li][qpos].0, query_path: tree.prove(qpos),
-                sibling_pos: spos, sibling_value: fri_layer_evals[li][spos].0, sibling_path: tree.prove(spos),
+                query_pos: qpos,
+                query_value: fri_layer_evals[li][qpos].0,
+                query_path: tree.prove(qpos),
+                sibling_pos: spos,
+                sibling_value: fri_layer_evals[li][spos].0,
+                sibling_path: tree.prove(spos),
             });
             qpos_in_layer = qpos.min(spos);
         }
 
         query_proofs.push(QueryProof {
-            index: idx, trace_values, trace_path, next_trace_values, next_trace_path,
-            constraint_value, constraint_path, constraint_sibling_value, constraint_sibling_pos,
-            constraint_sibling_path, fri_layers,
+            index: idx,
+            trace_values,
+            trace_path,
+            next_trace_values,
+            next_trace_path,
+            constraint_value,
+            constraint_path,
+            constraint_sibling_value,
+            constraint_sibling_pos,
+            constraint_sibling_path,
+            fri_layers,
         });
     }
 
     StarkProof {
-        trace_commitment: trace_tree.root(), constraint_commitment: constraint_tree.root(),
-        fri_commitments, fri_final_poly: fri_final_poly.iter().map(|v| v.0).collect(),
-        query_proofs, public_inputs: public_inputs.iter().map(|v| v.0).collect(),
-        trace_len: num_rows, num_cols,
+        trace_commitment: trace_tree.root(),
+        constraint_commitment: constraint_tree.root(),
+        fri_commitments,
+        fri_final_poly: fri_final_poly.iter().map(|v| v.0).collect(),
+        query_proofs,
+        public_inputs: public_inputs.iter().map(|v| v.0).collect(),
+        trace_len: num_rows,
+        num_cols,
     }
 }
 
-fn fri_commit(evals: &[BabyBear], _points: &[BabyBear], transcript: &mut Transcript) -> (Vec<[u8; 32]>, Vec<MerkleTree>, Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+fn fri_commit(
+    evals: &[BabyBear],
+    _points: &[BabyBear],
+    transcript: &mut Transcript,
+) -> (
+    Vec<[u8; 32]>,
+    Vec<MerkleTree>,
+    Vec<Vec<BabyBear>>,
+    Vec<BabyBear>,
+) {
     let mut current_evals = evals.to_vec();
     let mut commitments = Vec::new();
     let mut trees = Vec::new();
@@ -360,8 +475,12 @@ fn fri_commit(evals: &[BabyBear], _points: &[BabyBear], transcript: &mut Transcr
         let beta = transcript.squeeze_field();
         let half = current_evals.len() / 2;
         let mut folded = Vec::with_capacity(half);
-        for i in 0..half { folded.push(current_evals[i] + beta * current_evals[i + half]); }
-        while !folded.len().is_power_of_two() || folded.len() < 2 { folded.push(BabyBear::ZERO); }
+        for i in 0..half {
+            folded.push(current_evals[i] + beta * current_evals[i + half]);
+        }
+        while !folded.len().is_power_of_two() || folded.len() < 2 {
+            folded.push(BabyBear::ZERO);
+        }
         let leaves: Vec<[u8; 32]> = folded.iter().map(|&v| hash_leaf(v)).collect();
         let tree = MerkleTree::new(leaves);
         transcript.absorb_hash(&tree.root());
@@ -377,17 +496,25 @@ fn fri_commit(evals: &[BabyBear], _points: &[BabyBear], transcript: &mut Transcr
 // STARK Verifier
 // ============================================================================
 
-pub fn verify(air: &dyn StarkAir, proof: &StarkProof, public_inputs: &[BabyBear]) -> Result<(), String> {
+pub fn verify(
+    air: &dyn StarkAir,
+    proof: &StarkProof,
+    public_inputs: &[BabyBear],
+) -> Result<(), String> {
     let num_cols = proof.num_cols;
     let trace_len = proof.trace_len;
     let domain_size = trace_len * BLOWUP;
 
     let proof_pis: Vec<BabyBear> = proof.public_inputs.iter().map(|&v| BabyBear(v)).collect();
-    if proof_pis != public_inputs { return Err("Public inputs mismatch".to_string()); }
+    if proof_pis != public_inputs {
+        return Err("Public inputs mismatch".to_string());
+    }
 
     let mut transcript = Transcript::new(b"merkle-stark");
     transcript.absorb_hash(&proof.trace_commitment);
-    for pi in public_inputs { transcript.absorb_field(*pi); }
+    for pi in public_inputs {
+        transcript.absorb_field(*pi);
+    }
     let alpha = transcript.squeeze_field();
     transcript.absorb_hash(&proof.constraint_commitment);
 
@@ -402,61 +529,132 @@ pub fn verify(air: &dyn StarkAir, proof: &StarkProof, public_inputs: &[BabyBear]
 
     for query in &proof.query_proofs {
         let idx = transcript.squeeze_index(domain_size);
-        if query.index != idx { return Err(format!("Query index mismatch: expected {idx}, got {}", query.index)); }
+        if query.index != idx {
+            return Err(format!(
+                "Query index mismatch: expected {idx}, got {}",
+                query.index
+            ));
+        }
 
         let trace_vals: Vec<BabyBear> = query.trace_values.iter().map(|&v| BabyBear(v)).collect();
-        if trace_vals.len() != num_cols { return Err("Wrong number of trace values".to_string()); }
-        if !MerkleTree::verify_proof(&proof.trace_commitment, &hash_leaf_multi(&trace_vals), idx, &query.trace_path) {
+        if trace_vals.len() != num_cols {
+            return Err("Wrong number of trace values".to_string());
+        }
+        if !MerkleTree::verify_proof(
+            &proof.trace_commitment,
+            &hash_leaf_multi(&trace_vals),
+            idx,
+            &query.trace_path,
+        ) {
             return Err(format!("Trace Merkle proof failed at index {idx}"));
         }
 
         let constraint_val = BabyBear(query.constraint_value);
-        if !MerkleTree::verify_proof(&proof.constraint_commitment, &hash_leaf(constraint_val), idx, &query.constraint_path) {
+        if !MerkleTree::verify_proof(
+            &proof.constraint_commitment,
+            &hash_leaf(constraint_val),
+            idx,
+            &query.constraint_path,
+        ) {
             return Err(format!("Constraint Merkle proof failed at index {idx}"));
         }
 
         let next_idx = if idx + 1 < domain_size { idx + 1 } else { 0 };
-        let next_trace_vals: Vec<BabyBear> = query.next_trace_values.iter().map(|&v| BabyBear(v)).collect();
-        if next_trace_vals.len() != num_cols { return Err("Wrong number of next trace values".to_string()); }
-        if !MerkleTree::verify_proof(&proof.trace_commitment, &hash_leaf_multi(&next_trace_vals), next_idx, &query.next_trace_path) {
-            return Err(format!("Next trace Merkle proof failed at index {next_idx}"));
+        let next_trace_vals: Vec<BabyBear> = query
+            .next_trace_values
+            .iter()
+            .map(|&v| BabyBear(v))
+            .collect();
+        if next_trace_vals.len() != num_cols {
+            return Err("Wrong number of next trace values".to_string());
+        }
+        if !MerkleTree::verify_proof(
+            &proof.trace_commitment,
+            &hash_leaf_multi(&next_trace_vals),
+            next_idx,
+            &query.next_trace_path,
+        ) {
+            return Err(format!(
+                "Next trace Merkle proof failed at index {next_idx}"
+            ));
         }
 
-        if air.has_chain_continuity() && idx < trace_len - 1 && trace_vals[5] != next_trace_vals[0] {
+        if air.has_chain_continuity() && idx < trace_len - 1 && trace_vals[5] != next_trace_vals[0]
+        {
             return Err(format!("Chain continuity failed at trace row {idx}"));
         }
 
         let x = eval_points[idx];
         let mut z = BabyBear::ONE;
-        for &tp in &trace_points { z = z * (x - tp); }
-        let constraint_at_x = air.eval_constraints(&trace_vals, &next_trace_vals, public_inputs, alpha);
+        for &tp in &trace_points {
+            z = z * (x - tp);
+        }
+        let constraint_at_x =
+            air.eval_constraints(&trace_vals, &next_trace_vals, public_inputs, alpha);
         if constraint_val * z != constraint_at_x {
-            return Err(format!("Constraint consistency check failed at query index {idx}"));
+            return Err(format!(
+                "Constraint consistency check failed at query index {idx}"
+            ));
         }
 
         // FRI folding relation verification
         let first_half = domain_size / 2;
         let constraint_sib_val = BabyBear(query.constraint_sibling_value);
-        if !MerkleTree::verify_proof(&proof.constraint_commitment, &hash_leaf(constraint_sib_val), query.constraint_sibling_pos, &query.constraint_sibling_path) {
-            return Err(format!("FRI: constraint sibling Merkle proof failed at pos {}", query.constraint_sibling_pos));
+        if !MerkleTree::verify_proof(
+            &proof.constraint_commitment,
+            &hash_leaf(constraint_sib_val),
+            query.constraint_sibling_pos,
+            &query.constraint_sibling_path,
+        ) {
+            return Err(format!(
+                "FRI: constraint sibling Merkle proof failed at pos {}",
+                query.constraint_sibling_pos
+            ));
         }
 
-        let (even_val, odd_val) = if idx < first_half { (constraint_val, constraint_sib_val) } else { (constraint_sib_val, constraint_val) };
+        let (even_val, odd_val) = if idx < first_half {
+            (constraint_val, constraint_sib_val)
+        } else {
+            (constraint_sib_val, constraint_val)
+        };
 
         if !fri_betas.is_empty() {
             let expected_folded = even_val + fri_betas[0] * odd_val;
             if !proof.fri_commitments.is_empty() {
-                if query.fri_layers.is_empty() { return Err("FRI: missing layer 0 opening".to_string()); }
+                if query.fri_layers.is_empty() {
+                    return Err("FRI: missing layer 0 opening".to_string());
+                }
                 let layer0 = &query.fri_layers[0];
-                if layer0.query_pos != idx % first_half { return Err(format!("FRI layer 0: position mismatch")); }
+                if layer0.query_pos != idx % first_half {
+                    return Err(format!("FRI layer 0: position mismatch"));
+                }
                 if BabyBear(layer0.query_value) != expected_folded {
-                    return Err(format!("FRI folding check failed at layer 0: expected {}, got {}", expected_folded.0, layer0.query_value));
+                    return Err(format!(
+                        "FRI folding check failed at layer 0: expected {}, got {}",
+                        expected_folded.0, layer0.query_value
+                    ));
                 }
-                if !MerkleTree::verify_proof(&proof.fri_commitments[0], &hash_leaf(BabyBear(layer0.query_value)), layer0.query_pos, &layer0.query_path) {
-                    return Err(format!("FRI layer 0: Merkle proof for query_pos {} failed", layer0.query_pos));
+                if !MerkleTree::verify_proof(
+                    &proof.fri_commitments[0],
+                    &hash_leaf(BabyBear(layer0.query_value)),
+                    layer0.query_pos,
+                    &layer0.query_path,
+                ) {
+                    return Err(format!(
+                        "FRI layer 0: Merkle proof for query_pos {} failed",
+                        layer0.query_pos
+                    ));
                 }
-                if !MerkleTree::verify_proof(&proof.fri_commitments[0], &hash_leaf(BabyBear(layer0.sibling_value)), layer0.sibling_pos, &layer0.sibling_path) {
-                    return Err(format!("FRI layer 0: Merkle proof for sibling_pos {} failed", layer0.sibling_pos));
+                if !MerkleTree::verify_proof(
+                    &proof.fri_commitments[0],
+                    &hash_leaf(BabyBear(layer0.sibling_value)),
+                    layer0.sibling_pos,
+                    &layer0.sibling_path,
+                ) {
+                    return Err(format!(
+                        "FRI layer 0: Merkle proof for sibling_pos {} failed",
+                        layer0.sibling_pos
+                    ));
                 }
             }
         }
@@ -470,33 +668,67 @@ pub fn verify(air: &dyn StarkAir, proof: &StarkProof, public_inputs: &[BabyBear]
                 (BabyBear(cl.sibling_value), BabyBear(cl.query_value))
             };
             let beta_idx = k + 1;
-            if beta_idx >= fri_betas.len() { return Err(format!("FRI: not enough betas for layer {}", k + 1)); }
+            if beta_idx >= fri_betas.len() {
+                return Err(format!("FRI: not enough betas for layer {}", k + 1));
+            }
             let expected_next = even_k + fri_betas[beta_idx] * odd_k;
-            if nl.query_pos != cl.query_pos.min(cl.sibling_pos) { return Err(format!("FRI layer {}: position mismatch", k + 1)); }
+            if nl.query_pos != cl.query_pos.min(cl.sibling_pos) {
+                return Err(format!("FRI layer {}: position mismatch", k + 1));
+            }
             if BabyBear(nl.query_value) != expected_next {
-                return Err(format!("FRI folding check failed at layer {}: expected {}, got {}", k + 1, expected_next.0, nl.query_value));
+                return Err(format!(
+                    "FRI folding check failed at layer {}: expected {}, got {}",
+                    k + 1,
+                    expected_next.0,
+                    nl.query_value
+                ));
             }
             if beta_idx < proof.fri_commitments.len() {
-                if !MerkleTree::verify_proof(&proof.fri_commitments[beta_idx], &hash_leaf(BabyBear(nl.query_value)), nl.query_pos, &nl.query_path) {
-                    return Err(format!("FRI layer {}: Merkle proof for query_pos failed", k + 1));
+                if !MerkleTree::verify_proof(
+                    &proof.fri_commitments[beta_idx],
+                    &hash_leaf(BabyBear(nl.query_value)),
+                    nl.query_pos,
+                    &nl.query_path,
+                ) {
+                    return Err(format!(
+                        "FRI layer {}: Merkle proof for query_pos failed",
+                        k + 1
+                    ));
                 }
-                if !MerkleTree::verify_proof(&proof.fri_commitments[beta_idx], &hash_leaf(BabyBear(nl.sibling_value)), nl.sibling_pos, &nl.sibling_path) {
-                    return Err(format!("FRI layer {}: Merkle proof for sibling_pos failed", k + 1));
+                if !MerkleTree::verify_proof(
+                    &proof.fri_commitments[beta_idx],
+                    &hash_leaf(BabyBear(nl.sibling_value)),
+                    nl.sibling_pos,
+                    &nl.sibling_path,
+                ) {
+                    return Err(format!(
+                        "FRI layer {}: Merkle proof for sibling_pos failed",
+                        k + 1
+                    ));
                 }
             }
         }
 
         if let Some(last) = query.fri_layers.last() {
-            if last.query_pos < proof.fri_final_poly.len() && last.query_value != proof.fri_final_poly[last.query_pos] {
+            if last.query_pos < proof.fri_final_poly.len()
+                && last.query_value != proof.fri_final_poly[last.query_pos]
+            {
                 return Err(format!("FRI final poly mismatch at pos {}", last.query_pos));
             }
-            if last.sibling_pos < proof.fri_final_poly.len() && last.sibling_value != proof.fri_final_poly[last.sibling_pos] {
-                return Err(format!("FRI final poly sibling mismatch at pos {}", last.sibling_pos));
+            if last.sibling_pos < proof.fri_final_poly.len()
+                && last.sibling_value != proof.fri_final_poly[last.sibling_pos]
+            {
+                return Err(format!(
+                    "FRI final poly sibling mismatch at pos {}",
+                    last.sibling_pos
+                ));
             }
         }
     }
 
-    if proof.fri_final_poly.len() > 4 { return Err("FRI final polynomial too large".to_string()); }
+    if proof.fri_final_poly.len() > 4 {
+        return Err("FRI final polynomial too large".to_string());
+    }
     Ok(())
 }
 
@@ -504,7 +736,11 @@ pub fn verify(air: &dyn StarkAir, proof: &StarkProof, public_inputs: &[BabyBear]
 // Convenience
 // ============================================================================
 
-pub fn generate_merkle_trace(leaf_hash: u32, siblings: &[[u32; 3]], positions: &[u32]) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+pub fn generate_merkle_trace(
+    leaf_hash: u32,
+    siblings: &[[u32; 3]],
+    positions: &[u32],
+) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let depth = siblings.len();
     assert_eq!(positions.len(), depth);
     assert!(depth >= 2);
@@ -513,58 +749,94 @@ pub fn generate_merkle_trace(leaf_hash: u32, siblings: &[[u32; 3]], positions: &
     let mut current = BabyBear::new(leaf_hash);
     let leaf_elem = current;
     for i in 0..depth {
-        let (sib0, sib1, sib2) = (BabyBear::new(siblings[i][0]), BabyBear::new(siblings[i][1]), BabyBear::new(siblings[i][2]));
+        let (sib0, sib1, sib2) = (
+            BabyBear::new(siblings[i][0]),
+            BabyBear::new(siblings[i][1]),
+            BabyBear::new(siblings[i][2]),
+        );
         let pos = BabyBear::new(positions[i]);
         let parent = current + sib0 + sib1 + sib2 + pos;
         trace.push(vec![current, sib0, sib1, sib2, pos, parent]);
         current = parent;
     }
     let root = current;
-    for _ in depth..padded { trace.push(vec![root, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO, root]); }
+    for _ in depth..padded {
+        trace.push(vec![
+            root,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            root,
+        ]);
+    }
     (trace, vec![leaf_elem, root])
 }
 
 pub fn proof_to_bytes(proof: &StarkProof) -> Vec<u8> {
     let mut b = Vec::new();
-    b.extend_from_slice(b"PYNA"); b.push(1);
+    b.extend_from_slice(b"PYNA");
+    b.push(1);
     b.extend_from_slice(&proof.trace_commitment);
     b.extend_from_slice(&proof.constraint_commitment);
     b.extend_from_slice(&(proof.fri_commitments.len() as u32).to_le_bytes());
-    for c in &proof.fri_commitments { b.extend_from_slice(c); }
+    for c in &proof.fri_commitments {
+        b.extend_from_slice(c);
+    }
     b.extend_from_slice(&(proof.fri_final_poly.len() as u32).to_le_bytes());
-    for &v in &proof.fri_final_poly { b.extend_from_slice(&v.to_le_bytes()); }
+    for &v in &proof.fri_final_poly {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
     b.extend_from_slice(&(proof.public_inputs.len() as u32).to_le_bytes());
-    for &v in &proof.public_inputs { b.extend_from_slice(&v.to_le_bytes()); }
+    for &v in &proof.public_inputs {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
     b.extend_from_slice(&(proof.trace_len as u32).to_le_bytes());
     b.extend_from_slice(&(proof.num_cols as u32).to_le_bytes());
     b.extend_from_slice(&(proof.query_proofs.len() as u32).to_le_bytes());
     for qp in &proof.query_proofs {
         b.extend_from_slice(&(qp.index as u32).to_le_bytes());
         b.extend_from_slice(&(qp.trace_values.len() as u32).to_le_bytes());
-        for &v in &qp.trace_values { b.extend_from_slice(&v.to_le_bytes()); }
+        for &v in &qp.trace_values {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
         b.extend_from_slice(&(qp.trace_path.len() as u32).to_le_bytes());
-        for h in &qp.trace_path { b.extend_from_slice(h); }
+        for h in &qp.trace_path {
+            b.extend_from_slice(h);
+        }
         b.extend_from_slice(&(qp.next_trace_values.len() as u32).to_le_bytes());
-        for &v in &qp.next_trace_values { b.extend_from_slice(&v.to_le_bytes()); }
+        for &v in &qp.next_trace_values {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
         b.extend_from_slice(&(qp.next_trace_path.len() as u32).to_le_bytes());
-        for h in &qp.next_trace_path { b.extend_from_slice(h); }
+        for h in &qp.next_trace_path {
+            b.extend_from_slice(h);
+        }
         b.extend_from_slice(&qp.constraint_value.to_le_bytes());
         b.extend_from_slice(&(qp.constraint_path.len() as u32).to_le_bytes());
-        for h in &qp.constraint_path { b.extend_from_slice(h); }
+        for h in &qp.constraint_path {
+            b.extend_from_slice(h);
+        }
         b.extend_from_slice(&qp.constraint_sibling_value.to_le_bytes());
         b.extend_from_slice(&(qp.constraint_sibling_pos as u32).to_le_bytes());
         b.extend_from_slice(&(qp.constraint_sibling_path.len() as u32).to_le_bytes());
-        for h in &qp.constraint_sibling_path { b.extend_from_slice(h); }
+        for h in &qp.constraint_sibling_path {
+            b.extend_from_slice(h);
+        }
         b.extend_from_slice(&(qp.fri_layers.len() as u32).to_le_bytes());
         for l in &qp.fri_layers {
             b.extend_from_slice(&(l.query_pos as u32).to_le_bytes());
             b.extend_from_slice(&l.query_value.to_le_bytes());
             b.extend_from_slice(&(l.query_path.len() as u32).to_le_bytes());
-            for h in &l.query_path { b.extend_from_slice(h); }
+            for h in &l.query_path {
+                b.extend_from_slice(h);
+            }
             b.extend_from_slice(&(l.sibling_pos as u32).to_le_bytes());
             b.extend_from_slice(&l.sibling_value.to_le_bytes());
             b.extend_from_slice(&(l.sibling_path.len() as u32).to_le_bytes());
-            for h in &l.sibling_path { b.extend_from_slice(h); }
+            for h in &l.sibling_path {
+                b.extend_from_slice(h);
+            }
         }
     }
     b
@@ -573,23 +845,43 @@ pub fn proof_to_bytes(proof: &StarkProof) -> Vec<u8> {
 pub fn proof_from_bytes(bytes: &[u8]) -> Result<StarkProof, String> {
     let mut pos: usize;
     let ru32 = |p: &mut usize, b: &[u8]| -> Result<u32, String> {
-        if *p + 4 > b.len() { return Err("unexpected end".to_string()); }
-        let v = u32::from_le_bytes([b[*p], b[*p+1], b[*p+2], b[*p+3]]); *p += 4; Ok(v)
+        if *p + 4 > b.len() {
+            return Err("unexpected end".to_string());
+        }
+        let v = u32::from_le_bytes([b[*p], b[*p + 1], b[*p + 2], b[*p + 3]]);
+        *p += 4;
+        Ok(v)
     };
     let rh = |p: &mut usize, b: &[u8]| -> Result<[u8; 32], String> {
-        if *p + 32 > b.len() { return Err("unexpected end".to_string()); }
-        let mut h = [0u8; 32]; h.copy_from_slice(&b[*p..*p+32]); *p += 32; Ok(h)
+        if *p + 32 > b.len() {
+            return Err("unexpected end".to_string());
+        }
+        let mut h = [0u8; 32];
+        h.copy_from_slice(&b[*p..*p + 32]);
+        *p += 32;
+        Ok(h)
     };
-    if bytes.len() < 5 || &bytes[0..4] != b"PYNA" || bytes[4] != 1 { return Err("invalid proof header".to_string()); }
+    if bytes.len() < 5 || &bytes[0..4] != b"PYNA" || bytes[4] != 1 {
+        return Err("invalid proof header".to_string());
+    }
     pos = 5;
     let trace_commitment = rh(&mut pos, bytes)?;
     let constraint_commitment = rh(&mut pos, bytes)?;
     let fc = ru32(&mut pos, bytes)? as usize;
-    let mut fri_commitments = Vec::new(); for _ in 0..fc { fri_commitments.push(rh(&mut pos, bytes)?); }
+    let mut fri_commitments = Vec::new();
+    for _ in 0..fc {
+        fri_commitments.push(rh(&mut pos, bytes)?);
+    }
     let fpl = ru32(&mut pos, bytes)? as usize;
-    let mut fri_final_poly = Vec::new(); for _ in 0..fpl { fri_final_poly.push(ru32(&mut pos, bytes)?); }
+    let mut fri_final_poly = Vec::new();
+    for _ in 0..fpl {
+        fri_final_poly.push(ru32(&mut pos, bytes)?);
+    }
     let pic = ru32(&mut pos, bytes)? as usize;
-    let mut public_inputs = Vec::new(); for _ in 0..pic { public_inputs.push(ru32(&mut pos, bytes)?); }
+    let mut public_inputs = Vec::new();
+    for _ in 0..pic {
+        public_inputs.push(ru32(&mut pos, bytes)?);
+    }
     let trace_len = ru32(&mut pos, bytes)? as usize;
     let num_cols = ru32(&mut pos, bytes)? as usize;
     let qc = ru32(&mut pos, bytes)? as usize;
@@ -597,36 +889,88 @@ pub fn proof_from_bytes(bytes: &[u8]) -> Result<StarkProof, String> {
     for _ in 0..qc {
         let index = ru32(&mut pos, bytes)? as usize;
         let tc = ru32(&mut pos, bytes)? as usize;
-        let mut trace_values = Vec::new(); for _ in 0..tc { trace_values.push(ru32(&mut pos, bytes)?); }
+        let mut trace_values = Vec::new();
+        for _ in 0..tc {
+            trace_values.push(ru32(&mut pos, bytes)?);
+        }
         let tpc = ru32(&mut pos, bytes)? as usize;
-        let mut trace_path = Vec::new(); for _ in 0..tpc { trace_path.push(rh(&mut pos, bytes)?); }
+        let mut trace_path = Vec::new();
+        for _ in 0..tpc {
+            trace_path.push(rh(&mut pos, bytes)?);
+        }
         let ntc = ru32(&mut pos, bytes)? as usize;
-        let mut next_trace_values = Vec::new(); for _ in 0..ntc { next_trace_values.push(ru32(&mut pos, bytes)?); }
+        let mut next_trace_values = Vec::new();
+        for _ in 0..ntc {
+            next_trace_values.push(ru32(&mut pos, bytes)?);
+        }
         let ntpc = ru32(&mut pos, bytes)? as usize;
-        let mut next_trace_path = Vec::new(); for _ in 0..ntpc { next_trace_path.push(rh(&mut pos, bytes)?); }
+        let mut next_trace_path = Vec::new();
+        for _ in 0..ntpc {
+            next_trace_path.push(rh(&mut pos, bytes)?);
+        }
         let constraint_value = ru32(&mut pos, bytes)?;
         let cpc = ru32(&mut pos, bytes)? as usize;
-        let mut constraint_path = Vec::new(); for _ in 0..cpc { constraint_path.push(rh(&mut pos, bytes)?); }
+        let mut constraint_path = Vec::new();
+        for _ in 0..cpc {
+            constraint_path.push(rh(&mut pos, bytes)?);
+        }
         let constraint_sibling_value = ru32(&mut pos, bytes)?;
         let constraint_sibling_pos = ru32(&mut pos, bytes)? as usize;
         let cspc = ru32(&mut pos, bytes)? as usize;
-        let mut constraint_sibling_path = Vec::new(); for _ in 0..cspc { constraint_sibling_path.push(rh(&mut pos, bytes)?); }
+        let mut constraint_sibling_path = Vec::new();
+        for _ in 0..cspc {
+            constraint_sibling_path.push(rh(&mut pos, bytes)?);
+        }
         let flc = ru32(&mut pos, bytes)? as usize;
         let mut fri_layers = Vec::new();
         for _ in 0..flc {
             let query_pos = ru32(&mut pos, bytes)? as usize;
             let query_value = ru32(&mut pos, bytes)?;
             let qpc2 = ru32(&mut pos, bytes)? as usize;
-            let mut query_path = Vec::new(); for _ in 0..qpc2 { query_path.push(rh(&mut pos, bytes)?); }
+            let mut query_path = Vec::new();
+            for _ in 0..qpc2 {
+                query_path.push(rh(&mut pos, bytes)?);
+            }
             let sibling_pos = ru32(&mut pos, bytes)? as usize;
             let sibling_value = ru32(&mut pos, bytes)?;
             let spc = ru32(&mut pos, bytes)? as usize;
-            let mut sibling_path = Vec::new(); for _ in 0..spc { sibling_path.push(rh(&mut pos, bytes)?); }
-            fri_layers.push(FriLayerQuery { query_pos, query_value, query_path, sibling_pos, sibling_value, sibling_path });
+            let mut sibling_path = Vec::new();
+            for _ in 0..spc {
+                sibling_path.push(rh(&mut pos, bytes)?);
+            }
+            fri_layers.push(FriLayerQuery {
+                query_pos,
+                query_value,
+                query_path,
+                sibling_pos,
+                sibling_value,
+                sibling_path,
+            });
         }
-        query_proofs.push(QueryProof { index, trace_values, trace_path, next_trace_values, next_trace_path, constraint_value, constraint_path, constraint_sibling_value, constraint_sibling_pos, constraint_sibling_path, fri_layers });
+        query_proofs.push(QueryProof {
+            index,
+            trace_values,
+            trace_path,
+            next_trace_values,
+            next_trace_path,
+            constraint_value,
+            constraint_path,
+            constraint_sibling_value,
+            constraint_sibling_pos,
+            constraint_sibling_path,
+            fri_layers,
+        });
     }
-    Ok(StarkProof { trace_commitment, constraint_commitment, fri_commitments, fri_final_poly, query_proofs, public_inputs, trace_len, num_cols })
+    Ok(StarkProof {
+        trace_commitment,
+        constraint_commitment,
+        fri_commitments,
+        fri_final_poly,
+        query_proofs,
+        public_inputs,
+        trace_len,
+        num_cols,
+    })
 }
 
 // ============================================================================
@@ -666,37 +1010,60 @@ mod tests {
     fn merkle_tree_basic() {
         let leaves: Vec<[u8; 32]> = (0..4u32).map(|i| hash_leaf(BabyBear::new(i))).collect();
         let tree = MerkleTree::new(leaves.clone());
-        for i in 0..4 { let path = tree.prove(i); assert!(MerkleTree::verify_proof(&tree.root(), &leaves[i], i, &path)); }
+        for i in 0..4 {
+            let path = tree.prove(i);
+            assert!(MerkleTree::verify_proof(&tree.root(), &leaves[i], i, &path));
+        }
         let fake = hash_leaf(BabyBear::new(999));
-        assert!(!MerkleTree::verify_proof(&tree.root(), &fake, 0, &tree.prove(0)));
+        assert!(!MerkleTree::verify_proof(
+            &tree.root(),
+            &fake,
+            0,
+            &tree.prove(0)
+        ));
     }
 
     #[test]
     fn transcript_deterministic() {
-        let mut t1 = Transcript::new(b"test"); t1.absorb_field(BabyBear::new(42));
-        let mut t2 = Transcript::new(b"test"); t2.absorb_field(BabyBear::new(42));
+        let mut t1 = Transcript::new(b"test");
+        t1.absorb_field(BabyBear::new(42));
+        let mut t2 = Transcript::new(b"test");
+        t2.absorb_field(BabyBear::new(42));
         assert_eq!(t1.squeeze_field(), t2.squeeze_field());
     }
 
     #[test]
     fn transcript_different_inputs_different_challenges() {
-        let mut t1 = Transcript::new(b"test"); t1.absorb_field(BabyBear::new(42));
-        let mut t2 = Transcript::new(b"test"); t2.absorb_field(BabyBear::new(43));
+        let mut t1 = Transcript::new(b"test");
+        t1.absorb_field(BabyBear::new(42));
+        let mut t2 = Transcript::new(b"test");
+        t2.absorb_field(BabyBear::new(43));
         assert_ne!(t1.squeeze_field(), t2.squeeze_field());
     }
 
     #[test]
     fn generate_trace_valid() {
-        let (trace, pi) = generate_merkle_trace(100, &[[10u32,20,30],[40,50,60]], &[1u32,2]);
+        let (trace, pi) = generate_merkle_trace(100, &[[10u32, 20, 30], [40, 50, 60]], &[1u32, 2]);
         assert_eq!(trace.len(), 2);
-        for row in &trace { assert_eq!(row[5], row[0]+row[1]+row[2]+row[3]+row[4]); }
+        for row in &trace {
+            assert_eq!(row[5], row[0] + row[1] + row[2] + row[3] + row[4]);
+        }
         assert_eq!(trace[0][5], trace[1][0]);
         assert_eq!(pi[0], BabyBear::new(100));
     }
 
     #[test]
     fn end_to_end_stark_proof() {
-        let (trace, pi) = generate_merkle_trace(12345, &[[100u32,200,300],[400,500,600],[700,800,900],[1000,1100,1200]], &[0u32,1,2,3]);
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
         let air = MerkleStarkAir;
         let proof = prove(&air, &trace, &pi);
         assert!(proof_to_bytes(&proof).len() > 100);
@@ -705,7 +1072,11 @@ mod tests {
 
     #[test]
     fn stark_proof_roundtrip_serialization() {
-        let (trace, pi) = generate_merkle_trace(999, &[[10u32,20,30],[40,50,60],[70,80,90],[100,110,120]], &[0u32,1,2,3]);
+        let (trace, pi) = generate_merkle_trace(
+            999,
+            &[[10u32, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]],
+            &[0u32, 1, 2, 3],
+        );
         let air = MerkleStarkAir;
         let proof = prove(&air, &trace, &pi);
         let proof2 = proof_from_bytes(&proof_to_bytes(&proof)).unwrap();
@@ -714,7 +1085,16 @@ mod tests {
 
     #[test]
     fn wrong_public_inputs_fails() {
-        let (trace, pi) = generate_merkle_trace(12345, &[[100u32,200,300],[400,500,600],[700,800,900],[1000,1100,1200]], &[0u32,1,2,3]);
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
         let air = MerkleStarkAir;
         let proof = prove(&air, &trace, &pi);
         assert!(verify(&air, &proof, &[BabyBear::new(99999), pi[1]]).is_err());
@@ -722,7 +1102,16 @@ mod tests {
 
     #[test]
     fn tampered_proof_fails() {
-        let (trace, pi) = generate_merkle_trace(12345, &[[100u32,200,300],[400,500,600],[700,800,900],[1000,1100,1200]], &[0u32,1,2,3]);
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
         let air = MerkleStarkAir;
         let mut proof = prove(&air, &trace, &pi);
         proof.trace_commitment[0] ^= 0xFF;
@@ -731,8 +1120,13 @@ mod tests {
 
     #[test]
     fn wrong_witness_different_root() {
-        let sibs = [[100u32,200,300],[400,500,600],[700,800,900],[1000,1100,1200]];
-        let pos = [0u32,1,2,3];
+        let sibs = [
+            [100u32, 200, 300],
+            [400, 500, 600],
+            [700, 800, 900],
+            [1000, 1100, 1200],
+        ];
+        let pos = [0u32, 1, 2, 3];
         let (trace_good, pi_good) = generate_merkle_trace(12345, &sibs, &pos);
         let (_, pi_bad) = generate_merkle_trace(99999, &sibs, &pos);
         assert_ne!(pi_good[1], pi_bad[1]);
@@ -742,7 +1136,16 @@ mod tests {
 
     #[test]
     fn tampered_query_fails() {
-        let (trace, pi) = generate_merkle_trace(12345, &[[100u32,200,300],[400,500,600],[700,800,900],[1000,1100,1200]], &[0u32,1,2,3]);
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
         let air = MerkleStarkAir;
         let mut proof = prove(&air, &trace, &pi);
         proof.query_proofs[0].trace_values[0] ^= 1;
@@ -751,7 +1154,11 @@ mod tests {
 
     #[test]
     fn proof_is_substantial_bytes() {
-        let (trace, pi) = generate_merkle_trace(42, &[[10u32,20,30],[40,50,60],[70,80,90],[100,110,120]], &[0u32,1,2,3]);
+        let (trace, pi) = generate_merkle_trace(
+            42,
+            &[[10u32, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]],
+            &[0u32, 1, 2, 3],
+        );
         let air = MerkleStarkAir;
         let proof = prove(&air, &trace, &pi);
         let bytes = proof_to_bytes(&proof);
@@ -761,8 +1168,13 @@ mod tests {
 
     #[test]
     fn different_witnesses_different_proofs() {
-        let sibs = [[100u32,200,300],[400,500,600],[700,800,900],[1000,1100,1200]];
-        let pos = [0u32,1,2,3];
+        let sibs = [
+            [100u32, 200, 300],
+            [400, 500, 600],
+            [700, 800, 900],
+            [1000, 1100, 1200],
+        ];
+        let pos = [0u32, 1, 2, 3];
         let air = MerkleStarkAir;
         let (t1, p1) = generate_merkle_trace(111, &sibs, &pos);
         let (t2, p2) = generate_merkle_trace(222, &sibs, &pos);
@@ -776,32 +1188,68 @@ mod tests {
 
     #[test]
     fn corrupted_fri_layer_values_rejected() {
-        let (trace, pi) = generate_merkle_trace(12345, &[[100u32,200,300],[400,500,600],[700,800,900],[1000,1100,1200]], &[0u32,1,2,3]);
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
         let air = MerkleStarkAir;
         let mut proof = prove(&air, &trace, &pi);
         assert!(verify(&air, &proof, &pi).is_ok());
         proof.query_proofs[0].fri_layers[0].query_value ^= 1;
         let result = verify(&air, &proof, &pi);
-        assert!(result.is_err(), "corrupted FRI layer value must be rejected");
+        assert!(
+            result.is_err(),
+            "corrupted FRI layer value must be rejected"
+        );
         assert!(result.unwrap_err().contains("FRI"));
     }
 
     #[test]
     fn corrupted_fri_sibling_rejected() {
-        let (trace, pi) = generate_merkle_trace(12345, &[[100u32,200,300],[400,500,600],[700,800,900],[1000,1100,1200]], &[0u32,1,2,3]);
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
         let air = MerkleStarkAir;
         let mut proof = prove(&air, &trace, &pi);
         proof.query_proofs[0].constraint_sibling_value ^= 1;
         let result = verify(&air, &proof, &pi);
-        assert!(result.is_err(), "corrupted constraint sibling must be rejected");
+        assert!(
+            result.is_err(),
+            "corrupted constraint sibling must be rejected"
+        );
     }
 
     #[test]
     fn corrupted_fri_final_poly_rejected() {
-        let (trace, pi) = generate_merkle_trace(12345, &[[100u32,200,300],[400,500,600],[700,800,900],[1000,1100,1200]], &[0u32,1,2,3]);
+        let (trace, pi) = generate_merkle_trace(
+            12345,
+            &[
+                [100u32, 200, 300],
+                [400, 500, 600],
+                [700, 800, 900],
+                [1000, 1100, 1200],
+            ],
+            &[0u32, 1, 2, 3],
+        );
         let air = MerkleStarkAir;
         let mut proof = prove(&air, &trace, &pi);
         proof.fri_final_poly[0] ^= 1;
-        assert!(verify(&air, &proof, &pi).is_err(), "corrupted FRI final poly must be rejected");
+        assert!(
+            verify(&air, &proof, &pi).is_err(),
+            "corrupted FRI final poly must be rejected"
+        );
     }
 }

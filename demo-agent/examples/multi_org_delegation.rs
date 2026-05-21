@@ -15,7 +15,7 @@ use pyana_bridge::BridgePresentationBuilder;
 use pyana_bridge::present::{bytes_to_babybear, hash_index, verify_presentation};
 use pyana_circuit::BabyBear;
 use pyana_circuit::poseidon2;
-use pyana_token::{AuthRequest, AuthToken, Attenuation, MacaroonToken};
+use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
 /// Compute the Poseidon2-based federation root for a given issuer key.
 /// This matches what BridgePresentationBuilder uses internally.
@@ -47,7 +47,10 @@ fn compute_poseidon2_federation_root(issuer_key: &[u8; 32]) -> BabyBear {
 
 fn short_hex(bytes: &[u8]) -> String {
     if bytes.len() >= 4 {
-        format!("{:02x}{:02x}{:02x}{:02x}...", bytes[0], bytes[1], bytes[2], bytes[3])
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}...",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     } else {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -77,7 +80,10 @@ fn main() {
 
     println!("  Org A issuer key:       {}", short_hex(&org_a_issuer_key));
     println!("  Org A agent:            {}", org_a_agent_name);
-    println!("  Org A federation root:  {} (Poseidon2)", org_a_federation_root_bb.0);
+    println!(
+        "  Org A federation root:  {} (Poseidon2)",
+        org_a_federation_root_bb.0
+    );
     println!("  Org B service:          {}", org_b_service);
     println!();
     println!("  Trust model: Org B trusts Org A's federation root (shared out-of-band).");
@@ -107,7 +113,7 @@ fn main() {
     let cross_org_attenuation = Attenuation {
         services: vec![(org_b_service.into(), "r".into())],
         apps: vec![("cross-org-query".into(), "r".into())],
-        not_after: Some(1800000000), // Valid until ~2027
+        not_after: Some(1800000000),  // Valid until ~2027
         not_before: Some(1700000000), // Not before ~2023
         confine_user: Some(org_a_agent_name.into()),
         ..Default::default()
@@ -131,7 +137,10 @@ fn main() {
         ..Default::default()
     };
     let clearance = attenuated_token.verify(&intended_request).unwrap();
-    println!("  Plaintext verification: PASS ({} capabilities)", clearance.capabilities.len());
+    println!(
+        "  Plaintext verification: PASS ({} capabilities)",
+        clearance.capabilities.len()
+    );
     println!();
 
     // =========================================================================
@@ -169,7 +178,10 @@ fn main() {
     };
     let att_ok = builder.add_attenuation(&proof_attenuation);
     assert!(att_ok, "Attenuation should succeed");
-    println!("  Chain step 2: attenuated (service={}, app=cross-org-query)", org_b_service);
+    println!(
+        "  Chain step 2: attenuated (service={}, app=cross-org-query)",
+        org_b_service
+    );
     println!("  Chain length: {}", builder.chain_length());
 
     // Verify the fold chain integrity
@@ -186,13 +198,24 @@ fn main() {
         ..Default::default()
     };
 
-    let presentation = builder.prove_real(&proof_request).expect("Proof generation should succeed");
+    let presentation = builder
+        .prove_real(&proof_request)
+        .expect("Proof generation should succeed");
 
     println!("  STARK proof generated:");
     println!("    Proof size: {}", presentation.proof_size_display());
-    println!("    Chain length proven: {} steps", presentation.chain_length);
-    println!("    Has real STARK proof: {}", presentation.has_real_stark_proof());
-    println!("    Federation root (public input): {}", short_hex(&presentation.federation_root));
+    println!(
+        "    Chain length proven: {} steps",
+        presentation.chain_length
+    );
+    println!(
+        "    Has real STARK proof: {}",
+        presentation.has_real_stark_proof()
+    );
+    println!(
+        "    Federation root (public input): {}",
+        short_hex(&presentation.federation_root)
+    );
     println!();
 
     // =========================================================================
@@ -207,7 +230,11 @@ fn main() {
 
     // Verify the presentation proof
     let is_valid = verify_presentation(&presentation);
-    println!("  Presentation valid: {} [{}]", is_valid, if is_valid { "PASS" } else { "FAIL" });
+    println!(
+        "  Presentation valid: {} [{}]",
+        is_valid,
+        if is_valid { "PASS" } else { "FAIL" }
+    );
 
     // Verify the STARK proof cryptographically
     let stark_result = presentation.verify_issuer_stark();
@@ -248,11 +275,7 @@ fn main() {
         org_a_federation_root_bytes,
         org_a_federation_root_bb,
     );
-    let bad_root = MacaroonToken::mint(
-        org_a_issuer_key,
-        b"org-a:agent-alpha-7",
-        "org-a.internal",
-    );
+    let bad_root = MacaroonToken::mint(org_a_issuer_key, b"org-a:agent-alpha-7", "org-a.internal");
     bad_builder.set_root_token(bad_root);
     bad_builder.add_attenuation(&proof_attenuation);
 
@@ -283,9 +306,14 @@ fn main() {
     // =========================================================================
     println!("--- Step 6: WIRE TRANSPORT ---");
 
-    let proof_bytes = presentation.issuer_proof_bytes().expect("Should have proof bytes");
-    println!("  Extractable proof bytes: {} bytes ({:.1} KiB)",
-        proof_bytes.len(), proof_bytes.len() as f64 / 1024.0);
+    let proof_bytes = presentation
+        .issuer_proof_bytes()
+        .expect("Should have proof bytes");
+    println!(
+        "  Extractable proof bytes: {} bytes ({:.1} KiB)",
+        proof_bytes.len(),
+        proof_bytes.len() as f64 / 1024.0
+    );
     println!("  These bytes are all Org B needs to verify (plus the trusted federation root).");
     println!("  The entire token chain, delegation structure, and agent identity");
     println!("  remain with Org A -- never transmitted over the wire.");

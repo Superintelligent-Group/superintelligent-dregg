@@ -1,8 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use pyana_bridge::{
-    BridgePresentationBuilder, authorize_with_trace, macaroon_to_factset,
-};
 use pyana_bridge::present::{bytes_to_babybear, hash_index};
+use pyana_bridge::{BridgePresentationBuilder, authorize_with_trace, macaroon_to_factset};
 use pyana_circuit::BabyBear;
 use pyana_circuit::merkle_air::MerkleAir;
 use pyana_circuit::poseidon2;
@@ -215,7 +213,8 @@ fn bench_end_to_end_cycle(c: &mut Criterion) {
 
             // Build presentation (uses mock prove() which needs linear root)
             let (fed_root_bb, fed_root_bytes) = compute_matching_federation_root_linear(&key);
-            let mut builder = BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
+            let mut builder =
+                BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
             builder.set_root_token(token);
             builder.add_attenuation(&att);
 

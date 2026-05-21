@@ -204,7 +204,8 @@ impl FederationTransport for LocalTransport {
 
     fn recv(
         &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<ConsensusMessage>, TransportError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ConsensusMessage>, TransportError>> + Send + '_>>
+    {
         Box::pin(async move {
             let mut rx = self.receiver.lock().await;
             match rx.try_recv() {
@@ -329,10 +330,7 @@ impl TcpFederationTransport {
     }
 
     /// Handle an incoming TCP connection: read framed messages and push to inbox.
-    async fn handle_incoming(
-        mut stream: TcpStream,
-        tx: mpsc::Sender<ConsensusMessage>,
-    ) {
+    async fn handle_incoming(mut stream: TcpStream, tx: mpsc::Sender<ConsensusMessage>) {
         loop {
             match Self::read_envelope(&mut stream).await {
                 Ok(envelope) => {
@@ -362,7 +360,11 @@ impl TcpFederationTransport {
     }
 
     /// Send an envelope to a specific peer, reconnecting on failure.
-    async fn send_to(&self, peer_id: usize, envelope: &FederationEnvelope) -> Result<(), TransportError> {
+    async fn send_to(
+        &self,
+        peer_id: usize,
+        envelope: &FederationEnvelope,
+    ) -> Result<(), TransportError> {
         // Try to connect if not already connected.
         if let Err(_) = self.get_connection(peer_id).await {
             // Retry once after a short delay.
@@ -398,8 +400,8 @@ impl TcpFederationTransport {
         stream: &mut TcpStream,
         envelope: &FederationEnvelope,
     ) -> Result<(), TransportError> {
-        let payload = postcard::to_stdvec(envelope)
-            .map_err(|e| TransportError::Codec(e.to_string()))?;
+        let payload =
+            postcard::to_stdvec(envelope).map_err(|e| TransportError::Codec(e.to_string()))?;
         let len = payload.len() as u32;
         stream.write_all(&len.to_le_bytes()).await?;
         stream.write_all(&payload).await?;
@@ -420,8 +422,7 @@ impl TcpFederationTransport {
         let mut payload = vec![0u8; len];
         stream.read_exact(&mut payload).await?;
 
-        postcard::from_bytes(&payload)
-            .map_err(|e| TransportError::Codec(e.to_string()))
+        postcard::from_bytes(&payload).map_err(|e| TransportError::Codec(e.to_string()))
     }
 }
 
@@ -482,7 +483,8 @@ impl FederationTransport for TcpFederationTransport {
 
     fn recv(
         &self,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<ConsensusMessage>, TransportError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ConsensusMessage>, TransportError>> + Send + '_>>
+    {
         Box::pin(async move {
             let mut rx = self.inbox.lock().await;
             match rx.try_recv() {

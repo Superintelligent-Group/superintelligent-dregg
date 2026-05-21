@@ -18,7 +18,7 @@
 //! 3. `MerklePoseidon2StarkAir` -- Merkle AIR with per-row hash binding constraints.
 
 use crate::field::BabyBear;
-use crate::poseidon2::{compute_round, hash_4_to_1, poseidon2_trace, TOTAL_ROUNDS, WIDTH};
+use crate::poseidon2::{TOTAL_ROUNDS, WIDTH, compute_round, hash_4_to_1, poseidon2_trace};
 use crate::stark::StarkAir;
 
 /// Number of rows per Poseidon2 permutation in the trace.
@@ -141,9 +141,7 @@ impl MerklePoseidon2Air {
         Self { depth }
     }
 
-    pub fn generate_trace(
-        witness: &MerklePoseidon2Witness,
-    ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+    pub fn generate_trace(witness: &MerklePoseidon2Witness) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         let depth = witness.levels.len();
         assert!(depth >= 2, "need at least depth 2 for STARK");
 
@@ -228,7 +226,10 @@ impl StarkAir for MerklePoseidon2Air {
 
         let row_idx = local_row_idx.0 as usize;
 
-        if next_level == local_level && next_row_idx.0 == local_row_idx.0 + 1 && row_idx < TOTAL_ROUNDS {
+        if next_level == local_level
+            && next_row_idx.0 == local_row_idx.0 + 1
+            && row_idx < TOTAL_ROUNDS
+        {
             // Within-level: verify round function
             let expected = compute_round(&local_state, row_idx);
             for i in 0..WIDTH {
@@ -435,36 +436,60 @@ mod tests {
     #[test]
     fn poseidon2_air_trace_generation() {
         let input = [
-            BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4),
-            BabyBear::new(4), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+            BabyBear::new(1),
+            BabyBear::new(2),
+            BabyBear::new(3),
+            BabyBear::new(4),
+            BabyBear::new(4),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
         ];
         let (trace, pi) = Poseidon2Air::generate_trace(&input);
 
         assert_eq!(trace.len(), 2);
         assert_eq!(trace[0].len(), 16);
         assert_eq!(pi.len(), 16);
-        for i in 0..8 { assert_eq!(pi[i], input[i]); }
+        for i in 0..8 {
+            assert_eq!(pi[i], input[i]);
+        }
         assert_eq!(trace[0], trace[1]);
     }
 
     #[test]
     fn poseidon2_air_stark_prove_verify() {
         let input = [
-            BabyBear::new(10), BabyBear::new(20), BabyBear::new(30), BabyBear::new(40),
-            BabyBear::new(4), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+            BabyBear::new(10),
+            BabyBear::new(20),
+            BabyBear::new(30),
+            BabyBear::new(40),
+            BabyBear::new(4),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
         ];
         let (trace, public_inputs) = Poseidon2Air::generate_trace(&input);
         let air = Poseidon2Air;
         let proof = stark::prove(&air, &trace, &public_inputs);
         let result = stark::verify(&air, &proof, &public_inputs);
-        assert!(result.is_ok(), "Poseidon2Air STARK verification failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Poseidon2Air STARK verification failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
     fn poseidon2_air_tampered_trace_fails() {
         let input = [
-            BabyBear::new(10), BabyBear::new(20), BabyBear::new(30), BabyBear::new(40),
-            BabyBear::new(4), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+            BabyBear::new(10),
+            BabyBear::new(20),
+            BabyBear::new(30),
+            BabyBear::new(40),
+            BabyBear::new(4),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
         ];
         let (trace, public_inputs) = Poseidon2Air::generate_trace(&input);
         let air = Poseidon2Air;
@@ -479,8 +504,14 @@ mod tests {
     #[test]
     fn poseidon2_air_wrong_output_rejected() {
         let input = [
-            BabyBear::new(10), BabyBear::new(20), BabyBear::new(30), BabyBear::new(40),
-            BabyBear::new(4), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+            BabyBear::new(10),
+            BabyBear::new(20),
+            BabyBear::new(30),
+            BabyBear::new(40),
+            BabyBear::new(4),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
         ];
         let (mut trace, _) = Poseidon2Air::generate_trace(&input);
 
@@ -498,27 +529,47 @@ mod tests {
     #[test]
     fn poseidon2_air_constraint_nonzero_on_wrong_output() {
         let input = [
-            BabyBear::new(10), BabyBear::new(20), BabyBear::new(30), BabyBear::new(40),
-            BabyBear::new(4), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+            BabyBear::new(10),
+            BabyBear::new(20),
+            BabyBear::new(30),
+            BabyBear::new(40),
+            BabyBear::new(4),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
         ];
         let (trace, pi) = Poseidon2Air::generate_trace(&input);
         let air = Poseidon2Air;
         let alpha = BabyBear::new(7);
 
         let c_valid = air.eval_constraints(&trace[0], &trace[1], &pi, alpha);
-        assert_eq!(c_valid, BabyBear::ZERO, "Valid row must have zero constraint");
+        assert_eq!(
+            c_valid,
+            BabyBear::ZERO,
+            "Valid row must have zero constraint"
+        );
 
         let mut bad_row = trace[0].clone();
         bad_row[8] = BabyBear::new(12345678);
         let c_invalid = air.eval_constraints(&bad_row, &trace[1], &pi, alpha);
-        assert_ne!(c_invalid, BabyBear::ZERO, "Wrong output must have non-zero constraint");
+        assert_ne!(
+            c_invalid,
+            BabyBear::ZERO,
+            "Wrong output must have non-zero constraint"
+        );
     }
 
     #[test]
     fn poseidon2_air_all_rows_valid() {
         let input = [
-            BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4),
-            BabyBear::new(5), BabyBear::new(6), BabyBear::new(7), BabyBear::new(8),
+            BabyBear::new(1),
+            BabyBear::new(2),
+            BabyBear::new(3),
+            BabyBear::new(4),
+            BabyBear::new(5),
+            BabyBear::new(6),
+            BabyBear::new(7),
+            BabyBear::new(8),
         ];
         let (trace, pi) = Poseidon2Air::generate_trace(&input);
         let air = Poseidon2Air;
@@ -557,7 +608,11 @@ mod tests {
         let air = MerklePoseidon2StarkAir;
         let proof = stark::prove(&air, &trace, &public_inputs);
         let result = stark::verify(&air, &proof, &public_inputs);
-        assert!(result.is_ok(), "MerklePoseidon2 STARK verification failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "MerklePoseidon2 STARK verification failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -571,7 +626,10 @@ mod tests {
         let air = MerklePoseidon2StarkAir;
         let proof = stark::prove(&air, &trace, &public_inputs);
         let wrong_pi = vec![BabyBear::new(99999), public_inputs[1]];
-        assert!(stark::verify(&air, &proof, &wrong_pi).is_err(), "Should reject wrong leaf");
+        assert!(
+            stark::verify(&air, &proof, &wrong_pi).is_err(),
+            "Should reject wrong leaf"
+        );
     }
 
     #[test]
@@ -585,7 +643,10 @@ mod tests {
         let air = MerklePoseidon2StarkAir;
         let proof = stark::prove(&air, &trace, &public_inputs);
         let wrong_pi = vec![public_inputs[0], BabyBear::new(99999)];
-        assert!(stark::verify(&air, &proof, &wrong_pi).is_err(), "Should reject wrong root");
+        assert!(
+            stark::verify(&air, &proof, &wrong_pi).is_err(),
+            "Should reject wrong root"
+        );
     }
 
     #[test]
@@ -598,7 +659,8 @@ mod tests {
 
         let mut wrong_siblings = siblings.clone();
         wrong_siblings[1] = [BabyBear::new(999), BabyBear::new(998), BabyBear::new(997)];
-        let (wrong_trace, wrong_pi) = generate_merkle_poseidon2_trace(leaf, &wrong_siblings, &positions);
+        let (wrong_trace, wrong_pi) =
+            generate_merkle_poseidon2_trace(leaf, &wrong_siblings, &positions);
         assert_ne!(public_inputs[1], wrong_pi[1]);
 
         let air = MerklePoseidon2StarkAir;
@@ -621,7 +683,11 @@ mod tests {
         let mut bad_row = trace[0].clone();
         bad_row[5] = BabyBear::new(1337);
         let c = air.eval_constraints(&bad_row, &trace[1], &public_inputs, alpha);
-        assert_ne!(c, BabyBear::ZERO, "Constraint MUST be non-zero when parent is tampered");
+        assert_ne!(
+            c,
+            BabyBear::ZERO,
+            "Constraint MUST be non-zero when parent is tampered"
+        );
     }
 
     #[test]
@@ -638,7 +704,13 @@ mod tests {
         for i in 0..trace.len() {
             let next_idx = if i + 1 < trace.len() { i + 1 } else { 0 };
             let c = air.eval_constraints(&trace[i], &trace[next_idx], &public_inputs, alpha);
-            assert_eq!(c, BabyBear::ZERO, "Constraint non-zero at row {}: c = {}", i, c.0);
+            assert_eq!(
+                c,
+                BabyBear::ZERO,
+                "Constraint non-zero at row {}: c = {}",
+                i,
+                c.0
+            );
         }
     }
 
@@ -663,7 +735,10 @@ mod tests {
 
         let mut current = leaf;
         for i in 0..4 {
-            current = current + siblings[i][0] + siblings[i][1] + siblings[i][2]
+            current = current
+                + siblings[i][0]
+                + siblings[i][1]
+                + siblings[i][2]
                 + BabyBear::new(positions[i] as u32);
         }
         assert_ne!(p2_pi[1], current);
@@ -693,11 +768,21 @@ mod tests {
         let positions = [1u8, 2];
         let (trace, _) = generate_merkle_poseidon2_trace(leaf, &siblings, &positions);
 
-        let children_0 = [BabyBear::new(10), leaf, BabyBear::new(20), BabyBear::new(30)];
+        let children_0 = [
+            BabyBear::new(10),
+            leaf,
+            BabyBear::new(20),
+            BabyBear::new(30),
+        ];
         let expected_parent_0 = hash_4_to_1(&children_0);
         assert_eq!(trace[0][5], expected_parent_0);
 
-        let children_1 = [BabyBear::new(40), BabyBear::new(50), expected_parent_0, BabyBear::new(60)];
+        let children_1 = [
+            BabyBear::new(40),
+            BabyBear::new(50),
+            expected_parent_0,
+            BabyBear::new(60),
+        ];
         let expected_parent_1 = hash_4_to_1(&children_1);
         assert_eq!(trace[1][5], expected_parent_1);
         assert_eq!(trace[0][5], trace[1][0]);
@@ -719,24 +804,38 @@ mod tests {
         let pos = positions[1];
         let mut si = 0;
         for j in 0..4u8 {
-            if j == pos { c[j as usize] = BabyBear::new(0xDEAD); }
-            else { c[j as usize] = siblings[1][si]; si += 1; }
+            if j == pos {
+                c[j as usize] = BabyBear::new(0xDEAD);
+            } else {
+                c[j as usize] = siblings[1][si];
+                si += 1;
+            }
         }
         trace[1][5] = hash_4_to_1(&c);
         trace[2][0] = trace[1][5];
         let mut c2 = [BabyBear::ZERO; 4];
-        let pos2 = positions[2]; let mut si2 = 0;
+        let pos2 = positions[2];
+        let mut si2 = 0;
         for j in 0..4u8 {
-            if j == pos2 { c2[j as usize] = trace[2][0]; }
-            else { c2[j as usize] = siblings[2][si2]; si2 += 1; }
+            if j == pos2 {
+                c2[j as usize] = trace[2][0];
+            } else {
+                c2[j as usize] = siblings[2][si2];
+                si2 += 1;
+            }
         }
         trace[2][5] = hash_4_to_1(&c2);
         trace[3][0] = trace[2][5];
         let mut c3 = [BabyBear::ZERO; 4];
-        let pos3 = positions[3]; let mut si3 = 0;
+        let pos3 = positions[3];
+        let mut si3 = 0;
         for j in 0..4u8 {
-            if j == pos3 { c3[j as usize] = trace[3][0]; }
-            else { c3[j as usize] = siblings[3][si3]; si3 += 1; }
+            if j == pos3 {
+                c3[j as usize] = trace[3][0];
+            } else {
+                c3[j as usize] = siblings[3][si3];
+                si3 += 1;
+            }
         }
         trace[3][5] = hash_4_to_1(&c3);
 
@@ -746,6 +845,9 @@ mod tests {
         let air = MerklePoseidon2StarkAir;
         let proof = stark::prove(&air, &trace, &forged_pi);
         let result = stark::verify(&air, &proof, &forged_pi);
-        assert!(result.is_err(), "CRITICAL: Proof with forged hash MUST be rejected");
+        assert!(
+            result.is_err(),
+            "CRITICAL: Proof with forged hash MUST be rejected"
+        );
     }
 }

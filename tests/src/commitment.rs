@@ -8,8 +8,8 @@
 
 use pyana_commit::{
     Fact, FactSet, FieldElement, FoldDelta, FoldDeltaBuilder, FoldVerification, MerkleProof,
-    MerkleTree, NonMembershipProof, StateCommitment, SurvivalWitness, TokenState,
-    hash_leaf, hash_node, verify_fold_chain,
+    MerkleTree, NonMembershipProof, StateCommitment, SurvivalWitness, TokenState, hash_leaf,
+    hash_node, verify_fold_chain,
 };
 
 // =============================================================================
@@ -227,7 +227,11 @@ fn non_membership_proof_invalid_after_insertion() {
     let nm_proof = fs.non_membership_proof(&fact_b).unwrap();
 
     // The proof verifies against the current root
-    assert!(FactSet::verify_non_membership(&root_before, &fact_b, &nm_proof));
+    assert!(FactSet::verify_non_membership(
+        &root_before,
+        &fact_b,
+        &nm_proof
+    ));
 
     // Now insert fact_b
     fs.insert(fact_b);
@@ -382,9 +386,14 @@ fn fold_delta_removing_nonexistent_fact() {
     state.add_fact(Fact::from_symbols("owns", &["alice", "file1"]));
 
     let nonexistent = Fact::from_symbols("owns", &["bob", "file2"]);
-    let result = FoldDeltaBuilder::new(state).remove_fact(nonexistent).build();
+    let result = FoldDeltaBuilder::new(state)
+        .remove_fact(nonexistent)
+        .build();
 
-    assert!(result.is_none(), "Cannot build delta removing a nonexistent fact");
+    assert!(
+        result.is_none(),
+        "Cannot build delta removing a nonexistent fact"
+    );
 }
 
 #[test]

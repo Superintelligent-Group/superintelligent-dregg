@@ -86,3 +86,9 @@ name = "note_privacy"
 
 [[example]]
 name = "pipeline_demo"
+
+[[example]]
+name = "unified_harness"
+
+[lints]
+workspace = true

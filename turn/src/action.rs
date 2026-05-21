@@ -4,8 +4,8 @@
 //! Each action targets a cell, specifies a method, carries authorization, declares
 //! preconditions, and produces effects.
 
-use pyana_cell::{CellId, CapabilityRef, NoteCommitment, Nullifier, Preconditions, SealedBox};
 use pyana_cell::state::FieldElement;
+use pyana_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox};
 use serde::{Deserialize, Serialize};
 
 /// How much of the turn an action's signer commits to.
@@ -112,15 +112,25 @@ impl Authorization {
     }
 }
 
-/// Whether/how children can use their parent's capabilities.
+/// Delegation mode for child cells. Currently only `None` is enforced;
+/// `ParentsOwn` and `Inherit` are planned but not yet implemented in the executor.
+/// Use three-party introduction (Effect::Introduce) for explicit capability delegation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DelegationMode {
     /// Children cannot use parent's capabilities.
     None,
     /// Children can use capabilities that the parent owns.
+    /// NOTE: Not yet differentiated from `None` in capability-chain walking.
+    /// The executor rejects missing capabilities identically for all modes.
     ParentsOwn,
     /// Children inherit parent's delegation mode transitively.
+    /// NOTE: Not yet differentiated from `None` in capability-chain walking.
+    /// The executor rejects missing capabilities identically for all modes.
     Inherit,
+    /// Snapshot+refresh: child inherits parent's capabilities as a point-in-time
+    /// snapshot. Child can act using the snapshot offline. Refresh to pick up new
+    /// capabilities. Revocation is eventual (bounded by max_staleness).
+    SnapshotRefresh,
 }
 
 /// An effect produced by an action — what changes in the ledger.
@@ -219,6 +229,25 @@ pub enum Effect {
         sealed_box: SealedBox,
         /// The cell that should receive the unsealed capability.
         recipient: CellId,
+    },
+    /// Spawn a child cell with snapshot+refresh delegation.
+    /// The child inherits the actor's current c-list as a snapshot.
+    SpawnWithDelegation {
+        /// Public key of the new child cell.
+        child_public_key: [u8; 32],
+        /// Token domain of the new child cell.
+        child_token_id: [u8; 32],
+        /// Maximum acceptable staleness (seconds) for the delegation snapshot.
+        max_staleness: u64,
+    },
+    /// Child refreshes its delegation snapshot from its parent.
+    /// The actor must be the child cell (self-refresh).
+    RefreshDelegation,
+    /// Parent revokes delegation to a child by bumping its own epoch.
+    /// The child's snapshot becomes stale relative to the new epoch.
+    RevokeDelegation {
+        /// The child cell whose delegation is being revoked.
+        child: CellId,
     },
     /// Pipelined send: dispatch an action to the result of a pending turn.
     /// Three-party introduction.
@@ -336,13 +365,20 @@ impl Effect {
                 hasher.update(&[5u8]);
                 hasher.update(cell.as_bytes());
             }
-            Effect::CreateCell { public_key, token_id, balance } => {
+            Effect::CreateCell {
+                public_key,
+                token_id,
+                balance,
+            } => {
                 hasher.update(&[6u8]);
                 hasher.update(public_key);
                 hasher.update(token_id);
                 hasher.update(&balance.to_le_bytes());
             }
-            Effect::SetPermissions { cell, new_permissions } => {
+            Effect::SetPermissions {
+                cell,
+                new_permissions,
+            } => {
                 hasher.update(&[7u8]);
                 hasher.update(cell.as_bytes());
                 // Hash each permission field's discriminant.
@@ -377,14 +413,24 @@ impl Effect {
                     hasher.update(&[0u8]);
                 }
             }
-            Effect::NoteSpend { nullifier, note_tree_root, value, asset_type } => {
+            Effect::NoteSpend {
+                nullifier,
+                note_tree_root,
+                value,
+                asset_type,
+            } => {
                 hasher.update(&[9u8]);
                 hasher.update(&nullifier.0);
                 hasher.update(note_tree_root);
                 hasher.update(&value.to_le_bytes());
                 hasher.update(&asset_type.to_le_bytes());
             }
-            Effect::NoteCreate { commitment, value, asset_type, encrypted_note } => {
+            Effect::NoteCreate {
+                commitment,
+                value,
+                asset_type,
+                encrypted_note,
+            } => {
                 hasher.update(&[10u8]);
                 hasher.update(&commitment.0);
                 hasher.update(&value.to_le_bytes());
@@ -392,18 +438,27 @@ impl Effect {
                 hasher.update(&(encrypted_note.len() as u64).to_le_bytes());
                 hasher.update(encrypted_note);
             }
-            Effect::CreateSealPair { sealer_holder, unsealer_holder } => {
+            Effect::CreateSealPair {
+                sealer_holder,
+                unsealer_holder,
+            } => {
                 hasher.update(&[13u8]);
                 hasher.update(sealer_holder.as_bytes());
                 hasher.update(unsealer_holder.as_bytes());
             }
-            Effect::Seal { pair_id, capability } => {
+            Effect::Seal {
+                pair_id,
+                capability,
+            } => {
                 hasher.update(&[14u8]);
                 hasher.update(pair_id);
                 hasher.update(capability.target.as_bytes());
                 hasher.update(&capability.slot.to_le_bytes());
             }
-            Effect::Unseal { sealed_box, recipient } => {
+            Effect::Unseal {
+                sealed_box,
+                recipient,
+            } => {
                 hasher.update(&[15u8]);
                 hasher.update(&sealed_box.pair_id);
                 hasher.update(&sealed_box.ephemeral_public);
@@ -411,18 +466,46 @@ impl Effect {
                 hasher.update(&sealed_box.nonce);
                 hasher.update(recipient.as_bytes());
             }
-            Effect::Introduce { introducer, recipient, target, permissions } => {
+            Effect::Introduce {
+                introducer,
+                recipient,
+                target,
+                permissions,
+            } => {
                 hasher.update(&[17u8]);
                 hasher.update(introducer.as_bytes());
                 hasher.update(recipient.as_bytes());
                 hasher.update(target.as_bytes());
-                hasher.update(&[match permissions { pyana_cell::AuthRequired::None => 0u8, pyana_cell::AuthRequired::Signature => 1u8, pyana_cell::AuthRequired::Proof => 2u8, pyana_cell::AuthRequired::Either => 3u8, pyana_cell::AuthRequired::Impossible => 4u8, }]);
+                hasher.update(&[match permissions {
+                    pyana_cell::AuthRequired::None => 0u8,
+                    pyana_cell::AuthRequired::Signature => 1u8,
+                    pyana_cell::AuthRequired::Proof => 2u8,
+                    pyana_cell::AuthRequired::Either => 3u8,
+                    pyana_cell::AuthRequired::Impossible => 4u8,
+                }]);
             }
             Effect::PipelinedSend { target, action } => {
                 hasher.update(&[16u8]);
                 hasher.update(&target.source_turn);
                 hasher.update(&target.output_slot.to_le_bytes());
                 hasher.update(&action.hash());
+            }
+            Effect::SpawnWithDelegation {
+                child_public_key,
+                child_token_id,
+                max_staleness,
+            } => {
+                hasher.update(&[18u8]);
+                hasher.update(child_public_key);
+                hasher.update(child_token_id);
+                hasher.update(&max_staleness.to_le_bytes());
+            }
+            Effect::RefreshDelegation => {
+                hasher.update(&[19u8]);
+            }
+            Effect::RevokeDelegation { child } => {
+                hasher.update(&[20u8]);
+                hasher.update(child.as_bytes());
             }
         }
         *hasher.finalize().as_bytes()
@@ -453,6 +536,9 @@ impl Effect {
             }
             Effect::PipelinedSend { .. } => 32 + 4 + 32,
             Effect::Introduce { .. } => 97,
+            Effect::SpawnWithDelegation { .. } => 32 + 32 + 8,
+            Effect::RefreshDelegation => 0,
+            Effect::RevokeDelegation { .. } => 32,
         }
     }
 
@@ -462,7 +548,10 @@ impl Effect {
     /// applied LAST within an action to prevent an action from weakening permissions
     /// and exploiting the weakened state in subsequent effects.
     pub fn is_permission_effect(&self) -> bool {
-        matches!(self, Effect::SetPermissions { .. } | Effect::SetVerificationKey { .. })
+        matches!(
+            self,
+            Effect::SetPermissions { .. } | Effect::SetVerificationKey { .. }
+        )
     }
 }
 

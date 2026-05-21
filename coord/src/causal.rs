@@ -338,12 +338,7 @@ impl CausalTurnBuilder {
 
     /// Build a causal turn with explicit dependencies (for when you want to
     /// depend on specific turns rather than the full frontier).
-    pub fn build_with_deps(
-        &self,
-        turn: Turn,
-        deps: Vec<[u8; 32]>,
-        sequence: u64,
-    ) -> CausalTurn {
+    pub fn build_with_deps(&self, turn: Turn, deps: Vec<[u8; 32]>, sequence: u64) -> CausalTurn {
         CausalTurn::new(turn, deps, self.node_id, sequence)
     }
 }

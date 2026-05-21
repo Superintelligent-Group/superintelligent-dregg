@@ -75,9 +75,17 @@ impl core::fmt::Display for NoteError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             NoteError::DoubleSpend { nullifier } => {
-                write!(f, "double-spend: nullifier {:?} already revealed", &nullifier.0[..4])
+                write!(
+                    f,
+                    "double-spend: nullifier {:?} already revealed",
+                    &nullifier.0[..4]
+                )
             }
-            NoteError::ConservationViolation { asset_type, input_total, output_total } => {
+            NoteError::ConservationViolation {
+                asset_type,
+                input_total,
+                output_total,
+            } => {
                 write!(
                     f,
                     "conservation violated for asset {asset_type}: inputs={input_total}, outputs={output_total}"
@@ -116,7 +124,12 @@ impl Note {
         let mut creation_nonce = [0u8; 32];
         creation_nonce.copy_from_slice(nonce_hasher.finalize().as_bytes());
 
-        Self { owner, fields, randomness, creation_nonce }
+        Self {
+            owner,
+            fields,
+            randomness,
+            creation_nonce,
+        }
     }
 
     /// Create a note with explicit randomness and creation nonce (for deterministic tests).
@@ -127,13 +140,28 @@ impl Note {
         hasher.update(&randomness);
         let mut creation_nonce = [0u8; 32];
         creation_nonce.copy_from_slice(hasher.finalize().as_bytes());
-        Self { owner, fields, randomness, creation_nonce }
+        Self {
+            owner,
+            fields,
+            randomness,
+            creation_nonce,
+        }
     }
 
     /// Create a note with explicit randomness AND explicit creation nonce.
     /// Use when you need full control over both values (e.g., testing nonce uniqueness).
-    pub fn with_nonce(owner: [u8; 32], fields: [u64; 8], randomness: [u8; 32], creation_nonce: [u8; 32]) -> Self {
-        Self { owner, fields, randomness, creation_nonce }
+    pub fn with_nonce(
+        owner: [u8; 32],
+        fields: [u64; 8],
+        randomness: [u8; 32],
+        creation_nonce: [u8; 32],
+    ) -> Self {
+        Self {
+            owner,
+            fields,
+            randomness,
+            creation_nonce,
+        }
     }
 
     /// Compute the commitment for this note.
@@ -265,7 +293,10 @@ mod tests {
         // Even if positioned at different tree locations, nullifier is the same.
         let positioned_a = note.clone().positioned(0);
         let positioned_b = note.clone().positioned(999);
-        assert_eq!(positioned_a.note.nullifier(&key), positioned_b.note.nullifier(&key));
+        assert_eq!(
+            positioned_a.note.nullifier(&key),
+            positioned_b.note.nullifier(&key)
+        );
     }
 
     #[test]
@@ -336,18 +367,12 @@ mod tests {
         let unique_asset_id: u64 = 0xDEAD_BEEF_CAFE_0001;
 
         // NFT note: fields[0] = unique asset ID, fields[1] = 0 (not fungible).
-        let nft_note_a = Note::with_randomness(
-            owner_a,
-            [unique_asset_id, 0, 0, 0, 0, 0, 0, 0],
-            [10u8; 32],
-        );
+        let nft_note_a =
+            Note::with_randomness(owner_a, [unique_asset_id, 0, 0, 0, 0, 0, 0, 0], [10u8; 32]);
 
         // Transfer: create a new note with same asset_id but new owner.
-        let nft_note_b = Note::with_randomness(
-            owner_b,
-            [unique_asset_id, 0, 0, 0, 0, 0, 0, 0],
-            [20u8; 32],
-        );
+        let nft_note_b =
+            Note::with_randomness(owner_b, [unique_asset_id, 0, 0, 0, 0, 0, 0, 0], [20u8; 32]);
 
         // Asset identity is preserved (same fields[0]).
         assert_eq!(nft_note_a.asset_type(), nft_note_b.asset_type());

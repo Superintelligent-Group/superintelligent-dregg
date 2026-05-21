@@ -70,17 +70,20 @@ fn main() {
     // Initialize the escrow state
     let mut escrow_state = CellState::new(0);
     escrow_state.fields[0] = field_from_u64(total_escrow_value); // All value starts as "deposited"
-    escrow_state.fields[1] = field_from_u64(0);                   // Nothing withdrawn yet
-    escrow_state.fields[2] = field_from_u64(unlock_time);         // The unlock time
-    escrow_state.fields[3] = field_from_u64(beneficiary_id);      // Beneficiary
-    escrow_state.fields[4] = field_from_u64(depositor_id);        // Depositor
+    escrow_state.fields[1] = field_from_u64(0); // Nothing withdrawn yet
+    escrow_state.fields[2] = field_from_u64(unlock_time); // The unlock time
+    escrow_state.fields[3] = field_from_u64(beneficiary_id); // Beneficiary
+    escrow_state.fields[4] = field_from_u64(depositor_id); // Depositor
 
     // Verify initial state satisfies program (initialization)
     let init_result = escrow_program.evaluate(&escrow_state, None);
     assert!(init_result.is_ok(), "Initial state must satisfy program");
 
     println!("  Program constraints:");
-    println!("    - SumEquals([0,1], {}) — conservation law", total_escrow_value);
+    println!(
+        "    - SumEquals([0,1], {}) — conservation law",
+        total_escrow_value
+    );
     println!("    - FieldGte(2, {}) — time lock", unlock_time);
     println!("    - Immutable(3) — beneficiary locked");
     println!("    - Immutable(4) — depositor locked");
@@ -134,7 +137,10 @@ fn main() {
     early_state.fields[2] = field_from_u64(1700000000); // Try to set earlier unlock
 
     let early_result = escrow_program.evaluate(&early_state, Some(&escrow_state));
-    assert!(early_result.is_err(), "Lowering unlock time should fail (FieldGte)");
+    assert!(
+        early_result.is_err(),
+        "Lowering unlock time should fail (FieldGte)"
+    );
     println!("  Attempted to lower unlock_time to 1700000000...");
     if let Err(e) = early_result {
         println!("  REJECTED: {}", e);
@@ -151,8 +157,14 @@ fn main() {
     tamper_state.fields[3] = field_from_u64(attacker_id); // Try to change beneficiary
 
     let tamper_result = escrow_program.evaluate(&tamper_state, Some(&escrow_state));
-    assert!(tamper_result.is_err(), "Changing immutable beneficiary should fail");
-    println!("  Attacker attempts to change beneficiary to 0x{:016x}...", attacker_id);
+    assert!(
+        tamper_result.is_err(),
+        "Changing immutable beneficiary should fail"
+    );
+    println!(
+        "  Attacker attempts to change beneficiary to 0x{:016x}...",
+        attacker_id
+    );
     if let Err(e) = tamper_result {
         println!("  REJECTED: {}", e);
     }
@@ -178,17 +190,38 @@ fn main() {
     withdrawal_state.fields[2] = field_from_u64(unlock_time + 86400); // 1 day after unlock
 
     let withdrawal_result = escrow_program.evaluate(&withdrawal_state, Some(&escrow_state));
-    assert!(withdrawal_result.is_ok(), "Valid withdrawal after unlock should pass");
+    assert!(
+        withdrawal_result.is_ok(),
+        "Valid withdrawal after unlock should pass"
+    );
 
-    println!("  Current time: {} (past unlock time {})", unlock_time + 86400, unlock_time);
+    println!(
+        "  Current time: {} (past unlock time {})",
+        unlock_time + 86400,
+        unlock_time
+    );
     println!("  Withdrawal: {} units", withdrawal_amount);
-    println!("  deposited: {} -> {}", current_deposited, current_deposited - withdrawal_amount);
-    println!("  withdrawn: {} -> {}", current_withdrawn, current_withdrawn + withdrawal_amount);
-    println!("  Sum check: {} + {} = {} [PASS]",
+    println!(
+        "  deposited: {} -> {}",
+        current_deposited,
+        current_deposited - withdrawal_amount
+    );
+    println!(
+        "  withdrawn: {} -> {}",
+        current_withdrawn,
+        current_withdrawn + withdrawal_amount
+    );
+    println!(
+        "  Sum check: {} + {} = {} [PASS]",
         current_deposited - withdrawal_amount,
         current_withdrawn + withdrawal_amount,
-        total_escrow_value);
-    println!("  Time lock: {} >= {} [PASS]", unlock_time + 86400, unlock_time);
+        total_escrow_value
+    );
+    println!(
+        "  Time lock: {} >= {} [PASS]",
+        unlock_time + 86400,
+        unlock_time
+    );
     println!("  Beneficiary unchanged: [PASS]");
     println!("  Depositor unchanged: [PASS]");
 
@@ -207,18 +240,33 @@ fn main() {
     println!("  Final state:");
     println!("    field[0] (deposited):   {}", final_deposited);
     println!("    field[1] (withdrawn):   {}", final_withdrawn);
-    println!("    field[2] (unlock_time): {} (updated to prove time passage)",
-        u64::from_le_bytes(escrow_state.fields[2][..8].try_into().unwrap()));
-    println!("    field[3] (beneficiary): 0x{:016x} (immutable)", beneficiary_id);
-    println!("    field[4] (depositor):   0x{:016x} (immutable)", depositor_id);
+    println!(
+        "    field[2] (unlock_time): {} (updated to prove time passage)",
+        u64::from_le_bytes(escrow_state.fields[2][..8].try_into().unwrap())
+    );
+    println!(
+        "    field[3] (beneficiary): 0x{:016x} (immutable)",
+        beneficiary_id
+    );
+    println!(
+        "    field[4] (depositor):   0x{:016x} (immutable)",
+        depositor_id
+    );
     println!();
-    println!("  Conservation law: {} + {} = {} [VERIFIED]",
-        final_deposited, final_withdrawn, final_deposited + final_withdrawn);
+    println!(
+        "  Conservation law: {} + {} = {} [VERIFIED]",
+        final_deposited,
+        final_withdrawn,
+        final_deposited + final_withdrawn
+    );
     assert_eq!(final_deposited + final_withdrawn, total_escrow_value);
 
     // One final comprehensive check
     let final_check = escrow_program.evaluate(&escrow_state, Some(&escrow_state));
-    assert!(final_check.is_ok(), "Final state must satisfy all program constraints");
+    assert!(
+        final_check.is_ok(),
+        "Final state must satisfy all program constraints"
+    );
     println!("  All program constraints satisfied: [PASS]");
     println!();
     println!("=== Escrow Demo Complete ===");

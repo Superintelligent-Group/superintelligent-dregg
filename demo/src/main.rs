@@ -170,11 +170,7 @@ impl DemoState {
         let real_merkle_root = commit_state::compute_merkle_root(&token.facts, &token.rules);
 
         // Print results.
-        println!(
-            "  {} Token ID: {}",
-            arrow(),
-            token.id
-        );
+        println!("  {} Token ID: {}", arrow(), token.id);
         println!(
             "  {} Token state: {} facts, {} rules",
             arrow(),
@@ -216,10 +212,7 @@ impl DemoState {
     // Step 3: Attenuation
     // =========================================================================
 
-    fn step_3_attenuate(
-        &self,
-        root_token: &token::TokenState,
-    ) -> (token::TokenState, FoldDelta) {
+    fn step_3_attenuate(&self, root_token: &token::TokenState) -> (token::TokenState, FoldDelta) {
         print_step(3, 6, "Attenuating token for cross-silo sharing...");
 
         // The engineer narrows the token before sharing with partner.org's CI:
@@ -243,13 +236,9 @@ impl DemoState {
             Fact::user("engineer-42"),
         ];
 
-        let add_checks = vec![
-            Check::read_only(),
-            Check::restrict_app("frontend"),
-        ];
+        let add_checks = vec![Check::read_only(), Check::restrict_app("frontend")];
 
-        let attenuated =
-            root_token.attenuate(&remove_facts, add_checks, &self.acme_authority);
+        let attenuated = root_token.attenuate(&remove_facts, add_checks, &self.acme_authority);
 
         // Compute the fold delta for verification (demo's own).
         let delta = FoldDelta::compute(root_token, &attenuated);
@@ -286,10 +275,7 @@ impl DemoState {
             "  {} Adding check: action must be \"r\" (read-only)",
             arrow()
         );
-        println!(
-            "  {} Adding check: app must be \"frontend\"",
-            arrow()
-        );
+        println!("  {} Adding check: app must be \"frontend\"", arrow());
         println!(
             "  {} Remaining facts: {} (from {})",
             arrow(),
@@ -328,11 +314,7 @@ impl DemoState {
         print_step(4, 6, "Cross-silo verification at partner.org...");
 
         // partner.org receives the attenuated token and verifies it.
-        let verifier = Verifier::new(
-            "partner.org",
-            &self.federation,
-            &self.revocation_registry,
-        );
+        let verifier = Verifier::new("partner.org", &self.federation, &self.revocation_registry);
 
         // Build the authorization request.
         let request = AuthorizationRequest {
@@ -347,10 +329,8 @@ impl DemoState {
             .prove_non_membership(&attenuated_token.id, &attenuated_token.issuer);
 
         // Create the presentation.
-        let presentation = TokenPresentation::new(
-            attenuated_token.clone(),
-            non_membership_proof.clone(),
-        );
+        let presentation =
+            TokenPresentation::new(attenuated_token.clone(), non_membership_proof.clone());
 
         // Perform verification.
         let result = verifier.verify(
@@ -360,10 +340,7 @@ impl DemoState {
         );
 
         // Print results.
-        println!(
-            "  {} Request: app=\"frontend\", action=\"read\"",
-            arrow()
-        );
+        println!("  {} Request: app=\"frontend\", action=\"read\"", arrow());
         println!(
             "  {} Presented state commitment: {}",
             arrow(),
@@ -383,14 +360,16 @@ impl DemoState {
             *self.acme_authority.public_key.as_bytes(),
             *self.partner_authority.public_key.as_bytes(),
         ];
-        let stark_result = stark_proof::prove_issuer_membership(
-            attenuated_token.issuer.as_bytes(),
-            &member_keys,
-        );
+        let stark_result =
+            stark_proof::prove_issuer_membership(attenuated_token.issuer.as_bytes(), &member_keys);
         println!(
             "  {} STARK proof of issuer membership: {} (proof: {} bytes, {} trace rows)",
             arrow(),
-            if stark_result.verified { checkmark() } else { cross() },
+            if stark_result.verified {
+                checkmark()
+            } else {
+                cross()
+            },
             stark_result.proof_size_bytes,
             stark_result.trace_rows,
         );
@@ -400,12 +379,18 @@ impl DemoState {
             "  {} Checking authorization trace ({} derivation steps): {}",
             arrow(),
             trace_result.steps_verified,
-            if trace_result.valid { checkmark() } else { cross() }
+            if trace_result.valid {
+                checkmark()
+            } else {
+                cross()
+            }
         );
 
         // Verify the non-membership proof (token not revoked) using REAL Merkle verification.
         if let Some(ref nm_proof) = non_membership_proof {
-            let nm_valid = self.revocation_registry.verify_non_membership(nm_proof, &attenuated_token.issuer);
+            let nm_valid = self
+                .revocation_registry
+                .verify_non_membership(nm_proof, &attenuated_token.issuer);
             println!(
                 "  {} Non-membership proof (Merkle): {}",
                 arrow(),
@@ -433,11 +418,7 @@ impl DemoState {
     fn step_5_unauthorized(&self, attenuated_token: &token::TokenState) {
         print_step(5, 6, "Attempting unauthorized action...");
 
-        let verifier = Verifier::new(
-            "partner.org",
-            &self.federation,
-            &self.revocation_registry,
-        );
+        let verifier = Verifier::new("partner.org", &self.federation, &self.revocation_registry);
 
         // Try to write (the token is read-only).
         let request = AuthorizationRequest {
@@ -450,30 +431,23 @@ impl DemoState {
             .revocation_registry
             .prove_non_membership(&attenuated_token.id, &attenuated_token.issuer);
 
-        let result = verifier.verify(
-            attenuated_token,
-            &request,
-            non_membership_proof.as_ref(),
-        );
+        let result = verifier.verify(attenuated_token, &request, non_membership_proof.as_ref());
 
         // Print results.
-        println!(
-            "  {} Request: app=\"frontend\", action=\"write\"",
-            arrow()
-        );
+        println!("  {} Request: app=\"frontend\", action=\"write\"", arrow());
 
         let trace_result = verifier.verify_trace_only(attenuated_token);
         println!(
             "  {} Checking authorization trace ({} steps): {}",
             arrow(),
             trace_result.steps_verified,
-            if trace_result.valid { checkmark() } else { cross() }
+            if trace_result.valid {
+                checkmark()
+            } else {
+                cross()
+            }
         );
-        println!(
-            "  {} Checking authorization: DENIED {}",
-            arrow(),
-            cross()
-        );
+        println!("  {} Checking authorization: DENIED {}", arrow(), cross());
 
         if let Some(reason) = &result.denial_reason {
             println!("  {} ({})", arrow(), reason);
@@ -518,16 +492,9 @@ impl DemoState {
         println!("  {} Revocation accumulator updated", arrow());
 
         // partner.org attempts verification of the attenuated token.
-        println!(
-            "  {} partner.org attempts verification...",
-            arrow()
-        );
+        println!("  {} partner.org attempts verification...", arrow());
 
-        let verifier = Verifier::new(
-            "partner.org",
-            &self.federation,
-            &self.revocation_registry,
-        );
+        let verifier = Verifier::new("partner.org", &self.federation, &self.revocation_registry);
 
         let request = AuthorizationRequest {
             app: "frontend".to_string(),
@@ -550,10 +517,7 @@ impl DemoState {
                         "  {} Non-membership proof: stale (accumulator updated)",
                         arrow()
                     );
-                    println!(
-                        "  {} Token is revoked -- access denied",
-                        arrow()
-                    );
+                    println!("  {} Token is revoked -- access denied", arrow());
                 } else {
                     println!("  {} Unexpectedly authorized!", arrow());
                 }
@@ -565,10 +529,7 @@ impl DemoState {
                     arrow(),
                     cross()
                 );
-                println!(
-                    "  {} Token is revoked -- access denied",
-                    arrow()
-                );
+                println!("  {} Token is revoked -- access denied", arrow());
             }
         }
         println!();
@@ -585,9 +546,7 @@ fn print_header() {
         "\x1b[1m{}\x1b[0m",
         "═══════════════════════════════════════════════════════"
     );
-    println!(
-        "\x1b[1m  PYANA FEDERATED AUTHORIZATION DEMO\x1b[0m"
-    );
+    println!("\x1b[1m  PYANA FEDERATED AUTHORIZATION DEMO\x1b[0m");
     println!(
         "\x1b[1m{}\x1b[0m",
         "═══════════════════════════════════════════════════════"
@@ -600,9 +559,7 @@ fn print_footer() {
         "\x1b[1m{}\x1b[0m",
         "═══════════════════════════════════════════════════════"
     );
-    println!(
-        "\x1b[1m  Demo complete. All federation scenarios demonstrated.\x1b[0m"
-    );
+    println!("\x1b[1m  Demo complete. All federation scenarios demonstrated.\x1b[0m");
     println!(
         "\x1b[1m{}\x1b[0m",
         "═══════════════════════════════════════════════════════"

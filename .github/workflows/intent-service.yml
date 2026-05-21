@@ -23,13 +23,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download previous intent pool state
-        uses: actions/download-artifact@v4
         with:
-          name: intent-service-state
-          path: ${{ env.STATE_DIR }}
-        continue-on-error: true
+          fetch-depth: 0
+
+      - name: Load state from federation-state branch
+        run: |
+          git fetch origin federation-state || true
+          mkdir -p "$STATE_DIR"
+          if git show origin/federation-state:nodes/intent-service.json > "$STATE_DIR/state.json" 2>/dev/null; then
+            echo "Loaded previous intent pool state from federation-state branch"
+          else
+            echo "{}" > "$STATE_DIR/state.json"
+            echo "No previous state, starting fresh"
+          fi
+
+      - name: Load discovery from federation-state branch
+        run: |
+          mkdir -p /tmp/discovery
+          if git show origin/federation-state:discovery.json > /tmp/discovery/discovery.json 2>/dev/null; then
+            echo "Loaded discovery file"
+          else
+            echo '{"federation":[],"intent_service":null}' > /tmp/discovery/discovery.json
+            echo "No discovery file found, using empty"
+          fi
 
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@master
@@ -38,21 +54,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "relay -> relay/target"
+          cache-on-failure: true
 
       - name: Build pyana-relay
-        working-directory: relay
-        run: cargo build --release
+        run: cargo build --release -p pyana-relay
 
       - name: Prepare state directory
         run: mkdir -p "$STATE_DIR"
-
-      - name: Download discovery file
-        uses: actions/download-artifact@v4
-        with:
-          name: federation-discovery
-          path: /tmp/discovery
-        continue-on-error: true
 
       - name: Resolve federation peers
         id: peers
@@ -71,7 +79,7 @@ jobs:
           RUST_LOG: info
         run: |
           # Start the relay in intent-service mode
-          ./relay/target/release/pyana-relay \
+          ./target/release/pyana-relay \
             --state-dir "$STATE_DIR" \
             --discovery-file "$STATE_DIR/discovery.json" \
             --peers "${{ steps.peers.outputs.peer_list }}" \
@@ -105,14 +113,30 @@ jobs:
           wait $NODE_PID 2>/dev/null || true
           echo "Intent service shutdown complete"
 
-      - name: Upload intent pool state
+      - name: Publish state to federation-state branch
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: intent-service-state
-          path: ${{ env.STATE_DIR }}/
-          retention-days: 7
-          overwrite: true
+        run: |
+          git fetch origin federation-state || true
+          git worktree add /tmp/fed-state federation-state 2>/dev/null || {
+            git worktree add --detach /tmp/fed-state
+            cd /tmp/fed-state
+            git checkout --orphan federation-state
+            git rm -rf . 2>/dev/null || true
+            mkdir -p nodes
+            echo '{}' > nodes/.gitkeep
+            git add .
+            git commit -m "Initialize federation-state branch"
+          }
+          cd /tmp/fed-state
+          mkdir -p nodes
+          cp "$STATE_DIR/state.json" nodes/intent-service.json 2>/dev/null || echo '{}' > nodes/intent-service.json
+          git add nodes/intent-service.json
+          git diff --cached --quiet || {
+            git config user.name "pyana-federation[bot]"
+            git config user.email "federation@pyana.dev"
+            git commit -m "intent-service state update [skip ci]"
+            git push origin federation-state
+          }
 
       - name: Notify discovery service
         if: always()

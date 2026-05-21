@@ -44,25 +44,186 @@ pub mod rule_ids {
 
 /// Returns the standard pyana authorization policy rule set.
 ///
-/// These rules implement the core authorization logic:
+/// This is the **secure** policy that uses exact hash matching (`MemberOf`)
+/// instead of substring matching (`Contains`). It expects per-action facts:
 ///
-/// 1. **App + Action**: If an `app(AppId, Actions)` fact exists where AppId matches the
-///    request and Actions contains the requested action, allow.
+/// - `action_allowed(app_id, action)` — one fact per allowed action per app
+/// - `svc_action_allowed(service_id, action)` — one fact per allowed action per service
 ///
-/// 2. **Service + Action**: Same as above but for service-scoped tokens.
+/// Rules included:
+/// - **App + Action (secure)**: MemberOf-based exact action matching
+/// - **Service + Action (secure)**: Same for services
+/// - **Unrestricted**: If `unrestricted(true)` exists, allow any action
+/// - **Time-bounded app + action**: Checks expiry via `request_time < valid_until`
+/// - **Time-bounded service + action**: Same for services
+/// - **Budget**: Derives `budget_ok` or `deny` based on remaining budget vs cost
+/// - **Revocation**: Derives `deny` if token is revoked
 ///
-/// 3. **Unrestricted**: If an `unrestricted(true)` fact exists, allow any action.
-///
-/// 4. **App (any action)**: If an app fact exists and the request has no action constraint,
-///    allow. (Used when checking "can this token access this app at all?")
-///
-/// 5. **Service (any action)**: Same as above for services.
-///
-/// 6. **Time-bounded app + action**: Like rule 1 but also checks token expiry.
-///
-/// 7. **Time-bounded service + action**: Like rule 2 but also checks token expiry.
+/// For backward compatibility with comma-separated action facts, see [`legacy_policy()`].
 pub fn standard_policy() -> Vec<Rule> {
-    vec![
+    let mut rules = vec![
+        // Rule 40: allow if action_allowed($app, $act), request_app($app), request_action($act)
+        //   check: MemberOf($act, $act) [explicit equality for ZK]
+        Rule {
+            id: rule_ids::APP_ACTION_SECURE,
+            head: Atom {
+                predicate: symbol_from_str("allow"),
+                terms: vec![],
+            },
+            body: vec![
+                Atom {
+                    predicate: symbol_from_str("action_allowed"),
+                    terms: vec![Term::Var(0), Term::Var(1)], // $app, $act
+                },
+                Atom {
+                    predicate: symbol_from_str("request_app"),
+                    terms: vec![Term::Var(0)], // $app
+                },
+                Atom {
+                    predicate: symbol_from_str("request_action"),
+                    terms: vec![Term::Var(1)], // $act (must unify with action_allowed)
+                },
+            ],
+            checks: vec![
+                Check::MemberOf(Term::Var(1), Term::Var(1)), // explicit equality for ZK
+            ],
+        },
+        // Rule 41: allow if svc_action_allowed($svc, $act), request_service($svc), request_action($act)
+        Rule {
+            id: rule_ids::SERVICE_ACTION_SECURE,
+            head: Atom {
+                predicate: symbol_from_str("allow"),
+                terms: vec![],
+            },
+            body: vec![
+                Atom {
+                    predicate: symbol_from_str("svc_action_allowed"),
+                    terms: vec![Term::Var(0), Term::Var(1)], // $svc, $act
+                },
+                Atom {
+                    predicate: symbol_from_str("request_service"),
+                    terms: vec![Term::Var(0)], // $svc
+                },
+                Atom {
+                    predicate: symbol_from_str("request_action"),
+                    terms: vec![Term::Var(1)], // $act
+                },
+            ],
+            checks: vec![
+                Check::MemberOf(Term::Var(1), Term::Var(1)), // explicit equality for ZK
+            ],
+        },
+        // Rule 3: allow if unrestricted(true), request_action($act)
+        Rule {
+            id: rule_ids::UNRESTRICTED,
+            head: Atom {
+                predicate: symbol_from_str("allow"),
+                terms: vec![],
+            },
+            body: vec![
+                Atom {
+                    predicate: symbol_from_str("unrestricted"),
+                    terms: vec![Term::Int(1)], // true encoded as 1
+                },
+                Atom {
+                    predicate: symbol_from_str("request_action"),
+                    terms: vec![Term::Var(0)], // $act (ensures there IS an action)
+                },
+            ],
+            checks: vec![],
+        },
+        // Rule 10: Time-bounded app + action (secure)
+        // allow if action_allowed($app, $act), request_app($app), request_action($act),
+        //          valid_until($exp), request_time($t)
+        //   checks: MemberOf($act, $act), $t < $exp
+        Rule {
+            id: rule_ids::APP_ACTION_TIME_BOUNDED,
+            head: Atom {
+                predicate: symbol_from_str("allow"),
+                terms: vec![],
+            },
+            body: vec![
+                Atom {
+                    predicate: symbol_from_str("action_allowed"),
+                    terms: vec![Term::Var(0), Term::Var(1)], // $app, $act
+                },
+                Atom {
+                    predicate: symbol_from_str("request_app"),
+                    terms: vec![Term::Var(0)], // $app
+                },
+                Atom {
+                    predicate: symbol_from_str("request_action"),
+                    terms: vec![Term::Var(1)], // $act
+                },
+                Atom {
+                    predicate: symbol_from_str("valid_until"),
+                    terms: vec![Term::Var(2)], // $exp
+                },
+                Atom {
+                    predicate: symbol_from_str("request_time"),
+                    terms: vec![Term::Var(3)], // $t
+                },
+            ],
+            checks: vec![
+                Check::MemberOf(Term::Var(1), Term::Var(1)),
+                Check::LessThan(Term::Var(3), Term::Var(2)), // $t < $exp
+            ],
+        },
+        // Rule 11: Time-bounded service + action (secure)
+        Rule {
+            id: rule_ids::SERVICE_ACTION_TIME_BOUNDED,
+            head: Atom {
+                predicate: symbol_from_str("allow"),
+                terms: vec![],
+            },
+            body: vec![
+                Atom {
+                    predicate: symbol_from_str("svc_action_allowed"),
+                    terms: vec![Term::Var(0), Term::Var(1)], // $svc, $act
+                },
+                Atom {
+                    predicate: symbol_from_str("request_service"),
+                    terms: vec![Term::Var(0)], // $svc
+                },
+                Atom {
+                    predicate: symbol_from_str("request_action"),
+                    terms: vec![Term::Var(1)], // $act
+                },
+                Atom {
+                    predicate: symbol_from_str("valid_until"),
+                    terms: vec![Term::Var(2)], // $exp
+                },
+                Atom {
+                    predicate: symbol_from_str("request_time"),
+                    terms: vec![Term::Var(3)], // $t
+                },
+            ],
+            checks: vec![
+                Check::MemberOf(Term::Var(1), Term::Var(1)),
+                Check::LessThan(Term::Var(3), Term::Var(2)), // $t < $exp
+            ],
+        },
+    ];
+
+    // Add budget and revocation rules
+    rules.extend(budget_revocation_rules());
+    rules
+}
+
+/// Returns the legacy pyana authorization policy rule set.
+///
+/// **DEPRECATED**: This policy uses `Contains` (substring matching) for action checking,
+/// which is vulnerable to collisions (e.g. "threadwrite" matches "write"). Use
+/// [`standard_policy()`] instead, which uses exact hash matching via `MemberOf`.
+///
+/// This legacy policy expects comma-separated action strings in facts:
+/// - `app(app_id, "read,write,delete")` — actions as a comma-separated string
+/// - `service(service_id, "read,write")` — same for services
+///
+/// Retained for backward compatibility with existing serialized tokens.
+#[deprecated(note = "Use standard_policy() which uses MemberOf for secure action matching")]
+pub fn legacy_policy() -> Vec<Rule> {
+    let mut rules = vec![
         // Rule 1: allow if app($app, $actions), request_app($app), request_action($act), $actions.contains($act)
         Rule {
             id: rule_ids::APP_ACTION,
@@ -180,10 +341,8 @@ pub fn standard_policy() -> Vec<Rule> {
         },
         // Rule 10: Time-bounded app + action
         // allow if app($app, $actions), request_app($app), request_action($act),
-        //          valid_until($exp)
-        //   checks: $actions.contains($act), request_time < $exp
-        // Note: request_time is not directly checkable as a body atom here due to the
-        // 4-body limit, so we use it via the time_bounded_policy() variant that includes it.
+        //          valid_until($exp), request_time($t)
+        //   checks: $actions.contains($act), $t < $exp
         Rule {
             id: rule_ids::APP_ACTION_TIME_BOUNDED,
             head: Atom {
@@ -207,9 +366,14 @@ pub fn standard_policy() -> Vec<Rule> {
                     predicate: symbol_from_str("valid_until"),
                     terms: vec![Term::Var(3)],
                 },
+                Atom {
+                    predicate: symbol_from_str("request_time"),
+                    terms: vec![Term::Var(4)],
+                },
             ],
             checks: vec![
                 Check::Contains(Term::Var(1), Term::Var(2)),
+                Check::LessThan(Term::Var(4), Term::Var(3)), // $t < $exp
             ],
         },
         // Rule 11: Time-bounded service + action (same pattern)
@@ -236,11 +400,26 @@ pub fn standard_policy() -> Vec<Rule> {
                     predicate: symbol_from_str("valid_until"),
                     terms: vec![Term::Var(3)],
                 },
+                Atom {
+                    predicate: symbol_from_str("request_time"),
+                    terms: vec![Term::Var(4)],
+                },
             ],
             checks: vec![
                 Check::Contains(Term::Var(1), Term::Var(2)),
+                Check::LessThan(Term::Var(4), Term::Var(3)), // $t < $exp
             ],
         },
+    ];
+
+    // Add budget and revocation rules
+    rules.extend(budget_revocation_rules());
+    rules
+}
+
+/// Budget and revocation rules shared between standard and legacy policies.
+fn budget_revocation_rules() -> Vec<Rule> {
+    vec![
         // Rule 20: budget_ok(B) :- budget_remaining(B, R), request_cost(C), R >= C
         Rule {
             id: rule_ids::BUDGET_OK,
@@ -262,9 +441,7 @@ pub fn standard_policy() -> Vec<Rule> {
                 Check::GreaterThanOrEqual(Term::Var(1), Term::Var(2)), // $R >= $C
             ],
         },
-        // Rule 21: deny :- budget_enrolled(B), NOT budget_ok(B)
-        // Modeled positively: deny fires when budget_enrolled exists but remaining < cost.
-        // Since Datalog doesn't have negation, we derive deny when remaining < cost.
+        // Rule 21: deny :- budget_remaining(B, R), request_cost(C), C > R
         Rule {
             id: rule_ids::BUDGET_DENY,
             head: Atom {
@@ -286,26 +463,19 @@ pub fn standard_policy() -> Vec<Rule> {
             ],
         },
         // Rule 30: not_revoked_ok(T) :- not_revoked(T)
-        // (identity rule — proves the non-revocation fact was provided)
         Rule {
             id: rule_ids::REVOCATION_OK,
             head: Atom {
                 predicate: symbol_from_str("not_revoked_ok"),
                 terms: vec![Term::Var(0)],
             },
-            body: vec![
-                Atom {
-                    predicate: symbol_from_str("not_revoked"),
-                    terms: vec![Term::Var(0)],
-                },
-            ],
+            body: vec![Atom {
+                predicate: symbol_from_str("not_revoked"),
+                terms: vec![Term::Var(0)],
+            }],
             checks: vec![],
         },
-        // Rule 31: deny :- revocable(T), NOT not_revoked(T)
-        // Modeled as: deny fires when revocable(T) exists but revoked(T) also exists.
-        // In practice, the absence of not_revoked fact for a revocable token causes
-        // the allow rules to be blocked (since budget_ok/not_revoked_ok are prerequisites).
-        // This rule explicitly fires deny when a revoked(T) fact is present.
+        // Rule 31: deny :- revocable(T), revoked(T)
         Rule {
             id: rule_ids::REVOCATION_DENY,
             head: Atom {
@@ -541,7 +711,27 @@ mod tests {
         let rules = standard_policy();
         assert!(rules.len() >= 5);
 
-        // Check rule IDs are present
+        // Check rule IDs are present (secure MemberOf-based rules)
+        assert!(rules.iter().any(|r| r.id == rule_ids::APP_ACTION_SECURE));
+        assert!(rules.iter().any(|r| r.id == rule_ids::SERVICE_ACTION_SECURE));
+        assert!(rules.iter().any(|r| r.id == rule_ids::UNRESTRICTED));
+        // Budget and revocation rules
+        assert!(rules.iter().any(|r| r.id == rule_ids::BUDGET_OK));
+        assert!(rules.iter().any(|r| r.id == rule_ids::BUDGET_DENY));
+        assert!(rules.iter().any(|r| r.id == rule_ids::REVOCATION_OK));
+        assert!(rules.iter().any(|r| r.id == rule_ids::REVOCATION_DENY));
+        // Time-bounded rules
+        assert!(rules.iter().any(|r| r.id == rule_ids::APP_ACTION_TIME_BOUNDED));
+        assert!(rules.iter().any(|r| r.id == rule_ids::SERVICE_ACTION_TIME_BOUNDED));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_legacy_policy_has_expected_rules() {
+        let rules = legacy_policy();
+        assert!(rules.len() >= 5);
+
+        // Check rule IDs are present (Contains-based rules)
         assert!(rules.iter().any(|r| r.id == rule_ids::APP_ACTION));
         assert!(rules.iter().any(|r| r.id == rule_ids::SERVICE_ACTION));
         assert!(rules.iter().any(|r| r.id == rule_ids::UNRESTRICTED));
@@ -638,15 +828,9 @@ mod tests {
                 symbol_from_str("budget_remaining"),
                 vec![Term::Const(symbol_from_str("b1")), Term::Int(50)],
             ),
-            Fact::new(
-                symbol_from_str("request_cost"),
-                vec![Term::Int(10)],
-            ),
+            Fact::new(symbol_from_str("request_cost"), vec![Term::Int(10)]),
             // Also need an allow rule to fire — use unrestricted
-            Fact::new(
-                symbol_from_str("unrestricted"),
-                vec![Term::Int(1)],
-            ),
+            Fact::new(symbol_from_str("unrestricted"), vec![Term::Int(1)]),
         ];
 
         let eval = Evaluator::new(facts, rules);
@@ -664,7 +848,9 @@ mod tests {
         assert!(trace.steps.iter().any(|s| s.rule_id == rule_ids::BUDGET_OK));
         assert_eq!(
             trace.conclusion,
-            Conclusion::Allow { policy_rule_id: rule_ids::UNRESTRICTED }
+            Conclusion::Allow {
+                policy_rule_id: rule_ids::UNRESTRICTED
+            }
         );
     }
 
@@ -677,14 +863,8 @@ mod tests {
                 symbol_from_str("budget_remaining"),
                 vec![Term::Const(symbol_from_str("b1")), Term::Int(5)],
             ),
-            Fact::new(
-                symbol_from_str("request_cost"),
-                vec![Term::Int(10)],
-            ),
-            Fact::new(
-                symbol_from_str("unrestricted"),
-                vec![Term::Int(1)],
-            ),
+            Fact::new(symbol_from_str("request_cost"), vec![Term::Int(10)]),
+            Fact::new(symbol_from_str("unrestricted"), vec![Term::Int(1)]),
         ];
 
         let eval = Evaluator::new(facts, rules);
@@ -699,7 +879,12 @@ mod tests {
 
         let trace = eval.evaluate(&request);
         // deny should be derived by rule 21
-        assert!(trace.steps.iter().any(|s| s.rule_id == rule_ids::BUDGET_DENY));
+        assert!(
+            trace
+                .steps
+                .iter()
+                .any(|s| s.rule_id == rule_ids::BUDGET_DENY)
+        );
         // Note: the evaluator still returns Allow because the deny fact doesn't block
         // allow derivation in pure Datalog. The bridge layer checks for deny facts explicitly.
     }
@@ -717,10 +902,7 @@ mod tests {
                 symbol_from_str("revoked"),
                 vec![Term::Const(symbol_from_str("t1"))],
             ),
-            Fact::new(
-                symbol_from_str("unrestricted"),
-                vec![Term::Int(1)],
-            ),
+            Fact::new(symbol_from_str("unrestricted"), vec![Term::Int(1)]),
         ];
 
         let eval = Evaluator::new(facts, rules);
@@ -735,7 +917,12 @@ mod tests {
 
         let trace = eval.evaluate(&request);
         // deny should be derived by rule 31
-        assert!(trace.steps.iter().any(|s| s.rule_id == rule_ids::REVOCATION_DENY));
+        assert!(
+            trace
+                .steps
+                .iter()
+                .any(|s| s.rule_id == rule_ids::REVOCATION_DENY)
+        );
     }
 
     #[test]
@@ -747,10 +934,7 @@ mod tests {
                 symbol_from_str("not_revoked"),
                 vec![Term::Const(symbol_from_str("t1"))],
             ),
-            Fact::new(
-                symbol_from_str("unrestricted"),
-                vec![Term::Int(1)],
-            ),
+            Fact::new(symbol_from_str("unrestricted"), vec![Term::Int(1)]),
         ];
 
         let eval = Evaluator::new(facts, rules);
@@ -765,7 +949,12 @@ mod tests {
 
         let trace = eval.evaluate(&request);
         // not_revoked_ok should be derived by rule 30
-        assert!(trace.steps.iter().any(|s| s.rule_id == rule_ids::REVOCATION_OK));
+        assert!(
+            trace
+                .steps
+                .iter()
+                .any(|s| s.rule_id == rule_ids::REVOCATION_OK)
+        );
     }
 
     // ======================================================================
@@ -881,15 +1070,13 @@ mod tests {
     #[test]
     fn test_secure_policy_service_action_allow() {
         let rules = secure_policy();
-        let facts = vec![
-            Fact::new(
-                symbol_from_str("svc_action_allowed"),
-                vec![
-                    Term::Const(symbol_from_str("http")),
-                    Term::Const(symbol_from_str("read")),
-                ],
-            ),
-        ];
+        let facts = vec![Fact::new(
+            symbol_from_str("svc_action_allowed"),
+            vec![
+                Term::Const(symbol_from_str("http")),
+                Term::Const(symbol_from_str("read")),
+            ],
+        )];
 
         let eval = Evaluator::new(facts, rules);
         let request = AuthorizationRequest {

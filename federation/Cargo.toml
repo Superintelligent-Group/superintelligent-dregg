@@ -10,7 +10,7 @@ pyana-types = { path = "../types" }
 hints = { path = "../hints" }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
-getrandom = "0.3"
+getrandom = { workspace = true }
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
@@ -33,3 +33,6 @@ path = "src/bin/node.rs"
 [[bench]]
 name = "consensus_bench"
 harness = false
+
+[lints]
+workspace = true

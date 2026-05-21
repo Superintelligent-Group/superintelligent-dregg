@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
-getrandom = "0.3"
+getrandom = { workspace = true }
 pyana-commit = { path = "../commit" }
 pyana-federation = { path = "../federation" }
 pyana-circuit = { path = "../circuit" }
@@ -15,3 +15,6 @@ pyana-types = { path = "../types" }
 [[bin]]
 name = "pyana-demo"
 path = "src/main.rs"
+
+[lints]
+workspace = true

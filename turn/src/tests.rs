@@ -48,7 +48,10 @@ impl TestKeypair {
         let signing_key = SigningKey::from_bytes(&seed_bytes);
         let verifying_key: VerifyingKey = (&signing_key).into();
         let public_key = verifying_key.to_bytes();
-        TestKeypair { signing_key, public_key }
+        TestKeypair {
+            signing_key,
+            public_key,
+        }
     }
 
     /// Sign an action and return the Authorization.
@@ -98,7 +101,9 @@ fn setup_two_open_cells(agent_balance: u64, target_balance: u64) -> (Ledger, Cel
 
     // Grant agent a capability to target.
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
 
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
@@ -235,7 +240,9 @@ fn test_permission_denied_proof_required() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -280,7 +287,9 @@ fn test_permission_satisfied_with_proof() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -318,7 +327,9 @@ fn test_proof_rejected_by_verifier() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -361,7 +372,9 @@ fn test_proof_fail_closed_no_verifier() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -404,7 +417,9 @@ fn test_proof_rejected_no_verification_key() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -446,7 +461,9 @@ fn test_real_signature_verification() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -455,7 +472,11 @@ fn test_real_signature_verification() {
     // Build the action first to get the signing message, then sign it.
     let target_cell_id = target_id;
     let method = symbol("set_field");
-    let effects = vec![Effect::SetField { cell: target_cell_id, index: 0, value: [42u8; 32] }];
+    let effects = vec![Effect::SetField {
+        cell: target_cell_id,
+        index: 0,
+        value: [42u8; 32],
+    }];
 
     // Create the action to get the signing message.
     let unsigned_action = Action {
@@ -523,7 +544,9 @@ fn test_invalid_signature_rejected() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -545,7 +568,8 @@ fn test_invalid_signature_rejected() {
     match error {
         TurnError::InvalidAuthorization { reason } => {
             assert!(
-                reason.contains("signature verification failed") || reason.contains("not a valid Ed25519"),
+                reason.contains("signature verification failed")
+                    || reason.contains("not a valid Ed25519"),
                 "got: {reason}"
             );
         }
@@ -567,7 +591,9 @@ fn test_wrong_key_signature_rejected() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -575,7 +601,11 @@ fn test_wrong_key_signature_rejected() {
 
     // Sign with AGENT's key, but the TARGET's permissions check against TARGET's public key.
     let method = symbol("set_field");
-    let effects = vec![Effect::SetField { cell: target_id, index: 0, value: [42u8; 32] }];
+    let effects = vec![Effect::SetField {
+        cell: target_id,
+        index: 0,
+        value: [42u8; 32],
+    }];
     let unsigned_action = Action {
         target: target_id,
         method,
@@ -625,7 +655,10 @@ fn test_wrong_key_signature_rejected() {
     let (error, _) = result.unwrap_rejected();
     match error {
         TurnError::InvalidAuthorization { reason } => {
-            assert!(reason.contains("signature verification failed"), "got: {reason}");
+            assert!(
+                reason.contains("signature verification failed"),
+                "got: {reason}"
+            );
         }
         other => panic!("expected InvalidAuthorization, got {other:?}"),
     }
@@ -685,7 +718,10 @@ fn test_precondition_min_balance() {
     let (error, _) = result.unwrap_rejected();
     match error {
         TurnError::PreconditionFailed { description } => {
-            assert!(description.contains("InsufficientBalance"), "got: {description}");
+            assert!(
+                description.contains("InsufficientBalance"),
+                "got: {description}"
+            );
         }
         other => panic!("expected PreconditionFailed, got {other:?}"),
     }
@@ -815,8 +851,12 @@ fn test_delegation_none_blocks_child() {
     let target2_id = target2.id;
 
     let mut agent_with_caps = agent;
-    agent_with_caps.capabilities.grant(target1_id, AuthRequired::None);
-    agent_with_caps.capabilities.grant(target2_id, AuthRequired::None);
+    agent_with_caps
+        .capabilities
+        .grant(target1_id, AuthRequired::None);
+    agent_with_caps
+        .capabilities
+        .grant(target2_id, AuthRequired::None);
 
     ledger.insert_cell(agent_with_caps).unwrap();
     ledger.insert_cell(target1).unwrap();
@@ -840,7 +880,10 @@ fn test_delegation_none_blocks_child() {
 
     let (error, _) = result.unwrap_rejected();
     match error {
-        TurnError::DelegationDenied { parent, child_target } => {
+        TurnError::DelegationDenied {
+            parent,
+            child_target,
+        } => {
             assert_eq!(parent, target1_id);
             assert_eq!(child_target, target2_id);
         }
@@ -1117,10 +1160,7 @@ fn test_call_forest_dfs_iteration() {
     root.add_child(make_action("child2"));
 
     // DFS order: root, child1, grandchild1, child2.
-    let methods: Vec<_> = forest
-        .iter_dfs()
-        .map(|t| t.action.method)
-        .collect();
+    let methods: Vec<_> = forest.iter_dfs().map(|t| t.action.method).collect();
 
     assert_eq!(methods.len(), 4);
     assert_eq!(methods[0], symbol("root"));
@@ -1235,7 +1275,11 @@ fn test_insufficient_balance_for_fee() {
 
     let (error, _) = result.unwrap_rejected();
     match error {
-        TurnError::InsufficientBalance { cell, required, available } => {
+        TurnError::InsufficientBalance {
+            cell,
+            required,
+            available,
+        } => {
             assert_eq!(cell, agent_id);
             assert_eq!(required, 100);
             assert_eq!(available, 50);
@@ -1320,8 +1364,12 @@ fn test_grant_and_use_capability() {
     let target2_id = target2.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target1_id, AuthRequired::None);
-    agent_with_cap.capabilities.grant(target2_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target1_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target2_id, AuthRequired::None);
 
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target1).unwrap();
@@ -1367,11 +1415,15 @@ fn test_revoke_capability() {
     let other_id = other.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
 
     // Target starts with a capability to other.
     let mut target_with_cap = target;
-    let slot = target_with_cap.capabilities.grant(other_id, AuthRequired::None);
+    let slot = target_with_cap
+        .capabilities
+        .grant(other_id, AuthRequired::None);
 
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target_with_cap).unwrap();
@@ -1508,7 +1560,9 @@ fn test_validate_without_apply() {
         action.set_field(target_id, 0, [1u8; 32]);
     }
     let turn2 = builder2.fee(100).build();
-    let err = executor.validate_without_apply(&turn2, &ledger).unwrap_err();
+    let err = executor
+        .validate_without_apply(&turn2, &ledger)
+        .unwrap_err();
     assert!(matches!(err, TurnError::NonceReplay { .. }));
 }
 
@@ -1734,7 +1788,11 @@ fn test_forest_total_effects() {
         authorization: Authorization::None,
         preconditions: CellPreconditions::default(),
         effects: (0..n)
-            .map(|i| Effect::SetField { cell: id, index: i % STATE_SLOTS, value: [i as u8; 32] })
+            .map(|i| Effect::SetField {
+                cell: id,
+                index: i % STATE_SLOTS,
+                value: [i as u8; 32],
+            })
             .collect(),
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
@@ -1765,7 +1823,9 @@ fn test_auth_none_allows_none() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -1791,9 +1851,21 @@ fn test_auth_none_allows_none() {
 fn test_effect_hash_determinism() {
     let id = CellId::from_bytes([1u8; 32]);
 
-    let e1 = Effect::SetField { cell: id, index: 0, value: [42u8; 32] };
-    let e2 = Effect::SetField { cell: id, index: 0, value: [42u8; 32] };
-    let e3 = Effect::SetField { cell: id, index: 1, value: [42u8; 32] };
+    let e1 = Effect::SetField {
+        cell: id,
+        index: 0,
+        value: [42u8; 32],
+    };
+    let e2 = Effect::SetField {
+        cell: id,
+        index: 0,
+        value: [42u8; 32],
+    };
+    let e3 = Effect::SetField {
+        cell: id,
+        index: 1,
+        value: [42u8; 32],
+    };
 
     assert_eq!(e1.hash(), e2.hash());
     assert_ne!(e1.hash(), e3.hash());
@@ -1912,14 +1984,14 @@ fn test_breadstuff_authorization() {
 
     // The target has a capability with a matching breadstuff token.
     let token_hash = [0xAB; 32];
-    target.capabilities.grant_with_breadstuff(
-        agent_id,
-        AuthRequired::None,
-        Some(token_hash),
-    );
+    target
+        .capabilities
+        .grant_with_breadstuff(agent_id, AuthRequired::None, Some(token_hash));
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -1955,14 +2027,14 @@ fn test_breadstuff_wrong_token_rejected() {
     let target_id = target.id;
 
     // Target has breadstuff [0xAB; 32], but we provide [0xCD; 32].
-    target.capabilities.grant_with_breadstuff(
-        agent_id,
-        AuthRequired::None,
-        Some([0xAB; 32]),
-    );
+    target
+        .capabilities
+        .grant_with_breadstuff(agent_id, AuthRequired::None, Some([0xAB; 32]));
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -2035,7 +2107,9 @@ fn test_frozen_cell_rejects_all() {
     let frozen_id = frozen.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(frozen_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(frozen_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(frozen).unwrap();
 
@@ -2075,7 +2149,9 @@ fn test_receive_permission_blocks_transfer() {
     let dest_id = dest.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(dest_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(dest_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(dest).unwrap();
 
@@ -2093,7 +2169,11 @@ fn test_receive_permission_blocks_transfer() {
 
     let (error, _) = result.unwrap_rejected();
     match error {
-        TurnError::PermissionDenied { cell, action, required } => {
+        TurnError::PermissionDenied {
+            cell,
+            action,
+            required,
+        } => {
             assert_eq!(cell, dest_id);
             assert_eq!(action, "Receive");
             assert_eq!(required, AuthRequired::Impossible);
@@ -2118,7 +2198,9 @@ fn test_receive_permission_requires_auth_blocks_transfer() {
     let dest_id = dest.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(dest_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(dest_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(dest).unwrap();
 
@@ -2136,7 +2218,11 @@ fn test_receive_permission_requires_auth_blocks_transfer() {
 
     let (error, _) = result.unwrap_rejected();
     match error {
-        TurnError::PermissionDenied { cell, action, required } => {
+        TurnError::PermissionDenied {
+            cell,
+            action,
+            required,
+        } => {
             assert_eq!(cell, dest_id);
             assert_eq!(action, "Receive");
             assert_eq!(required, AuthRequired::Signature);
@@ -2162,7 +2248,9 @@ fn test_mixed_effects_all_permissions_checked() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -2206,7 +2294,9 @@ fn test_empty_proof_rejected() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -2249,7 +2339,9 @@ fn test_grant_capability_amplification_blocked() {
 
     // Agent has capability to target1, but NOT to target2.
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target1_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target1_id, AuthRequired::None);
     // Deliberately NOT granting capability to target2_id.
 
     ledger.insert_cell(agent_with_cap).unwrap();
@@ -2308,8 +2400,12 @@ fn test_grant_capability_attenuation_only() {
     // Agent has capability to target1 and target2,
     // but the cap to target2 requires Signature.
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target1_id, AuthRequired::None);
-    agent_with_cap.capabilities.grant(target2_id, AuthRequired::Signature);
+    agent_with_cap
+        .capabilities
+        .grant(target1_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target2_id, AuthRequired::Signature);
 
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target1).unwrap();
@@ -2338,7 +2434,10 @@ fn test_grant_capability_attenuation_only() {
 
     let (error, _) = result.unwrap_rejected();
     match error {
-        TurnError::DelegationDenied { parent, child_target } => {
+        TurnError::DelegationDenied {
+            parent,
+            child_target,
+        } => {
             assert_eq!(parent, agent_id);
             assert_eq!(child_target, target1_id);
         }
@@ -2362,8 +2461,12 @@ fn test_grant_capability_attenuation_succeeds() {
 
     // Agent has capability to target1 and target2 with AuthRequired::None.
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target1_id, AuthRequired::None);
-    agent_with_cap.capabilities.grant(target2_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target1_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target2_id, AuthRequired::None);
 
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target1).unwrap();
@@ -2429,7 +2532,11 @@ fn test_partial_commitment_signature_valid() {
         args: vec![],
         authorization: Authorization::None,
         preconditions: CellPreconditions::default(),
-        effects: vec![Effect::SetField { cell: cell_id, index: 0, value: [42u8; 32] }],
+        effects: vec![Effect::SetField {
+            cell: cell_id,
+            index: 0,
+            value: [42u8; 32],
+        }],
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: Some(-100),
@@ -2443,7 +2550,8 @@ fn test_partial_commitment_signature_valid() {
     let sig_bytes = sign_partial_action(&action, position, &forest_root_hash, &kp.signing_key);
 
     // Verify manually.
-    let message = TurnExecutor::compute_partial_signing_message(&action, position, &forest_root_hash);
+    let message =
+        TurnExecutor::compute_partial_signing_message(&action, position, &forest_root_hash);
     let verifying_key: VerifyingKey = (&kp.signing_key).into();
     let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes);
     assert!(verifying_key.verify(&message, &signature).is_ok());
@@ -2466,7 +2574,11 @@ fn test_partial_commitment_independent_of_other_actions() {
         args: vec![],
         authorization: Authorization::None,
         preconditions: CellPreconditions::default(),
-        effects: vec![Effect::SetField { cell: cell_id, index: 0, value: [1u8; 32] }],
+        effects: vec![Effect::SetField {
+            cell: cell_id,
+            index: 0,
+            value: [1u8; 32],
+        }],
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: Some(-50),
@@ -2516,7 +2628,11 @@ fn test_full_commitment_invalidated_by_changes() {
         args: vec![],
         authorization: Authorization::None,
         preconditions: CellPreconditions::default(),
-        effects: vec![Effect::SetField { cell: cell_id, index: 0, value: [1u8; 32] }],
+        effects: vec![Effect::SetField {
+            cell: cell_id,
+            index: 0,
+            value: [1u8; 32],
+        }],
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
@@ -2532,7 +2648,11 @@ fn test_full_commitment_invalidated_by_changes() {
 
     // Now modify the action (change effect value) and re-compute message.
     let mut modified = action.clone();
-    modified.effects = vec![Effect::SetField { cell: cell_id, index: 0, value: [99u8; 32] }];
+    modified.effects = vec![Effect::SetField {
+        cell: cell_id,
+        index: 0,
+        value: [99u8; 32],
+    }];
     let modified_message = TurnExecutor::compute_signing_message(&modified);
 
     // The original signature does NOT verify for the modified message.
@@ -2623,16 +2743,20 @@ fn test_compose_two_party_swap() {
 
     // Compose.
     let mut composer = TurnComposer::new(matcher_cell, 1000, 0);
-    composer.add_fragment(SignedFragment {
-        actions: vec![alice_action],
-        signatures: vec![alice_sig],
-        signer: alice_kp.public_key,
-    }).unwrap();
-    composer.add_fragment(SignedFragment {
-        actions: vec![bob_action],
-        signatures: vec![bob_sig],
-        signer: bob_kp.public_key,
-    }).unwrap();
+    composer
+        .add_fragment(SignedFragment {
+            actions: vec![alice_action],
+            signatures: vec![alice_sig],
+            signer: alice_kp.public_key,
+        })
+        .unwrap();
+    composer
+        .add_fragment(SignedFragment {
+            actions: vec![bob_action],
+            signatures: vec![bob_sig],
+            signer: bob_kp.public_key,
+        })
+        .unwrap();
     composer.add_settlement_action(settle_alice);
     composer.add_settlement_action(settle_bob);
 
@@ -2691,17 +2815,23 @@ fn test_compose_rejects_invalid_signature() {
     let wrong_sig = sign_partial_action(&alice_action, 0, &forest_root_hash, &wrong_kp.signing_key);
 
     let mut composer = TurnComposer::new(matcher_cell, 1000, 0);
-    composer.add_fragment(SignedFragment {
-        actions: vec![alice_action],
-        signatures: vec![wrong_sig],
-        signer: alice_kp.public_key, // claims to be Alice, but signed by wrong key
-    }).unwrap();
+    composer
+        .add_fragment(SignedFragment {
+            actions: vec![alice_action],
+            signatures: vec![wrong_sig],
+            signer: alice_kp.public_key, // claims to be Alice, but signed by wrong key
+        })
+        .unwrap();
     composer.add_settlement_action(settle);
 
     let result = composer.compose();
     assert!(result.is_err());
     match result.unwrap_err() {
-        ComposeError::InvalidSignature { fragment_index, action_index, .. } => {
+        ComposeError::InvalidSignature {
+            fragment_index,
+            action_index,
+            ..
+        } => {
             assert_eq!(fragment_index, 0);
             assert_eq!(action_index, 0);
         }
@@ -2742,11 +2872,13 @@ fn test_compose_validates_excess_balance() {
     let alice_sig = sign_partial_action(&alice_action, 0, &forest_root_hash, &alice_kp.signing_key);
 
     let mut composer = TurnComposer::new(matcher_cell, 1000, 0);
-    composer.add_fragment(SignedFragment {
-        actions: vec![alice_action],
-        signatures: vec![alice_sig],
-        signer: alice_kp.public_key,
-    }).unwrap();
+    composer
+        .add_fragment(SignedFragment {
+            actions: vec![alice_action],
+            signatures: vec![alice_sig],
+            signer: alice_kp.public_key,
+        })
+        .unwrap();
     // No settlement action to balance the -100.
 
     let result = composer.compose();
@@ -2790,7 +2922,10 @@ fn test_fragment_full_commitment_rejected() {
 
     assert!(result.is_err());
     match result.unwrap_err() {
-        ComposeError::FullCommitmentInFragment { fragment_index, action_index } => {
+        ComposeError::FullCommitmentInFragment {
+            fragment_index,
+            action_index,
+        } => {
             assert_eq!(fragment_index, 0);
             assert_eq!(action_index, 0);
         }
@@ -2830,7 +2965,11 @@ fn test_fragment_signature_count_mismatch() {
 
     assert!(result.is_err());
     match result.unwrap_err() {
-        ComposeError::SignatureCountMismatch { fragment_index, actions, signatures } => {
+        ComposeError::SignatureCountMismatch {
+            fragment_index,
+            actions,
+            signatures,
+        } => {
             assert_eq!(fragment_index, 0);
             assert_eq!(actions, 1);
             assert_eq!(signatures, 0);
@@ -2879,7 +3018,9 @@ fn test_program_predicate_gte_enforced() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -2911,7 +3052,10 @@ fn test_program_predicate_gte_enforced() {
     }
     let turn = builder.fee(500).build();
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "expected success for field >= 100, got: {result:?}");
+    assert!(
+        result.is_committed(),
+        "expected success for field >= 100, got: {result:?}"
+    );
 }
 
 #[test]
@@ -2919,9 +3063,7 @@ fn test_program_immutable_field_enforced() {
     // A cell with Immutable(index=1) rejects transitions that change field[1].
     use pyana_cell::program::{StateConstraint, field_from_u64};
 
-    let program = pyana_cell::CellProgram::Predicate(vec![StateConstraint::Immutable {
-        index: 1,
-    }]);
+    let program = pyana_cell::CellProgram::Predicate(vec![StateConstraint::Immutable { index: 1 }]);
 
     let mut ledger = Ledger::new();
     let (agent, _) = make_open_cell(1, 5000);
@@ -2932,7 +3074,9 @@ fn test_program_immutable_field_enforced() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -2946,7 +3090,10 @@ fn test_program_immutable_field_enforced() {
     }
     let turn = builder.fee(500).build();
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_rejected(), "expected rejection for mutating immutable field");
+    assert!(
+        result.is_rejected(),
+        "expected rejection for mutating immutable field"
+    );
     let (error, _) = result.unwrap_rejected();
     match error {
         TurnError::ProgramViolation { cell, .. } => {
@@ -2964,7 +3111,10 @@ fn test_program_immutable_field_enforced() {
     }
     let turn = builder.fee(500).build();
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "expected success for mutable field, got: {result:?}");
+    assert!(
+        result.is_committed(),
+        "expected success for mutable field, got: {result:?}"
+    );
 }
 
 #[test]
@@ -2983,7 +3133,10 @@ fn test_program_none_backward_compat() {
     }
     let turn = builder.fee(500).build();
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "CellProgram::None should allow any state change");
+    assert!(
+        result.is_committed(),
+        "CellProgram::None should allow any state change"
+    );
 }
 
 #[test]
@@ -3007,7 +3160,9 @@ fn test_program_sum_conservation_enforced() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -3021,7 +3176,10 @@ fn test_program_sum_conservation_enforced() {
     }
     let turn = builder.fee(500).build();
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_rejected(), "expected rejection for conservation violation");
+    assert!(
+        result.is_rejected(),
+        "expected rejection for conservation violation"
+    );
 
     // Maintain conservation: set field[0] = 400, field[1] = 400 (400 + 400 + 200 = 1000).
     // Nonce is now 1 because fee+nonce commit is permanent even on failure.
@@ -3033,7 +3191,10 @@ fn test_program_sum_conservation_enforced() {
     }
     let turn = builder.fee(500).build();
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "expected success for conserving sum, got: {result:?}");
+    assert!(
+        result.is_committed(),
+        "expected success for conserving sum, got: {result:?}"
+    );
 }
 
 // =============================================================================
@@ -3087,7 +3248,10 @@ fn test_balanced_transfer_via_excess() {
     let turn = builder.fee(100).build();
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "balanced excess should commit: {result:?}");
+    assert!(
+        result.is_committed(),
+        "balanced excess should commit: {result:?}"
+    );
 
     // A lost 200.
     let a = ledger.get(&a_id).unwrap();
@@ -3176,7 +3340,10 @@ fn test_multiple_sources_one_sink() {
     let turn = builder.fee(100).build();
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "multi-source single-sink should commit: {result:?}");
+    assert!(
+        result.is_committed(),
+        "multi-source single-sink should commit: {result:?}"
+    );
 
     assert_eq!(ledger.get(&a_id).unwrap().state.balance, 450);
     assert_eq!(ledger.get(&b_id).unwrap().state.balance, 450);
@@ -3222,7 +3389,10 @@ fn test_proof_circuit_withdraw_without_destination() {
         let turn = builder.fee(100).build();
 
         let result = executor.execute(&turn, &mut ledger);
-        assert!(result.is_committed(), "composed withdrawal+deposit should succeed: {result:?}");
+        assert!(
+            result.is_committed(),
+            "composed withdrawal+deposit should succeed: {result:?}"
+        );
 
         assert_eq!(ledger.get(&a_id).unwrap().state.balance, 900);
         assert_eq!(ledger.get(&b_id).unwrap().state.balance, 100);
@@ -3247,7 +3417,10 @@ fn test_explicit_transfer_still_works() {
     let turn = builder.fee(100).build();
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "explicit transfer should still work: {result:?}");
+    assert!(
+        result.is_committed(),
+        "explicit transfer should still work: {result:?}"
+    );
 
     assert_eq!(ledger.get(&a_id).unwrap().state.balance, 800);
     assert_eq!(ledger.get(&b_id).unwrap().state.balance, 700);
@@ -3275,7 +3448,11 @@ fn test_balance_change_underflow_rejected() {
 
     let (error, _) = result.unwrap_rejected();
     match error {
-        TurnError::BalanceChangeUnderflow { cell, current, delta } => {
+        TurnError::BalanceChangeUnderflow {
+            cell,
+            current,
+            delta,
+        } => {
             assert_eq!(cell, a_id);
             assert_eq!(current, 100);
             assert_eq!(delta, -200);
@@ -3350,7 +3527,10 @@ fn test_balance_change_with_effects() {
     let turn = builder.fee(100).build();
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "balance_change with effects should commit: {result:?}");
+    assert!(
+        result.is_committed(),
+        "balance_change with effects should commit: {result:?}"
+    );
 
     let a = ledger.get(&a_id).unwrap();
     assert_eq!(a.state.balance, 900);
@@ -3378,7 +3558,10 @@ fn test_zero_balance_change_no_effect() {
     let turn = builder.fee(100).build();
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "zero balance_change should commit: {result:?}");
+    assert!(
+        result.is_committed(),
+        "zero balance_change should commit: {result:?}"
+    );
 
     // Balance unchanged.
     assert_eq!(ledger.get(&a_id).unwrap().state.balance, 1000);
@@ -3416,14 +3599,23 @@ fn test_fee_charged_on_failure() {
     // TWO-PHASE FEE COMMITMENT: Even though the turn failed, the fee is charged
     // and the nonce is incremented. This prevents DoS via expensive-but-failing turns.
     let agent = ledger.get(&agent_id).unwrap();
-    assert_eq!(agent.state.balance, initial_agent_balance - 500,
-        "fee must be charged even on failure");
-    assert_eq!(agent.state.nonce, initial_agent_nonce + 1,
-        "nonce must increment even on failure");
+    assert_eq!(
+        agent.state.balance,
+        initial_agent_balance - 500,
+        "fee must be charged even on failure"
+    );
+    assert_eq!(
+        agent.state.nonce,
+        initial_agent_nonce + 1,
+        "nonce must increment even on failure"
+    );
 
     // Target cell should be completely unaffected (Phase 2 rolled back).
     let target = ledger.get(&target_id).unwrap();
-    assert_eq!(target.state.balance, 100, "target balance must not change on failed turn");
+    assert_eq!(
+        target.state.balance, 100,
+        "target balance must not change on failed turn"
+    );
 }
 
 // =============================================================================
@@ -3461,7 +3653,9 @@ fn test_permission_change_doesnt_affect_same_action() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -3474,16 +3668,19 @@ fn test_permission_change_doesnt_affect_same_action() {
     {
         let action = builder.action(target_id, "exploit_attempt");
         // First effect: weaken permissions.
-        action.set_permissions(target_id, pyana_cell::Permissions {
-            send: AuthRequired::None,
-            receive: AuthRequired::None,
-            set_state: AuthRequired::None,
-            set_permissions: AuthRequired::None,
-            set_verification_key: AuthRequired::None,
-            increment_nonce: AuthRequired::None,
-            delegate: AuthRequired::None,
-            access: AuthRequired::None,
-        });
+        action.set_permissions(
+            target_id,
+            pyana_cell::Permissions {
+                send: AuthRequired::None,
+                receive: AuthRequired::None,
+                set_state: AuthRequired::None,
+                set_permissions: AuthRequired::None,
+                set_verification_key: AuthRequired::None,
+                increment_nonce: AuthRequired::None,
+                delegate: AuthRequired::None,
+                access: AuthRequired::None,
+            },
+        );
         // Second effect: try to exploit the weakened permissions.
         action.transfer(target_id, agent_id, 500);
     }
@@ -3495,7 +3692,10 @@ fn test_permission_change_doesnt_affect_same_action() {
     // (verify_authorization) checks ALL effects against the ORIGINAL permissions.
     // The action has a Transfer from target, which requires Send permission.
     // The ORIGINAL permissions require Signature for Send, but we have None auth.
-    assert!(result.is_rejected(), "permission exploit should be blocked, got: {result:?}");
+    assert!(
+        result.is_rejected(),
+        "permission exploit should be blocked, got: {result:?}"
+    );
 
     let (error, _) = result.unwrap_rejected();
     match error {
@@ -3511,8 +3711,11 @@ fn test_permission_change_doesnt_affect_same_action() {
 
     // Verify permissions were NOT changed (entire action was rejected in Phase 2,
     // since verify_authorization fails before any effects are applied).
-    assert_eq!(target.permissions.send, AuthRequired::Signature,
-        "permissions must not be changed when action is rejected");
+    assert_eq!(
+        target.permissions.send,
+        AuthRequired::Signature,
+        "permissions must not be changed when action is rejected"
+    );
 }
 
 // =============================================================================
@@ -3531,7 +3734,9 @@ fn test_proved_state_set_by_proof() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -3575,7 +3780,9 @@ fn test_proved_state_cleared_by_signature() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -3629,7 +3836,9 @@ fn test_proved_state_unchanged_when_no_fields_modified() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -3682,7 +3891,9 @@ fn test_precondition_proved_state_true() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -3741,7 +3952,10 @@ fn test_precondition_proved_state_false_rejects() {
     let (error, _) = result.unwrap_rejected();
     match error {
         TurnError::PreconditionFailed { description } => {
-            assert!(description.contains("ProvedStateMismatch"), "got: {description}");
+            assert!(
+                description.contains("ProvedStateMismatch"),
+                "got: {description}"
+            );
         }
         other => panic!("expected PreconditionFailed, got {other:?}"),
     }
@@ -3763,7 +3977,9 @@ fn test_partial_proof_fields_doesnt_set_proved() {
     let target_id = target.id;
 
     let mut agent_with_cap = agent;
-    agent_with_cap.capabilities.grant(target_id, AuthRequired::None);
+    agent_with_cap
+        .capabilities
+        .grant(target_id, AuthRequired::None);
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -3832,7 +4048,10 @@ fn test_note_spend_and_create_conservation() {
     let turn = builder.fee(10000).build();
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "conservation-valid note turn should commit");
+    assert!(
+        result.is_committed(),
+        "conservation-valid note turn should commit"
+    );
 }
 
 #[test]
@@ -3871,7 +4090,14 @@ fn test_note_conservation_violated() {
     match result {
         crate::turn::TurnResult::Rejected { reason, .. } => {
             assert!(
-                matches!(reason, TurnError::NoteConservationViolation { asset_type: 1, inputs: 100, outputs: 200 }),
+                matches!(
+                    reason,
+                    TurnError::NoteConservationViolation {
+                        asset_type: 1,
+                        inputs: 100,
+                        outputs: 200
+                    }
+                ),
                 "expected NoteConservationViolation, got: {reason:?}"
             );
         }
@@ -3916,7 +4142,10 @@ fn test_note_nft_transfer() {
     let turn = builder.fee(10000).build();
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "NFT transfer should commit (0==0 conservation)");
+    assert!(
+        result.is_committed(),
+        "NFT transfer should commit (0==0 conservation)"
+    );
 }
 
 #[test]
@@ -3963,7 +4192,10 @@ fn test_note_multiple_asset_types_conservation() {
     let turn = builder.fee(10000).build();
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "multi-asset conservation should pass");
+    assert!(
+        result.is_committed(),
+        "multi-asset conservation should pass"
+    );
 }
 
 #[test]
@@ -4009,7 +4241,6 @@ fn test_note_cross_asset_conservation_fails() {
     }
 }
 
-
 // =============================================================================
 // Tests: Three-Party Introduction (Effect::Introduce)
 // === Three-Party Introduction Tests ===
@@ -4018,10 +4249,16 @@ fn setup_three_cells_for_introduction() -> (Ledger, CellId, CellId, CellId) {
     let (alice, _) = make_open_cell(10, 10000);
     let (bob, _) = make_open_cell(20, 1000);
     let (carol, _) = make_open_cell(30, 1000);
-    let alice_id = alice.id; let bob_id = bob.id; let carol_id = carol.id;
+    let alice_id = alice.id;
+    let bob_id = bob.id;
+    let carol_id = carol.id;
     let mut alice_with_caps = alice;
-    alice_with_caps.capabilities.grant(bob_id, AuthRequired::None);
-    alice_with_caps.capabilities.grant(carol_id, AuthRequired::None);
+    alice_with_caps
+        .capabilities
+        .grant(bob_id, AuthRequired::None);
+    alice_with_caps
+        .capabilities
+        .grant(carol_id, AuthRequired::None);
     ledger.insert_cell(alice_with_caps).unwrap();
     ledger.insert_cell(bob).unwrap();
     ledger.insert_cell(carol).unwrap();
@@ -4032,7 +4269,10 @@ fn test_introduction_basic_success() {
     let (mut ledger, alice_id, bob_id, carol_id) = setup_three_cells_for_introduction();
     let executor = zero_cost_executor();
     let mut builder = TurnBuilder::new(alice_id, 0);
-    { let action = builder.action(alice_id, "introduce"); action.introduce(alice_id, bob_id, carol_id, AuthRequired::None); }
+    {
+        let action = builder.action(alice_id, "introduce");
+        action.introduce(alice_id, bob_id, carol_id, AuthRequired::None);
+    }
     let turn = builder.fee(100).build();
     let result = executor.execute(&turn, &mut ledger);
     assert!(result.is_committed(), "introduction should succeed");
@@ -4049,17 +4289,30 @@ fn test_introduction_fails_without_cap_to_target() {
     let (alice, _) = make_open_cell(10, 10000);
     let (bob, _) = make_open_cell(20, 1000);
     let (carol, _) = make_open_cell(30, 1000);
-    let alice_id = alice.id; let bob_id = bob.id; let carol_id = carol.id;
-    let mut a = alice; a.capabilities.grant(bob_id, AuthRequired::None);
-    ledger.insert_cell(a).unwrap(); ledger.insert_cell(bob).unwrap(); ledger.insert_cell(carol).unwrap();
+    let alice_id = alice.id;
+    let bob_id = bob.id;
+    let carol_id = carol.id;
+    let mut a = alice;
+    a.capabilities.grant(bob_id, AuthRequired::None);
+    ledger.insert_cell(a).unwrap();
+    ledger.insert_cell(bob).unwrap();
+    ledger.insert_cell(carol).unwrap();
     let executor = zero_cost_executor();
     let mut builder = TurnBuilder::new(alice_id, 0);
-    { let action = builder.action(alice_id, "introduce"); action.introduce(alice_id, bob_id, carol_id, AuthRequired::None); }
+    {
+        let action = builder.action(alice_id, "introduce");
+        action.introduce(alice_id, bob_id, carol_id, AuthRequired::None);
+    }
     let turn = builder.fee(100).build();
     let result = executor.execute(&turn, &mut ledger);
     assert!(result.is_rejected());
     let (error, _) = result.unwrap_rejected();
-    match error { TurnError::IntroductionDenied { reason, .. } => { assert!(reason.contains("no capability to target")); } other => panic!("expected IntroductionDenied, got: {:?}", other), }
+    match error {
+        TurnError::IntroductionDenied { reason, .. } => {
+            assert!(reason.contains("no capability to target"));
+        }
+        other => panic!("expected IntroductionDenied, got: {:?}", other),
+    }
 }
 #[test]
 fn test_introduction_fails_without_cap_to_recipient() {
@@ -4067,17 +4320,30 @@ fn test_introduction_fails_without_cap_to_recipient() {
     let (alice, _) = make_open_cell(10, 10000);
     let (bob, _) = make_open_cell(20, 1000);
     let (carol, _) = make_open_cell(30, 1000);
-    let alice_id = alice.id; let bob_id = bob.id; let carol_id = carol.id;
-    let mut a = alice; a.capabilities.grant(carol_id, AuthRequired::None);
-    ledger.insert_cell(a).unwrap(); ledger.insert_cell(bob).unwrap(); ledger.insert_cell(carol).unwrap();
+    let alice_id = alice.id;
+    let bob_id = bob.id;
+    let carol_id = carol.id;
+    let mut a = alice;
+    a.capabilities.grant(carol_id, AuthRequired::None);
+    ledger.insert_cell(a).unwrap();
+    ledger.insert_cell(bob).unwrap();
+    ledger.insert_cell(carol).unwrap();
     let executor = zero_cost_executor();
     let mut builder = TurnBuilder::new(alice_id, 0);
-    { let action = builder.action(alice_id, "introduce"); action.introduce(alice_id, bob_id, carol_id, AuthRequired::None); }
+    {
+        let action = builder.action(alice_id, "introduce");
+        action.introduce(alice_id, bob_id, carol_id, AuthRequired::None);
+    }
     let turn = builder.fee(100).build();
     let result = executor.execute(&turn, &mut ledger);
     assert!(result.is_rejected());
     let (error, _) = result.unwrap_rejected();
-    match error { TurnError::IntroductionDenied { reason, .. } => { assert!(reason.contains("no capability to recipient")); } other => panic!("expected IntroductionDenied, got: {:?}", other), }
+    match error {
+        TurnError::IntroductionDenied { reason, .. } => {
+            assert!(reason.contains("no capability to recipient"));
+        }
+        other => panic!("expected IntroductionDenied, got: {:?}", other),
+    }
 }
 #[test]
 fn test_introduction_fails_with_amplification() {
@@ -4085,24 +4351,41 @@ fn test_introduction_fails_with_amplification() {
     let (alice, _) = make_open_cell(10, 10000);
     let (bob, _) = make_open_cell(20, 1000);
     let (carol, _) = make_open_cell(30, 1000);
-    let alice_id = alice.id; let bob_id = bob.id; let carol_id = carol.id;
-    let mut a = alice; a.capabilities.grant(bob_id, AuthRequired::None); a.capabilities.grant(carol_id, AuthRequired::Signature);
-    ledger.insert_cell(a).unwrap(); ledger.insert_cell(bob).unwrap(); ledger.insert_cell(carol).unwrap();
+    let alice_id = alice.id;
+    let bob_id = bob.id;
+    let carol_id = carol.id;
+    let mut a = alice;
+    a.capabilities.grant(bob_id, AuthRequired::None);
+    a.capabilities.grant(carol_id, AuthRequired::Signature);
+    ledger.insert_cell(a).unwrap();
+    ledger.insert_cell(bob).unwrap();
+    ledger.insert_cell(carol).unwrap();
     let executor = zero_cost_executor();
     let mut builder = TurnBuilder::new(alice_id, 0);
-    { let action = builder.action(alice_id, "introduce"); action.introduce(alice_id, bob_id, carol_id, AuthRequired::None); }
+    {
+        let action = builder.action(alice_id, "introduce");
+        action.introduce(alice_id, bob_id, carol_id, AuthRequired::None);
+    }
     let turn = builder.fee(100).build();
     let result = executor.execute(&turn, &mut ledger);
     assert!(result.is_rejected());
     let (error, _) = result.unwrap_rejected();
-    match error { TurnError::IntroductionDenied { reason, .. } => { assert!(reason.contains("amplification denied")); } other => panic!("expected IntroductionDenied, got: {:?}", other), }
+    match error {
+        TurnError::IntroductionDenied { reason, .. } => {
+            assert!(reason.contains("amplification denied"));
+        }
+        other => panic!("expected IntroductionDenied, got: {:?}", other),
+    }
 }
 #[test]
 fn test_introduction_routing_directive_hash() {
     let (mut ledger, alice_id, bob_id, carol_id) = setup_three_cells_for_introduction();
     let executor = zero_cost_executor();
     let mut builder = TurnBuilder::new(alice_id, 0);
-    { let action = builder.action(alice_id, "introduce"); action.introduce(alice_id, bob_id, carol_id, AuthRequired::None); }
+    {
+        let action = builder.action(alice_id, "introduce");
+        action.introduce(alice_id, bob_id, carol_id, AuthRequired::None);
+    }
     let turn = builder.fee(100).build();
     let result = executor.execute(&turn, &mut ledger);
     let (_, receipt, _) = result.unwrap_committed();
@@ -4115,11 +4398,224 @@ fn test_introduction_attenuation_preserves_level() {
     let (mut ledger, alice_id, bob_id, carol_id) = setup_three_cells_for_introduction();
     let executor = zero_cost_executor();
     let mut builder = TurnBuilder::new(alice_id, 0);
-    { let action = builder.action(alice_id, "introduce"); action.introduce(alice_id, bob_id, carol_id, AuthRequired::Signature); }
+    {
+        let action = builder.action(alice_id, "introduce");
+        action.introduce(alice_id, bob_id, carol_id, AuthRequired::Signature);
+    }
     let turn = builder.fee(100).build();
     let result = executor.execute(&turn, &mut ledger);
     assert!(result.is_committed());
     let bob = ledger.get(&bob_id).unwrap();
     let cap = bob.capabilities.lookup_by_target(&carol_id).unwrap();
     assert_eq!(cap.permissions, AuthRequired::Signature);
+}
+
+// =============================================================================
+// Tests: BudgetGate integration (Stingray bounded counter)
+// =============================================================================
+
+use crate::budget_gate::{BudgetGate, BudgetSlice};
+
+/// Helper: build a simple noop turn with a given fee using TurnBuilder.
+/// Uses SetField effect (doesn't add extra nonce increments beyond the Phase 1 commitment).
+fn make_noop_turn_with_fee(agent_id: CellId, nonce: u64, fee: u64) -> Turn {
+    let mut builder = TurnBuilder::new(agent_id, nonce);
+    {
+        let action = builder.action(agent_id, "noop");
+        action.set_field(agent_id, 0, [0u8; 32]);
+    }
+    builder.fee(fee).build()
+}
+
+#[test]
+fn test_budget_gate_turn_within_budget_succeeds() {
+    let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100_000, 0);
+
+    // Budget slice with 10_000 ceiling — more than enough for one turn.
+    let slice = BudgetSlice::new(10_000);
+    let gate = BudgetGate::new(1, slice);
+    let executor = TurnExecutor::with_budget_gate(ComputronCosts::zero(), gate);
+
+    let turn = make_noop_turn_with_fee(agent_id, 0, 500);
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    // Verify the slice was debited.
+    let gate_ref = executor.budget_gate.as_ref().unwrap().borrow();
+    assert_eq!(gate_ref.slice.spent, 500);
+    assert_eq!(gate_ref.slice.remaining(), 9_500);
+    assert_eq!(gate_ref.slice.debits.len(), 1);
+}
+
+#[test]
+fn test_budget_gate_turn_exceeding_slice_rejected() {
+    let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100_000, 0);
+
+    // Budget slice with only 100 ceiling — less than the turn fee.
+    let slice = BudgetSlice::new(100);
+    let gate = BudgetGate::new(42, slice);
+    let executor = TurnExecutor::with_budget_gate(ComputronCosts::zero(), gate);
+
+    let turn = make_noop_turn_with_fee(agent_id, 0, 500);
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected());
+
+    let (error, _) = result.unwrap_rejected();
+    match error {
+        TurnError::BudgetExhausted {
+            silo_id,
+            requested,
+            remaining,
+        } => {
+            assert_eq!(silo_id, 42);
+            assert_eq!(requested, 500);
+            assert_eq!(remaining, 100);
+        }
+        other => panic!("expected BudgetExhausted, got: {other}"),
+    }
+
+    // Verify the slice was NOT debited (rejected before debit).
+    let gate_ref = executor.budget_gate.as_ref().unwrap().borrow();
+    assert_eq!(gate_ref.slice.spent, 0);
+    assert_eq!(gate_ref.slice.remaining(), 100);
+}
+
+#[test]
+fn test_budget_gate_multiple_turns_deplete_slice() {
+    let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100_000, 0);
+
+    // Budget slice with 1000 ceiling.
+    let slice = BudgetSlice::new(1000);
+    let gate = BudgetGate::new(1, slice);
+    let executor = TurnExecutor::with_budget_gate(ComputronCosts::zero(), gate);
+
+    // Execute 4 turns of fee=200 each (total 800, within budget).
+    for i in 0..4u64 {
+        let turn = make_noop_turn_with_fee(agent_id, i, 200);
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(result.is_committed(), "turn {i} should succeed");
+    }
+
+    // Verify progressive depletion.
+    {
+        let gate_ref = executor.budget_gate.as_ref().unwrap().borrow();
+        assert_eq!(gate_ref.slice.spent, 800);
+        assert_eq!(gate_ref.slice.remaining(), 200);
+        assert_eq!(gate_ref.slice.debits.len(), 4);
+    }
+
+    // 5th turn of fee=300 exceeds remaining (200).
+    let turn = make_noop_turn_with_fee(agent_id, 4, 300);
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected());
+    match result.unwrap_rejected().0 {
+        TurnError::BudgetExhausted {
+            remaining: 200, ..
+        } => {}
+        other => panic!("expected BudgetExhausted with remaining=200, got: {other}"),
+    }
+}
+
+#[test]
+fn test_budget_gate_refund_on_turn_failure() {
+    let (mut ledger, agent_id, target_id) = setup_two_open_cells(100_000, 0);
+
+    // Budget slice with 5000 ceiling.
+    let slice = BudgetSlice::new(5000);
+    let gate = BudgetGate::new(1, slice);
+    let executor = TurnExecutor::with_budget_gate(ComputronCosts::default_costs(), gate);
+
+    // Create a turn that will fail during execution (transfer more than available on target).
+    // The fee is within budget, but the turn fails for a different reason.
+    // Use a turn with fee=1000 that tries to transfer from target cell which has 0 balance.
+    let mut forest = CallForest::new();
+    let action = Action {
+        target: target_id,
+        method: symbol("transfer"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::Transfer {
+            from: target_id,
+            to: agent_id,
+            amount: 999_999, // Target has 0 balance -- will fail
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Full,
+        balance_change: None,
+    };
+    forest.add_root(action);
+    let turn = Turn {
+        agent: agent_id,
+        nonce: 0,
+        call_forest: forest,
+        fee: 1000,
+        memo: None,
+        valid_until: None,
+        depends_on: vec![],
+        previous_receipt_hash: None,
+    };
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected());
+
+    // The budget debit should have been refunded (fast unlock).
+    let gate_ref = executor.budget_gate.as_ref().unwrap().borrow();
+    assert_eq!(gate_ref.slice.spent, 0);
+    assert_eq!(gate_ref.slice.remaining(), 5000);
+    assert_eq!(gate_ref.slice.debits.len(), 0);
+}
+
+#[test]
+fn test_budget_gate_fresh_slice_after_rebalance() {
+    let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100_000, 0);
+
+    // Start with a small slice that gets exhausted.
+    let slice = BudgetSlice::new(500);
+    let gate = BudgetGate::new(1, slice);
+    let executor = TurnExecutor::with_budget_gate(ComputronCosts::zero(), gate);
+
+    // First turn exhausts most of the slice.
+    let turn = make_noop_turn_with_fee(agent_id, 0, 400);
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    // Next turn with fee=200 would exceed remaining (100).
+    let turn = make_noop_turn_with_fee(agent_id, 1, 200);
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected());
+
+    // Simulate rebalance: replace the slice with a fresh one.
+    {
+        let mut gate_ref = executor.budget_gate.as_ref().unwrap().borrow_mut();
+        gate_ref.slice = BudgetSlice::new(2000); // Fresh slice from coordinator
+    }
+
+    // Now the same turn succeeds with the fresh slice.
+    let turn = make_noop_turn_with_fee(agent_id, 1, 200);
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed());
+
+    // Verify new slice state.
+    let gate_ref = executor.budget_gate.as_ref().unwrap().borrow();
+    assert_eq!(gate_ref.slice.spent, 200);
+    assert_eq!(gate_ref.slice.remaining(), 1800);
+}
+
+#[test]
+fn test_budget_gate_none_allows_all_turns() {
+    // Without a budget gate, all turns execute normally (backward compatible).
+    let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100_000, 0);
+    let executor = TurnExecutor::new(ComputronCosts::zero());
+
+    for i in 0..10u64 {
+        let turn = make_noop_turn_with_fee(agent_id, i, 1000);
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(result.is_committed());
+    }
+
+    // No budget gate means no budget checking.
+    assert!(executor.budget_gate.is_none());
 }

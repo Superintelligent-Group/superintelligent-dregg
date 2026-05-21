@@ -51,11 +51,7 @@ impl PersistentStore {
     ///
     /// Returns `None` if no key exists with the given name.
     /// Returns `Err(Crypto)` if decryption/authentication fails (wrong master key).
-    pub fn load_signing_key(
-        &self,
-        name: &str,
-        master_key: &[u8; 32],
-    ) -> Result<Option<[u8; 32]>> {
+    pub fn load_signing_key(&self, name: &str, master_key: &[u8; 32]) -> Result<Option<[u8; 32]>> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(tables::SIGNING_KEYS)?;
 

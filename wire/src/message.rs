@@ -5,7 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use pyana_types::{PublicKey, Signature, AttestedRoot as TypesAttestedRoot, RevocationEvent as TypesRevocationEvent, ThresholdQC};
+pub use pyana_types::{
+    AttestedRoot as TypesAttestedRoot, PublicKey, RevocationEvent as TypesRevocationEvent,
+    Signature, ThresholdQC,
+};
 
 // =============================================================================
 // Authorization Request
@@ -33,7 +36,11 @@ pub struct AuthorizationRequest {
 
 impl AuthorizationRequest {
     /// Create a new authorization request with a random nonce.
-    pub fn new(resource: impl Into<String>, action: impl Into<String>, principal: impl Into<String>) -> Self {
+    pub fn new(
+        resource: impl Into<String>,
+        action: impl Into<String>,
+        principal: impl Into<String>,
+    ) -> Self {
         let mut nonce = [0u8; 16];
         getrandom_fill(&mut nonce);
         Self {
@@ -379,8 +386,14 @@ mod tests {
                 node_id: [9; 32],
                 node_name: "responder".to_string(),
             },
-            WireMessage::Ping { seq: 1, timestamp: 100 },
-            WireMessage::Pong { seq: 1, timestamp: 101 },
+            WireMessage::Ping {
+                seq: 1,
+                timestamp: 100,
+            },
+            WireMessage::Pong {
+                seq: 1,
+                timestamp: 101,
+            },
             WireMessage::PresentationResult {
                 accepted: true,
                 reason: None,
@@ -395,7 +408,12 @@ mod tests {
         for msg in messages {
             let bytes = postcard::to_stdvec(&msg).unwrap();
             let decoded: WireMessage = postcard::from_bytes(&bytes).unwrap();
-            assert_eq!(msg, decoded, "roundtrip failed for {:?}", msg.variant_name());
+            assert_eq!(
+                msg,
+                decoded,
+                "roundtrip failed for {:?}",
+                msg.variant_name()
+            );
         }
     }
 

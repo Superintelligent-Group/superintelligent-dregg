@@ -68,10 +68,7 @@ impl SiloClient {
     /// # Errors
     ///
     /// Returns [`SdkError::Wire`] if the connection cannot be established.
-    pub async fn connect(
-        addr: SocketAddr,
-        wallet: Arc<AgentWallet>,
-    ) -> Result<Self, SdkError> {
+    pub async fn connect(addr: SocketAddr, wallet: Arc<AgentWallet>) -> Result<Self, SdkError> {
         let conn = PeerConnection::connect(&addr.to_string())
             .await
             .map_err(|e| SdkError::Wire(format!("connect failed: {e}")))?;
@@ -126,12 +123,16 @@ impl SiloClient {
             capabilities: vec!["present".to_string(), "revoke-check".to_string()],
         };
 
-        let response = self.connection.request(hello).await.map_err(|e| {
-            SdkError::Wire(format!("handshake failed: {e}"))
-        })?;
+        let response = self
+            .connection
+            .request(hello)
+            .await
+            .map_err(|e| SdkError::Wire(format!("handshake failed: {e}")))?;
 
         match response {
-            WireMessage::Welcome { federation_root, .. } => Ok(federation_root),
+            WireMessage::Welcome {
+                federation_root, ..
+            } => Ok(federation_root),
             WireMessage::Error { message, .. } => Err(SdkError::Rejected(message)),
             other => Err(SdkError::Wire(format!(
                 "unexpected handshake response: {}",
@@ -179,25 +180,27 @@ impl SiloClient {
             federation_root,
         };
 
-        let response = self.connection.request(msg).await.map_err(|e| {
-            SdkError::Wire(format!("present_token failed: {e}"))
-        })?;
+        let response = self
+            .connection
+            .request(msg)
+            .await
+            .map_err(|e| SdkError::Wire(format!("present_token failed: {e}")))?;
 
         match response {
-            WireMessage::PresentationResult { accepted, reason, request_digest } => {
-                Ok(PresentationResult {
-                    accepted,
-                    reason,
-                    request_digest,
-                })
-            }
-            WireMessage::Error { message, .. } => {
-                Ok(PresentationResult {
-                    accepted: false,
-                    reason: Some(message),
-                    request_digest: wire_request.digest(),
-                })
-            }
+            WireMessage::PresentationResult {
+                accepted,
+                reason,
+                request_digest,
+            } => Ok(PresentationResult {
+                accepted,
+                reason,
+                request_digest,
+            }),
+            WireMessage::Error { message, .. } => Ok(PresentationResult {
+                accepted: false,
+                reason: Some(message),
+                request_digest: wire_request.digest(),
+            }),
             other => Err(SdkError::Wire(format!(
                 "unexpected response to PresentToken: {}",
                 other.variant_name()
@@ -223,9 +226,11 @@ impl SiloClient {
             token_id: token_id.to_string(),
         };
 
-        let response = self.connection.request(msg).await.map_err(|e| {
-            SdkError::Wire(format!("check_revocation failed: {e}"))
-        })?;
+        let response = self
+            .connection
+            .request(msg)
+            .await
+            .map_err(|e| SdkError::Wire(format!("check_revocation failed: {e}")))?;
 
         match response {
             WireMessage::NonMembershipResponse { proof, .. } => {
@@ -249,14 +254,19 @@ impl SiloClient {
     pub async fn get_attested_root(&mut self) -> Result<([u8; 32], u64, i64), SdkError> {
         let msg = WireMessage::RequestAttestedRoot;
 
-        let response = self.connection.request(msg).await.map_err(|e| {
-            SdkError::Wire(format!("get_attested_root failed: {e}"))
-        })?;
+        let response = self
+            .connection
+            .request(msg)
+            .await
+            .map_err(|e| SdkError::Wire(format!("get_attested_root failed: {e}")))?;
 
         match response {
-            WireMessage::AttestedRoot { root, height, timestamp, .. } => {
-                Ok((root, height, timestamp))
-            }
+            WireMessage::AttestedRoot {
+                root,
+                height,
+                timestamp,
+                ..
+            } => Ok((root, height, timestamp)),
             WireMessage::Error { message, .. } => {
                 Err(SdkError::Wire(format!("attested root error: {message}")))
             }
@@ -279,10 +289,7 @@ impl SiloClient {
     /// # Returns
     ///
     /// The new Merkle root and height after revocation, or an error.
-    pub async fn submit_revocation(
-        &mut self,
-        token_id: &str,
-    ) -> Result<([u8; 32], u64), SdkError> {
+    pub async fn submit_revocation(&mut self, token_id: &str) -> Result<([u8; 32], u64), SdkError> {
         let sig = self.wallet.sign_bytes(token_id.as_bytes());
 
         let msg = WireMessage::SubmitRevocation {
@@ -291,15 +298,17 @@ impl SiloClient {
             authority_sig: Signature(sig.0),
         };
 
-        let response = self.connection.request(msg).await.map_err(|e| {
-            SdkError::Wire(format!("submit_revocation failed: {e}"))
-        })?;
+        let response = self
+            .connection
+            .request(msg)
+            .await
+            .map_err(|e| SdkError::Wire(format!("submit_revocation failed: {e}")))?;
 
         match response {
             WireMessage::RevocationAck { new_root, height } => Ok((new_root, height)),
-            WireMessage::Error { message, .. } => {
-                Err(SdkError::Rejected(format!("revocation rejected: {message}")))
-            }
+            WireMessage::Error { message, .. } => Err(SdkError::Rejected(format!(
+                "revocation rejected: {message}"
+            ))),
             other => Err(SdkError::Wire(format!(
                 "unexpected response to SubmitRevocation: {}",
                 other.variant_name()

@@ -3,8 +3,8 @@
 //! These builders provide a fluent interface for constructing turns and actions
 //! without manually assembling all the nested structures.
 
-use pyana_cell::{CapabilityRef, CellId, Preconditions};
 use pyana_cell::state::FieldElement;
+use pyana_cell::{CapabilityRef, CellId, Preconditions};
 
 use crate::action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, Event, symbol};
 use crate::forest::CallForest;
@@ -36,7 +36,8 @@ impl TurnBuilder {
     /// Add a root-level action targeting the given cell with the given method.
     /// Returns a mutable reference to the ActionBuilder for further configuration.
     pub fn action(&mut self, target: CellId, method: &str) -> &mut ActionBuilder {
-        self.action_builders.push(ActionBuilder::new(target, method));
+        self.action_builders
+            .push(ActionBuilder::new(target, method));
         self.action_builders.last_mut().unwrap()
     }
 
@@ -190,28 +191,40 @@ impl ActionBuilder {
 
     /// Set a nonce precondition.
     pub fn require_nonce(&mut self, nonce: u64) -> &mut Self {
-        let cell_pre = self.preconditions.cell_state.get_or_insert_with(Default::default);
+        let cell_pre = self
+            .preconditions
+            .cell_state
+            .get_or_insert_with(Default::default);
         cell_pre.nonce = Some(nonce);
         self
     }
 
     /// Set a minimum balance precondition.
     pub fn require_min_balance(&mut self, min: u64) -> &mut Self {
-        let cell_pre = self.preconditions.cell_state.get_or_insert_with(Default::default);
+        let cell_pre = self
+            .preconditions
+            .cell_state
+            .get_or_insert_with(Default::default);
         cell_pre.min_balance = Some(min);
         self
     }
 
     /// Set a state field equality precondition.
     pub fn require_field_equals(&mut self, index: usize, value: FieldElement) -> &mut Self {
-        let cell_pre = self.preconditions.cell_state.get_or_insert_with(Default::default);
+        let cell_pre = self
+            .preconditions
+            .cell_state
+            .get_or_insert_with(Default::default);
         cell_pre.field_equals.push((index, value));
         self
     }
 
     /// Set a proved_state precondition.
     pub fn require_proved_state(&mut self, expected: bool) -> &mut Self {
-        let cell_pre = self.preconditions.cell_state.get_or_insert_with(Default::default);
+        let cell_pre = self
+            .preconditions
+            .cell_state
+            .get_or_insert_with(Default::default);
         cell_pre.proved_state = Some(expected);
         self
     }
@@ -295,12 +308,7 @@ impl ActionBuilder {
     }
 
     /// Add a GrantCapability effect.
-    pub fn grant_capability(
-        &mut self,
-        from: CellId,
-        to: CellId,
-        cap: CapabilityRef,
-    ) -> &mut Self {
+    pub fn grant_capability(&mut self, from: CellId, to: CellId, cap: CapabilityRef) -> &mut Self {
         self.effects.push(Effect::GrantCapability { from, to, cap });
         self
     }
@@ -318,7 +326,11 @@ impl ActionBuilder {
         token_id: [u8; 32],
         balance: u64,
     ) -> &mut Self {
-        self.effects.push(Effect::CreateCell { public_key, token_id, balance });
+        self.effects.push(Effect::CreateCell {
+            public_key,
+            token_id,
+            balance,
+        });
         self
     }
 
@@ -327,16 +339,28 @@ impl ActionBuilder {
     /// NOTE: Permission effects are always applied LAST within an action,
     /// regardless of declaration order. All other effects in the same action
     /// are checked against the ORIGINAL permissions.
-    pub fn set_permissions(&mut self, cell: CellId, new_permissions: pyana_cell::Permissions) -> &mut Self {
-        self.effects.push(Effect::SetPermissions { cell, new_permissions });
+    pub fn set_permissions(
+        &mut self,
+        cell: CellId,
+        new_permissions: pyana_cell::Permissions,
+    ) -> &mut Self {
+        self.effects.push(Effect::SetPermissions {
+            cell,
+            new_permissions,
+        });
         self
     }
 
     /// Add a SetVerificationKey effect.
     ///
     /// NOTE: Like SetPermissions, this is applied LAST within an action.
-    pub fn set_verification_key(&mut self, cell: CellId, new_vk: Option<pyana_cell::VerificationKey>) -> &mut Self {
-        self.effects.push(Effect::SetVerificationKey { cell, new_vk });
+    pub fn set_verification_key(
+        &mut self,
+        cell: CellId,
+        new_vk: Option<pyana_cell::VerificationKey>,
+    ) -> &mut Self {
+        self.effects
+            .push(Effect::SetVerificationKey { cell, new_vk });
         self
     }
 
@@ -344,8 +368,19 @@ impl ActionBuilder {
     /// Excess is the negation of balance_change: withdrawal (-delta) produces excess (+),
     /// deposit (+delta) consumes excess (-).
     /// Add a three-party introduction effect.
-    pub fn introduce(&mut self, introducer: CellId, recipient: CellId, target: CellId, permissions: pyana_cell::AuthRequired) -> &mut Self {
-        self.effects.push(Effect::Introduce { introducer, recipient, target, permissions });
+    pub fn introduce(
+        &mut self,
+        introducer: CellId,
+        recipient: CellId,
+        target: CellId,
+        permissions: pyana_cell::AuthRequired,
+    ) -> &mut Self {
+        self.effects.push(Effect::Introduce {
+            introducer,
+            recipient,
+            target,
+            permissions,
+        });
         self
     }
 

@@ -12,9 +12,7 @@
 use pyana_cell::note::Note;
 use pyana_cell::nullifier_set::NullifierSet;
 use pyana_circuit::{
-    BabyBear, prove_note_spend, verify_note_spend,
-    note_spending_air::create_test_witness,
-    stark,
+    BabyBear, note_spending_air::create_test_witness, prove_note_spend, stark, verify_note_spend,
 };
 
 /// Asset type constant for GOLD.
@@ -55,13 +53,16 @@ fn main() {
     let alice_commitment = alice_note.commitment();
 
     println!("  Alice's note:");
-    println!("    Owner: {:02x}{:02x}{:02x}{:02x}... (Alice's public key)",
-        alice_owner[0], alice_owner[1], alice_owner[2], alice_owner[3]);
+    println!(
+        "    Owner: {:02x}{:02x}{:02x}{:02x}... (Alice's public key)",
+        alice_owner[0], alice_owner[1], alice_owner[2], alice_owner[3]
+    );
     println!("    Asset: GOLD (0x{:016x})", ASSET_GOLD);
     println!("    Value: 100");
-    println!("    Commitment: {:02x}{:02x}{:02x}{:02x}...",
-        alice_commitment.0[0], alice_commitment.0[1],
-        alice_commitment.0[2], alice_commitment.0[3]);
+    println!(
+        "    Commitment: {:02x}{:02x}{:02x}{:02x}...",
+        alice_commitment.0[0], alice_commitment.0[1], alice_commitment.0[2], alice_commitment.0[3]
+    );
     println!();
     println!("  What an observer sees on-chain: ONLY the commitment hash.");
     println!("  They cannot determine the owner, value, or asset type.");
@@ -77,9 +78,10 @@ fn main() {
 
     // Alice computes the nullifier for her note (proves ownership).
     let alice_nullifier = alice_note.nullifier(&alice_sk);
-    println!("  Alice reveals nullifier: {:02x}{:02x}{:02x}{:02x}...",
-        alice_nullifier.0[0], alice_nullifier.0[1],
-        alice_nullifier.0[2], alice_nullifier.0[3]);
+    println!(
+        "  Alice reveals nullifier: {:02x}{:02x}{:02x}{:02x}...",
+        alice_nullifier.0[0], alice_nullifier.0[1], alice_nullifier.0[2], alice_nullifier.0[3]
+    );
     println!("  (Only Alice can compute this — requires her spending key)");
     println!();
 
@@ -89,15 +91,18 @@ fn main() {
     println!("  Alice generates STARK proof of note ownership...");
     let alice_witness = create_test_witness(
         BabyBear::new(u32::from_le_bytes(alice_owner[0..4].try_into().unwrap())),
-        BabyBear::new(100),      // value
+        BabyBear::new(100),               // value
         BabyBear::new(ASSET_GOLD as u32), // asset type (truncated for BabyBear)
         BabyBear::new(u32::from_le_bytes(alice_sk[0..4].try_into().unwrap())), // spending key
-        4, // Merkle depth
+        4,                                // Merkle depth
     );
     let alice_proof = prove_note_spend(&alice_witness);
     let proof_bytes = stark::proof_to_bytes(&alice_proof);
-    println!("  STARK proof generated: {} bytes ({:.1} KiB)",
-        proof_bytes.len(), proof_bytes.len() as f64 / 1024.0);
+    println!(
+        "  STARK proof generated: {} bytes ({:.1} KiB)",
+        proof_bytes.len(),
+        proof_bytes.len() as f64 / 1024.0
+    );
     println!();
 
     // Verify the STARK proof (anyone can do this with only public inputs).
@@ -113,22 +118,22 @@ fn main() {
     println!();
 
     // Add nullifier to the set (note is now spent).
-    nullifier_set.insert(alice_nullifier).expect("nullifier should be accepted");
+    nullifier_set
+        .insert(alice_nullifier)
+        .expect("nullifier should be accepted");
     println!("  Nullifier recorded in global set (note is spent).");
     println!();
 
     // Alice creates a new note for Bob.
-    let bob_note = Note::with_randomness(
-        bob_owner,
-        [ASSET_GOLD, 100, 0, 0, 0, 0, 0, 0],
-        [0xB0u8; 32],
-    );
+    let bob_note =
+        Note::with_randomness(bob_owner, [ASSET_GOLD, 100, 0, 0, 0, 0, 0, 0], [0xB0u8; 32]);
     let bob_commitment = bob_note.commitment();
 
     println!("  New note created for Bob:");
-    println!("    Commitment: {:02x}{:02x}{:02x}{:02x}...",
-        bob_commitment.0[0], bob_commitment.0[1],
-        bob_commitment.0[2], bob_commitment.0[3]);
+    println!(
+        "    Commitment: {:02x}{:02x}{:02x}{:02x}...",
+        bob_commitment.0[0], bob_commitment.0[1], bob_commitment.0[2], bob_commitment.0[3]
+    );
     println!();
     println!("  PRIVACY ANALYSIS (what an observer sees):");
     println!("    - A nullifier was revealed (some note was spent)");
@@ -162,7 +167,10 @@ fn main() {
     // Bob also verifies his note has NOT been spent (non-membership proof).
     let bob_nullifier = bob_note.nullifier(&bob_sk);
     let non_membership = nullifier_set.prove_non_membership(&bob_nullifier);
-    assert!(non_membership.is_some(), "Bob's note should not be spent yet");
+    assert!(
+        non_membership.is_some(),
+        "Bob's note should not be spent yet"
+    );
     let nm_proof = non_membership.unwrap();
     let root = nullifier_set.root();
     assert!(NullifierSet::verify_non_membership(&nm_proof, &root));
@@ -178,9 +186,10 @@ fn main() {
     let carol_owner = owner_key("carol");
 
     // Bob spends his 100 GOLD note.
-    println!("  Bob reveals his nullifier: {:02x}{:02x}{:02x}{:02x}...",
-        bob_nullifier.0[0], bob_nullifier.0[1],
-        bob_nullifier.0[2], bob_nullifier.0[3]);
+    println!(
+        "  Bob reveals his nullifier: {:02x}{:02x}{:02x}{:02x}...",
+        bob_nullifier.0[0], bob_nullifier.0[1], bob_nullifier.0[2], bob_nullifier.0[3]
+    );
 
     // Bob generates a STARK proof of ownership.
     let bob_witness = create_test_witness(
@@ -204,7 +213,9 @@ fn main() {
     println!();
 
     // Record Bob's nullifier as spent.
-    nullifier_set.insert(bob_nullifier).expect("Bob's nullifier should be accepted");
+    nullifier_set
+        .insert(bob_nullifier)
+        .expect("Bob's nullifier should be accepted");
     println!("  Bob's nullifier recorded (his 100 GOLD note is spent).");
     println!();
 
@@ -216,24 +227,29 @@ fn main() {
     );
     let carol_commitment = carol_note.commitment();
 
-    let bob_change_note = Note::with_randomness(
-        bob_owner,
-        [ASSET_GOLD, 40, 0, 0, 0, 0, 0, 0],
-        [0xB1u8; 32],
-    );
+    let bob_change_note =
+        Note::with_randomness(bob_owner, [ASSET_GOLD, 40, 0, 0, 0, 0, 0, 0], [0xB1u8; 32]);
     let bob_change_commitment = bob_change_note.commitment();
 
     println!("  Two new notes created:");
-    println!("    Carol's note: commitment {:02x}{:02x}{:02x}{:02x}...",
-        carol_commitment.0[0], carol_commitment.0[1],
-        carol_commitment.0[2], carol_commitment.0[3]);
-    println!("    Bob's change: commitment {:02x}{:02x}{:02x}{:02x}...",
-        bob_change_commitment.0[0], bob_change_commitment.0[1],
-        bob_change_commitment.0[2], bob_change_commitment.0[3]);
+    println!(
+        "    Carol's note: commitment {:02x}{:02x}{:02x}{:02x}...",
+        carol_commitment.0[0], carol_commitment.0[1], carol_commitment.0[2], carol_commitment.0[3]
+    );
+    println!(
+        "    Bob's change: commitment {:02x}{:02x}{:02x}{:02x}...",
+        bob_change_commitment.0[0],
+        bob_change_commitment.0[1],
+        bob_change_commitment.0[2],
+        bob_change_commitment.0[3]
+    );
     println!();
 
     // Conservation check: 100 in = 60 + 40 out.
-    assert_eq!(bob_note.value(), carol_note.value() + bob_change_note.value());
+    assert_eq!(
+        bob_note.value(),
+        carol_note.value() + bob_change_note.value()
+    );
     println!("  Conservation verified: 100 = 60 + 40 [PASS]");
     println!();
 
@@ -256,17 +272,27 @@ fn main() {
     println!("  The complete transfer chain was: Alice -> Bob -> Carol");
     println!("  But from the public ledger, an observer sees only:\n");
     println!("  Transaction 1:");
-    println!("    Nullifier: {:02x}{:02x}...  (some note was spent)",
-        alice_nullifier.0[0], alice_nullifier.0[1]);
-    println!("    New commitment: {:02x}{:02x}...  (some note was created)",
-        bob_commitment.0[0], bob_commitment.0[1]);
+    println!(
+        "    Nullifier: {:02x}{:02x}...  (some note was spent)",
+        alice_nullifier.0[0], alice_nullifier.0[1]
+    );
+    println!(
+        "    New commitment: {:02x}{:02x}...  (some note was created)",
+        bob_commitment.0[0], bob_commitment.0[1]
+    );
     println!();
     println!("  Transaction 2:");
-    println!("    Nullifier: {:02x}{:02x}...  (some note was spent)",
-        bob_nullifier.0[0], bob_nullifier.0[1]);
-    println!("    New commitments: {:02x}{:02x}..., {:02x}{:02x}...",
-        carol_commitment.0[0], carol_commitment.0[1],
-        bob_change_commitment.0[0], bob_change_commitment.0[1]);
+    println!(
+        "    Nullifier: {:02x}{:02x}...  (some note was spent)",
+        bob_nullifier.0[0], bob_nullifier.0[1]
+    );
+    println!(
+        "    New commitments: {:02x}{:02x}..., {:02x}{:02x}...",
+        carol_commitment.0[0],
+        carol_commitment.0[1],
+        bob_change_commitment.0[0],
+        bob_change_commitment.0[1]
+    );
     println!();
     println!("  Can the observer link Transaction 1 to Transaction 2?");
     println!("    - The nullifiers are different (derived from different notes): NO");
@@ -315,16 +341,27 @@ fn main() {
     // FINAL STATE
     // =========================================================================
     println!("--- Final State ---\n");
-    println!("  Nullifier set size: {} (notes ever spent)", nullifier_set.len());
-    println!("  Nullifier set root: {:02x}{:02x}{:02x}{:02x}...",
-        nullifier_set.root()[0], nullifier_set.root()[1],
-        nullifier_set.root()[2], nullifier_set.root()[3]);
+    println!(
+        "  Nullifier set size: {} (notes ever spent)",
+        nullifier_set.len()
+    );
+    println!(
+        "  Nullifier set root: {:02x}{:02x}{:02x}{:02x}...",
+        nullifier_set.root()[0],
+        nullifier_set.root()[1],
+        nullifier_set.root()[2],
+        nullifier_set.root()[3]
+    );
     println!();
     println!("  Live notes (unspent):");
-    println!("    Carol: 60 GOLD (commitment {:02x}{:02x}...)",
-        carol_commitment.0[0], carol_commitment.0[1]);
-    println!("    Bob:   40 GOLD (commitment {:02x}{:02x}...)",
-        bob_change_commitment.0[0], bob_change_commitment.0[1]);
+    println!(
+        "    Carol: 60 GOLD (commitment {:02x}{:02x}...)",
+        carol_commitment.0[0], carol_commitment.0[1]
+    );
+    println!(
+        "    Bob:   40 GOLD (commitment {:02x}{:02x}...)",
+        bob_change_commitment.0[0], bob_change_commitment.0[1]
+    );
     println!("  Total GOLD in circulation: 100 (conserved from Alice's original)");
     println!();
     println!("  Security properties proven:");

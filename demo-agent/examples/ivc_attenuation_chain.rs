@@ -15,10 +15,10 @@
 use pyana_circuit::field::BabyBear;
 use pyana_circuit::fold_air::{FoldWitness, RemovedFact, build_shared_tree};
 use pyana_circuit::ivc::{
-    IvcBuilder, IvcVerification, FoldDelta, verify_ivc, verify_ivc_with_roots,
+    FoldDelta, IvcBuilder, IvcVerification, verify_ivc, verify_ivc_with_roots,
 };
 use pyana_circuit::poseidon2::hash_fact;
-use pyana_commit::{Fact, TokenState, FoldDeltaBuilder, verify_fold_chain};
+use pyana_commit::{Fact, FoldDeltaBuilder, TokenState, verify_fold_chain};
 
 fn main() {
     println!("=== Pyana IVC Attenuation Chain Demo ===\n");
@@ -43,28 +43,37 @@ fn main() {
 
     let initial_root = state.root();
     println!("  Root token state: {} facts", 8);
-    println!("  Initial Merkle root: {:02x}{:02x}{:02x}{:02x}...",
-        initial_root[0], initial_root[1], initial_root[2], initial_root[3]);
+    println!(
+        "  Initial Merkle root: {:02x}{:02x}{:02x}{:02x}...",
+        initial_root[0], initial_root[1], initial_root[2], initial_root[3]
+    );
     println!();
 
     // Attenuation chain: 5 steps, each removing capabilities.
     let attenuations: Vec<(&str, Vec<Fact>)> = vec![
-        ("Remove admin on logs", vec![
-            Fact::from_symbols("can_admin", &["alice", "logs"]),
-        ]),
-        ("Remove delete on both", vec![
-            Fact::from_symbols("can_delete", &["alice", "database"]),
-            Fact::from_symbols("can_delete", &["alice", "logs"]),
-        ]),
-        ("Remove write on logs", vec![
-            Fact::from_symbols("can_write", &["alice", "logs"]),
-        ]),
-        ("Remove admin on database", vec![
-            Fact::from_symbols("can_admin", &["alice", "database"]),
-        ]),
-        ("Remove write on database (read-only)", vec![
-            Fact::from_symbols("can_write", &["alice", "database"]),
-        ]),
+        (
+            "Remove admin on logs",
+            vec![Fact::from_symbols("can_admin", &["alice", "logs"])],
+        ),
+        (
+            "Remove delete on both",
+            vec![
+                Fact::from_symbols("can_delete", &["alice", "database"]),
+                Fact::from_symbols("can_delete", &["alice", "logs"]),
+            ],
+        ),
+        (
+            "Remove write on logs",
+            vec![Fact::from_symbols("can_write", &["alice", "logs"])],
+        ),
+        (
+            "Remove admin on database",
+            vec![Fact::from_symbols("can_admin", &["alice", "database"])],
+        ),
+        (
+            "Remove write on database (read-only)",
+            vec![Fact::from_symbols("can_write", &["alice", "database"])],
+        ),
     ];
 
     let mut deltas = Vec::new();
@@ -78,20 +87,29 @@ fn main() {
         let delta = builder.build().expect("fold delta should build");
         assert!(delta.apply_and_verify(), "delta {} should verify", i + 1);
 
-        let new_state = delta.reconstruct_new_state(&current_state)
+        let new_state = delta
+            .reconstruct_new_state(&current_state)
             .expect("reconstruction should succeed");
 
         println!("  Step {}: {}", i + 1, description);
-        println!("    Removed {} fact(s), new root: {:02x}{:02x}{:02x}{:02x}...",
+        println!(
+            "    Removed {} fact(s), new root: {:02x}{:02x}{:02x}{:02x}...",
             facts_to_remove.len(),
-            delta.new_root[0], delta.new_root[1], delta.new_root[2], delta.new_root[3]);
+            delta.new_root[0],
+            delta.new_root[1],
+            delta.new_root[2],
+            delta.new_root[3]
+        );
 
         deltas.push(delta);
         current_state = new_state;
     }
 
     // Verify the entire chain at the commitment layer.
-    assert!(verify_fold_chain(&deltas), "Commitment-layer fold chain must verify");
+    assert!(
+        verify_fold_chain(&deltas),
+        "Commitment-layer fold chain must verify"
+    );
     println!();
     println!("  Commitment-layer chain verified: 5 steps [PASS]");
     println!("  Final state: {} facts remaining", 3); // read database, read logs, write... no, let's count
@@ -116,17 +134,36 @@ fn main() {
     // Create capabilities as BabyBear field elements.
     let capabilities: Vec<(BabyBear, [BabyBear; 3])> = vec![
         // (predicate, [term1, term2, term3])
-        (BabyBear::new(100), [BabyBear::new(1), BabyBear::new(10), BabyBear::ZERO]),  // admin/logs
-        (BabyBear::new(200), [BabyBear::new(2), BabyBear::new(20), BabyBear::ZERO]),  // delete/db
-        (BabyBear::new(200), [BabyBear::new(2), BabyBear::new(21), BabyBear::ZERO]),  // delete/logs
-        (BabyBear::new(300), [BabyBear::new(3), BabyBear::new(30), BabyBear::ZERO]),  // write/logs
-        (BabyBear::new(100), [BabyBear::new(1), BabyBear::new(11), BabyBear::ZERO]),  // admin/db
-        (BabyBear::new(300), [BabyBear::new(3), BabyBear::new(31), BabyBear::ZERO]),  // write/db
+        (
+            BabyBear::new(100),
+            [BabyBear::new(1), BabyBear::new(10), BabyBear::ZERO],
+        ), // admin/logs
+        (
+            BabyBear::new(200),
+            [BabyBear::new(2), BabyBear::new(20), BabyBear::ZERO],
+        ), // delete/db
+        (
+            BabyBear::new(200),
+            [BabyBear::new(2), BabyBear::new(21), BabyBear::ZERO],
+        ), // delete/logs
+        (
+            BabyBear::new(300),
+            [BabyBear::new(3), BabyBear::new(30), BabyBear::ZERO],
+        ), // write/logs
+        (
+            BabyBear::new(100),
+            [BabyBear::new(1), BabyBear::new(11), BabyBear::ZERO],
+        ), // admin/db
+        (
+            BabyBear::new(300),
+            [BabyBear::new(3), BabyBear::new(31), BabyBear::ZERO],
+        ), // write/db
     ];
 
     // Build Merkle trees for each intermediate state.
     // We start with all 6 facts and remove one per step (plus an extra removal in step 2).
-    let all_fact_hashes: Vec<BabyBear> = capabilities.iter()
+    let all_fact_hashes: Vec<BabyBear> = capabilities
+        .iter()
         .map(|(pred, terms)| hash_fact(*pred, terms))
         .collect();
 
@@ -144,11 +181,11 @@ fn main() {
     // Step 4: remove capability 4 (admin/db)
     // Step 5: remove capability 5 (write/db)
     let removal_schedule: Vec<Vec<usize>> = vec![
-        vec![0],     // Step 1: admin/logs
-        vec![1],     // Step 2: delete/db (simplified: one removal per step for circuit)
-        vec![2],     // Step 3: delete/logs
-        vec![3],     // Step 4: write/logs
-        vec![4],     // Step 5: admin/db
+        vec![0], // Step 1: admin/logs
+        vec![1], // Step 2: delete/db (simplified: one removal per step for circuit)
+        vec![2], // Step 3: delete/logs
+        vec![3], // Step 4: write/logs
+        vec![4], // Step 5: admin/db
     ];
 
     let step_descriptions = [
@@ -165,13 +202,14 @@ fn main() {
 
     for (step_idx, removals) in removal_schedule.iter().enumerate() {
         // Build removed facts with membership proofs from the CURRENT tree state.
-        let removed_facts: Vec<RemovedFact> = removals.iter().map(|&fact_idx| {
-            RemovedFact {
+        let removed_facts: Vec<RemovedFact> = removals
+            .iter()
+            .map(|&fact_idx| RemovedFact {
                 predicate: capabilities[fact_idx].0,
                 terms: capabilities[fact_idx].1,
                 membership_proof: Some(initial_proofs[fact_idx].clone()),
-            }
-        }).collect();
+            })
+            .collect();
 
         // Compute a new root (simulating post-attenuation state).
         // In a real system this would be the Merkle root of the remaining facts.
@@ -192,7 +230,11 @@ fn main() {
         intermediate_roots.push(new_root);
         current_root = new_root;
 
-        println!("  Step {}: {} [accumulated]", step_idx + 1, step_descriptions[step_idx]);
+        println!(
+            "  Step {}: {} [accumulated]",
+            step_idx + 1,
+            step_descriptions[step_idx]
+        );
         println!("    Root transition: -> {:?}", new_root);
     }
 
@@ -201,7 +243,9 @@ fn main() {
     println!();
 
     // Finalize to get the constant-size IVC proof.
-    let ivc_proof = ivc_builder.finalize().expect("IVC finalization should succeed");
+    let ivc_proof = ivc_builder
+        .finalize()
+        .expect("IVC finalization should succeed");
 
     // =========================================================================
     // PART 3: Verification
@@ -243,10 +287,16 @@ fn main() {
     let ivc_size = ivc_proof.proof_size_bytes();
 
     println!("  Comparison:");
-    println!("    5 separate fold proofs: ~{} bytes ({:.1} KiB)",
-        sequential_total, sequential_total as f64 / 1024.0);
-    println!("    1 IVC proof (all 5 steps): {} bytes ({:.1} KiB)",
-        ivc_size, ivc_size as f64 / 1024.0);
+    println!(
+        "    5 separate fold proofs: ~{} bytes ({:.1} KiB)",
+        sequential_total,
+        sequential_total as f64 / 1024.0
+    );
+    println!(
+        "    1 IVC proof (all 5 steps): {} bytes ({:.1} KiB)",
+        ivc_size,
+        ivc_size as f64 / 1024.0
+    );
     println!();
 
     // Demonstrate that proof size doesn't grow linearly with chain length.
@@ -260,21 +310,28 @@ fn main() {
         if let Some(proof) = pyana_circuit::ivc::prove_ivc(test_root, test_deltas) {
             let size = proof.proof_size_bytes();
             sizes.push((n, size));
-            println!("    {:>2}-step chain: {:>7} bytes ({:>6.1} KiB)",
-                n, size, size as f64 / 1024.0);
+            println!(
+                "    {:>2}-step chain: {:>7} bytes ({:>6.1} KiB)",
+                n,
+                size,
+                size as f64 / 1024.0
+            );
         }
     }
 
     // Show the ratio: 20-step proof vs 5-step proof.
     if sizes.len() >= 4 {
-        let (_, size_5) = sizes[2];  // 5-step
+        let (_, size_5) = sizes[2]; // 5-step
         let (_, size_20) = sizes[4]; // 20-step
         let ratio = size_20 as f64 / size_5 as f64;
         println!();
         println!("    Growth ratio (20-step / 5-step): {:.2}x", ratio);
         println!("    Linear would be 4.0x -- IVC provides sub-linear scaling");
-        assert!(ratio < 3.0,
-            "IVC should provide sub-linear growth, got {:.2}x", ratio);
+        assert!(
+            ratio < 3.0,
+            "IVC should provide sub-linear growth, got {:.2}x",
+            ratio
+        );
     }
 
     println!();

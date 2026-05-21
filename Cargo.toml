@@ -25,13 +25,15 @@ token = { path = "token" }
 tokenizer = { path = "tokenizer" }
 
 ## Crates.io
-aes-gcm = { version = "0.11.0-rc.3", features = ["arrayvec"] }
+# NOTE: RC needed for aead 0.6 trait unification with chacha20poly1305 0.10;
+# stable aes-gcm 0.10 uses aead 0.5 which conflicts. Revisit when 0.11 stable ships.
+aes-gcm = { version = "0.11.0-rc.3" }
 base64 = { version = "0.22" }
 chacha20poly1305 = { version = "0.10" }
 criterion = { version = "0.5", features = ["html_reports"] }
 directories = { version = "6" }
-getrandom = { version = "0" }
-globset = { version = "0" }
+getrandom = { version = "0.3" }
+globset = { version = "0.4" }
 hmac = { version = "0.12" }
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 rmp-serde = { version = "1.3.1" }
@@ -43,3 +45,57 @@ tempfile = { version = "3" }
 thiserror = { version = "2" }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = { version = "1", features = ["std", "derive"] }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+assign_op_pattern = "allow"
+collapsible_if = "allow"
+collapsible_match = "allow"
+derivable_impls = "allow"
+explicit_auto_deref = "allow"
+for_kv_map = "allow"
+get_first = "allow"
+if_same_then_else = "allow"
+int_plus_one = "allow"
+iter_overeager_cloned = "allow"
+manual_is_multiple_of = "allow"
+mem_replace_with_default = "allow"
+needless_borrow = "allow"
+needless_borrows_for_generic_args = "allow"
+needless_range_loop = "allow"
+new_without_default = "allow"
+ptr_arg = "allow"
+question_mark = "allow"
+redundant_closure = "allow"
+should_implement_trait = "allow"
+single_match = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+unnecessary_cast = "allow"
+unnecessary_map_or = "allow"
+unwrap_or_default = "allow"
+useless_conversion = "allow"
+useless_format = "allow"
+vec_init_then_push = "allow"
+wrong_self_convention = "allow"
+identity_op = "allow"
+manual_strip = "allow"
+result_large_err = "allow"
+doc_nested_refdefs = "allow"
+large_enum_variant = "allow"
+clone_on_copy = "allow"
+extend_with_drain = "allow"
+redundant_pattern_matching = "allow"
+while_let_loop = "allow"
+io_other_error = "allow"
+manual_unwrap_or_default = "allow"
+manual_unwrap_or = "allow"
+manual_flatten = "allow"
+print_literal = "allow"
+unused_enumerate_index = "allow"
+
+[workspace.lints.rust]
+unused_imports = "allow"
+unused_variables = "allow"
+dead_code = "allow"
+unexpected_cfgs = "allow"

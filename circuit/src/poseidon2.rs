@@ -33,7 +33,8 @@ pub const TOTAL_ROUNDS: usize = EXTERNAL_ROUNDS + INTERNAL_ROUNDS;
 const SBOX_ALPHA: u32 = 7;
 
 /// Cached round constants, computed once from BLAKE3 derivation.
-pub static ROUND_CONSTANTS: LazyLock<Vec<[BabyBear; WIDTH]>> = LazyLock::new(compute_round_constants);
+pub static ROUND_CONSTANTS: LazyLock<Vec<[BabyBear; WIDTH]>> =
+    LazyLock::new(compute_round_constants);
 
 /// Cached internal diagonal matrix, computed once from BLAKE3 derivation.
 pub static INTERNAL_DIAG: LazyLock<[BabyBear; WIDTH]> = LazyLock::new(compute_internal_diag);
@@ -155,7 +156,11 @@ impl Poseidon2State {
     /// Poseidon2 internal layer: x_0 = sum(x_i) + (d_0 - 1) * x_0, others similar.
     pub fn internal_linear_layer(&mut self) {
         let diag = &*INTERNAL_DIAG;
-        let sum: BabyBear = self.state.iter().copied().fold(BabyBear::ZERO, |a, b| a + b);
+        let sum: BabyBear = self
+            .state
+            .iter()
+            .copied()
+            .fold(BabyBear::ZERO, |a, b| a + b);
 
         for i in 0..WIDTH {
             // x_i' = sum + (d_i - 1) * x_i = sum - x_i + d_i * x_i
@@ -231,10 +236,18 @@ pub fn apply_external_linear_layer(state: &[BabyBear; WIDTH]) -> [BabyBear; WIDT
         s[i] = t;
     }
     let multipliers = [
-        BabyBear::new(2), BabyBear::new(3), BabyBear::new(4), BabyBear::new(5),
-        BabyBear::new(6), BabyBear::new(7), BabyBear::new(8), BabyBear::new(9),
+        BabyBear::new(2),
+        BabyBear::new(3),
+        BabyBear::new(4),
+        BabyBear::new(5),
+        BabyBear::new(6),
+        BabyBear::new(7),
+        BabyBear::new(8),
+        BabyBear::new(9),
     ];
-    for i in 0..WIDTH { s[i] = s[i] * multipliers[i]; }
+    for i in 0..WIDTH {
+        s[i] = s[i] * multipliers[i];
+    }
     s
 }
 
@@ -250,7 +263,10 @@ pub fn apply_internal_linear_layer(state: &[BabyBear; WIDTH]) -> [BabyBear; WIDT
 }
 
 /// Compute one full (external) round of Poseidon2.
-pub fn compute_full_round(state: &[BabyBear; WIDTH], round_constants: &[BabyBear; WIDTH]) -> [BabyBear; WIDTH] {
+pub fn compute_full_round(
+    state: &[BabyBear; WIDTH],
+    round_constants: &[BabyBear; WIDTH],
+) -> [BabyBear; WIDTH] {
     let mut s = [BabyBear::ZERO; WIDTH];
     for i in 0..WIDTH {
         s[i] = Poseidon2State::sbox(state[i] + round_constants[i]);
@@ -259,7 +275,10 @@ pub fn compute_full_round(state: &[BabyBear; WIDTH], round_constants: &[BabyBear
 }
 
 /// Compute one partial (internal) round of Poseidon2.
-pub fn compute_partial_round(state: &[BabyBear; WIDTH], round_constant: BabyBear) -> [BabyBear; WIDTH] {
+pub fn compute_partial_round(
+    state: &[BabyBear; WIDTH],
+    round_constant: BabyBear,
+) -> [BabyBear; WIDTH] {
     let mut s = *state;
     s[0] = Poseidon2State::sbox(s[0] + round_constant);
     apply_internal_linear_layer(&s)
@@ -332,6 +351,17 @@ pub fn hash_many(inputs: &[BabyBear]) -> BabyBear {
     state.state[0]
 }
 
+/// Hash arbitrary bytes into a single BabyBear field element via Poseidon2.
+///
+/// Packs the input bytes into field elements (4 bytes per element with modular
+/// reduction), then hashes through the sponge construction. This is useful for
+/// bridging byte-oriented data (like BLAKE3 commitments) into the field-element
+/// domain used by the Poseidon2 Merkle tree.
+pub fn hash_bytes(data: &[u8]) -> BabyBear {
+    let elements = BabyBear::from_bytes_packed(data);
+    hash_many(&elements)
+}
+
 /// Hash a leaf fact (predicate + 3 terms encoded as field elements) into a single digest.
 /// Each fact is 4 field elements; we hash them using the 4-to-1 function with leaf domain sep.
 pub fn hash_fact(predicate: BabyBear, terms: &[BabyBear; 3]) -> BabyBear {
@@ -402,7 +432,12 @@ mod tests {
 
     #[test]
     fn poseidon2_deterministic() {
-        let input = [BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4)];
+        let input = [
+            BabyBear::new(1),
+            BabyBear::new(2),
+            BabyBear::new(3),
+            BabyBear::new(4),
+        ];
         let h1 = hash_4_to_1(&input);
         let h2 = hash_4_to_1(&input);
         assert_eq!(h1, h2);
@@ -410,8 +445,18 @@ mod tests {
 
     #[test]
     fn poseidon2_different_inputs_different_outputs() {
-        let a = [BabyBear::new(1), BabyBear::new(2), BabyBear::new(3), BabyBear::new(4)];
-        let b = [BabyBear::new(5), BabyBear::new(6), BabyBear::new(7), BabyBear::new(8)];
+        let a = [
+            BabyBear::new(1),
+            BabyBear::new(2),
+            BabyBear::new(3),
+            BabyBear::new(4),
+        ];
+        let b = [
+            BabyBear::new(5),
+            BabyBear::new(6),
+            BabyBear::new(7),
+            BabyBear::new(8),
+        ];
         assert_ne!(hash_4_to_1(&a), hash_4_to_1(&b));
     }
 
@@ -468,5 +513,28 @@ mod tests {
         let x = BabyBear::new(2);
         let y = Poseidon2State::sbox(x);
         assert_eq!(y.0, 128);
+    }
+
+    #[test]
+    fn hash_bytes_deterministic() {
+        let data = b"hello world";
+        let h1 = hash_bytes(data);
+        let h2 = hash_bytes(data);
+        assert_eq!(h1, h2);
+        assert_ne!(h1, BabyBear::ZERO);
+    }
+
+    #[test]
+    fn hash_bytes_different_inputs() {
+        let h1 = hash_bytes(b"foo");
+        let h2 = hash_bytes(b"bar");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn hash_bytes_32_byte_input() {
+        let commitment = [0xAB_u8; 32];
+        let h = hash_bytes(&commitment);
+        assert_ne!(h, BabyBear::ZERO);
     }
 }

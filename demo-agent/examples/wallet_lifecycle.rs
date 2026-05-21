@@ -9,15 +9,17 @@
 //! 6. Show: another party can verify the agent's state from just the receipt chain
 
 use pyana_sdk::{
-    AgentWallet, CellId, TurnReceipt,
-    verify_receipt_chain, verify_receipt_chain_head,
+    AgentWallet, CellId, TurnReceipt, verify_receipt_chain, verify_receipt_chain_head,
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn short_hex(bytes: &[u8]) -> String {
     if bytes.len() >= 4 {
-        format!("{:02x}{:02x}{:02x}{:02x}...", bytes[0], bytes[1], bytes[2], bytes[3])
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}...",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     } else {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -28,11 +30,7 @@ fn short_hex(bytes: &[u8]) -> String {
 /// In production, this would come from TurnExecutor::execute(). Here we
 /// simulate the receipt that the executor would produce, advancing state
 /// deterministically per turn.
-fn simulate_turn_execution(
-    agent: CellId,
-    turn_number: u64,
-    pre_state: [u8; 32],
-) -> TurnReceipt {
+fn simulate_turn_execution(agent: CellId, turn_number: u64, pre_state: [u8; 32]) -> TurnReceipt {
     // Deterministic state transition: hash the pre-state with the turn number.
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"pyana-demo-state-transition");
@@ -96,8 +94,14 @@ fn main() {
     let agent_cell = wallet.cell_id("demo-service");
 
     item(&format!("Public key: {}", short_hex(&agent_pubkey.0)));
-    item(&format!("Cell ID (demo-service): {}", short_hex(agent_cell.as_bytes())));
-    item(&format!("Receipt chain length: {} (empty, genesis)", wallet.receipt_chain_length()));
+    item(&format!(
+        "Cell ID (demo-service): {}",
+        short_hex(agent_cell.as_bytes())
+    ));
+    item(&format!(
+        "Receipt chain length: {} (empty, genesis)",
+        wallet.receipt_chain_length()
+    ));
     item(&format!("State commitment: None (no turns executed yet)"));
 
     // =========================================================================
@@ -143,8 +147,14 @@ fn main() {
     }
 
     println!();
-    item(&format!("Receipt chain length: {}", wallet.receipt_chain_length()));
-    item(&format!("Current state commitment: {}", short_hex(&current_state)));
+    item(&format!(
+        "Receipt chain length: {}",
+        wallet.receipt_chain_length()
+    ));
+    item(&format!(
+        "Current state commitment: {}",
+        short_hex(&current_state)
+    ));
 
     // =========================================================================
     // STEP 4: Verify the wallet's own receipt chain
@@ -204,13 +214,21 @@ fn main() {
     // Compute total "proof weight"
     let total_computrons: u64 = exported_chain.iter().map(|r| r.computrons_used).sum();
     let total_actions: usize = exported_chain.iter().map(|r| r.action_count).sum();
-    let time_span = exported_chain.last().unwrap().timestamp - exported_chain.first().unwrap().timestamp;
+    let time_span =
+        exported_chain.last().unwrap().timestamp - exported_chain.first().unwrap().timestamp;
 
     item(&format!("Exported chain: {} receipts", chain_length));
-    item(&format!("Final state commitment: {}", short_hex(&final_state)));
+    item(&format!(
+        "Final state commitment: {}",
+        short_hex(&final_state)
+    ));
     item(&format!("Total computrons consumed: {}", total_computrons));
     item(&format!("Total actions executed: {}", total_actions));
-    item(&format!("Time span: {} seconds ({} minutes)", time_span, time_span / 60));
+    item(&format!(
+        "Time span: {} seconds ({} minutes)",
+        time_span,
+        time_span / 60
+    ));
     item(&format!("Agent cell: {}", short_hex(agent_cell.as_bytes())));
 
     // =========================================================================
@@ -237,14 +255,26 @@ fn main() {
     // They can also extract the final verified state
     let verified_head = verify_receipt_chain_head(&exported_chain).unwrap();
     assert_eq!(verified_head, final_state);
-    item(&format!("Verified state head: {}", short_hex(&verified_head)));
+    item(&format!(
+        "Verified state head: {}",
+        short_hex(&verified_head)
+    ));
 
     // They can read the chain metadata
     let genesis = &exported_chain[0];
     let head = exported_chain.last().unwrap();
-    item(&format!("Agent identity: {}", short_hex(genesis.agent.as_bytes())));
-    item(&format!("Genesis state: {}", short_hex(&genesis.pre_state_hash)));
-    item(&format!("Final state: {}", short_hex(&head.post_state_hash)));
+    item(&format!(
+        "Agent identity: {}",
+        short_hex(genesis.agent.as_bytes())
+    ));
+    item(&format!(
+        "Genesis state: {}",
+        short_hex(&genesis.pre_state_hash)
+    ));
+    item(&format!(
+        "Final state: {}",
+        short_hex(&head.post_state_hash)
+    ));
     item(&format!("Chain depth: {} turns", chain_length));
 
     println!();

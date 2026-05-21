@@ -7,3 +7,6 @@ edition = "2024"
 pyana-commit = { path = "../commit" }
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

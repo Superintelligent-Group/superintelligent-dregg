@@ -119,7 +119,6 @@ impl Fact {
         buf.extend_from_slice(self.actions.as_bytes());
         buf
     }
-
 }
 
 // =============================================================================
@@ -236,10 +235,7 @@ impl Check {
         match &self.kind {
             CheckKind::ActionRestriction { allowed_actions } => {
                 // Every character in the requested action must be in allowed_actions.
-                request
-                    .action
-                    .chars()
-                    .all(|c| allowed_actions.contains(c))
+                request.action.chars().all(|c| allowed_actions.contains(c))
             }
             CheckKind::AppRestriction { app_id } => request.app == *app_id,
         }
@@ -410,25 +406,20 @@ impl TokenState {
 
         // Then, evaluate rules against facts.
         // Find a matching fact for the request.
-        let authorized = self.facts.iter().any(|fact| {
-            match (&fact.kind, &request.service) {
+        let authorized = self
+            .facts
+            .iter()
+            .any(|fact| match (&fact.kind, &request.service) {
                 (FactKind::App, _) => {
                     fact.resource == request.app
-                        && request
-                            .action
-                            .chars()
-                            .all(|c| fact.actions.contains(c))
+                        && request.action.chars().all(|c| fact.actions.contains(c))
                 }
                 (FactKind::Service, Some(svc)) => {
                     fact.resource == *svc
-                        && request
-                            .action
-                            .chars()
-                            .all(|c| fact.actions.contains(c))
+                        && request.action.chars().all(|c| fact.actions.contains(c))
                 }
                 _ => false,
-            }
-        });
+            });
 
         if authorized {
             Ok(())
@@ -444,7 +435,6 @@ impl TokenState {
     pub fn state_root_hex(&self) -> String {
         hex_encode(&self.state_root[..4])
     }
-
 }
 
 // =============================================================================
@@ -550,10 +540,7 @@ mod tests {
     #[test]
     fn test_fold_delta() {
         let auth = Authority::new("acme.corp");
-        let facts = vec![
-            Fact::app("frontend", "rwcd"),
-            Fact::app("backend", "rw"),
-        ];
+        let facts = vec![Fact::app("frontend", "rwcd"), Fact::app("backend", "rw")];
         let rules = vec![Rule::allow_app(), Rule::deny_default()];
         let token = auth.mint_token(facts, rules);
 

@@ -168,10 +168,9 @@ async fn four_node_tcp_with_one_offline() {
                 peers.insert(j, addrs[j]);
             }
         }
-        let (transport, actual_addr) =
-            TcpFederationTransport::new_with_addr(i, peers, addrs[i])
-                .await
-                .unwrap();
+        let (transport, actual_addr) = TcpFederationTransport::new_with_addr(i, peers, addrs[i])
+            .await
+            .unwrap();
         addrs[i] = actual_addr;
         transports.push(transport);
     }

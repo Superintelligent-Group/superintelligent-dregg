@@ -10,18 +10,21 @@
 
 use std::time::Instant;
 
-use pyana_bridge::{BridgePresentationBuilder, BridgePresentationProof};
 use pyana_bridge::present::{bytes_to_babybear, hash_index};
+use pyana_bridge::{BridgePresentationBuilder, BridgePresentationProof};
 use pyana_circuit::BabyBear;
 use pyana_circuit::merkle_air::MerkleAir;
 use pyana_circuit::stark;
-use pyana_token::{AuthRequest, AuthToken, Attenuation, MacaroonToken};
+use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn short_hex(bytes: &[u8]) -> String {
     if bytes.len() >= 4 {
-        format!("{:02x}{:02x}{:02x}{:02x}...", bytes[0], bytes[1], bytes[2], bytes[3])
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}...",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     } else {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -120,7 +123,10 @@ fn main() {
     party("PAGE", "})");
     println!();
     party("PAGE", "The page sees: a pending promise. Nothing else.");
-    party("PAGE", "The page does NOT know: what tokens exist, who issued them,");
+    party(
+        "PAGE",
+        "The page does NOT know: what tokens exist, who issued them,",
+    );
     party("PAGE", "  or what capabilities the user has.");
 
     let step1_time = step1_start.elapsed();
@@ -137,12 +143,24 @@ fn main() {
     let clearance = user_token.verify(&page_request).unwrap();
 
     party("WALLET", "Found matching token for service 'api'");
-    party("WALLET", &format!("Datalog evaluation: {} capabilities derived", clearance.capabilities.len()));
+    party(
+        "WALLET",
+        &format!(
+            "Datalog evaluation: {} capabilities derived",
+            clearance.capabilities.len()
+        ),
+    );
     party("WALLET", "Decision: ALLOW");
     party("WALLET", "Selected mode: FullyPrivate (maximum privacy)");
     println!();
-    party("WALLET", "The wallet sees: full token chain, all capabilities, all caveats.");
-    party("WALLET", "The wallet decides: which token, which mode, what to reveal.");
+    party(
+        "WALLET",
+        "The wallet sees: full token chain, all capabilities, all caveats.",
+    );
+    party(
+        "WALLET",
+        "The wallet decides: which token, which mode, what to reveal.",
+    );
 
     let step2_time = step2_start.elapsed();
     item(&format!("Time: {:?}", step2_time));
@@ -170,13 +188,28 @@ fn main() {
 
     let step3_time = step3_start.elapsed();
 
-    party("WALLET", &format!("Proof generated: {}", proof.proof_size_display()));
+    party(
+        "WALLET",
+        &format!("Proof generated: {}", proof.proof_size_display()),
+    );
     party("WALLET", &format!("Proof valid: {}", proof.is_valid()));
-    party("WALLET", &format!("Chain length: {} attenuation steps", proof.chain_length));
-    party("WALLET", &format!("Has real STARK: {}", proof.has_real_stark_proof()));
+    party(
+        "WALLET",
+        &format!("Chain length: {} attenuation steps", proof.chain_length),
+    );
+    party(
+        "WALLET",
+        &format!("Has real STARK: {}", proof.has_real_stark_proof()),
+    );
     println!();
-    party("WALLET", "The proof encodes: 'I hold a valid token authorizing this request'");
-    party("WALLET", "The proof hides: which token, what other capabilities, who issued it");
+    party(
+        "WALLET",
+        "The proof encodes: 'I hold a valid token authorizing this request'",
+    );
+    party(
+        "WALLET",
+        "The proof hides: which token, what other capabilities, who issued it",
+    );
 
     item(&format!("Time: {:?}", step3_time));
 
@@ -201,11 +234,8 @@ fn main() {
         .collect();
     let stark_positions: Vec<u32> = vec![0, 1, 2, 3];
 
-    let (stark_trace, stark_public_inputs) = stark::generate_merkle_trace(
-        leaf_hash_bb.0,
-        &stark_siblings,
-        &stark_positions,
-    );
+    let (stark_trace, stark_public_inputs) =
+        stark::generate_merkle_trace(leaf_hash_bb.0, &stark_siblings, &stark_positions);
 
     let stark_air = stark::MerkleStarkAir;
     let membership_proof = stark::prove(&stark_air, &stark_trace, &stark_public_inputs);
@@ -213,10 +243,29 @@ fn main() {
 
     let step4_time = step4_start.elapsed();
 
-    party("WALLET", &format!("STARK proof size: {} bytes ({:.1} KiB)", proof_bytes.len(), proof_bytes.len() as f64 / 1024.0));
-    party("WALLET", &format!("Public inputs: leaf={}, root={}", stark_public_inputs[0].0, stark_public_inputs[1].0));
-    party("WALLET", "This proves: issuer is a member of the federation");
-    party("WALLET", "Without revealing: which issuer, the tree structure, sibling hashes");
+    party(
+        "WALLET",
+        &format!(
+            "STARK proof size: {} bytes ({:.1} KiB)",
+            proof_bytes.len(),
+            proof_bytes.len() as f64 / 1024.0
+        ),
+    );
+    party(
+        "WALLET",
+        &format!(
+            "Public inputs: leaf={}, root={}",
+            stark_public_inputs[0].0, stark_public_inputs[1].0
+        ),
+    );
+    party(
+        "WALLET",
+        "This proves: issuer is a member of the federation",
+    );
+    party(
+        "WALLET",
+        "Without revealing: which issuer, the tree structure, sibling hashes",
+    );
 
     item(&format!("Time: {:?}", step4_time));
 
@@ -224,7 +273,11 @@ fn main() {
     // STEP 5: Server verifies the proof
     // =========================================================================
 
-    section(5, total_steps, "SERVER: Verifies proof against attested root");
+    section(
+        5,
+        total_steps,
+        "SERVER: Verifies proof against attested root",
+    );
     let step5_start = Instant::now();
 
     // The server only has:
@@ -233,8 +286,17 @@ fn main() {
     // - The public inputs (leaf hash, root)
     // It does NOT have: the token, the caveats, the user's identity, the chain
 
-    party("SERVER", &format!("Federation root (configured): {}", short_hex(&federation_root)));
-    party("SERVER", &format!("Received proof: {} bytes", proof_bytes.len()));
+    party(
+        "SERVER",
+        &format!(
+            "Federation root (configured): {}",
+            short_hex(&federation_root)
+        ),
+    );
+    party(
+        "SERVER",
+        &format!("Received proof: {} bytes", proof_bytes.len()),
+    );
     party("SERVER", "Verifying STARK proof...");
 
     let verify_result = stark::verify(&stark_air, &membership_proof, &stark_public_inputs);
@@ -244,7 +306,10 @@ fn main() {
     match verify_result {
         Ok(()) => {
             party("SERVER", "Verification: PASS");
-            party("SERVER", "Conclusion: Request is authorized by a federation member");
+            party(
+                "SERVER",
+                "Conclusion: Request is authorized by a federation member",
+            );
         }
         Err(e) => {
             party("SERVER", &format!("Verification: FAILED ({e})"));
@@ -266,7 +331,10 @@ fn main() {
     party("SERVER", "  - Which user made the request");
     party("SERVER", "  - What token was used");
     party("SERVER", "  - What other capabilities the user has");
-    party("SERVER", "  - How the token was obtained (delegation chain)");
+    party(
+        "SERVER",
+        "  - How the token was obtained (delegation chain)",
+    );
     party("SERVER", "  - Whether the token was attenuated");
 
     item(&format!("Time: {:?}", step5_time));
@@ -279,10 +347,16 @@ fn main() {
     let step6_start = Instant::now();
 
     party("PAGE", "Promise resolved:");
-    party("PAGE", "  { authorized: true, proofSize: ..., mode: 'private' }");
+    party(
+        "PAGE",
+        "  { authorized: true, proofSize: ..., mode: 'private' }",
+    );
     println!();
     party("PAGE", "The page sees: authorized=true. That's it.");
-    party("PAGE", "The page can now: make the API call with confidence.");
+    party(
+        "PAGE",
+        "The page can now: make the API call with confidence.",
+    );
 
     let step6_time = step6_start.elapsed();
     item(&format!("Time: {:?}", step6_time));

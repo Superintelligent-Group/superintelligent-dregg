@@ -42,34 +42,34 @@ use crate::traits::{Attenuation, AuthRequest};
 /// Rejects strings containing characters that could break out of a
 /// quoted string literal in the Datalog grammar.
 fn sanitize_datalog_string(s: &str) -> String {
-  s.replace('\\', "\\\\").replace('"', "\\\"")
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Standard Pyana Datalog fact names.
 pub mod facts {
-  pub const ORGANIZATION: &str = "organization";
-  pub const APP: &str = "app";
-  pub const SERVICE: &str = "service";
-  pub const SECRET_ACCESS: &str = "secret_access";
-  pub const FEATURE: &str = "feature";
-  pub const OAUTH_PROVIDER: &str = "oauth_provider";
-  pub const OAUTH_SCOPE: &str = "oauth_scope";
-  pub const USER: &str = "user";
-  pub const MACHINE: &str = "machine";
-  pub const COMMAND: &str = "command";
+    pub const ORGANIZATION: &str = "organization";
+    pub const APP: &str = "app";
+    pub const SERVICE: &str = "service";
+    pub const SECRET_ACCESS: &str = "secret_access";
+    pub const FEATURE: &str = "feature";
+    pub const OAUTH_PROVIDER: &str = "oauth_provider";
+    pub const OAUTH_SCOPE: &str = "oauth_scope";
+    pub const USER: &str = "user";
+    pub const MACHINE: &str = "machine";
+    pub const COMMAND: &str = "command";
 }
 
 /// Standard Pyana Datalog authorizer fact names (ambient facts from the request).
 pub mod authorizer_facts {
-  pub const REQUEST_ORG: &str = "request_org";
-  pub const REQUEST_APP: &str = "request_app";
-  pub const REQUEST_SERVICE: &str = "request_service";
-  pub const REQUEST_ACTION: &str = "request_action";
-  pub const REQUEST_FEATURE: &str = "request_feature";
-  pub const REQUEST_USER: &str = "request_user";
-  pub const REQUEST_MACHINE: &str = "request_machine";
-  pub const REQUEST_COMMAND: &str = "request_command";
-  pub const TIME: &str = "time";
+    pub const REQUEST_ORG: &str = "request_org";
+    pub const REQUEST_APP: &str = "request_app";
+    pub const REQUEST_SERVICE: &str = "request_service";
+    pub const REQUEST_ACTION: &str = "request_action";
+    pub const REQUEST_FEATURE: &str = "request_feature";
+    pub const REQUEST_USER: &str = "request_user";
+    pub const REQUEST_MACHINE: &str = "request_machine";
+    pub const REQUEST_COMMAND: &str = "request_command";
+    pub const TIME: &str = "time";
 }
 
 /// Build Biscuit authority block Datalog code from an [`AuthRequest`]-shaped
@@ -78,312 +78,357 @@ pub mod authorizer_facts {
 /// This generates the facts that go into the authority block when minting
 /// a new Biscuit token.
 pub fn authority_datalog(
-  org_id: Option<u64>,
-  apps: &[(String, String)],
-  services: &[(String, String)],
-  features: &[String],
-  oauth_providers: &[String],
-  oauth_scopes: &[String],
-  user_id: Option<&str>,
-  machine_id: Option<&str>,
-  commands: &[String],
+    org_id: Option<u64>,
+    apps: &[(String, String)],
+    services: &[(String, String)],
+    features: &[String],
+    oauth_providers: &[String],
+    oauth_scopes: &[String],
+    user_id: Option<&str>,
+    machine_id: Option<&str>,
+    commands: &[String],
 ) -> String {
-  let mut code = String::new();
+    let mut code = String::new();
 
-  if let Some(org) = org_id {
-    code.push_str(&format!("{}({});\n", facts::ORGANIZATION, org));
-  }
-  for (app, actions) in apps {
-    code.push_str(&format!("{}(\"{}\", \"{}\");\n", facts::APP, sanitize_datalog_string(app), sanitize_datalog_string(actions)));
-  }
-  for (svc, actions) in services {
-    code.push_str(&format!(
-      "{}(\"{}\", \"{}\");\n",
-      facts::SERVICE,
-      sanitize_datalog_string(svc),
-      sanitize_datalog_string(actions),
-    ));
-  }
-  for feat in features {
-    code.push_str(&format!("{}(\"{}\");\n", facts::FEATURE, sanitize_datalog_string(feat)));
-  }
-  for provider in oauth_providers {
-    code.push_str(&format!("{}(\"{}\");\n", facts::OAUTH_PROVIDER, sanitize_datalog_string(provider)));
-  }
-  for scope in oauth_scopes {
-    code.push_str(&format!("{}(\"{}\");\n", facts::OAUTH_SCOPE, sanitize_datalog_string(scope)));
-  }
-  if let Some(uid) = user_id {
-    code.push_str(&format!("{}(\"{}\");\n", facts::USER, sanitize_datalog_string(uid)));
-  }
-  if let Some(mid) = machine_id {
-    code.push_str(&format!("{}(\"{}\");\n", facts::MACHINE, sanitize_datalog_string(mid)));
-  }
-  for cmd in commands {
-    code.push_str(&format!("{}(\"{}\");\n", facts::COMMAND, sanitize_datalog_string(cmd)));
-  }
+    if let Some(org) = org_id {
+        code.push_str(&format!("{}({});\n", facts::ORGANIZATION, org));
+    }
+    for (app, actions) in apps {
+        code.push_str(&format!(
+            "{}(\"{}\", \"{}\");\n",
+            facts::APP,
+            sanitize_datalog_string(app),
+            sanitize_datalog_string(actions)
+        ));
+    }
+    for (svc, actions) in services {
+        code.push_str(&format!(
+            "{}(\"{}\", \"{}\");\n",
+            facts::SERVICE,
+            sanitize_datalog_string(svc),
+            sanitize_datalog_string(actions),
+        ));
+    }
+    for feat in features {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            facts::FEATURE,
+            sanitize_datalog_string(feat)
+        ));
+    }
+    for provider in oauth_providers {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            facts::OAUTH_PROVIDER,
+            sanitize_datalog_string(provider)
+        ));
+    }
+    for scope in oauth_scopes {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            facts::OAUTH_SCOPE,
+            sanitize_datalog_string(scope)
+        ));
+    }
+    if let Some(uid) = user_id {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            facts::USER,
+            sanitize_datalog_string(uid)
+        ));
+    }
+    if let Some(mid) = machine_id {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            facts::MACHINE,
+            sanitize_datalog_string(mid)
+        ));
+    }
+    for cmd in commands {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            facts::COMMAND,
+            sanitize_datalog_string(cmd)
+        ));
+    }
 
-  // Emit unrestricted(true) only when the token has zero app and zero
-  // service grants — i.e., it is a true root / superuser token. This
-  // allows the wildcard authorizer policy to fire for intentional root
-  // tokens while preventing accidentally unscoped tokens from passing.
-  if apps.is_empty() && services.is_empty() {
-    code.push_str("unrestricted(true);\n");
-  }
+    // Emit unrestricted(true) only when the token has zero app and zero
+    // service grants — i.e., it is a true root / superuser token. This
+    // allows the wildcard authorizer policy to fire for intentional root
+    // tokens while preventing accidentally unscoped tokens from passing.
+    if apps.is_empty() && services.is_empty() {
+        code.push_str("unrestricted(true);\n");
+    }
 
-  code
+    code
 }
 
 /// Build Biscuit restriction block Datalog code from an [`Attenuation`].
 ///
 /// These are checks that further restrict the token's capabilities.
 pub fn attenuation_datalog(att: &Attenuation) -> String {
-  let mut code = String::new();
+    let mut code = String::new();
 
-  for (app, actions) in &att.apps {
-    code.push_str(&format!(
-      "check if {}(\"{}\", $actions), $actions.contains(\"{}\");\n",
-      facts::APP,
-      sanitize_datalog_string(app),
-      sanitize_datalog_string(actions),
-    ));
-  }
-  for (svc, actions) in &att.services {
-    code.push_str(&format!(
-      "check if {}(\"{}\", $actions), $actions.contains(\"{}\");\n",
-      facts::SERVICE,
-      sanitize_datalog_string(svc),
-      sanitize_datalog_string(actions),
-    ));
-  }
-  for feat in &att.features {
-    code.push_str(&format!("check if {}(\"{}\");\n", facts::FEATURE, sanitize_datalog_string(feat)));
-  }
-  if let Some(ts) = att.not_after {
-    code.push_str(&format!(
-      "check if {}($t), $t < {};\n",
-      authorizer_facts::TIME,
-      ts
-    ));
-  }
-  if let Some(ts) = att.not_before {
-    code.push_str(&format!(
-      "check if {}($t), $t > {};\n",
-      authorizer_facts::TIME,
-      ts
-    ));
-  }
-  if let Some(uid) = &att.confine_user {
-    code.push_str(&format!("check if {}(\"{}\");\n", facts::USER, sanitize_datalog_string(uid)));
-  }
-  for provider in &att.oauth_providers {
-    code.push_str(&format!(
-      "check if {}(\"{}\");\n",
-      facts::OAUTH_PROVIDER,
-      sanitize_datalog_string(provider),
-    ));
-  }
-  for scope in &att.oauth_scopes {
-    code.push_str(&format!(
-      "check if {}(\"{}\");\n",
-      facts::OAUTH_SCOPE,
-      sanitize_datalog_string(scope),
-    ));
-  }
-  if let Some(mid) = &att.from_machine {
-    code.push_str(&format!("check if {}(\"{}\");\n", facts::MACHINE, sanitize_datalog_string(mid)));
-  }
-  for cmd in &att.commands {
-    code.push_str(&format!("check if {}(\"{}\");\n", facts::COMMAND, sanitize_datalog_string(cmd)));
-  }
-  // Feature glob restrictions are macaroon-specific (Biscuit doesn't use glob matching).
-  // Budget and Revocable are service-level concerns, not Datalog checks.
-  if let Some(raw) = &att.raw_datalog {
-    code.push_str(raw);
-    if !raw.ends_with('\n') {
-      code.push('\n');
+    for (app, actions) in &att.apps {
+        code.push_str(&format!(
+            "check if {}(\"{}\", $actions), $actions.contains(\"{}\");\n",
+            facts::APP,
+            sanitize_datalog_string(app),
+            sanitize_datalog_string(actions),
+        ));
     }
-  }
+    for (svc, actions) in &att.services {
+        code.push_str(&format!(
+            "check if {}(\"{}\", $actions), $actions.contains(\"{}\");\n",
+            facts::SERVICE,
+            sanitize_datalog_string(svc),
+            sanitize_datalog_string(actions),
+        ));
+    }
+    for feat in &att.features {
+        code.push_str(&format!(
+            "check if {}(\"{}\");\n",
+            facts::FEATURE,
+            sanitize_datalog_string(feat)
+        ));
+    }
+    if let Some(ts) = att.not_after {
+        code.push_str(&format!(
+            "check if {}($t), $t < {};\n",
+            authorizer_facts::TIME,
+            ts
+        ));
+    }
+    if let Some(ts) = att.not_before {
+        code.push_str(&format!(
+            "check if {}($t), $t > {};\n",
+            authorizer_facts::TIME,
+            ts
+        ));
+    }
+    if let Some(uid) = &att.confine_user {
+        code.push_str(&format!(
+            "check if {}(\"{}\");\n",
+            facts::USER,
+            sanitize_datalog_string(uid)
+        ));
+    }
+    for provider in &att.oauth_providers {
+        code.push_str(&format!(
+            "check if {}(\"{}\");\n",
+            facts::OAUTH_PROVIDER,
+            sanitize_datalog_string(provider),
+        ));
+    }
+    for scope in &att.oauth_scopes {
+        code.push_str(&format!(
+            "check if {}(\"{}\");\n",
+            facts::OAUTH_SCOPE,
+            sanitize_datalog_string(scope),
+        ));
+    }
+    if let Some(mid) = &att.from_machine {
+        code.push_str(&format!(
+            "check if {}(\"{}\");\n",
+            facts::MACHINE,
+            sanitize_datalog_string(mid)
+        ));
+    }
+    for cmd in &att.commands {
+        code.push_str(&format!(
+            "check if {}(\"{}\");\n",
+            facts::COMMAND,
+            sanitize_datalog_string(cmd)
+        ));
+    }
+    // Feature glob restrictions are macaroon-specific (Biscuit doesn't use glob matching).
+    // Budget and Revocable are service-level concerns, not Datalog checks.
+    if let Some(raw) = &att.raw_datalog {
+        code.push_str(raw);
+        if !raw.ends_with('\n') {
+            code.push('\n');
+        }
+    }
 
-  code
+    code
 }
 
 /// Build Biscuit authorizer Datalog code from an [`AuthRequest`].
 ///
 /// These are the ambient facts + policies added by the verifier.
 pub fn authorizer_datalog(req: &AuthRequest) -> String {
-  let mut code = String::new();
+    let mut code = String::new();
 
-  // Ambient facts from the request
-  if let Some(org) = req.org_id {
-    code.push_str(&format!("{}({});\n", authorizer_facts::REQUEST_ORG, org));
-  }
-  if let Some(app) = &req.app_id {
-    code.push_str(&format!(
-      "{}(\"{}\");\n",
-      authorizer_facts::REQUEST_APP,
-      sanitize_datalog_string(app),
-    ));
-  }
-  if let Some(svc) = &req.service {
-    code.push_str(&format!(
-      "{}(\"{}\");\n",
-      authorizer_facts::REQUEST_SERVICE,
-      sanitize_datalog_string(svc),
-    ));
-  }
-  if let Some(act) = &req.action {
-    code.push_str(&format!(
-      "{}(\"{}\");\n",
-      authorizer_facts::REQUEST_ACTION,
-      sanitize_datalog_string(act),
-    ));
-  }
-  for feat in &req.features {
-    code.push_str(&format!(
-      "{}(\"{}\");\n",
-      authorizer_facts::REQUEST_FEATURE,
-      sanitize_datalog_string(feat),
-    ));
-  }
-  if let Some(uid) = &req.user_id {
-    code.push_str(&format!(
-      "{}(\"{}\");\n",
-      authorizer_facts::REQUEST_USER,
-      sanitize_datalog_string(uid),
-    ));
-  }
-  if let Some(mid) = &req.machine_id {
-    code.push_str(&format!(
-      "{}(\"{}\");\n",
-      authorizer_facts::REQUEST_MACHINE,
-      sanitize_datalog_string(mid),
-    ));
-  }
-  if let Some(cmd) = &req.command {
-    code.push_str(&format!(
-      "{}(\"{}\");\n",
-      authorizer_facts::REQUEST_COMMAND,
-      sanitize_datalog_string(cmd),
-    ));
-  }
+    // Ambient facts from the request
+    if let Some(org) = req.org_id {
+        code.push_str(&format!("{}({});\n", authorizer_facts::REQUEST_ORG, org));
+    }
+    if let Some(app) = &req.app_id {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            authorizer_facts::REQUEST_APP,
+            sanitize_datalog_string(app),
+        ));
+    }
+    if let Some(svc) = &req.service {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            authorizer_facts::REQUEST_SERVICE,
+            sanitize_datalog_string(svc),
+        ));
+    }
+    if let Some(act) = &req.action {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            authorizer_facts::REQUEST_ACTION,
+            sanitize_datalog_string(act),
+        ));
+    }
+    for feat in &req.features {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            authorizer_facts::REQUEST_FEATURE,
+            sanitize_datalog_string(feat),
+        ));
+    }
+    if let Some(uid) = &req.user_id {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            authorizer_facts::REQUEST_USER,
+            sanitize_datalog_string(uid),
+        ));
+    }
+    if let Some(mid) = &req.machine_id {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            authorizer_facts::REQUEST_MACHINE,
+            sanitize_datalog_string(mid),
+        ));
+    }
+    if let Some(cmd) = &req.command {
+        code.push_str(&format!(
+            "{}(\"{}\");\n",
+            authorizer_facts::REQUEST_COMMAND,
+            sanitize_datalog_string(cmd),
+        ));
+    }
 
-  // Time fact
-  let now = req.now.unwrap_or_else(|| {
-    std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .unwrap_or_default()
-      .as_secs() as i64
-  });
-  code.push_str(&format!("{}({});\n", authorizer_facts::TIME, now));
+    // Time fact
+    let now = req.now.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
+    });
+    code.push_str(&format!("{}({});\n", authorizer_facts::TIME, now));
 
-  // Standard allow/deny policies
-  code.push_str("\n// App-level authorization\n");
-  code.push_str("allow if app($app, $actions), request_app($app), request_action($act), $actions.contains($act);\n");
-  code.push_str("\n// Service-level authorization\n");
-  code.push_str("allow if service($svc, $actions), request_service($svc), request_action($act), $actions.contains($act);\n");
-  code.push_str("\n// Wildcard — only for explicit root tokens with unrestricted(true) fact\n");
-  code.push_str("allow if unrestricted(true), request_action($act);\n");
-  code.push_str("\n// Default deny\n");
-  code.push_str("deny if true;\n");
+    // Standard allow/deny policies
+    code.push_str("\n// App-level authorization\n");
+    code.push_str("allow if app($app, $actions), request_app($app), request_action($act), $actions.contains($act);\n");
+    code.push_str("\n// Service-level authorization\n");
+    code.push_str("allow if service($svc, $actions), request_service($svc), request_action($act), $actions.contains($act);\n");
+    code.push_str("\n// Wildcard — only for explicit root tokens with unrestricted(true) fact\n");
+    code.push_str("allow if unrestricted(true), request_action($act);\n");
+    code.push_str("\n// Default deny\n");
+    code.push_str("deny if true;\n");
 
-  code
+    code
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn test_authority_datalog_generation() {
-    let code = authority_datalog(
-      Some(42),
-      &[("my-app".into(), "rwcd".into())],
-      &[("http".into(), "rw".into())],
-      &["ai-engine".into()],
-      &["github".into()],
-      &["repo".into(), "user:email".into()],
-      Some("user-123"),
-      None,
-      &[],
-    );
-    assert!(code.contains("organization(42)"));
-    assert!(code.contains("app(\"my-app\", \"rwcd\")"));
-    assert!(code.contains("service(\"http\", \"rw\")"));
-    assert!(code.contains("feature(\"ai-engine\")"));
-    assert!(code.contains("oauth_provider(\"github\")"));
-    assert!(code.contains("user(\"user-123\")"));
-    // Token with app+service grants must NOT get unrestricted
-    assert!(!code.contains("unrestricted"));
-  }
+    #[test]
+    fn test_authority_datalog_generation() {
+        let code = authority_datalog(
+            Some(42),
+            &[("my-app".into(), "rwcd".into())],
+            &[("http".into(), "rw".into())],
+            &["ai-engine".into()],
+            &["github".into()],
+            &["repo".into(), "user:email".into()],
+            Some("user-123"),
+            None,
+            &[],
+        );
+        assert!(code.contains("organization(42)"));
+        assert!(code.contains("app(\"my-app\", \"rwcd\")"));
+        assert!(code.contains("service(\"http\", \"rw\")"));
+        assert!(code.contains("feature(\"ai-engine\")"));
+        assert!(code.contains("oauth_provider(\"github\")"));
+        assert!(code.contains("user(\"user-123\")"));
+        // Token with app+service grants must NOT get unrestricted
+        assert!(!code.contains("unrestricted"));
+    }
 
-  #[test]
-  fn test_authority_datalog_unrestricted_root_token() {
-    // A token with no app and no service grants is a root token
-    let code = authority_datalog(
-      Some(1),
-      &[],
-      &[],
-      &[],
-      &[],
-      &["read".into()],
-      Some("alice"),
-      None,
-      &[],
-    );
-    assert!(code.contains("unrestricted(true)"));
-    assert!(code.contains("user(\"alice\")"));
-  }
+    #[test]
+    fn test_authority_datalog_unrestricted_root_token() {
+        // A token with no app and no service grants is a root token
+        let code = authority_datalog(
+            Some(1),
+            &[],
+            &[],
+            &[],
+            &[],
+            &["read".into()],
+            Some("alice"),
+            None,
+            &[],
+        );
+        assert!(code.contains("unrestricted(true)"));
+        assert!(code.contains("user(\"alice\")"));
+    }
 
-  #[test]
-  fn test_authority_datalog_app_only_no_unrestricted() {
-    // A token with app grants but no service grants is NOT unrestricted
-    let code = authority_datalog(
-      None,
-      &[("my-app".into(), "rw".into())],
-      &[],
-      &[],
-      &[],
-      &[],
-      None,
-      None,
-      &[],
-    );
-    assert!(code.contains("app(\"my-app\", \"rw\")"));
-    assert!(!code.contains("unrestricted"));
-  }
+    #[test]
+    fn test_authority_datalog_app_only_no_unrestricted() {
+        // A token with app grants but no service grants is NOT unrestricted
+        let code = authority_datalog(
+            None,
+            &[("my-app".into(), "rw".into())],
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            &[],
+        );
+        assert!(code.contains("app(\"my-app\", \"rw\")"));
+        assert!(!code.contains("unrestricted"));
+    }
 
-  #[test]
-  fn test_attenuation_datalog_generation() {
-    let att = Attenuation {
-      apps: vec![("my-app".into(), "r".into())],
-      not_after: Some(1700000000),
-      confine_user: Some("user-456".into()),
-      ..Default::default()
-    };
-    let code = attenuation_datalog(&att);
-    assert!(code.contains("check if app(\"my-app\", $actions)"));
-    assert!(code.contains("check if time($t), $t < 1700000000"));
-    assert!(code.contains("check if user(\"user-456\")"));
-  }
+    #[test]
+    fn test_attenuation_datalog_generation() {
+        let att = Attenuation {
+            apps: vec![("my-app".into(), "r".into())],
+            not_after: Some(1700000000),
+            confine_user: Some("user-456".into()),
+            ..Default::default()
+        };
+        let code = attenuation_datalog(&att);
+        assert!(code.contains("check if app(\"my-app\", $actions)"));
+        assert!(code.contains("check if time($t), $t < 1700000000"));
+        assert!(code.contains("check if user(\"user-456\")"));
+    }
 
-  #[test]
-  fn test_authorizer_datalog_generation() {
-    let req = AuthRequest {
-      app_id: Some("my-app".into()),
-      action: Some("read".into()),
-      service: Some("http".into()),
-      now: Some(1700000000),
-      ..Default::default()
-    };
-    let code = authorizer_datalog(&req);
-    assert!(code.contains("request_app(\"my-app\")"));
-    assert!(code.contains("request_action(\"read\")"));
-    assert!(code.contains("request_service(\"http\")"));
-    assert!(code.contains("time(1700000000)"));
-    assert!(code.contains("allow if"));
-    assert!(code.contains("deny if true"));
-    // Wildcard rule must require unrestricted(true)
-    assert!(code.contains("allow if unrestricted(true), request_action($act)"));
-  }
+    #[test]
+    fn test_authorizer_datalog_generation() {
+        let req = AuthRequest {
+            app_id: Some("my-app".into()),
+            action: Some("read".into()),
+            service: Some("http".into()),
+            now: Some(1700000000),
+            ..Default::default()
+        };
+        let code = authorizer_datalog(&req);
+        assert!(code.contains("request_app(\"my-app\")"));
+        assert!(code.contains("request_action(\"read\")"));
+        assert!(code.contains("request_service(\"http\")"));
+        assert!(code.contains("time(1700000000)"));
+        assert!(code.contains("allow if"));
+        assert!(code.contains("deny if true"));
+        // Wildcard rule must require unrestricted(true)
+        assert!(code.contains("allow if unrestricted(true), request_action($act)"));
+    }
 }

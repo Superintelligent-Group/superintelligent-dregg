@@ -183,7 +183,10 @@ impl PeerConnection {
     }
 
     /// Receive a message with a timeout.
-    pub async fn recv_timeout(&mut self, timeout: Duration) -> Result<WireMessage, ConnectionError> {
+    pub async fn recv_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<WireMessage, ConnectionError> {
         match tokio::time::timeout(timeout, self.recv()).await {
             Ok(result) => result,
             Err(_) => Err(ConnectionError::Timeout),
@@ -296,18 +299,41 @@ mod tests {
             let (stream, _) = listener.accept().await.unwrap();
             let mut conn = PeerConnection::from_stream(stream);
             let msg = conn.recv().await.unwrap();
-            conn.send(WireMessage::Pong { seq: 1, timestamp: 200 }).await.unwrap();
+            conn.send(WireMessage::Pong {
+                seq: 1,
+                timestamp: 200,
+            })
+            .await
+            .unwrap();
             msg
         });
 
         let mut client = PeerConnection::connect(&addr.to_string()).await.unwrap();
-        client.send(WireMessage::Ping { seq: 1, timestamp: 100 }).await.unwrap();
+        client
+            .send(WireMessage::Ping {
+                seq: 1,
+                timestamp: 100,
+            })
+            .await
+            .unwrap();
         let response = client.recv().await.unwrap();
 
-        assert_eq!(response, WireMessage::Pong { seq: 1, timestamp: 200 });
+        assert_eq!(
+            response,
+            WireMessage::Pong {
+                seq: 1,
+                timestamp: 200
+            }
+        );
 
         let received = server_task.await.unwrap();
-        assert_eq!(received, WireMessage::Ping { seq: 1, timestamp: 100 });
+        assert_eq!(
+            received,
+            WireMessage::Ping {
+                seq: 1,
+                timestamp: 100
+            }
+        );
     }
 
     #[tokio::test]
@@ -331,7 +357,10 @@ mod tests {
         });
 
         let mut client = PeerConnection::connect(&addr.to_string()).await.unwrap();
-        let response = client.request(WireMessage::RequestAttestedRoot).await.unwrap();
+        let response = client
+            .request(WireMessage::RequestAttestedRoot)
+            .await
+            .unwrap();
 
         match response {
             WireMessage::AttestedRoot { root, height, .. } => {
@@ -351,14 +380,25 @@ mod tests {
             let (stream, _) = listener.accept().await.unwrap();
             let mut conn = PeerConnection::from_stream(stream);
             let _ = conn.recv().await;
-            conn.send(WireMessage::Pong { seq: 1, timestamp: 0 }).await.unwrap();
+            conn.send(WireMessage::Pong {
+                seq: 1,
+                timestamp: 0,
+            })
+            .await
+            .unwrap();
         });
 
         let mut client = PeerConnection::connect(&addr.to_string()).await.unwrap();
         assert_eq!(client.stats().messages_sent, 0);
         assert_eq!(client.stats().messages_received, 0);
 
-        client.send(WireMessage::Ping { seq: 1, timestamp: 0 }).await.unwrap();
+        client
+            .send(WireMessage::Ping {
+                seq: 1,
+                timestamp: 0,
+            })
+            .await
+            .unwrap();
         assert_eq!(client.stats().messages_sent, 1);
         assert!(client.stats().bytes_sent > 0);
 

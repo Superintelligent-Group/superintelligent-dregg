@@ -54,9 +54,18 @@ fn main() {
     println!("--- Step 1: Alice creates a sealer/unsealer pair ---\n");
 
     let pair = SealPair::generate();
-    println!("  Pair ID: {:02x}{:02x}{:02x}{:02x}...", pair.id[0], pair.id[1], pair.id[2], pair.id[3]);
-    println!("  Sealer public key (Alice keeps): {:02x}{:02x}...", pair.sealer_public[0], pair.sealer_public[1]);
-    println!("  Unsealer secret key (given to Bob): {:02x}{:02x}...", pair.unsealer_secret[0], pair.unsealer_secret[1]);
+    println!(
+        "  Pair ID: {:02x}{:02x}{:02x}{:02x}...",
+        pair.id[0], pair.id[1], pair.id[2], pair.id[3]
+    );
+    println!(
+        "  Sealer public key (Alice keeps): {:02x}{:02x}...",
+        pair.sealer_public[0], pair.sealer_public[1]
+    );
+    println!(
+        "  Unsealer secret key (given to Bob): {:02x}{:02x}...",
+        pair.unsealer_secret[0], pair.unsealer_secret[1]
+    );
     println!();
     println!("  In practice: Alice submits a CreateSealPair effect naming herself as");
     println!("  sealer_holder and Bob as unsealer_holder. The executor grants the");
@@ -70,10 +79,22 @@ fn main() {
 
     let sealed_box = pair.seal(&carol_cap);
     println!("  Sealed box created:");
-    println!("    pair_id:    {:02x}{:02x}{:02x}{:02x}...", sealed_box.pair_id[0], sealed_box.pair_id[1], sealed_box.pair_id[2], sealed_box.pair_id[3]);
-    println!("    commitment: {:02x}{:02x}{:02x}{:02x}...", sealed_box.commitment[0], sealed_box.commitment[1], sealed_box.commitment[2], sealed_box.commitment[3]);
+    println!(
+        "    pair_id:    {:02x}{:02x}{:02x}{:02x}...",
+        sealed_box.pair_id[0], sealed_box.pair_id[1], sealed_box.pair_id[2], sealed_box.pair_id[3]
+    );
+    println!(
+        "    commitment: {:02x}{:02x}{:02x}{:02x}...",
+        sealed_box.commitment[0],
+        sealed_box.commitment[1],
+        sealed_box.commitment[2],
+        sealed_box.commitment[3]
+    );
     println!("    ciphertext: {} bytes", sealed_box.ciphertext.len());
-    println!("    nonce:      {:02x}{:02x}{:02x}{:02x}...", sealed_box.nonce[0], sealed_box.nonce[1], sealed_box.nonce[2], sealed_box.nonce[3]);
+    println!(
+        "    nonce:      {:02x}{:02x}{:02x}{:02x}...",
+        sealed_box.nonce[0], sealed_box.nonce[1], sealed_box.nonce[2], sealed_box.nonce[3]
+    );
     println!();
 
     // =========================================================================
@@ -96,9 +117,13 @@ fn main() {
     println!("--- Step 4: Bob retrieves the sealed box (Alice is offline) ---\n");
 
     // Bob deserializes the sealed box from whatever channel it arrived on.
-    let recovered_box: SealedBox = postcard::from_bytes(&serialized).expect("deserialize sealed box");
+    let recovered_box: SealedBox =
+        postcard::from_bytes(&serialized).expect("deserialize sealed box");
     println!("  Bob received sealed box ({} bytes)", serialized.len());
-    println!("  pair_id matches: {}", recovered_box.pair_id == sealed_box.pair_id);
+    println!(
+        "  pair_id matches: {}",
+        recovered_box.pair_id == sealed_box.pair_id
+    );
     println!();
 
     // =========================================================================
@@ -109,11 +134,20 @@ fn main() {
     let recovered_cap = pair.unseal(&recovered_box).expect("unseal should succeed");
     println!("  Unsealed successfully!");
     println!("  Recovered capability:");
-    println!("    target: {:02x}{:02x}{:02x}{:02x}... (Carol)", recovered_cap.target.as_bytes()[0], recovered_cap.target.as_bytes()[1], recovered_cap.target.as_bytes()[2], recovered_cap.target.as_bytes()[3]);
+    println!(
+        "    target: {:02x}{:02x}{:02x}{:02x}... (Carol)",
+        recovered_cap.target.as_bytes()[0],
+        recovered_cap.target.as_bytes()[1],
+        recovered_cap.target.as_bytes()[2],
+        recovered_cap.target.as_bytes()[3]
+    );
     println!("    slot:   {}", recovered_cap.slot);
     println!("    perms:  {:?}", recovered_cap.permissions);
     println!();
-    assert_eq!(recovered_cap, carol_cap, "Recovered capability must match original");
+    assert_eq!(
+        recovered_cap, carol_cap,
+        "Recovered capability must match original"
+    );
     println!("  VERIFIED: recovered capability == original capability");
     println!();
     println!("  In practice: Bob submits an Unseal effect with the SealedBox.");
@@ -132,7 +166,10 @@ fn main() {
     match &eve_result {
         Err(SealError::PairMismatch { expected, got }) => {
             println!("  Eve's unseal attempt: REJECTED (PairMismatch)");
-            println!("    Eve's pair:   {:02x}{:02x}...", expected[0], expected[1]);
+            println!(
+                "    Eve's pair:   {:02x}{:02x}...",
+                expected[0], expected[1]
+            );
             println!("    Box's pair:   {:02x}{:02x}...", got[0], got[1]);
         }
         Err(e) => {

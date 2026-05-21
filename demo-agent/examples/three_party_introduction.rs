@@ -14,7 +14,7 @@
 //! someone who already holds both ends of the relationship.
 
 use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
-use pyana_turn::{TurnBuilder, TurnExecutor, ComputronCosts, TurnResult};
+use pyana_turn::{ComputronCosts, TurnBuilder, TurnExecutor, TurnResult};
 
 /// Create a cell with open permissions and a given balance.
 fn make_open_cell(seed: u8, balance: u64) -> Cell {
@@ -64,10 +64,19 @@ fn main() {
     let eve_id = eve.id;
 
     println!("  Alice: {} (the introducer)", short_id(&alice_id));
-    println!("  Bob:   {} (will be introduced to Carol)", short_id(&bob_id));
+    println!(
+        "  Bob:   {} (will be introduced to Carol)",
+        short_id(&bob_id)
+    );
     println!("  Carol: {} (the target)", short_id(&carol_id));
-    println!("  Dave:  {} (will be transitively introduced)", short_id(&dave_id));
-    println!("  Eve:   {} (unauthorized -- no introduction)", short_id(&eve_id));
+    println!(
+        "  Dave:  {} (will be transitively introduced)",
+        short_id(&dave_id)
+    );
+    println!(
+        "  Eve:   {} (unauthorized -- no introduction)",
+        short_id(&eve_id)
+    );
     println!();
 
     // =========================================================================
@@ -123,9 +132,13 @@ fn main() {
     match &result {
         TurnResult::Committed { receipt, .. } => {
             println!("  Turn committed successfully!");
-            println!("  Routing directives emitted: {}", receipt.routing_directives.len());
+            println!(
+                "  Routing directives emitted: {}",
+                receipt.routing_directives.len()
+            );
             for rd in &receipt.routing_directives {
-                println!("    {} -> {} (authorized by turn {:02x}{:02x}...)",
+                println!(
+                    "    {} -> {} (authorized by turn {:02x}{:02x}...)",
                     short_id(&rd.sender),
                     short_id(&rd.target),
                     rd.authorizing_turn[0],
@@ -195,7 +208,10 @@ fn main() {
     }
     let turn = builder.fee(0).build();
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "Alice introducing Bob to Dave should work");
+    assert!(
+        result.is_committed(),
+        "Alice introducing Bob to Dave should work"
+    );
     println!("  Alice introduced Bob to Dave (so Bob has [Carol, Dave])");
 
     // Now Bob introduces Dave to Carol.
@@ -212,10 +228,7 @@ fn main() {
             println!("  Bob's transitive introduction succeeded!");
             println!("  Routing directives: {}", receipt.routing_directives.len());
             for rd in &receipt.routing_directives {
-                println!("    {} -> {}",
-                    short_id(&rd.sender),
-                    short_id(&rd.target),
-                );
+                println!("    {} -> {}", short_id(&rd.sender), short_id(&rd.target),);
             }
         }
         TurnResult::Rejected { reason, .. } => {
@@ -261,7 +274,10 @@ fn main() {
     let turn = builder.fee(0).build();
 
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "attenuated introduction should succeed");
+    assert!(
+        result.is_committed(),
+        "attenuated introduction should succeed"
+    );
     println!("  Alice introduced Frank to Carol with Signature-only access.");
 
     let frank_cell = ledger.get(&frank_id).unwrap();

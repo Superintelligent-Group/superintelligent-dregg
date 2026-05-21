@@ -98,7 +98,10 @@ impl Evaluator {
     /// Inject facts representing the authorization request into the fact set.
     pub(crate) fn inject_request_facts(facts: &mut Vec<Fact>, request: &AuthorizationRequest) {
         if let Some(app_id) = &request.app_id {
-            facts.push(Fact::new(predicates::request_app(), vec![Term::Const(*app_id)]));
+            facts.push(Fact::new(
+                predicates::request_app(),
+                vec![Term::Const(*app_id)],
+            ));
         }
         if let Some(service) = &request.service {
             facts.push(Fact::new(
@@ -159,7 +162,9 @@ impl Evaluator {
 
                 // Only add if this fact is new
                 if !facts.contains(&derived_fact)
-                    && !new_steps.iter().any(|s: &DerivationStep| s.derived_fact == derived_fact)
+                    && !new_steps
+                        .iter()
+                        .any(|s: &DerivationStep| s.derived_fact == derived_fact)
                 {
                     new_steps.push(DerivationStep {
                         rule_id: rule.id,

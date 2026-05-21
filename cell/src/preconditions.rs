@@ -160,12 +160,37 @@ impl NetworkPrecondition {
 /// Errors from precondition evaluation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PreconditionError {
-    NonceMismatch { expected: u64, actual: u64 },
-    InsufficientBalance { required: u64, actual: u64 },
-    FieldMismatch { index: usize, expected: FieldElement, actual: FieldElement },
-    InvalidFieldIndex { index: usize },
-    HeightTooLow { required: u64, actual: u64 },
-    HeightTooHigh { max: u64, actual: u64 },
-    TimeOutOfRange { timestamp: i64, start: i64, end: i64 },
-    ProvedStateMismatch { expected: bool, actual: bool },
+    NonceMismatch {
+        expected: u64,
+        actual: u64,
+    },
+    InsufficientBalance {
+        required: u64,
+        actual: u64,
+    },
+    FieldMismatch {
+        index: usize,
+        expected: FieldElement,
+        actual: FieldElement,
+    },
+    InvalidFieldIndex {
+        index: usize,
+    },
+    HeightTooLow {
+        required: u64,
+        actual: u64,
+    },
+    HeightTooHigh {
+        max: u64,
+        actual: u64,
+    },
+    TimeOutOfRange {
+        timestamp: i64,
+        start: i64,
+        end: i64,
+    },
+    ProvedStateMismatch {
+        expected: bool,
+        actual: bool,
+    },
 }

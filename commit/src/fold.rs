@@ -339,9 +339,7 @@ mod tests {
         let old_state = sample_state();
         let absent = Fact::from_symbols("nonexistent", &["x"]);
 
-        let result = FoldDeltaBuilder::new(old_state)
-            .remove_fact(absent)
-            .build();
+        let result = FoldDeltaBuilder::new(old_state).remove_fact(absent).build();
 
         assert!(result.is_none());
     }

@@ -106,11 +106,7 @@ impl RevocationTree {
     }
 
     /// Verify a non-membership proof against the current root.
-    pub fn verify_non_membership(
-        &mut self,
-        token_id: &str,
-        proof: &NonMembershipProof,
-    ) -> bool {
+    pub fn verify_non_membership(&mut self, token_id: &str, proof: &NonMembershipProof) -> bool {
         let root = self.root();
         Self::verify_non_membership_against_root(&root, token_id, proof)
     }

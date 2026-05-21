@@ -46,6 +46,7 @@ pub mod audit;
 pub mod federation;
 pub mod keys;
 pub mod note_tree;
+pub mod poseidon2_note_tree;
 pub mod recovery;
 pub mod tables;
 pub mod tokens;
@@ -60,6 +61,7 @@ use redb::{Database, ReadableTable};
 pub use audit::StoredAuditEvent;
 pub use federation::StoredAttestedRoot;
 pub use note_tree::{NoteTree, PersistentNullifierSet};
+pub use poseidon2_note_tree::Poseidon2NoteTree;
 pub use recovery::RecoveredState;
 pub use tokens::{StoredFoldStep, TokenChain};
 
@@ -155,8 +157,9 @@ impl PersistentStore {
     /// Data is lost when the store is dropped.
     pub fn open_in_memory() -> Result<Self> {
         let backend = redb::backends::InMemoryBackend::new();
-        let db =
-            Database::builder().create_with_backend(backend).map_err(|e| StoreError::Database(e.to_string()))?;
+        let db = Database::builder()
+            .create_with_backend(backend)
+            .map_err(|e| StoreError::Database(e.to_string()))?;
         let store = Self { db };
         store.initialize_tables()?;
         Ok(store)
@@ -189,7 +192,9 @@ impl PersistentStore {
 
     /// Compact the database file, reclaiming unused space.
     pub fn compact(&mut self) -> Result<bool> {
-        self.db.compact().map_err(|e| StoreError::Database(e.to_string()))
+        self.db
+            .compact()
+            .map_err(|e| StoreError::Database(e.to_string()))
     }
 
     // =========================================================================
@@ -197,7 +202,10 @@ impl PersistentStore {
     // =========================================================================
 
     /// Store a note commitment at the next position. Returns the position assigned.
-    pub fn store_note_commitment(&self, commitment: &pyana_cell::note::NoteCommitment) -> Result<u64> {
+    pub fn store_note_commitment(
+        &self,
+        commitment: &pyana_cell::note::NoteCommitment,
+    ) -> Result<u64> {
         let write_txn = self.db.begin_write()?;
         let position;
         {
@@ -296,7 +304,8 @@ impl PersistentStore {
         let mut nullifiers = Vec::new();
         let iter = table.iter()?;
         for entry in iter {
-            let entry = entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
+            let entry =
+                entry.map_err(|e: redb::StorageError| StoreError::Database(e.to_string()))?;
             nullifiers.push(pyana_cell::note::Nullifier(*entry.0.value()));
         }
         Ok(nullifiers)

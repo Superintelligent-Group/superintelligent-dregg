@@ -13,14 +13,13 @@
 //! - A cached copy of the federation's attested root (may be stale)
 //! - The federation's public keys (for root validity check)
 
-use pyana_circuit::stark::{
-    MerkleStarkAir, StarkProof,
-    generate_merkle_trace, prove, verify,
-    proof_to_bytes, proof_from_bytes,
-};
 use pyana_circuit::BabyBear;
-use pyana_federation::{generate_keypair, sign};
+use pyana_circuit::stark::{
+    MerkleStarkAir, StarkProof, generate_merkle_trace, proof_from_bytes, proof_to_bytes, prove,
+    verify,
+};
 use pyana_federation::types::{AttestedRoot, PublicKey};
+use pyana_federation::{generate_keypair, sign};
 
 fn short_hex(bytes: &[u8]) -> String {
     bytes[..4].iter().map(|b| format!("{b:02x}")).collect()
@@ -60,8 +59,10 @@ fn deserialize_proof_bundle(bundle: &[u8]) -> Result<(StarkProof, AttestedRoot),
     let proof = proof_from_bytes(&bundle[proof_start..proof_end])?;
 
     let root_len = u32::from_le_bytes([
-        bundle[proof_end], bundle[proof_end + 1],
-        bundle[proof_end + 2], bundle[proof_end + 3],
+        bundle[proof_end],
+        bundle[proof_end + 1],
+        bundle[proof_end + 2],
+        bundle[proof_end + 3],
     ]) as usize;
     let root_start = proof_end + 4;
     let root_end = root_start + root_len;
@@ -137,7 +138,12 @@ fn main() {
     // Simulate a Merkle membership proof for the agent's issuer key.
     // The trace proves: "my issuer key is at leaf position X in the federation tree."
     let leaf_hash: u32 = 12345;
-    let siblings = [[100u32, 200, 300], [400, 500, 600], [700, 800, 900], [1000, 1100, 1200]];
+    let siblings = [
+        [100u32, 200, 300],
+        [400, 500, 600],
+        [700, 800, 900],
+        [1000, 1100, 1200],
+    ];
     let positions = [0u32, 1, 2, 3];
 
     let (trace, public_inputs) = generate_merkle_trace(leaf_hash, &siblings, &positions);
@@ -146,12 +152,19 @@ fn main() {
     println!("  Generating STARK proof for Merkle membership...");
     println!("    Leaf hash (issuer key): {}", leaf_hash);
     println!("    Tree depth: {} levels", siblings.len());
-    println!("    Public inputs: leaf={}, root={}", public_inputs[0].0, public_inputs[1].0);
+    println!(
+        "    Public inputs: leaf={}, root={}",
+        public_inputs[0].0, public_inputs[1].0
+    );
 
     let proof = prove(&air, &trace, &public_inputs);
     let proof_bytes = proof_to_bytes(&proof);
 
-    println!("    Proof generated: {} bytes ({:.1} KiB)", proof_bytes.len(), proof_bytes.len() as f64 / 1024.0);
+    println!(
+        "    Proof generated: {} bytes ({:.1} KiB)",
+        proof_bytes.len(),
+        proof_bytes.len() as f64 / 1024.0
+    );
     println!("    FRI queries: 50 (approximately 100-bit security)");
 
     // Sanity check: proof verifies before we serialize.
@@ -175,19 +188,18 @@ fn main() {
     let fresh_timestamp = 1700000000i64;
     let mut fresh_root = AttestedRoot {
         merkle_root: *blake3::hash(b"federation-revocation-tree-state-v1").as_bytes(),
+        note_tree_root: None,
+        nullifier_set_root: None,
         height: 42,
         timestamp: fresh_timestamp,
-        qc: None,
+        threshold_qc: None,
         quorum_signatures: Vec::new(),
         threshold: 2,
     };
 
     // Sign with quorum (2 of 3).
     let msg = fresh_root.signing_message();
-    fresh_root.quorum_signatures = vec![
-        (pk1, sign(&sk1, &msg)),
-        (pk2, sign(&sk2, &msg)),
-    ];
+    fresh_root.quorum_signatures = vec![(pk1, sign(&sk1, &msg)), (pk2, sign(&sk2, &msg))];
 
     assert!(fresh_root.is_valid(&federation_keys));
     println!("  Fresh attested root:");
@@ -205,7 +217,10 @@ fn main() {
     let bundle = serialize_proof_bundle(&proof, &fresh_root);
     println!("  Proof bundle serialized: {} bytes total", bundle.len());
     println!("    STARK proof: {} bytes", proof_bytes.len());
-    println!("    Attested root: {} bytes", bundle.len() - proof_bytes.len() - 8);
+    println!(
+        "    Attested root: {} bytes",
+        bundle.len() - proof_bytes.len() - 8
+    );
     println!("  (In practice: saved to file, encoded in QR code, or sent via sneakernet)");
     println!();
 
@@ -217,18 +232,27 @@ fn main() {
     println!();
 
     // Deserialize the bundle.
-    let (loaded_proof, loaded_root) = deserialize_proof_bundle(&bundle)
-        .expect("bundle deserialization should succeed");
+    let (loaded_proof, loaded_root) =
+        deserialize_proof_bundle(&bundle).expect("bundle deserialization should succeed");
 
     // Reconstruct public inputs from the proof metadata.
-    let loaded_public_inputs: Vec<BabyBear> = loaded_proof.public_inputs
+    let loaded_public_inputs: Vec<BabyBear> = loaded_proof
+        .public_inputs
         .iter()
         .map(|&v| BabyBear(v))
         .collect();
 
     println!("  Bundle loaded from bytes:");
-    println!("    Proof: {} query proofs, trace_len={}", loaded_proof.query_proofs.len(), loaded_proof.trace_len);
-    println!("    Root: height={}, sigs={}", loaded_root.height, loaded_root.quorum_signatures.len());
+    println!(
+        "    Proof: {} query proofs, trace_len={}",
+        loaded_proof.query_proofs.len(),
+        loaded_proof.trace_len
+    );
+    println!(
+        "    Root: height={}, sigs={}",
+        loaded_root.height,
+        loaded_root.quorum_signatures.len()
+    );
     println!();
 
     // =========================================================================
@@ -252,7 +276,11 @@ fn main() {
         OfflineVerifyResult::Valid => println!("    Result: VALID [PASS]"),
         other => panic!("Expected Valid, got: {:?}", other),
     }
-    println!("    Root age: {}s (< {}s threshold)", current_time - fresh_timestamp, max_staleness);
+    println!(
+        "    Root age: {}s (< {}s threshold)",
+        current_time - fresh_timestamp,
+        max_staleness
+    );
     println!();
 
     // =========================================================================
@@ -273,7 +301,10 @@ fn main() {
     match &result_b {
         OfflineVerifyResult::ValidButStale { age_seconds } => {
             println!("    Result: VALID (stale warning) [PASS]");
-            println!("    Root age: {}s (> {}s threshold)", age_seconds, max_staleness);
+            println!(
+                "    Root age: {}s (> {}s threshold)",
+                age_seconds, max_staleness
+            );
             println!("    WARNING: root may not reflect recent revocations");
         }
         other => panic!("Expected ValidButStale, got: {:?}", other),

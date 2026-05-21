@@ -11,16 +11,17 @@
 //!   cargo run --bin multi_node
 
 use pyana_wire::prelude::*;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // Re-use federation consensus types.
+use pyana_federation::types::{NodeIdentity, hex_encode};
 use pyana_federation::{
-    ConsensusConfig, ConsensusOrchestrator, ConsensusState,
-    RevocationEvent, generate_keypair, sign,
+    ConsensusConfig, ConsensusState, NetworkConsensusNode, RevocationEvent,
+    TcpFederationTransport, generate_keypair, sign,
 };
-use pyana_federation::types::{hex_encode, NodeIdentity};
 
 /// Hex-encode the first N bytes of a slice for display.
 fn short_hex(bytes: &[u8], n: usize) -> String {
@@ -59,22 +60,18 @@ async fn main() {
     // =========================================================================
     // Setup: Generate keypairs for 3 federation nodes
     // =========================================================================
-    let nodes: Vec<DemoNode> = vec![
-        ("alpha.org", 0),
-        ("beta.net", 1),
-        ("gamma.io", 2),
-    ]
-    .into_iter()
-    .map(|(name, idx)| {
-        let (sk, pk) = generate_keypair();
-        DemoNode {
-            name: name.to_string(),
-            index: idx,
-            signing_key: sk,
-            public_key: pk,
-        }
-    })
-    .collect();
+    let nodes: Vec<DemoNode> = vec![("alpha.org", 0), ("beta.net", 1), ("gamma.io", 2)]
+        .into_iter()
+        .map(|(name, idx)| {
+            let (sk, pk) = generate_keypair();
+            DemoNode {
+                name: name.to_string(),
+                index: idx,
+                signing_key: sk,
+                public_key: pk,
+            }
+        })
+        .collect();
 
     let node_identities: Vec<NodeIdentity> = nodes
         .iter()
@@ -129,28 +126,68 @@ async fn main() {
     println!();
 
     // =========================================================================
-    // Phase 2: Federation consensus round
+    // Phase 2: Federation consensus round (real TCP transport)
     // =========================================================================
-    println!("[Phase 2] Running federation consensus round...");
+    println!("[Phase 2] Running federation consensus round over TCP...");
     println!();
 
-    // Setup consensus states for all 3 nodes
+    // Setup consensus config for 3 nodes
     let config = ConsensusConfig::new(3);
-    // With 3 nodes: threshold = 3 - floor((3-1)/3) = 3 - 0 = 3... actually:
-    // max_faults = (3-1)/3 = 0 (integer division)
-    // threshold = 3 - 0 = 3
-    // So we need all 3 to vote. That's fine for the demo.
     println!(
         "  [Federation] Config: {} nodes, threshold={}, max_faults={}",
         config.num_nodes, config.threshold, config.max_faults
     );
 
-    let mut consensus_states: Vec<ConsensusState> = nodes
-        .iter()
-        .map(|n| ConsensusState::new(n.index, n.signing_key.clone(), config.clone()))
+    // Bind TCP listeners for the consensus transport layer (separate from silo servers).
+    let consensus_base: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    let mut consensus_addrs: Vec<SocketAddr> = Vec::new();
+    let mut listeners = Vec::new();
+    for _ in 0..3 {
+        let listener = tokio::net::TcpListener::bind(consensus_base).await.unwrap();
+        consensus_addrs.push(listener.local_addr().unwrap());
+        listeners.push(listener);
+    }
+    // Release the ports so TcpFederationTransport can rebind them.
+    drop(listeners);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Create TcpFederationTransport instances for each node.
+    let mut transports: Vec<Arc<TcpFederationTransport>> = Vec::new();
+    for i in 0..3 {
+        let mut peers = HashMap::new();
+        for j in 0..3 {
+            if j != i {
+                peers.insert(j, consensus_addrs[j]);
+            }
+        }
+        let (transport, actual_addr) =
+            TcpFederationTransport::new_with_addr(i, peers, consensus_addrs[i])
+                .await
+                .unwrap();
+        consensus_addrs[i] = actual_addr;
+        transports.push(transport);
+    }
+
+    // Give transport listeners time to start accepting connections.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    for (i, addr) in consensus_addrs.iter().enumerate() {
+        println!(
+            "  [Node {}] Consensus transport on localhost:{}",
+            i + 1,
+            addr.port()
+        );
+    }
+
+    // Create NetworkConsensusNode instances.
+    let mut consensus_nodes: Vec<NetworkConsensusNode> = (0..3)
+        .map(|i| {
+            let state = ConsensusState::new(i, nodes[i].signing_key.clone(), config.clone());
+            NetworkConsensusNode::new(state, transports[i].clone(), config.clone())
+        })
         .collect();
 
-    // Submit a revocation event to trigger a consensus round
+    // Submit a revocation event to trigger a consensus round.
     let token_to_revoke = "tok-agent-alpha-session-42";
     let revocation_sig = sign(&nodes[0].signing_key, token_to_revoke.as_bytes());
     let event = RevocationEvent {
@@ -159,39 +196,53 @@ async fn main() {
         signature: revocation_sig.clone(),
     };
 
-    // The leader for view 1 is node_id = 1 % 3 = 1 (beta.net)
-    let leader_id = config.leader_for_view(consensus_states[0].current_view);
+    // Determine the leader for view 1.
+    let leader_id = config.leader_for_view(consensus_nodes[0].state.current_view);
     println!(
         "  [Federation] Leader for view {}: Node {} ({})",
-        consensus_states[0].current_view,
+        consensus_nodes[0].state.current_view,
         leader_id + 1,
         nodes[leader_id].name
     );
 
-    // Submit the event to the system
-    consensus_states[0].submit_revocation(event);
+    // Submit the revocation event to the leader node.
+    consensus_nodes[leader_id].submit_revocation(event);
 
-    // Compute a federation root to propose (BLAKE3 of the token state)
-    let proposed_root = *blake3::hash(token_to_revoke.as_bytes()).as_bytes();
+    // Leader proposes and broadcasts over TCP.
+    let proposal = consensus_nodes[leader_id].try_propose().await.unwrap();
+    assert!(
+        proposal.is_some(),
+        "leader should create a proposal"
+    );
     println!(
-        "  [Federation] Proposing root: {}...",
-        short_hex(&proposed_root, 8)
+        "  [Node {}] Proposed block (height 1) broadcast over TCP",
+        leader_id + 1
     );
 
-    // Run the consensus orchestrator
-    let mut orchestrator = ConsensusOrchestrator::new(config.clone());
-    let consensus_result = orchestrator.run_round(&mut consensus_states);
+    // Wait for proposals to propagate over TCP.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Non-leader nodes process the proposal and send votes over TCP.
+    for i in 0..3 {
+        if i == leader_id {
+            continue;
+        }
+        consensus_nodes[i].process_messages().await.unwrap();
+        println!("  [Node {}] Received proposal, voted YES over TCP", i + 1);
+    }
+
+    // Wait for votes to propagate over TCP.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Leader collects votes and finalizes.
+    let consensus_result = consensus_nodes[leader_id].process_messages().await.unwrap();
 
     match consensus_result {
         Some((block, qc)) => {
             // Print individual votes
             for (voter_id, sig) in &qc.votes {
                 let sig_hex = hex_encode(&sig.0[..4]);
-                println!(
-                    "  [Node {}] Voting YES (sig: {}...)",
-                    voter_id + 1,
-                    sig_hex
-                );
+                println!("  [Node {}] Vote recorded (sig: {}...)", voter_id + 1, sig_hex);
             }
 
             println!(
@@ -205,9 +256,40 @@ async fn main() {
                 short_hex(&block.block_hash, 8)
             );
 
+            // Wait for finalization broadcast to propagate.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+
+            // Non-leader nodes receive and apply the finalization.
+            for i in 0..3 {
+                if i == leader_id {
+                    continue;
+                }
+                let fin = consensus_nodes[i].process_messages().await.unwrap();
+                assert!(
+                    fin.is_some(),
+                    "node {} should have received finalization",
+                    i
+                );
+                let (fin_block, _fin_qc) = fin.unwrap();
+                assert_eq!(fin_block.block_hash, block.block_hash);
+                println!(
+                    "  [Node {}] Finalized block (hash matches leader)",
+                    i + 1
+                );
+            }
+
+            // Verify all nodes are now at the same height.
+            for node in &consensus_nodes {
+                assert_eq!(node.state.current_height, 2);
+            }
+            println!("  [Federation] All nodes at height 2 (consensus verified)");
+
             // Validate the QC with real keys
             let valid = qc.is_valid_with_keys(&node_identities);
-            println!("  [Federation] QC cryptographic verification: {}", if valid { "PASSED" } else { "FAILED" });
+            println!(
+                "  [Federation] QC cryptographic verification: {}",
+                if valid { "PASSED" } else { "FAILED" }
+            );
 
             // Store the attested root in all nodes' persistent stores
             let attested = pyana_store::StoredAttestedRoot {
@@ -235,7 +317,10 @@ async fn main() {
             for store in &stores {
                 store.store_attested_root(&attested).unwrap();
             }
-            println!("  [Federation] Attested root persisted to all {} stores", stores.len());
+            println!(
+                "  [Federation] Attested root persisted to all {} stores",
+                stores.len()
+            );
         }
         None => {
             println!("  [Federation] CONSENSUS FAILED - not enough votes");
@@ -289,17 +374,16 @@ async fn main() {
     let welcome = conn.recv().await.unwrap();
 
     let federation_root = match &welcome {
-        WireMessage::Welcome { federation_root, .. } => *federation_root,
+        WireMessage::Welcome {
+            federation_root, ..
+        } => *federation_root,
         _ => panic!("unexpected response"),
     };
 
     // Present the token
-    let request = AuthorizationRequest::new(
-        "compute/v1/workloads",
-        "execute",
-        "agent-alpha@alpha.org",
-    )
-    .with_scopes(vec!["service:compute".to_string(), "ttl:60s".to_string()]);
+    let request =
+        AuthorizationRequest::new("compute/v1/workloads", "execute", "agent-alpha@alpha.org")
+            .with_scopes(vec!["service:compute".to_string(), "ttl:60s".to_string()]);
 
     let present_msg = WireMessage::PresentToken {
         proof: stark_proof.clone(),
@@ -311,7 +395,9 @@ async fn main() {
     let result = conn.recv().await.unwrap();
 
     match &result {
-        WireMessage::PresentationResult { accepted, reason, .. } => {
+        WireMessage::PresentationResult {
+            accepted, reason, ..
+        } => {
             println!(
                 "  [Node 2] Received presentation proof ({} bytes)",
                 stark_proof.len()
@@ -345,13 +431,12 @@ async fn main() {
     let rev_sig_fed = sign(&nodes[0].signing_key, revoke_token_id.as_bytes());
     let authority_sig = Signature(rev_sig_fed.0);
 
-    println!(
-        "  [Node 1] Revoking token \"{}\"...",
-        revoke_token_id
-    );
+    println!("  [Node 1] Revoking token \"{}\"...", revoke_token_id);
 
     // Submit revocation to Node 2
-    let mut conn2 = PeerConnection::connect(&addrs[1].to_string()).await.unwrap();
+    let mut conn2 = PeerConnection::connect(&addrs[1].to_string())
+        .await
+        .unwrap();
     let revoke_msg = WireMessage::SubmitRevocation {
         token_id: revoke_token_id.to_string(),
         authority: authority_pk,
@@ -374,7 +459,9 @@ async fn main() {
     drop(conn2);
 
     // Submit revocation to Node 3
-    let mut conn3 = PeerConnection::connect(&addrs[2].to_string()).await.unwrap();
+    let mut conn3 = PeerConnection::connect(&addrs[2].to_string())
+        .await
+        .unwrap();
     let revoke_msg3 = WireMessage::SubmitRevocation {
         token_id: revoke_token_id.to_string(),
         authority: PublicKey(nodes[0].public_key.0),
@@ -412,12 +499,12 @@ async fn main() {
     println!("[Phase 5] Re-presenting revoked token...");
     println!();
 
-    println!(
-        "  [Node 1] Attempting to re-present revoked token to Node 2..."
-    );
+    println!("  [Node 1] Attempting to re-present revoked token to Node 2...");
 
     // Connect to Node 2 and check non-membership first
-    let mut conn_check = PeerConnection::connect(&addrs[1].to_string()).await.unwrap();
+    let mut conn_check = PeerConnection::connect(&addrs[1].to_string())
+        .await
+        .unwrap();
 
     // Request non-membership proof for the revoked token
     let nm_msg = WireMessage::RequestNonMembership {
@@ -427,7 +514,9 @@ async fn main() {
     let nm_resp = conn_check.recv().await.unwrap();
 
     match &nm_resp {
-        WireMessage::NonMembershipResponse { token_id, proof, .. } => {
+        WireMessage::NonMembershipResponse {
+            token_id, proof, ..
+        } => {
             if proof.is_none() {
                 println!(
                     "  [Node 2] Token \"{}\" REVOKED - no non-membership proof available",
@@ -445,7 +534,9 @@ async fn main() {
     }
 
     // Also verify against Node 3
-    let mut conn_check3 = PeerConnection::connect(&addrs[2].to_string()).await.unwrap();
+    let mut conn_check3 = PeerConnection::connect(&addrs[2].to_string())
+        .await
+        .unwrap();
     let nm_msg3 = WireMessage::RequestNonMembership {
         token_id: revoke_token_id.to_string(),
     };
@@ -453,7 +544,9 @@ async fn main() {
     let nm_resp3 = conn_check3.recv().await.unwrap();
 
     match &nm_resp3 {
-        WireMessage::NonMembershipResponse { token_id, proof, .. } => {
+        WireMessage::NonMembershipResponse {
+            token_id, proof, ..
+        } => {
             if proof.is_none() {
                 println!(
                     "  [Node 3] Token \"{}\" REVOKED - presentation rejected",
@@ -493,7 +586,7 @@ async fn main() {
     let mint_note = Note::with_randomness(
         owner_key,
         [1, 100, 0, 0, 0, 0, 0, 0], // asset_type=1, amount=100
-        [0x42; 32], // deterministic randomness for demo
+        [0x42; 32],                 // deterministic randomness for demo
     );
     let mint_commitment = mint_note.commitment();
     let mint_pos = store.store_note_commitment(&mint_commitment).unwrap();
@@ -520,12 +613,10 @@ async fn main() {
     );
 
     // Create output note 1: 60 units to self.
-    let output_note_1 = Note::with_randomness(
-        owner_key,
-        [1, 60, 0, 0, 0, 0, 0, 0],
-        [0x60; 32],
-    );
-    let out_pos_1 = store.store_note_commitment(&output_note_1.commitment()).unwrap();
+    let output_note_1 = Note::with_randomness(owner_key, [1, 60, 0, 0, 0, 0, 0, 0], [0x60; 32]);
+    let out_pos_1 = store
+        .store_note_commitment(&output_note_1.commitment())
+        .unwrap();
     println!(
         "  [Node 1] Created note: 60 units of asset 1 (position: {})",
         out_pos_1,
@@ -533,12 +624,10 @@ async fn main() {
 
     // Create output note 2: 40 units to a recipient.
     let recipient_key: [u8; 32] = nodes[1].public_key.0;
-    let output_note_2 = Note::with_randomness(
-        recipient_key,
-        [1, 40, 0, 0, 0, 0, 0, 0],
-        [0x40; 32],
-    );
-    let out_pos_2 = store.store_note_commitment(&output_note_2.commitment()).unwrap();
+    let output_note_2 = Note::with_randomness(recipient_key, [1, 40, 0, 0, 0, 0, 0, 0], [0x40; 32]);
+    let out_pos_2 = store
+        .store_note_commitment(&output_note_2.commitment())
+        .unwrap();
     println!(
         "  [Node 1] Created note: 40 units of asset 1 to recipient (position: {})",
         out_pos_2,
@@ -557,10 +646,7 @@ async fn main() {
     let double_spend_result = store.store_nullifier(&nullifier);
     match double_spend_result {
         Err(ref e) => {
-            println!(
-                "  [Node 1] Double-spend REJECTED: {}",
-                e,
-            );
+            println!("  [Node 1] Double-spend REJECTED: {}", e,);
         }
         Ok(()) => {
             println!("  [Node 1] ERROR: double-spend was NOT rejected!");
@@ -574,9 +660,7 @@ async fn main() {
     let tree_root = tree.root();
     let proof = tree.prove_membership(mint_pos).unwrap();
     assert!(NoteTree::verify_proof(&tree_root, &proof));
-    println!(
-        "  [Node 1] Membership proof for minted note: VALID",
-    );
+    println!("  [Node 1] Membership proof for minted note: VALID",);
 
     // Show the note tree root + nullifier root (federation would attest to these).
     let note_root = store.note_tree_root().unwrap();
@@ -601,11 +685,17 @@ async fn main() {
     println!("==========================================================================");
     println!();
     println!("  Nodes:            3 (alpha.org, beta.net, gamma.io)");
-    println!("  Consensus:        BFT (threshold {}/{})", config.threshold, config.num_nodes);
-    println!("  Transport:        TCP with postcard framing");
+    println!(
+        "  Consensus:        BFT (threshold {}/{})",
+        config.threshold, config.num_nodes
+    );
+    println!("  Transport:        TCP (real TcpFederationTransport)");
     println!("  Proof system:     Real STARK (FRI + Merkle + Fiat-Shamir)");
     println!("  Persistence:      redb (in-memory for demo)");
-    println!("  Elapsed:          {:.1}ms", elapsed.as_secs_f64() * 1000.0);
+    println!(
+        "  Elapsed:          {:.1}ms",
+        elapsed.as_secs_f64() * 1000.0
+    );
     println!();
     println!("  Phases completed:");
     println!("    1. Node startup & binding          OK");
@@ -627,7 +717,7 @@ async fn main() {
 fn generate_real_stark_proof() -> Vec<u8> {
     use pyana_circuit::BabyBear;
     use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
-    use pyana_circuit::stark::{prove, proof_to_bytes};
+    use pyana_circuit::stark::{proof_to_bytes, prove};
 
     // Create a 4-level Merkle membership witness with Poseidon2 hashing
     let leaf_hash = BabyBear::new(42424242); // Represents the issuer's key hash
@@ -635,7 +725,11 @@ fn generate_real_stark_proof() -> Vec<u8> {
         [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
         [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
         [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
-        [BabyBear::new(1000), BabyBear::new(1100), BabyBear::new(1200)],
+        [
+            BabyBear::new(1000),
+            BabyBear::new(1100),
+            BabyBear::new(1200),
+        ],
     ];
     let positions = [0u8, 1, 2, 3];
 

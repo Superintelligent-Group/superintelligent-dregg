@@ -18,22 +18,20 @@
 
 use pyana_bridge::StarkProofVerifier;
 use pyana_bridge::present::{bytes_to_babybear, hash_index};
-use pyana_cell::{
-    AuthRequired, CellId, Ledger, Permissions, VerificationKey,
-    cell::Cell,
-};
+use pyana_cell::{AuthRequired, CellId, Ledger, Permissions, VerificationKey, cell::Cell};
 use pyana_circuit::BabyBear;
 use pyana_circuit::merkle_air::MerkleAir;
-use pyana_turn::{
-    ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult,
-};
-use pyana_token::{AuthRequest, AuthToken, MacaroonToken, Attenuation};
+use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn short_hex(bytes: &[u8]) -> String {
     if bytes.len() >= 4 {
-        format!("{:02x}{:02x}{:02x}{:02x}...", bytes[0], bytes[1], bytes[2], bytes[3])
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}...",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     } else {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -105,16 +103,19 @@ fn main() {
     use pyana_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
 
     let leaf_hash_bb = bytes_to_babybear(&issuer_key);
-    let stark_siblings: Vec<[u32; 3]> = (0..4u32).map(|i| {
-        [hash_index(i as usize, 0, &issuer_key),
-         hash_index(i as usize, 1, &issuer_key),
-         hash_index(i as usize, 2, &issuer_key)]
-    }).collect();
+    let stark_siblings: Vec<[u32; 3]> = (0..4u32)
+        .map(|i| {
+            [
+                hash_index(i as usize, 0, &issuer_key),
+                hash_index(i as usize, 1, &issuer_key),
+                hash_index(i as usize, 2, &issuer_key),
+            ]
+        })
+        .collect();
     let stark_positions: Vec<u32> = vec![0, 1, 2, 3];
 
-    let (stark_trace, stark_public_inputs) = generate_merkle_trace(
-        leaf_hash_bb.0, &stark_siblings, &stark_positions,
-    );
+    let (stark_trace, stark_public_inputs) =
+        generate_merkle_trace(leaf_hash_bb.0, &stark_siblings, &stark_positions);
     let stark_federation_root = stark_public_inputs[1];
 
     // Store the BabyBear root as a 32-byte verification key (first 4 bytes = u32 LE).
@@ -127,8 +128,14 @@ fn main() {
     item(&format!("Issuer key: {}", short_hex(&issuer_key)));
     item(&format!("Member 2 key: {}", short_hex(&member2_key)));
     item(&format!("Member 3 key: {}", short_hex(&member3_key)));
-    item(&format!("Federation root (STARK algebraic): {}", stark_federation_root.0));
-    item(&format!("Federation root (Poseidon2 bridge): {}", federation_root_bb.0));
+    item(&format!(
+        "Federation root (STARK algebraic): {}",
+        stark_federation_root.0
+    ));
+    item(&format!(
+        "Federation root (Poseidon2 bridge): {}",
+        federation_root_bb.0
+    ));
 
     // ─── Step 2: Mint a root macaroon token ─────────────────────────────────
 
@@ -141,7 +148,11 @@ fn main() {
 
     // ─── Step 3: Attenuate the token ────────────────────────────────────────
 
-    section(3, total_steps, "Attenuating token (restrict to service + time)");
+    section(
+        3,
+        total_steps,
+        "Attenuating token (restrict to service + time)",
+    );
 
     let attenuation = Attenuation {
         services: vec![("compute".into(), "rw".into())],
@@ -165,7 +176,10 @@ fn main() {
         ..Default::default()
     };
     let clearance = attenuated_token.verify(&test_request).unwrap();
-    item(&format!("  Verification: PASS (capabilities: {})", clearance.capabilities.len()));
+    item(&format!(
+        "  Verification: PASS (capabilities: {})",
+        clearance.capabilities.len()
+    ));
 
     // ─── Step 4: Create cells in a Ledger ───────────────────────────────────
 
@@ -227,9 +241,18 @@ fn main() {
     let target_id = target_cell.id;
     ledger.insert_cell(target_cell).unwrap();
 
-    item(&format!("Issuer cell: {} (balance: 1,000,000)", short_id(&issuer_id)));
-    item(&format!("Agent cell:  {} (balance: 100,000)", short_id(&agent_id)));
-    item(&format!("Target cell: {} (balance: 50,000, requires PROOF auth)", short_id(&target_id)));
+    item(&format!(
+        "Issuer cell: {} (balance: 1,000,000)",
+        short_id(&issuer_id)
+    ));
+    item(&format!(
+        "Agent cell:  {} (balance: 100,000)",
+        short_id(&agent_id)
+    ));
+    item(&format!(
+        "Target cell: {} (balance: 50,000, requires PROOF auth)",
+        short_id(&target_id)
+    ));
 
     // ─── Step 5: Grant capabilities ─────────────────────────────────────────
 
@@ -241,7 +264,10 @@ fn main() {
         agent.capabilities.grant(target_id, AuthRequired::None);
     }
 
-    item(&format!("Agent granted capability to target cell {}", short_id(&target_id)));
+    item(&format!(
+        "Agent granted capability to target cell {}",
+        short_id(&target_id)
+    ));
 
     // ─── Step 6: Convert token to ZK presentation proof ─────────────────────
 
@@ -259,17 +285,34 @@ fn main() {
 
     // Verify our own proof
     let verify_result = stark::verify(&stark_air, &stark_proof, &stark_public_inputs);
-    assert!(verify_result.is_ok(), "STARK self-verification failed: {:?}", verify_result.err());
+    assert!(
+        verify_result.is_ok(),
+        "STARK self-verification failed: {:?}",
+        verify_result.err()
+    );
 
-    item(&format!("  STARK proof generated: {} bytes ({:.1} KiB)",
-        proof_bytes.len(), proof_bytes.len() as f64 / 1024.0));
-    item(&format!("  Public inputs: leaf={}, root={}", stark_public_inputs[0].0, stark_public_inputs[1].0));
+    item(&format!(
+        "  STARK proof generated: {} bytes ({:.1} KiB)",
+        proof_bytes.len(),
+        proof_bytes.len() as f64 / 1024.0
+    ));
+    item(&format!(
+        "  Public inputs: leaf={}, root={}",
+        stark_public_inputs[0].0, stark_public_inputs[1].0
+    ));
     item("  STARK self-verification: PASS (50 FRI queries, ~100-bit security)");
-    item(&format!("  Federation root bound to proof: {}", stark_federation_root.0));
+    item(&format!(
+        "  Federation root bound to proof: {}",
+        stark_federation_root.0
+    ));
 
     // ─── Step 7: Submit a Turn with proof authorization ─────────────────────
 
-    section(7, total_steps, "Submitting Turn with STARK proof authorization");
+    section(
+        7,
+        total_steps,
+        "Submitting Turn with STARK proof authorization",
+    );
 
     // Configure the executor with the StarkProofVerifier
     let verifier = StarkProofVerifier::new();
@@ -303,29 +346,58 @@ fn main() {
     }
 
     let turn = turn_builder.build();
-    item(&format!("Turn built: agent {} -> target {}", short_id(&agent_id), short_id(&target_id)));
-    item(&format!("  Authorization: STARK proof ({} bytes)", proof_bytes.len()));
-    item(&format!("  Effect: SetField(target, slot=0, computation_result)"));
+    item(&format!(
+        "Turn built: agent {} -> target {}",
+        short_id(&agent_id),
+        short_id(&target_id)
+    ));
+    item(&format!(
+        "  Authorization: STARK proof ({} bytes)",
+        proof_bytes.len()
+    ));
+    item(&format!(
+        "  Effect: SetField(target, slot=0, computation_result)"
+    ));
 
     // ─── Step 8: Execute and verify ─────────────────────────────────────────
 
-    section(8, total_steps, "Executor verifies STARK proof and executes turn");
+    section(
+        8,
+        total_steps,
+        "Executor verifies STARK proof and executes turn",
+    );
 
     let result = executor.execute(&turn, &mut ledger);
 
     match result {
-        TurnResult::Committed { receipt, computrons_used, .. } => {
+        TurnResult::Committed {
+            receipt,
+            computrons_used,
+            ..
+        } => {
             item("TURN COMMITTED SUCCESSFULLY");
             item(&format!("  Computrons used: {computrons_used}"));
             item(&format!("  Turn hash: {}", short_hex(&receipt.turn_hash)));
-            item(&format!("  Effects hash: {}", short_hex(&receipt.effects_hash)));
-            item(&format!("  Pre-state: {}", short_hex(&receipt.pre_state_hash)));
-            item(&format!("  Post-state: {}", short_hex(&receipt.post_state_hash)));
+            item(&format!(
+                "  Effects hash: {}",
+                short_hex(&receipt.effects_hash)
+            ));
+            item(&format!(
+                "  Pre-state: {}",
+                short_hex(&receipt.pre_state_hash)
+            ));
+            item(&format!(
+                "  Post-state: {}",
+                short_hex(&receipt.post_state_hash)
+            ));
 
             // Verify the target cell's state was actually modified
             let target = ledger.get(&target_id).unwrap();
             let expected = *blake3::hash(b"computation_result:success:42").as_bytes();
-            assert_eq!(target.state.fields[0], expected, "target state should be updated");
+            assert_eq!(
+                target.state.fields[0], expected,
+                "target state should be updated"
+            );
             item("  Target cell state verified: field[0] contains computation result");
         }
         TurnResult::Rejected { reason, at_action } => {

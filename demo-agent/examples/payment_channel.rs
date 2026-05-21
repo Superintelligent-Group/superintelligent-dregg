@@ -91,6 +91,8 @@ fn make_channel_receipt(
         action_count: 1,
         previous_receipt_hash: previous_receipt_hash,
         agent,
+        routing_directives: Vec::new(),
+        executor_signature: None,
     }
 }
 
@@ -104,10 +106,14 @@ fn main() {
     let alice_cell_id = CellId::derive_raw(&alice_pubkey, &[0u8; 32]);
 
     println!("Participants:");
-    println!("  Alice: {:02x}{:02x}{:02x}{:02x}... (sender)",
-        alice_pubkey[0], alice_pubkey[1], alice_pubkey[2], alice_pubkey[3]);
-    println!("  Bob:   {:02x}{:02x}{:02x}{:02x}... (receiver)",
-        bob_pubkey[0], bob_pubkey[1], bob_pubkey[2], bob_pubkey[3]);
+    println!(
+        "  Alice: {:02x}{:02x}{:02x}{:02x}... (sender)",
+        alice_pubkey[0], alice_pubkey[1], alice_pubkey[2], alice_pubkey[3]
+    );
+    println!(
+        "  Bob:   {:02x}{:02x}{:02x}{:02x}... (receiver)",
+        bob_pubkey[0], bob_pubkey[1], bob_pubkey[2], bob_pubkey[3]
+    );
     println!();
 
     // =======================================================================
@@ -152,15 +158,21 @@ fn main() {
         channel_deposit,
         silos.clone(),
         1, // tolerate 1 Byzantine silo
-    ).expect("Channel budget created");
+    )
+    .expect("Channel budget created");
 
     let slice_ceiling = budget.compute_slice_ceiling();
 
     println!("  Channel deposit: {} units", channel_deposit);
     println!("  Byzantine tolerance: f=1 (requires 4 silos: 2 endpoints + 2 witnesses)");
-    println!("  Slice ceiling per silo: {} units (balance * (f+1)/(2f+1) = {} * 2/3)",
-        slice_ceiling, channel_deposit);
-    println!("  Alice's spending limit: {} units per epoch", slice_ceiling);
+    println!(
+        "  Slice ceiling per silo: {} units (balance * (f+1)/(2f+1) = {} * 2/3)",
+        slice_ceiling, channel_deposit
+    );
+    println!(
+        "  Alice's spending limit: {} units per epoch",
+        slice_ceiling
+    );
     println!();
 
     // =======================================================================
@@ -207,8 +219,12 @@ fn main() {
                 channel.payments.push(payment.clone());
 
                 println!("  Payment #{}: {} units -> Bob", seq, amount);
-                println!("    Cumulative sent: {} | Alice remaining: {} | Bob accrued: {}",
-                    payment.cumulative_sent, payment.alice_remaining, channel.bob_balance());
+                println!(
+                    "    Cumulative sent: {} | Alice remaining: {} | Bob accrued: {}",
+                    payment.cumulative_sent,
+                    payment.alice_remaining,
+                    channel.bob_balance()
+                );
             }
             Err(e) => {
                 println!("  Payment #{}: REJECTED ({})", seq, e);
@@ -226,27 +242,39 @@ fn main() {
     // Verify the receipt chain is valid
     let chain_result = verify_receipt_chain(&receipt_chain);
     assert!(chain_result.is_ok(), "Receipt chain should be valid");
-    println!("  Receipt chain valid: {} receipts linked [PASS]", receipt_chain.len());
+    println!(
+        "  Receipt chain valid: {} receipts linked [PASS]",
+        receipt_chain.len()
+    );
 
     // Bob checks monotonicity: cumulative_sent never decreases
     let mut prev_cumulative = 0u64;
     for payment in &channel.payments {
-        assert!(payment.cumulative_sent >= prev_cumulative,
-            "Cumulative sent must be monotonically increasing");
-        assert!(payment.cumulative_sent <= channel.alice_deposit,
-            "Cumulative sent must not exceed channel deposit");
+        assert!(
+            payment.cumulative_sent >= prev_cumulative,
+            "Cumulative sent must be monotonically increasing"
+        );
+        assert!(
+            payment.cumulative_sent <= channel.alice_deposit,
+            "Cumulative sent must not exceed channel deposit"
+        );
         prev_cumulative = payment.cumulative_sent;
     }
     println!("  Monotonicity check: cumulative_sent never decreases [PASS]");
-    println!("  Bounds check: cumulative_sent <= slice ceiling ({}) [PASS]", channel.alice_deposit);
+    println!(
+        "  Bounds check: cumulative_sent <= slice ceiling ({}) [PASS]",
+        channel.alice_deposit
+    );
 
     // Bob can verify each payment's digest matches its claimed (seq, amount)
     for payment in &channel.payments {
         let expected_digest = payment_digest(payment.seq, payment.amount, &alice_pubkey);
-        assert_eq!(payment.digest, expected_digest,
-            "Payment digest must match");
+        assert_eq!(payment.digest, expected_digest, "Payment digest must match");
     }
-    println!("  Digest integrity: all {} payment digests verified [PASS]", channel.payments.len());
+    println!(
+        "  Digest integrity: all {} payment digests verified [PASS]",
+        channel.payments.len()
+    );
     println!();
 
     // =======================================================================
@@ -278,7 +306,10 @@ fn main() {
     let alice_cert = alice_slice.certificate(alice_silo);
 
     println!("  Alice's spending certificate:");
-    println!("    Silo:        {:02x}{:02x}...", alice_silo[0], alice_silo[1]);
+    println!(
+        "    Silo:        {:02x}{:02x}...",
+        alice_silo[0], alice_silo[1]
+    );
     println!("    Version:     {}", alice_cert.version);
     println!("    Total spent: {} units", alice_cert.total_spent);
     println!("    Debits:      {} transactions", alice_cert.debits.len());
@@ -317,9 +348,15 @@ fn main() {
 
     println!("  Settlement complete!");
     println!("    Total spent in channel: {} units", total_spent);
-    println!("    Remaining balance (returned to Alice): {} units", budget.total_balance);
-    println!("    Bob receives: {} units (from {} payments)",
-        channel.bob_balance(), channel.payments.len());
+    println!(
+        "    Remaining balance (returned to Alice): {} units",
+        budget.total_balance
+    );
+    println!(
+        "    Bob receives: {} units (from {} payments)",
+        channel.bob_balance(),
+        channel.payments.len()
+    );
     println!();
 
     // Verify conservation
@@ -328,8 +365,10 @@ fn main() {
         channel_deposit,
         "Conservation: spent + remaining = original deposit"
     );
-    println!("  Conservation: {} (spent) + {} (remaining) = {} (deposit) [PASS]",
-        total_spent, budget.total_balance, channel_deposit);
+    println!(
+        "  Conservation: {} (spent) + {} (remaining) = {} (deposit) [PASS]",
+        total_spent, budget.total_balance, channel_deposit
+    );
     println!();
 
     // =======================================================================
@@ -339,19 +378,37 @@ fn main() {
     println!("  ┌──────────────────────────────────────────────────────────┐");
     println!("  │ Channel Summary                                          │");
     println!("  ├──────────────────────────────────────────────────────────┤");
-    println!("  │ Original deposit:    {:>6} units                        │", channel_deposit);
-    println!("  │ Alice sent to Bob:   {:>6} units ({} payments)           │",
-        channel.bob_balance(), channel.payments.len());
-    println!("  │ Alice final balance: {:>6} units                        │", budget.total_balance);
-    println!("  │ Bob final balance:   {:>6} units                        │", channel.bob_balance());
-    println!("  │ Budget version:      {:>6} (1 epoch completed)          │", budget.version);
+    println!(
+        "  │ Original deposit:    {:>6} units                        │",
+        channel_deposit
+    );
+    println!(
+        "  │ Alice sent to Bob:   {:>6} units ({} payments)           │",
+        channel.bob_balance(),
+        channel.payments.len()
+    );
+    println!(
+        "  │ Alice final balance: {:>6} units                        │",
+        budget.total_balance
+    );
+    println!(
+        "  │ Bob final balance:   {:>6} units                        │",
+        channel.bob_balance()
+    );
+    println!(
+        "  │ Budget version:      {:>6} (1 epoch completed)          │",
+        budget.version
+    );
     println!("  └──────────────────────────────────────────────────────────┘");
     println!();
     println!("  Trust model:");
     println!("  1. OFFLINE VERIFICATION: Bob verifies payments via receipt chain.");
     println!("     No federation contact needed for individual payments.");
     println!();
-    println!("  2. BOUNDED RISK: Alice can spend at most her slice ceiling ({}).", slice_ceiling);
+    println!(
+        "  2. BOUNDED RISK: Alice can spend at most her slice ceiling ({}).",
+        slice_ceiling
+    );
     println!("     Even if she is malicious, overspend is bounded by (f+1)/(2f+1).");
     println!();
     println!("  3. ATOMICITY: Channel close is a single rebalance operation.");

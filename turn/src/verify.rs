@@ -82,7 +82,11 @@ impl core::fmt::Display for VerifyError {
             VerifyError::StateChainBreak { index, .. } => {
                 write!(f, "state chain break at receipt index {index}")
             }
-            VerifyError::AgentMismatch { index, expected_agent, actual_agent } => {
+            VerifyError::AgentMismatch {
+                index,
+                expected_agent,
+                actual_agent,
+            } => {
                 write!(
                     f,
                     "agent mismatch at receipt index {index}: expected {expected_agent}, got {actual_agent}"
@@ -329,7 +333,12 @@ mod tests {
                 Some(chain[i - 1].receipt_hash())
             };
 
-            chain.push(make_receipt(agent, pre_state, post_state, previous_receipt_hash));
+            chain.push(make_receipt(
+                agent,
+                pre_state,
+                post_state,
+                previous_receipt_hash,
+            ));
         }
 
         chain
@@ -414,7 +423,11 @@ mod tests {
 
         let err = verify_receipt_chain(&chain).unwrap_err();
         match err {
-            VerifyError::AgentMismatch { index, expected_agent, actual_agent } => {
+            VerifyError::AgentMismatch {
+                index,
+                expected_agent,
+                actual_agent,
+            } => {
                 assert_eq!(index, 1);
                 assert_eq!(expected_agent, agent1);
                 assert_eq!(actual_agent, agent2);

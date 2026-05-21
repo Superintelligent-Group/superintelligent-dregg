@@ -53,9 +53,18 @@ fn main() {
     println!("    C-0 [{}] (genesis, no deps)", hex_short(&c0));
     println!();
     println!("  Concurrency check:");
-    println!("    A-0 || B-0 ? {} (concurrent — no causal relation)", dag.are_concurrent(&a0, &b0));
-    println!("    A-0 || C-0 ? {} (concurrent — no causal relation)", dag.are_concurrent(&a0, &c0));
-    println!("    B-0 || C-0 ? {} (concurrent — no causal relation)", dag.are_concurrent(&b0, &c0));
+    println!(
+        "    A-0 || B-0 ? {} (concurrent — no causal relation)",
+        dag.are_concurrent(&a0, &b0)
+    );
+    println!(
+        "    A-0 || C-0 ? {} (concurrent — no causal relation)",
+        dag.are_concurrent(&a0, &c0)
+    );
+    println!(
+        "    B-0 || C-0 ? {} (concurrent — no causal relation)",
+        dag.are_concurrent(&b0, &c0)
+    );
     println!();
     println!("  These events can be processed in ANY order since they are");
     println!("  causally independent. No consensus needed to order them.");
@@ -89,10 +98,22 @@ fn main() {
     println!();
 
     println!("  Causal relationships after step 2:");
-    println!("    B-0 -> A-1 ? {} (B-0 happened before A-1)", dag.happened_before(&b0, &a1));
-    println!("    A-0 -> B-1 ? {} (A-0 happened before B-1)", dag.happened_before(&a0, &b1));
-    println!("    A-1 || B-1 ? {} (concurrent! neither causally precedes the other)", dag.are_concurrent(&a1, &b1));
-    println!("    A-1 || C-1 ? {} (concurrent!)", dag.are_concurrent(&a1, &c1));
+    println!(
+        "    B-0 -> A-1 ? {} (B-0 happened before A-1)",
+        dag.happened_before(&b0, &a1)
+    );
+    println!(
+        "    A-0 -> B-1 ? {} (A-0 happened before B-1)",
+        dag.happened_before(&a0, &b1)
+    );
+    println!(
+        "    A-1 || B-1 ? {} (concurrent! neither causally precedes the other)",
+        dag.are_concurrent(&a1, &b1)
+    );
+    println!(
+        "    A-1 || C-1 ? {} (concurrent!)",
+        dag.are_concurrent(&a1, &c1)
+    );
     println!();
     println!("  KEY INSIGHT: A-1 and B-1 are concurrent even though they both");
     println!("  depend on each other's genesis events. They were produced");
@@ -122,10 +143,22 @@ fn main() {
     println!();
 
     println!("  After convergence:");
-    println!("    A-0 -> A-2 ? {} (transitive: A-0 happened before A-2)", dag.happened_before(&a0, &a2));
-    println!("    B-0 -> A-2 ? {} (transitive: B-0 happened before A-2 via B-0->A-1->A-2)", dag.happened_before(&b0, &a2));
-    println!("    A-2 || B-2 ? {} (still concurrent!)", dag.are_concurrent(&a2, &b2));
-    println!("    A-2 || C-2 ? {} (concurrent)", dag.are_concurrent(&a2, &c2));
+    println!(
+        "    A-0 -> A-2 ? {} (transitive: A-0 happened before A-2)",
+        dag.happened_before(&a0, &a2)
+    );
+    println!(
+        "    B-0 -> A-2 ? {} (transitive: B-0 happened before A-2 via B-0->A-1->A-2)",
+        dag.happened_before(&b0, &a2)
+    );
+    println!(
+        "    A-2 || B-2 ? {} (still concurrent!)",
+        dag.are_concurrent(&a2, &b2)
+    );
+    println!(
+        "    A-2 || C-2 ? {} (concurrent)",
+        dag.are_concurrent(&a2, &c2)
+    );
     println!();
 
     // ─── Step 4: DAG Properties ──────────────────────────────────────────────
@@ -178,14 +211,20 @@ fn main() {
             for dep in deps {
                 let dep_pos = topo.iter().position(|x| x == dep).unwrap();
                 if dep_pos >= i {
-                    println!("    VIOLATION: dep at position {} >= event at position {}", dep_pos, i);
+                    println!(
+                        "    VIOLATION: dep at position {} >= event at position {}",
+                        dep_pos, i
+                    );
                     all_ok = false;
                 }
             }
         }
     }
     if all_ok {
-        println!("    All {} events correctly ordered: every dependency precedes its dependent. [PASS]", topo.len());
+        println!(
+            "    All {} events correctly ordered: every dependency precedes its dependent. [PASS]",
+            topo.len()
+        );
     }
     println!();
 
@@ -210,7 +249,12 @@ fn main() {
     ];
 
     for (name_a, name_b, ha, hb) in &causal_pairs {
-        assert!(dag.happened_before(ha, hb), "{} should happen before {}", name_a, name_b);
+        assert!(
+            dag.happened_before(ha, hb),
+            "{} should happen before {}",
+            name_a,
+            name_b
+        );
         println!("    {} -> {}", name_a, name_b);
     }
     println!();
@@ -229,7 +273,12 @@ fn main() {
     ];
 
     for (name_a, name_b, ha, hb) in &concurrent_pairs {
-        assert!(dag.are_concurrent(ha, hb), "{} and {} should be concurrent", name_a, name_b);
+        assert!(
+            dag.are_concurrent(ha, hb),
+            "{} and {} should be concurrent",
+            name_a,
+            name_b
+        );
         println!("    {} || {}", name_a, name_b);
     }
     println!();
@@ -269,18 +318,35 @@ fn main() {
 /// Identify an event hash by comparing against known hashes.
 fn identify_event(
     h: &[u8; 32],
-    a0: &[u8; 32], a1: &[u8; 32], a2: &[u8; 32],
-    b0: &[u8; 32], b1: &[u8; 32], b2: &[u8; 32],
-    c0: &[u8; 32], c1: &[u8; 32], c2: &[u8; 32],
+    a0: &[u8; 32],
+    a1: &[u8; 32],
+    a2: &[u8; 32],
+    b0: &[u8; 32],
+    b1: &[u8; 32],
+    b2: &[u8; 32],
+    c0: &[u8; 32],
+    c1: &[u8; 32],
+    c2: &[u8; 32],
 ) -> &'static str {
-    if h == a0 { "A-0" }
-    else if h == a1 { "A-1" }
-    else if h == a2 { "A-2" }
-    else if h == b0 { "B-0" }
-    else if h == b1 { "B-1" }
-    else if h == b2 { "B-2" }
-    else if h == c0 { "C-0" }
-    else if h == c1 { "C-1" }
-    else if h == c2 { "C-2" }
-    else { "???" }
+    if h == a0 {
+        "A-0"
+    } else if h == a1 {
+        "A-1"
+    } else if h == a2 {
+        "A-2"
+    } else if h == b0 {
+        "B-0"
+    } else if h == b1 {
+        "B-1"
+    } else if h == b2 {
+        "B-2"
+    } else if h == c0 {
+        "C-0"
+    } else if h == c1 {
+        "C-1"
+    } else if h == c2 {
+        "C-2"
+    } else {
+        "???"
+    }
 }

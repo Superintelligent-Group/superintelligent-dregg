@@ -22,9 +22,9 @@
 //! Use [`TokenFormat::detect`] to auto-detect from an encoded string.
 
 pub mod action_set;
-pub mod pyana;
 pub mod error;
 pub mod format;
+pub mod pyana;
 pub mod revocation;
 pub mod traits;
 
@@ -49,8 +49,8 @@ pub use error::TokenError;
 pub use format::TokenFormat;
 pub use revocation::RevocationFilter;
 pub use traits::{
-  Attenuation, AuthRequest, AuthToken, BudgetSpec, Capability, FeatureGlobSpec, TokenClearance,
-  TokenVerifier,
+    Attenuation, AuthRequest, AuthToken, BudgetSpec, Capability, FeatureGlobSpec, TokenClearance,
+    TokenVerifier,
 };
 
 #[cfg(feature = "biscuit")]
@@ -75,28 +75,28 @@ pub use pyana_macaroon;
 ///
 /// Use the format-specific constructors for type-safe key handling.
 pub fn decode_token(
-  encoded: &str,
-  #[cfg(feature = "biscuit")] biscuit_public_key: Option<biscuit_auth::PublicKey>,
-  #[cfg(feature = "macaroon")] macaroon_root_key: Option<[u8; 32]>,
+    encoded: &str,
+    #[cfg(feature = "biscuit")] biscuit_public_key: Option<biscuit_auth::PublicKey>,
+    #[cfg(feature = "macaroon")] macaroon_root_key: Option<[u8; 32]>,
 ) -> Result<Box<dyn AuthToken>, TokenError> {
-  let fmt = TokenFormat::detect(encoded)?;
-  match fmt {
-    #[cfg(feature = "biscuit")]
-    TokenFormat::Biscuit => {
-      let pk = biscuit_public_key
-        .ok_or_else(|| TokenError::KeyError("biscuit public key required".into()))?;
-      Ok(Box::new(BiscuitToken::from_encoded(encoded, pk)?))
+    let fmt = TokenFormat::detect(encoded)?;
+    match fmt {
+        #[cfg(feature = "biscuit")]
+        TokenFormat::Biscuit => {
+            let pk = biscuit_public_key
+                .ok_or_else(|| TokenError::KeyError("biscuit public key required".into()))?;
+            Ok(Box::new(BiscuitToken::from_encoded(encoded, pk)?))
+        }
+        #[cfg(feature = "macaroon")]
+        TokenFormat::Macaroon => {
+            let key = macaroon_root_key
+                .ok_or_else(|| TokenError::KeyError("macaroon root key required".into()))?;
+            Ok(Box::new(MacaroonToken::from_encoded(encoded, key)?))
+        }
+        #[allow(unreachable_patterns)]
+        _ => Err(TokenError::UnsupportedFormat(format!(
+            "{} support not compiled in",
+            fmt
+        ))),
     }
-    #[cfg(feature = "macaroon")]
-    TokenFormat::Macaroon => {
-      let key = macaroon_root_key
-        .ok_or_else(|| TokenError::KeyError("macaroon root key required".into()))?;
-      Ok(Box::new(MacaroonToken::from_encoded(encoded, key)?))
-    }
-    #[allow(unreachable_patterns)]
-    _ => Err(TokenError::UnsupportedFormat(format!(
-      "{} support not compiled in",
-      fmt
-    ))),
-  }
 }

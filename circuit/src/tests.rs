@@ -8,17 +8,13 @@
 //! 5. Verify the proof
 //! 6. Print proof size
 
-use crate::derivation_air::{
-    BodyAtomPattern, CircuitRule, DerivationAir, DerivationWitness,
-};
+use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationAir, DerivationWitness};
 use crate::field::BabyBear;
 use crate::fold_air::{FoldAir, FoldWitness, RemovedFact, build_shared_tree};
 use crate::merkle_air::{MerkleAir, create_test_witness};
 use crate::mock_prover::{Air, MockProof, MockProver};
 use crate::poseidon2::{hash_4_to_1, hash_fact, hash_many};
-use crate::presentation::{
-    PresentationAir, PresentationVerification, PresentationWitness,
-};
+use crate::presentation::{PresentationAir, PresentationVerification, PresentationWitness};
 
 /// End-to-end test: Full authorization flow with token creation, attenuation, and proof.
 #[test]
@@ -46,7 +42,9 @@ fn end_to_end_authorization_proof() {
     let h_write_f2 = hash_fact(can_write, &[alice, file2, BabyBear::ZERO]);
 
     // Compute initial state root (simplified: hash all fact hashes together)
-    let initial_root = hash_many(&[h_owns_f1, h_owns_f2, h_read_f1, h_read_f2, h_write_f1, h_write_f2]);
+    let initial_root = hash_many(&[
+        h_owns_f1, h_owns_f2, h_read_f1, h_read_f2, h_write_f1, h_write_f2,
+    ]);
     println!("Initial state root: {initial_root}");
     println!("  Facts: owns(alice,file1), owns(alice,file2), can_read(alice,file1),");
     println!("         can_read(alice,file2), can_write(alice,file1), can_write(alice,file2)");
@@ -74,7 +72,11 @@ fn end_to_end_authorization_proof() {
     println!("\nFold step 1: Remove can_write(alice, file2)");
     let fold1_air = FoldAir::new(fold1.clone());
     let fold1_result = MockProver::verify(&fold1_air);
-    assert!(fold1_result.is_valid(), "Fold 1 failed: {:?}", fold1_result.violations());
+    assert!(
+        fold1_result.is_valid(),
+        "Fold 1 failed: {:?}",
+        fold1_result.violations()
+    );
     println!("  Fold 1 constraints: SATISFIED");
 
     // -- Step 3: Second attenuation — remove ownership of file2 --
@@ -95,7 +97,11 @@ fn end_to_end_authorization_proof() {
     println!("\nFold step 2: Remove owns(alice, file2), add check read_only(file2)");
     let fold2_air = FoldAir::new(fold2.clone());
     let fold2_result = MockProver::verify(&fold2_air);
-    assert!(fold2_result.is_valid(), "Fold 2 failed: {:?}", fold2_result.violations());
+    assert!(
+        fold2_result.is_valid(),
+        "Fold 2 failed: {:?}",
+        fold2_result.violations()
+    );
     println!("  Fold 2 constraints: SATISFIED");
 
     // -- Step 4: Authorization derivation --
@@ -109,18 +115,26 @@ fn end_to_end_authorization_proof() {
             num_variables: 2,
             head_predicate: access,
             head_terms: [
-                (true, BabyBear::new(0)),  // X
-                (true, BabyBear::new(1)),  // Y
+                (true, BabyBear::new(0)), // X
+                (true, BabyBear::new(1)), // Y
                 (false, BabyBear::ZERO),
             ],
             body_atoms: vec![
                 BodyAtomPattern {
                     predicate: owns,
-                    terms: [(true, BabyBear::new(0)), (true, BabyBear::new(1)), (false, BabyBear::ZERO)],
+                    terms: [
+                        (true, BabyBear::new(0)),
+                        (true, BabyBear::new(1)),
+                        (false, BabyBear::ZERO),
+                    ],
                 },
                 BodyAtomPattern {
                     predicate: can_read,
-                    terms: [(true, BabyBear::new(0)), (true, BabyBear::new(1)), (false, BabyBear::ZERO)],
+                    terms: [
+                        (true, BabyBear::new(0)),
+                        (true, BabyBear::new(1)),
+                        (false, BabyBear::ZERO),
+                    ],
                 },
             ],
             equal_checks: vec![],
@@ -137,7 +151,11 @@ fn end_to_end_authorization_proof() {
     println!("\nDerivation: access(alice, file1) :- owns(alice, file1), can_read(alice, file1)");
     let deriv_air = DerivationAir::new(derivation.clone());
     let deriv_result = MockProver::verify(&deriv_air);
-    assert!(deriv_result.is_valid(), "Derivation failed: {:?}", deriv_result.violations());
+    assert!(
+        deriv_result.is_valid(),
+        "Derivation failed: {:?}",
+        deriv_result.violations()
+    );
     println!("  Derivation constraints: SATISFIED");
 
     // -- Step 5: Issuer membership --
@@ -145,10 +163,17 @@ fn end_to_end_authorization_proof() {
     let issuer_witness = create_test_witness(issuer_key, 8);
     let federation_root = issuer_witness.expected_root;
 
-    println!("\nIssuer membership: key {} in federation root {}", issuer_key, federation_root);
+    println!(
+        "\nIssuer membership: key {} in federation root {}",
+        issuer_key, federation_root
+    );
     let issuer_air = MerkleAir::new(issuer_witness.clone());
     let issuer_result = MockProver::verify(&issuer_air);
-    assert!(issuer_result.is_valid(), "Issuer membership failed: {:?}", issuer_result.violations());
+    assert!(
+        issuer_result.is_valid(),
+        "Issuer membership failed: {:?}",
+        issuer_result.violations()
+    );
     println!("  Issuer membership constraints: SATISFIED");
 
     // -- Step 6: Complete presentation proof --
@@ -168,7 +193,9 @@ fn end_to_end_authorization_proof() {
     println!("\n=== Presentation Verification: VALID ===");
 
     // Generate proof
-    let proof = presentation_air.prove().expect("Proof generation should succeed");
+    let proof = presentation_air
+        .prove()
+        .expect("Proof generation should succeed");
     println!("\n--- Proof Statistics ---");
     println!("  Fold proofs: {}", proof.fold_proofs.len());
     println!("  Total proof size: {}", proof.proof_size_display());
@@ -201,17 +228,28 @@ fn single_step_no_attenuation() {
             num_body_atoms: 1,
             num_variables: 1,
             head_predicate: pred_access,
-            head_terms: [(true, BabyBear::new(0)), (false, BabyBear::ZERO), (false, BabyBear::ZERO)],
+            head_terms: [
+                (true, BabyBear::new(0)),
+                (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
+            ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: BabyBear::new(100),
-                terms: [(true, BabyBear::new(0)), (false, resource), (false, BabyBear::ZERO)],
+                terms: [
+                    (true, BabyBear::new(0)),
+                    (false, resource),
+                    (false, BabyBear::ZERO),
+                ],
             }],
             equal_checks: vec![],
             memberof_checks: vec![],
             gte_check: None,
         },
         state_root,
-        body_fact_hashes: vec![hash_fact(BabyBear::new(100), &[alice, resource, BabyBear::ZERO])],
+        body_fact_hashes: vec![hash_fact(
+            BabyBear::new(100),
+            &[alice, resource, BabyBear::ZERO],
+        )],
         substitution: vec![alice],
         derived_predicate: pred_access,
         derived_terms: [alice, BabyBear::ZERO, BabyBear::ZERO],
@@ -251,12 +289,19 @@ fn long_attenuation_chain() {
     let mut folds = Vec::new();
     for i in 0..5 {
         let pred = BabyBear::new((i * 10 + 1) as u32);
-        let terms = [BabyBear::new((i * 10 + 2) as u32), BabyBear::new((i * 10 + 3) as u32), BabyBear::ZERO];
+        let terms = [
+            BabyBear::new((i * 10 + 2) as u32),
+            BabyBear::new((i * 10 + 3) as u32),
+            BabyBear::ZERO,
+        ];
         let fact_hash = hash_fact(pred, &terms);
         let (tree_root, proofs) = build_shared_tree(&[fact_hash], 4);
         roots[i] = tree_root; // use tree root as old_root
-        if i > 0 { // fix previous fold's new_root
-            folds.last_mut().map(|f: &mut FoldWitness| f.new_root = tree_root);
+        if i > 0 {
+            // fix previous fold's new_root
+            folds
+                .last_mut()
+                .map(|f: &mut FoldWitness| f.new_root = tree_root);
         }
         folds.push(FoldWitness {
             old_root: tree_root,
@@ -274,12 +319,19 @@ fn long_attenuation_chain() {
     for (i, fold) in folds.iter().enumerate() {
         let air = FoldAir::new(fold.clone());
         let result = MockProver::verify(&air);
-        assert!(result.is_valid(), "Fold {i} failed: {:?}", result.violations());
+        assert!(
+            result.is_valid(),
+            "Fold {i} failed: {:?}",
+            result.violations()
+        );
     }
 
     // Create derivation from final state
     let final_root = *roots.last().unwrap();
-    let body_hash = hash_fact(BabyBear::new(777), &[BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO]);
+    let body_hash = hash_fact(
+        BabyBear::new(777),
+        &[BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO],
+    );
 
     let derivation = DerivationWitness {
         rule: CircuitRule {
@@ -287,7 +339,11 @@ fn long_attenuation_chain() {
             num_body_atoms: 1,
             num_variables: 1,
             head_predicate: BabyBear::new(999),
-            head_terms: [(true, BabyBear::new(0)), (false, BabyBear::ZERO), (false, BabyBear::ZERO)],
+            head_terms: [
+                (true, BabyBear::new(0)),
+                (false, BabyBear::ZERO),
+                (false, BabyBear::ZERO),
+            ],
             body_atoms: vec![],
             equal_checks: vec![],
             memberof_checks: vec![],
@@ -319,7 +375,10 @@ fn long_attenuation_chain() {
 
     let proof = air.prove().unwrap();
     assert_eq!(proof.fold_proofs.len(), 5);
-    println!("5-step attenuation proof size: {}", proof.proof_size_display());
+    println!(
+        "5-step attenuation proof size: {}",
+        proof.proof_size_display()
+    );
 }
 
 /// Test: Merkle proofs at various depths.
@@ -374,8 +433,12 @@ fn fold_rejects_inconsistent_fact_hash() {
     // the constraint should catch it.
     struct BadHashFoldAir;
     impl Air for BadHashFoldAir {
-        fn trace_width(&self) -> usize { crate::fold_air::FOLD_AIR_WIDTH }
-        fn num_public_inputs(&self) -> usize { 5 }
+        fn trace_width(&self) -> usize {
+            crate::fold_air::FOLD_AIR_WIDTH
+        }
+        fn num_public_inputs(&self) -> usize {
+            5
+        }
         fn constraints(&self) -> Vec<Constraint> {
             FoldAir::new(crate::fold_air::create_test_fold(1, 1)).constraints()
         }
@@ -420,9 +483,17 @@ fn fold_rejects_inconsistent_fact_hash() {
             summary[col::HASH_VALID] = BabyBear::ONE;
 
             let root_transition = crate::fold_air::compute_root_transition_hash(
-                old_root, new_root, &[BabyBear::new(99999)],
+                old_root,
+                new_root,
+                &[BabyBear::new(99999)],
             );
-            let pi = vec![old_root, new_root, BabyBear::ONE, BabyBear::ONE, root_transition];
+            let pi = vec![
+                old_root,
+                new_root,
+                BabyBear::ONE,
+                BabyBear::ONE,
+                root_transition,
+            ];
             (vec![row, summary], pi)
         }
     }
@@ -435,7 +506,11 @@ fn fold_rejects_inconsistent_fact_hash() {
         .violations()
         .iter()
         .any(|v| v.constraint_name.contains("fact_hash_correct"));
-    assert!(has_hash_violation, "Expected fact_hash_correct violation, got: {:?}", result.violations());
+    assert!(
+        has_hash_violation,
+        "Expected fact_hash_correct violation, got: {:?}",
+        result.violations()
+    );
 }
 
 /// Test: Derivation AIR rejects if derived hash doesn't match head.
@@ -446,8 +521,12 @@ fn derivation_rejects_wrong_head() {
 
     struct BadDerivAir;
     impl Air for BadDerivAir {
-        fn trace_width(&self) -> usize { crate::derivation_air::DERIVATION_AIR_WIDTH }
-        fn num_public_inputs(&self) -> usize { 2 }
+        fn trace_width(&self) -> usize {
+            crate::derivation_air::DERIVATION_AIR_WIDTH
+        }
+        fn num_public_inputs(&self) -> usize {
+            2
+        }
         fn constraints(&self) -> Vec<Constraint> {
             DerivationAir::new(crate::derivation_air::create_test_derivation()).constraints()
         }
@@ -497,7 +576,7 @@ fn field_arithmetic_stress() {
 /// Test: IVC proof produces constant-size output regardless of chain length.
 #[test]
 fn ivc_constant_size_proof() {
-    use crate::ivc::{create_test_chain, prove_ivc, verify_ivc, IvcVerification};
+    use crate::ivc::{IvcVerification, create_test_chain, prove_ivc, verify_ivc};
 
     println!("\n=== IVC Constant-Size Proof ===");
 
@@ -541,10 +620,7 @@ fn ivc_constant_size_proof() {
     let (_, size_10) = ivc_sizes[3];
     let ivc_ratio = size_10 as f64 / size_1 as f64;
     println!("  IVC growth ratio (10-step / 1-step): {ivc_ratio:.2}x");
-    assert!(
-        ivc_ratio < 5.0,
-        "IVC should provide sub-linear growth"
-    );
+    assert!(ivc_ratio < 5.0, "IVC should provide sub-linear growth");
 
     // Sequential 10-step should be ~10x of sequential 1-step (linear)
     let (_, seq_1) = sequential_sizes[0];
@@ -568,7 +644,10 @@ fn ivc_presentation_end_to_end() {
 
     // Generate IVC-based proof
     let ivc_presentation = air.prove_ivc();
-    assert!(ivc_presentation.is_some(), "IVC presentation proof should succeed");
+    assert!(
+        ivc_presentation.is_some(),
+        "IVC presentation proof should succeed"
+    );
 
     let ivc_pres = ivc_presentation.unwrap();
     let result = ivc_pres.verify();
@@ -576,7 +655,10 @@ fn ivc_presentation_end_to_end() {
 
     // Compare sizes
     let sequential_proof = air.prove().unwrap();
-    println!("  Sequential proof size: {}", sequential_proof.proof_size_display());
+    println!(
+        "  Sequential proof size: {}",
+        sequential_proof.proof_size_display()
+    );
     println!("  IVC proof size: {}", ivc_pres.proof_size_display());
     println!("  IVC fold chain steps: {}", ivc_pres.ivc_proof.step_count);
 }
@@ -594,7 +676,11 @@ fn proof_size_scaling() {
         let folds: Vec<FoldWitness> = (0..chain_len)
             .map(|i| {
                 let pred = BabyBear::new((i * 10 + 1) as u32);
-                let terms = [BabyBear::new((i * 10 + 2) as u32), BabyBear::ZERO, BabyBear::ZERO];
+                let terms = [
+                    BabyBear::new((i * 10 + 2) as u32),
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                ];
                 let fact_hash = hash_fact(pred, &terms);
                 let (tree_root, proofs) = build_shared_tree(&[fact_hash], 4);
                 roots[i] = tree_root;
@@ -616,7 +702,10 @@ fn proof_size_scaling() {
         }
 
         let final_root = *roots.last().unwrap();
-        let body_hash = hash_fact(BabyBear::new(777), &[BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO]);
+        let body_hash = hash_fact(
+            BabyBear::new(777),
+            &[BabyBear::new(888), BabyBear::ZERO, BabyBear::ZERO],
+        );
 
         let derivation = DerivationWitness {
             rule: CircuitRule {
@@ -624,7 +713,11 @@ fn proof_size_scaling() {
                 num_body_atoms: 1,
                 num_variables: 1,
                 head_predicate: BabyBear::new(999),
-                head_terms: [(true, BabyBear::new(0)), (false, BabyBear::ZERO), (false, BabyBear::ZERO)],
+                head_terms: [
+                    (true, BabyBear::new(0)),
+                    (false, BabyBear::ZERO),
+                    (false, BabyBear::ZERO),
+                ],
                 body_atoms: vec![],
                 equal_checks: vec![],
                 memberof_checks: vec![],

@@ -30,9 +30,9 @@
 
 use pyana_commit::{Fact, FactSet, FieldElement, SymbolTable};
 
+use crate::MacaroonToken;
 use crate::pyana_caveats::{self, PyanaGrant};
 use crate::traits::Attenuation;
-use crate::MacaroonToken;
 
 /// Convert a MacaroonToken's caveats into a `FactSet` and `SymbolTable`.
 ///
@@ -188,10 +188,7 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
 /// Convert an `Attenuation` specification to a list of facts.
 ///
 /// Used when computing the FactSet for an attenuated token.
-pub fn attenuation_to_facts(
-    attenuation: &Attenuation,
-    symbols: &mut SymbolTable,
-) -> Vec<Fact> {
+pub fn attenuation_to_facts(attenuation: &Attenuation, symbols: &mut SymbolTable) -> Vec<Fact> {
     let wire_caveats = pyana_caveats::attenuation_to_wire_caveats(attenuation);
     let mut facts = Vec::new();
 
@@ -296,10 +293,22 @@ mod tests {
         let valid_pred = FieldElement::from_symbol("valid_until");
         let user_pred = FieldElement::from_symbol("confine_user");
 
-        assert_eq!(factset.iter().filter(|f| f.predicate == app_pred).count(), 1);
-        assert_eq!(factset.iter().filter(|f| f.predicate == svc_pred).count(), 1);
-        assert_eq!(factset.iter().filter(|f| f.predicate == valid_pred).count(), 1);
-        assert_eq!(factset.iter().filter(|f| f.predicate == user_pred).count(), 1);
+        assert_eq!(
+            factset.iter().filter(|f| f.predicate == app_pred).count(),
+            1
+        );
+        assert_eq!(
+            factset.iter().filter(|f| f.predicate == svc_pred).count(),
+            1
+        );
+        assert_eq!(
+            factset.iter().filter(|f| f.predicate == valid_pred).count(),
+            1
+        );
+        assert_eq!(
+            factset.iter().filter(|f| f.predicate == user_pred).count(),
+            1
+        );
 
         assert_eq!(symbols.resolve(app_pred), Some("app"));
         assert_eq!(symbols.resolve(svc_pred), Some("service"));
@@ -332,7 +341,10 @@ mod tests {
         let grant = PyanaGrant::Organization(42);
         let facts = grant_to_facts(&grant, &mut symbols);
         assert_eq!(facts.len(), 1);
-        assert_eq!(facts[0].predicate, FieldElement::from_symbol("organization"));
+        assert_eq!(
+            facts[0].predicate,
+            FieldElement::from_symbol("organization")
+        );
         assert_eq!(facts[0].terms[0], FieldElement::from_u64(42));
     }
 

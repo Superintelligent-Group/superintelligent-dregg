@@ -232,12 +232,7 @@ impl AuditLog {
     ///
     /// Returns a `RangeProof` that proves every event for this token has
     /// a timestamp within [start, end].
-    pub fn prove_range(
-        &mut self,
-        token_id: &[u8; 32],
-        start: i64,
-        end: i64,
-    ) -> RangeProof {
+    pub fn prove_range(&mut self, token_id: &[u8; 32], start: i64, end: i64) -> RangeProof {
         let indices = self.token_events.get(token_id).cloned().unwrap_or_default();
         let root = self.root();
 
@@ -539,13 +534,8 @@ impl AuditLog {
                 });
             } else if subtree_start < old_size && subtree_end > old_size {
                 // Straddles old/new boundary — recurse.
-                let sub = Self::find_bridge_subtrees(
-                    leaves,
-                    depth + 1,
-                    child_prefix,
-                    old_size,
-                    new_size,
-                );
+                let sub =
+                    Self::find_bridge_subtrees(leaves, depth + 1, child_prefix, old_size, new_size);
                 bridges.extend(sub);
             }
         }

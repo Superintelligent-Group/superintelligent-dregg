@@ -83,7 +83,9 @@ pub const GTE_DIFF_BITS: usize = 31;
 
 /// Column indices.
 pub mod col {
-    use super::{GTE_DIFF_BITS, MAX_EQUAL_CHECKS, MAX_HEAD_TERMS, MAX_MEMBEROF_CHECKS, MAX_SUB_VARS};
+    use super::{
+        GTE_DIFF_BITS, MAX_EQUAL_CHECKS, MAX_HEAD_TERMS, MAX_MEMBEROF_CHECKS, MAX_SUB_VARS,
+    };
 
     pub const RULE_ID: usize = 0;
     pub const BODY_HASH_START: usize = 1;
@@ -409,9 +411,7 @@ impl Air for DerivationAir {
             // Constraint 6: Derived hash matches public input.
             Constraint {
                 name: "derived_hash_public".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::DERIVED_HASH] - public_inputs[1]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::DERIVED_HASH] - public_inputs[1]),
             },
             // Constraint 7: head_is_var columns are binary.
             Constraint {
@@ -477,8 +477,7 @@ impl Air for DerivationAir {
                         }
 
                         // expected = is_var * var_resolved + (1 - is_var) * raw_value
-                        let expected = is_var * var_resolved
-                            + (BabyBear::ONE - is_var) * raw_value;
+                        let expected = is_var * var_resolved + (BabyBear::ONE - is_var) * raw_value;
 
                         result = result + (derived_term - expected) * (derived_term - expected);
                     }
@@ -792,24 +791,24 @@ pub fn create_test_derivation() -> DerivationWitness {
         num_variables: 2,
         head_predicate: access_pred,
         head_terms: [
-            (true, BabyBear::new(0)),  // X
-            (true, BabyBear::new(1)),  // Y
-            (false, BabyBear::ZERO),   // unused
+            (true, BabyBear::new(0)), // X
+            (true, BabyBear::new(1)), // Y
+            (false, BabyBear::ZERO),  // unused
         ],
         body_atoms: vec![
             BodyAtomPattern {
                 predicate: owns_pred,
                 terms: [
-                    (true, BabyBear::new(0)),  // X
-                    (true, BabyBear::new(1)),  // Y
+                    (true, BabyBear::new(0)), // X
+                    (true, BabyBear::new(1)), // Y
                     (false, BabyBear::ZERO),
                 ],
             },
             BodyAtomPattern {
                 predicate: can_read_pred,
                 terms: [
-                    (true, BabyBear::new(0)),  // X
-                    (true, BabyBear::new(1)),  // Y
+                    (true, BabyBear::new(0)), // X
+                    (true, BabyBear::new(1)), // Y
                     (false, BabyBear::ZERO),
                 ],
             },
@@ -985,9 +984,9 @@ mod tests {
             num_variables: 2,
             head_predicate: access_pred,
             head_terms: [
-                (true, BabyBear::new(0)),   // X -> substitution[0] = alice
-                (false, fixed_val),          // constant 500
-                (true, BabyBear::new(1)),   // Y -> substitution[1] = file
+                (true, BabyBear::new(0)), // X -> substitution[0] = alice
+                (false, fixed_val),       // constant 500
+                (true, BabyBear::new(1)), // Y -> substitution[1] = file
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: owns_pred,
@@ -1038,7 +1037,7 @@ mod tests {
             head_predicate: access_pred,
             head_terms: [
                 (true, BabyBear::new(0)),
-                (false, fixed_val),          // expects constant 500
+                (false, fixed_val), // expects constant 500
                 (true, BabyBear::new(1)),
             ],
             body_atoms: vec![BodyAtomPattern {
@@ -1089,8 +1088,8 @@ mod tests {
             num_variables: 2,
             head_predicate: access_pred,
             head_terms: [
-                (true, BabyBear::new(0)),  // X
-                (true, BabyBear::new(1)),  // Y
+                (true, BabyBear::new(0)), // X
+                (true, BabyBear::new(1)), // Y
                 (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
@@ -1148,8 +1147,8 @@ mod tests {
             num_variables: 2,
             head_predicate: access_pred,
             head_terms: [
-                (true, BabyBear::new(0)),  // X
-                (true, BabyBear::new(1)),  // Y
+                (true, BabyBear::new(0)), // X
+                (true, BabyBear::new(1)), // Y
                 (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
@@ -1228,9 +1227,9 @@ mod tests {
             }],
             equal_checks: vec![CircuitEqualCheck {
                 lhs_is_var: true,
-                lhs_value: BabyBear::new(0),  // X
+                lhs_value: BabyBear::new(0), // X
                 rhs_is_var: false,
-                rhs_value: alice,              // constant 1000
+                rhs_value: alice, // constant 1000
             }],
             memberof_checks: vec![],
             gte_check: None,
@@ -1491,10 +1490,7 @@ mod tests {
 
         let air = DerivationAir::new(witness);
         let result = MockProver::verify(&air);
-        assert!(
-            !result.is_valid(),
-            "GTE check 5 >= 10 should fail"
-        );
+        assert!(!result.is_valid(), "GTE check 5 >= 10 should fail");
         // The high bit constraint should catch this
         let has_gte_violation = result
             .violations()
@@ -1523,9 +1519,9 @@ mod tests {
             num_variables: 3,
             head_predicate: grant_pred,
             head_terms: [
-                (true, BabyBear::new(0)),  // action_hash
-                (true, BabyBear::new(1)),  // budget_remaining
-                (true, BabyBear::new(2)),  // request_cost
+                (true, BabyBear::new(0)), // action_hash
+                (true, BabyBear::new(1)), // budget_remaining
+                (true, BabyBear::new(2)), // request_cost
             ],
             body_atoms: vec![BodyAtomPattern {
                 predicate: budget_pred,

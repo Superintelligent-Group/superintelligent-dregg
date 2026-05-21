@@ -30,9 +30,9 @@
 //! AuthorizationTrace
 //! ```
 
+pub mod authorize;
 pub mod convert;
 pub mod delta;
-pub mod authorize;
 pub mod present;
 
 #[cfg(feature = "turn")]
@@ -42,9 +42,9 @@ pub mod verifier;
 mod tests;
 
 // Re-export primary types for convenience.
-pub use convert::{macaroon_to_factset, grant_to_facts};
+pub use authorize::{AuthError, authorize_with_trace};
+pub use convert::{grant_to_facts, macaroon_to_factset};
 pub use delta::attenuation_to_delta;
-pub use authorize::{authorize_with_trace, AuthError};
 pub use present::{BridgePresentationBuilder, BridgePresentationProof, FederationRegistry};
 #[cfg(feature = "turn")]
 pub use verifier::StarkProofVerifier;

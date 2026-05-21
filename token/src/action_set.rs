@@ -77,7 +77,10 @@ impl std::fmt::Display for ActionId {
         write!(
             f,
             "{}",
-            self.0.iter().map(|b| format!("{b:02x}")).collect::<String>()
+            self.0
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
         )
     }
 }
@@ -141,7 +144,9 @@ impl ActionSet {
     ///
     /// O(log n) via binary search on sorted hashes.
     pub fn contains(&self, action: &ActionId) -> bool {
-        self.actions.binary_search_by(|a| a.0.cmp(&action.0)).is_ok()
+        self.actions
+            .binary_search_by(|a| a.0.cmp(&action.0))
+            .is_ok()
     }
 
     /// Check if all actions in `other` are also in `self`.

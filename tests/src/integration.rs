@@ -8,10 +8,8 @@ use pyana_bridge::present::{bytes_to_babybear, hash_index};
 use pyana_cell::{AuthRequired, Ledger, Permissions, VerificationKey, cell::Cell};
 use pyana_circuit::BabyBear;
 use pyana_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
-use pyana_turn::{
-    ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult,
-};
-use pyana_token::{AuthRequest, AuthToken, MacaroonToken, Attenuation};
+use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
+use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 
 fn test_key(name: &str) -> [u8; 32] {
     *blake3::hash(format!("pyana-integration-test:{name}").as_bytes()).as_bytes()
@@ -25,11 +23,15 @@ fn test_token_id() -> [u8; 32] {
 /// Returns (proof_bytes, federation_root_babybear_value).
 fn generate_membership_proof(issuer_key: &[u8; 32]) -> (Vec<u8>, BabyBear) {
     let leaf_hash = bytes_to_babybear(issuer_key);
-    let siblings: Vec<[u32; 3]> = (0..4u32).map(|i| {
-        [hash_index(i as usize, 0, issuer_key),
-         hash_index(i as usize, 1, issuer_key),
-         hash_index(i as usize, 2, issuer_key)]
-    }).collect();
+    let siblings: Vec<[u32; 3]> = (0..4u32)
+        .map(|i| {
+            [
+                hash_index(i as usize, 0, issuer_key),
+                hash_index(i as usize, 1, issuer_key),
+                hash_index(i as usize, 2, issuer_key),
+            ]
+        })
+        .collect();
     let positions: Vec<u32> = vec![0, 1, 2, 3];
 
     let (trace, public_inputs) = generate_merkle_trace(leaf_hash.0, &siblings, &positions);
@@ -61,7 +63,10 @@ fn test_mint_attenuate_prove_execute_verify() {
         now: Some(1700000000),
         ..Default::default()
     };
-    assert!(attenuated.verify(&request).is_ok(), "attenuated token should verify");
+    assert!(
+        attenuated.verify(&request).is_ok(),
+        "attenuated token should verify"
+    );
 
     // --- Phase 2: Generate STARK proof ---
     let (proof_bytes, federation_root) = generate_membership_proof(&issuer_key);
@@ -69,7 +74,11 @@ fn test_mint_attenuate_prove_execute_verify() {
 
     // Verify the STARK proof independently
     let deserialized = stark::proof_from_bytes(&proof_bytes).unwrap();
-    let pi: Vec<BabyBear> = deserialized.public_inputs.iter().map(|&v| BabyBear::new(v)).collect();
+    let pi: Vec<BabyBear> = deserialized
+        .public_inputs
+        .iter()
+        .map(|&v| BabyBear::new(v))
+        .collect();
     assert!(stark::verify(&MerkleStarkAir, &deserialized, &pi).is_ok());
 
     // --- Phase 3: Set up ledger with cells ---
@@ -123,7 +132,8 @@ fn test_mint_attenuate_prove_execute_verify() {
 
     // --- Phase 4: Execute turn with STARK proof ---
     let verifier = StarkProofVerifier::new();
-    let executor = TurnExecutor::with_proof_verifier(ComputronCosts::default_costs(), Box::new(verifier));
+    let executor =
+        TurnExecutor::with_proof_verifier(ComputronCosts::default_costs(), Box::new(verifier));
 
     let mut turn_builder = TurnBuilder::new(agent_id, 0);
     turn_builder.set_fee(50000);
@@ -141,7 +151,11 @@ fn test_mint_attenuate_prove_execute_verify() {
 
     let result = executor.execute(&turn, &mut ledger);
     match &result {
-        TurnResult::Committed { receipt, computrons_used, .. } => {
+        TurnResult::Committed {
+            receipt,
+            computrons_used,
+            ..
+        } => {
             assert!(*computrons_used > 0);
             assert_ne!(receipt.pre_state_hash, receipt.post_state_hash);
         }
@@ -152,7 +166,10 @@ fn test_mint_attenuate_prove_execute_verify() {
 
     // Verify state was actually modified
     let target = ledger.get(&target_id).unwrap();
-    assert_eq!(target.state.fields[0], *blake3::hash(b"result:42").as_bytes());
+    assert_eq!(
+        target.state.fields[0],
+        *blake3::hash(b"result:42").as_bytes()
+    );
 
     // --- Phase 5: Verify rejection with tampered proof ---
     let mut bad_proof = proof_bytes.clone();
@@ -179,7 +196,10 @@ fn test_mint_attenuate_prove_execute_verify() {
 
     // State unchanged
     let target = ledger.get(&target_id).unwrap();
-    assert_eq!(target.state.fields[1], [0u8; 32], "state should be unchanged after rejection");
+    assert_eq!(
+        target.state.fields[1], [0u8; 32],
+        "state should be unchanged after rejection"
+    );
 }
 
 /// Test that the verifier rejects when no verifier is configured (fail-closed).
@@ -307,7 +327,8 @@ fn test_wrong_federation_root_rejected() {
     }
 
     let verifier = StarkProofVerifier::new();
-    let executor = TurnExecutor::with_proof_verifier(ComputronCosts::default_costs(), Box::new(verifier));
+    let executor =
+        TurnExecutor::with_proof_verifier(ComputronCosts::default_costs(), Box::new(verifier));
 
     let mut turn_builder = TurnBuilder::new(agent_id, 0);
     turn_builder.set_fee(50000);

@@ -30,3 +30,6 @@ crate-type = ["lib"]
 [[bench]]
 name = "tokenizer_bench"
 harness = false
+
+[lints]
+workspace = true

@@ -117,7 +117,10 @@ impl Substitution {
 
     /// Look up a variable in this substitution.
     pub fn get(&self, var: Variable) -> Option<&Term> {
-        self.bindings.iter().find(|(v, _)| *v == var).map(|(_, t)| t)
+        self.bindings
+            .iter()
+            .find(|(v, _)| *v == var)
+            .map(|(_, t)| t)
     }
 
     /// Extend this substitution with a new binding.
@@ -155,7 +158,9 @@ impl Substitution {
     /// Check if all variables in the given atom are bound.
     pub fn is_ground_for(&self, atom: &Atom) -> bool {
         atom.terms.iter().all(|t| match t {
-            Term::Var(v) => self.get(*v).is_some_and(|bound| !matches!(bound, Term::Var(_))),
+            Term::Var(v) => self
+                .get(*v)
+                .is_some_and(|bound| !matches!(bound, Term::Var(_))),
             _ => true,
         })
     }

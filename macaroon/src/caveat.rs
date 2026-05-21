@@ -48,21 +48,21 @@ pub const CAV_BIND_TO_PARENT: CaveatType = 255;
 ///
 /// Implementations must be deterministic and side-effect free.
 pub trait Caveat: Send + Sync {
-  /// The numeric type ID for this caveat.
-  fn caveat_type(&self) -> CaveatType;
+    /// The numeric type ID for this caveat.
+    fn caveat_type(&self) -> CaveatType;
 
-  /// Human-readable name for debugging/logging.
-  fn name(&self) -> &str;
+    /// Human-readable name for debugging/logging.
+    fn name(&self) -> &str;
 
-  /// Check whether this caveat prohibits the given access.
-  ///
-  /// Returns `Ok(())` if the access is allowed, or `Err(CaveatError)` if denied.
-  fn prohibits(&self, access: &dyn Access) -> Result<(), CaveatError>;
+    /// Check whether this caveat prohibits the given access.
+    ///
+    /// Returns `Ok(())` if the access is allowed, or `Err(CaveatError)` if denied.
+    fn prohibits(&self, access: &dyn Access) -> Result<(), CaveatError>;
 
-  /// Serialize this caveat's body to bytes (MsgPack).
-  ///
-  /// The type ID is NOT included — it's prepended by the caller.
-  fn encode_body(&self) -> Vec<u8>;
+    /// Serialize this caveat's body to bytes (MsgPack).
+    ///
+    /// The type ID is NOT included — it's prepended by the caller.
+    fn encode_body(&self) -> Vec<u8>;
 }
 
 /// Wire representation of a caveat: `[type_id: u16][body: bytes]`.
@@ -71,33 +71,33 @@ pub trait Caveat: Send + Sync {
 /// The body is opaque — interpretation depends on the type_id.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireCaveat {
-  /// Caveat type identifier.
-  pub caveat_type: CaveatType,
-  /// Serialized caveat body.
-  pub body: Vec<u8>,
+    /// Caveat type identifier.
+    pub caveat_type: CaveatType,
+    /// Serialized caveat body.
+    pub body: Vec<u8>,
 }
 
 impl WireCaveat {
-  /// Create a new wire caveat from a type ID and body bytes.
-  pub fn new(caveat_type: CaveatType, body: Vec<u8>) -> Self {
-    Self { caveat_type, body }
-  }
-
-  /// Create from a `Caveat` trait object.
-  pub fn from_caveat(caveat: &dyn Caveat) -> Self {
-    Self {
-      caveat_type: caveat.caveat_type(),
-      body: caveat.encode_body(),
+    /// Create a new wire caveat from a type ID and body bytes.
+    pub fn new(caveat_type: CaveatType, body: Vec<u8>) -> Self {
+        Self { caveat_type, body }
     }
-  }
 
-  /// Encode to bytes for HMAC chaining: `[type_id LE u16][body]`.
-  pub fn encode(&self) -> Vec<u8> {
-    let mut out = Vec::with_capacity(2 + self.body.len());
-    out.extend_from_slice(&self.caveat_type.to_le_bytes());
-    out.extend_from_slice(&self.body);
-    out
-  }
+    /// Create from a `Caveat` trait object.
+    pub fn from_caveat(caveat: &dyn Caveat) -> Self {
+        Self {
+            caveat_type: caveat.caveat_type(),
+            body: caveat.encode_body(),
+        }
+    }
+
+    /// Encode to bytes for HMAC chaining: `[type_id LE u16][body]`.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(2 + self.body.len());
+        out.extend_from_slice(&self.caveat_type.to_le_bytes());
+        out.extend_from_slice(&self.body);
+        out
+    }
 }
 
 /// An ordered set of caveats.
@@ -106,107 +106,104 @@ impl WireCaveat {
 /// The order is significant for HMAC chain replay.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CaveatSet {
-  caveats: Vec<WireCaveat>,
+    caveats: Vec<WireCaveat>,
 }
 
 impl CaveatSet {
-  /// Create an empty caveat set.
-  pub fn new() -> Self {
-    Self {
-      caveats: Vec::new(),
+    /// Create an empty caveat set.
+    pub fn new() -> Self {
+        Self {
+            caveats: Vec::new(),
+        }
     }
-  }
 
-  /// Add a wire caveat to the set.
-  pub fn push(&mut self, caveat: WireCaveat) {
-    self.caveats.push(caveat);
-  }
+    /// Add a wire caveat to the set.
+    pub fn push(&mut self, caveat: WireCaveat) {
+        self.caveats.push(caveat);
+    }
 
-  /// Add a caveat from a trait object.
-  pub fn push_caveat(&mut self, caveat: &dyn Caveat) {
-    self.caveats.push(WireCaveat::from_caveat(caveat));
-  }
+    /// Add a caveat from a trait object.
+    pub fn push_caveat(&mut self, caveat: &dyn Caveat) {
+        self.caveats.push(WireCaveat::from_caveat(caveat));
+    }
 
-  /// Number of caveats.
-  pub fn len(&self) -> usize {
-    self.caveats.len()
-  }
+    /// Number of caveats.
+    pub fn len(&self) -> usize {
+        self.caveats.len()
+    }
 
-  /// Whether the set is empty.
-  pub fn is_empty(&self) -> bool {
-    self.caveats.is_empty()
-  }
+    /// Whether the set is empty.
+    pub fn is_empty(&self) -> bool {
+        self.caveats.is_empty()
+    }
 
-  /// Iterate over wire caveats.
-  pub fn iter(&self) -> impl Iterator<Item = &WireCaveat> {
-    self.caveats.iter()
-  }
+    /// Iterate over wire caveats.
+    pub fn iter(&self) -> impl Iterator<Item = &WireCaveat> {
+        self.caveats.iter()
+    }
 
-  /// Get a reference to the underlying vec.
-  pub fn as_slice(&self) -> &[WireCaveat] {
-    &self.caveats
-  }
+    /// Get a reference to the underlying vec.
+    pub fn as_slice(&self) -> &[WireCaveat] {
+        &self.caveats
+    }
 
-  /// Consume and return the inner vec.
-  pub fn into_vec(self) -> Vec<WireCaveat> {
-    self.caveats
-  }
+    /// Consume and return the inner vec.
+    pub fn into_vec(self) -> Vec<WireCaveat> {
+        self.caveats
+    }
 
-  /// Extend with caveats from another set.
-  pub fn extend(&mut self, other: CaveatSet) {
-    self.caveats.extend(other.caveats);
-  }
+    /// Extend with caveats from another set.
+    pub fn extend(&mut self, other: CaveatSet) {
+        self.caveats.extend(other.caveats);
+    }
 
-  /// Check if any caveat is a third-party caveat.
-  pub fn has_third_party(&self) -> bool {
-    self
-      .caveats
-      .iter()
-      .any(|c| c.caveat_type == CAV_THIRD_PARTY)
-  }
+    /// Check if any caveat is a third-party caveat.
+    pub fn has_third_party(&self) -> bool {
+        self.caveats
+            .iter()
+            .any(|c| c.caveat_type == CAV_THIRD_PARTY)
+    }
 
-  /// Get all third-party caveats.
-  pub fn third_party_caveats(&self) -> Vec<&WireCaveat> {
-    self
-      .caveats
-      .iter()
-      .filter(|c| c.caveat_type == CAV_THIRD_PARTY)
-      .collect()
-  }
+    /// Get all third-party caveats.
+    pub fn third_party_caveats(&self) -> Vec<&WireCaveat> {
+        self.caveats
+            .iter()
+            .filter(|c| c.caveat_type == CAV_THIRD_PARTY)
+            .collect()
+    }
 
-  /// Get all first-party caveats (non-3P, non-bind).
-  pub fn first_party_caveats(&self) -> Vec<&WireCaveat> {
-    self
-      .caveats
-      .iter()
-      .filter(|c| c.caveat_type != CAV_THIRD_PARTY && c.caveat_type != CAV_BIND_TO_PARENT)
-      .collect()
-  }
+    /// Get all first-party caveats (non-3P, non-bind).
+    pub fn first_party_caveats(&self) -> Vec<&WireCaveat> {
+        self.caveats
+            .iter()
+            .filter(|c| c.caveat_type != CAV_THIRD_PARTY && c.caveat_type != CAV_BIND_TO_PARENT)
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn test_wire_caveat_encode() {
-    let wc = WireCaveat::new(1, vec![0x42, 0x43]);
-    let encoded = wc.encode();
-    assert_eq!(encoded, vec![0x01, 0x00, 0x42, 0x43]);
-  }
+    #[test]
+    fn test_wire_caveat_encode() {
+        let wc = WireCaveat::new(1, vec![0x42, 0x43]);
+        let encoded = wc.encode();
+        assert_eq!(encoded, vec![0x01, 0x00, 0x42, 0x43]);
+    }
 
-  #[test]
-  fn test_caveat_set_operations() {
-    let mut set = CaveatSet::new();
-    assert!(set.is_empty());
+    #[test]
+    fn test_caveat_set_operations() {
+        let mut set = CaveatSet::new();
+        assert!(set.is_empty());
 
-    set.push(WireCaveat::new(1, vec![0x01]));
-    set.push(WireCaveat::new(CAV_THIRD_PARTY, vec![0x02]));
-    set.push(WireCaveat::new(2, vec![0x03]));
+        set.push(WireCaveat::new(1, vec![0x01]));
+        set.push(WireCaveat::new(CAV_THIRD_PARTY, vec![0x02]));
+        set.push(WireCaveat::new(2, vec![0x03]));
 
-    assert_eq!(set.len(), 3);
-    assert!(set.has_third_party());
-    assert_eq!(set.third_party_caveats().len(), 1);
-    assert_eq!(set.first_party_caveats().len(), 2);
-  }
+        assert_eq!(set.len(), 3);
+        assert!(set.has_third_party());
+        assert_eq!(set.third_party_caveats().len(), 1);
+        assert_eq!(set.first_party_caveats().len(), 2);
+    }
 }

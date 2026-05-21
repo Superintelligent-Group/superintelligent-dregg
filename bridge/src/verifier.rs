@@ -121,7 +121,12 @@ impl ProofVerifier for StarkProofVerifier {
         // (b) vk is a 32-byte hash that we compress to BabyBear
         let expected_root = if vk_bytes[4..].iter().all(|&b| b == 0) {
             // Case (a): raw BabyBear value in first 4 bytes
-            BabyBear::new(u32::from_le_bytes([vk_bytes[0], vk_bytes[1], vk_bytes[2], vk_bytes[3]]))
+            BabyBear::new(u32::from_le_bytes([
+                vk_bytes[0],
+                vk_bytes[1],
+                vk_bytes[2],
+                vk_bytes[3],
+            ]))
         } else {
             // Case (b): full 32-byte hash, compress to BabyBear
             crate::present::bytes_to_babybear(&vk_bytes)
@@ -141,12 +146,17 @@ impl ProofVerifier for StarkProofVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::stark::{generate_merkle_trace, prove, proof_to_bytes};
+    use pyana_circuit::stark::{generate_merkle_trace, proof_to_bytes, prove};
 
     #[test]
     fn test_stark_verifier_valid_proof() {
         // Generate a valid Merkle membership proof.
-        let siblings = [[100u32, 200, 300], [400, 500, 600], [700, 800, 900], [1000, 1100, 1200]];
+        let siblings = [
+            [100u32, 200, 300],
+            [400, 500, 600],
+            [700, 800, 900],
+            [1000, 1100, 1200],
+        ];
         let positions = [0u32, 1, 2, 3];
         let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
 
@@ -167,7 +177,12 @@ mod tests {
 
     #[test]
     fn test_stark_verifier_wrong_federation_root() {
-        let siblings = [[100u32, 200, 300], [400, 500, 600], [700, 800, 900], [1000, 1100, 1200]];
+        let siblings = [
+            [100u32, 200, 300],
+            [400, 500, 600],
+            [700, 800, 900],
+            [1000, 1100, 1200],
+        ];
         let positions = [0u32, 1, 2, 3];
         let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
 
@@ -186,7 +201,12 @@ mod tests {
 
     #[test]
     fn test_stark_verifier_tampered_proof() {
-        let siblings = [[100u32, 200, 300], [400, 500, 600], [700, 800, 900], [1000, 1100, 1200]];
+        let siblings = [
+            [100u32, 200, 300],
+            [400, 500, 600],
+            [700, 800, 900],
+            [1000, 1100, 1200],
+        ];
         let positions = [0u32, 1, 2, 3];
         let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
 

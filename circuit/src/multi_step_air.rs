@@ -47,9 +47,8 @@
 //!   - Step index increments by 1 for active rows
 
 use crate::derivation_air::{
-    col as dcol, DerivationWitness,
-    DERIVATION_AIR_WIDTH, GTE_DIFF_BITS, MAX_BODY_ATOMS, MAX_EQUAL_CHECKS,
-    MAX_HEAD_TERMS, MAX_MEMBEROF_CHECKS, MAX_SUB_VARS,
+    DERIVATION_AIR_WIDTH, DerivationWitness, GTE_DIFF_BITS, MAX_BODY_ATOMS, MAX_EQUAL_CHECKS,
+    MAX_HEAD_TERMS, MAX_MEMBEROF_CHECKS, MAX_SUB_VARS, col as dcol,
 };
 use crate::field::BabyBear;
 use crate::mock_prover::{Air, Constraint};
@@ -322,8 +321,7 @@ impl Air for MultiStepDerivationAir {
                             var_resolved = var_resolved + sel * sub_val;
                         }
 
-                        let expected =
-                            is_var * var_resolved + (BabyBear::ONE - is_var) * raw_value;
+                        let expected = is_var * var_resolved + (BabyBear::ONE - is_var) * raw_value;
                         result = result + (derived_term - expected) * (derived_term - expected);
                     }
                     active * result
@@ -357,7 +355,6 @@ impl Air for MultiStepDerivationAir {
                     active * result
                 }),
             },
-
             // Constraint 12: MemberOf check active flags are binary (when active).
             Constraint {
                 name: "memberof_check_active_binary".to_string(),
@@ -448,7 +445,6 @@ impl Air for MultiStepDerivationAir {
                     active * gte_active * high_bit
                 }),
             },
-
             // === Multi-step chaining constraints ===
 
             // Constraint 19: is_active is binary.
@@ -598,7 +594,12 @@ impl Air for MultiStepDerivationAir {
                 // --- Single-step derivation columns (same as DerivationAir) ---
                 row[dcol::RULE_ID] = BabyBear::new(step.rule.id);
 
-                for (i, &hash) in step.body_fact_hashes.iter().enumerate().take(MAX_BODY_ATOMS) {
+                for (i, &hash) in step
+                    .body_fact_hashes
+                    .iter()
+                    .enumerate()
+                    .take(MAX_BODY_ATOMS)
+                {
                     row[dcol::BODY_HASH_START + i] = hash;
                     row[dcol::BODY_MEMBERSHIP_START + i] = BabyBear::ONE;
                     row[dcol::BODY_ROOT_START + i] = step.state_root;
@@ -768,11 +769,11 @@ impl Air for MultiStepDerivationAir {
         let conclusion = w.conclusion();
         let final_acc = w.final_accumulated_hash();
         let public_inputs = vec![
-            w.initial_state_root,                       // 0: initial_state_root
-            w.request_hash,                             // 1: request_hash
-            conclusion,                                 // 2: conclusion
-            BabyBear::new(num_active as u32),           // 3: num_steps
-            final_acc,                                  // 4: final_accumulated_hash
+            w.initial_state_root,             // 0: initial_state_root
+            w.request_hash,                   // 1: request_hash
+            conclusion,                       // 2: conclusion
+            BabyBear::new(num_active as u32), // 3: num_steps
+            final_acc,                        // 4: final_accumulated_hash
         ];
 
         (trace, public_inputs)
@@ -1082,7 +1083,9 @@ impl StarkAir for MultiStepStarkAir {
 ///
 /// This extracts the trace generation logic so it can be used by both the MockProver
 /// and the real STARK prover.
-pub fn generate_multi_step_trace(witness: &MultiStepWitness) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+pub fn generate_multi_step_trace(
+    witness: &MultiStepWitness,
+) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let air = MultiStepDerivationAir::new(witness.clone());
     let (mut trace, public_inputs) = air.generate_trace();
 
@@ -1490,16 +1493,16 @@ mod tests {
                 num_variables: 3,
                 head_predicate: app_auth_pred,
                 head_terms: [
-                    (true, BabyBear::new(0)),  // X -> alice
-                    (true, BabyBear::new(1)),  // App -> app1
+                    (true, BabyBear::new(0)), // X -> alice
+                    (true, BabyBear::new(1)), // App -> app1
                     (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![BodyAtomPattern {
                     predicate: has_cap_pred,
                     terms: [
-                        (true, BabyBear::new(0)),  // X
-                        (true, BabyBear::new(1)),  // App
-                        (true, BabyBear::new(2)),  // Action (wildcard in head)
+                        (true, BabyBear::new(0)), // X
+                        (true, BabyBear::new(1)), // App
+                        (true, BabyBear::new(2)), // Action (wildcard in head)
                     ],
                 }],
                 equal_checks: vec![],
@@ -1521,15 +1524,15 @@ mod tests {
                 num_variables: 2,
                 head_predicate: action_perm_pred,
                 head_terms: [
-                    (true, BabyBear::new(0)),  // X
-                    (true, BabyBear::new(1)),  // App
+                    (true, BabyBear::new(0)), // X
+                    (true, BabyBear::new(1)), // App
                     (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![BodyAtomPattern {
                     predicate: app_auth_pred,
                     terms: [
-                        (true, BabyBear::new(0)),  // X
-                        (true, BabyBear::new(1)),  // App
+                        (true, BabyBear::new(0)), // X
+                        (true, BabyBear::new(1)), // App
                         (false, BabyBear::ZERO),
                     ],
                 }],
@@ -1552,15 +1555,15 @@ mod tests {
                 num_variables: 2,
                 head_predicate: allow_pred,
                 head_terms: [
-                    (true, BabyBear::new(0)),  // X
-                    (true, BabyBear::new(1)),  // App
+                    (true, BabyBear::new(0)), // X
+                    (true, BabyBear::new(1)), // App
                     (false, BabyBear::ZERO),
                 ],
                 body_atoms: vec![BodyAtomPattern {
                     predicate: action_perm_pred,
                     terms: [
-                        (true, BabyBear::new(0)),  // X
-                        (true, BabyBear::new(1)),  // App
+                        (true, BabyBear::new(0)), // X
+                        (true, BabyBear::new(1)), // App
                         (false, BabyBear::ZERO),
                     ],
                 }],
@@ -1575,11 +1578,8 @@ mod tests {
             derived_terms: [alice, app1, BabyBear::ZERO],
         };
 
-        let witness = build_multi_step_witness(
-            state_root,
-            BabyBear::new(42),
-            vec![step1, step2, step3],
-        );
+        let witness =
+            build_multi_step_witness(state_root, BabyBear::new(42), vec![step1, step2, step3]);
 
         // Verify the witness computes the right conclusion
         assert_eq!(witness.conclusion(), BabyBear::ONE, "Should conclude ALLOW");
@@ -1597,9 +1597,33 @@ mod tests {
             state_root,
             BabyBear::new(42),
             vec![
-                make_step(1, state_root, app_auth_pred, [alice, app1, BabyBear::ZERO], has_cap_pred, [alice, app1, read_action], vec![alice, app1, read_action]),
-                make_step(2, state_root, action_perm_pred, [alice, app1, BabyBear::ZERO], app_auth_pred, [alice, app1, BabyBear::ZERO], vec![alice, app1]),
-                make_step(3, state_root, allow_pred, [alice, app1, BabyBear::ZERO], action_perm_pred, [alice, app1, BabyBear::ZERO], vec![alice, app1]),
+                make_step(
+                    1,
+                    state_root,
+                    app_auth_pred,
+                    [alice, app1, BabyBear::ZERO],
+                    has_cap_pred,
+                    [alice, app1, read_action],
+                    vec![alice, app1, read_action],
+                ),
+                make_step(
+                    2,
+                    state_root,
+                    action_perm_pred,
+                    [alice, app1, BabyBear::ZERO],
+                    app_auth_pred,
+                    [alice, app1, BabyBear::ZERO],
+                    vec![alice, app1],
+                ),
+                make_step(
+                    3,
+                    state_root,
+                    allow_pred,
+                    [alice, app1, BabyBear::ZERO],
+                    action_perm_pred,
+                    [alice, app1, BabyBear::ZERO],
+                    vec![alice, app1],
+                ),
             ],
         );
         let proof = prove_authorization(witness2);
@@ -1668,7 +1692,10 @@ mod tests {
 
         let proof = proof.unwrap();
         // Public inputs should be correct
-        assert_eq!(proof.public_inputs[pi::INITIAL_STATE_ROOT], BabyBear::new(99999));
+        assert_eq!(
+            proof.public_inputs[pi::INITIAL_STATE_ROOT],
+            BabyBear::new(99999)
+        );
         assert_eq!(proof.public_inputs[pi::REQUEST_HASH], BabyBear::new(42));
         assert_eq!(proof.public_inputs[pi::CONCLUSION], BabyBear::ONE); // ALLOW
         assert_eq!(proof.public_inputs[pi::NUM_STEPS], BabyBear::ONE); // 1 step
@@ -1802,11 +1829,8 @@ mod tests {
             vec![alice, app1],
         );
 
-        let witness = build_multi_step_witness(
-            state_root,
-            BabyBear::new(42),
-            vec![step1, step2, step3],
-        );
+        let witness =
+            build_multi_step_witness(state_root, BabyBear::new(42), vec![step1, step2, step3]);
         let conclusion = witness.conclusion();
         let acc_hash = witness.final_accumulated_hash();
 
@@ -1853,10 +1877,7 @@ mod tests {
         // Try to verify with WRONG conclusion (DENY instead of ALLOW)
         let wrong_conclusion = BabyBear::ZERO;
         let result = verify_authorization_stark(wrong_conclusion, acc_hash, &proof);
-        assert!(
-            result.is_err(),
-            "Should reject wrong conclusion"
-        );
+        assert!(result.is_err(), "Should reject wrong conclusion");
         assert!(
             result.unwrap_err().contains("Conclusion mismatch"),
             "Error should mention conclusion mismatch"
@@ -1889,10 +1910,7 @@ mod tests {
         // Try to verify with WRONG accumulated hash
         let wrong_hash = BabyBear::new(777777);
         let result = verify_authorization_stark(conclusion, wrong_hash, &proof);
-        assert!(
-            result.is_err(),
-            "Should reject wrong accumulated hash"
-        );
+        assert!(result.is_err(), "Should reject wrong accumulated hash");
         assert!(
             result.unwrap_err().contains("Accumulated hash mismatch"),
             "Error should mention accumulated hash mismatch"
@@ -1927,10 +1945,7 @@ mod tests {
         proof.trace_commitment[0] ^= 0xFF;
 
         let result = verify_authorization_stark(conclusion, acc_hash, &proof);
-        assert!(
-            result.is_err(),
-            "Tampered proof should be rejected"
-        );
+        assert!(result.is_err(), "Tampered proof should be rejected");
     }
 
     #[test]

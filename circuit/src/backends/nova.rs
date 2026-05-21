@@ -31,15 +31,11 @@
 use super::ProofBackend;
 use ff::{Field, PrimeField};
 use nova_snark::{
-    frontend::{num::AllocatedNum, ConstraintSystem, SynthesisError},
+    frontend::{ConstraintSystem, SynthesisError, num::AllocatedNum},
     nova::{CompressedSNARK, PublicParams, RecursiveSNARK},
-    provider::{ipa_pc::EvaluationEngine, PallasEngine, VestaEngine},
+    provider::{PallasEngine, VestaEngine, ipa_pc::EvaluationEngine},
     spartan::snark::RelaxedR1CSSNARK,
-    traits::{
-        circuit::StepCircuit,
-        snark::RelaxedR1CSSNARKTrait,
-        Engine,
-    },
+    traits::{Engine, circuit::StepCircuit, snark::RelaxedR1CSSNARKTrait},
 };
 use serde::{Deserialize, Serialize};
 
@@ -130,8 +126,7 @@ impl StepCircuit<F1> for FoldStepCircuit {
         // z[2] = step_counter
 
         // Allocate new_root as a witness.
-        let new_root =
-            AllocatedNum::alloc(cs.namespace(|| "new_root"), || Ok(self.new_root))?;
+        let new_root = AllocatedNum::alloc(cs.namespace(|| "new_root"), || Ok(self.new_root))?;
 
         // Allocate removal_hash as a witness.
         let removal_hash =
@@ -142,8 +137,12 @@ impl StepCircuit<F1> for FoldStepCircuit {
         // In production, use a Poseidon sponge gadget.
         let old_acc = &z[1];
         let new_acc = AllocatedNum::alloc(cs.namespace(|| "new_acc"), || {
-            let old_val = old_acc.get_value().ok_or(SynthesisError::AssignmentMissing)?;
-            let rem_val = removal_hash.get_value().ok_or(SynthesisError::AssignmentMissing)?;
+            let old_val = old_acc
+                .get_value()
+                .ok_or(SynthesisError::AssignmentMissing)?;
+            let rem_val = removal_hash
+                .get_value()
+                .ok_or(SynthesisError::AssignmentMissing)?;
             Ok(old_val + rem_val + old_val * rem_val)
         })?;
 
@@ -211,11 +210,7 @@ impl ProofBackend for NovaBackend {
         .map_err(|e| format!("Nova setup: {e}"))?;
 
         // Initial state: z0 = [leaf_as_scalar, 0 (no prior removals), 0 (step 0)].
-        let z0_primary = vec![
-            bytes_to_scalar::<E1>(leaf),
-            F1::ZERO,
-            F1::ZERO,
-        ];
+        let z0_primary = vec![bytes_to_scalar::<E1>(leaf), F1::ZERO, F1::ZERO];
 
         // Run 1-step IVC.
         let mut recursive_snark = RecursiveSNARK::new(&pp, &step_circuit, &z0_primary)
@@ -233,8 +228,7 @@ impl ProofBackend for NovaBackend {
             .map_err(|e| format!("CompressedSNARK::prove: {e}"))?;
 
         // Serialize the proof.
-        let proof_bytes =
-            bincode::serialize(&compressed).map_err(|e| format!("serialize: {e}"))?;
+        let proof_bytes = bincode::serialize(&compressed).map_err(|e| format!("serialize: {e}"))?;
 
         Ok(NovaProof {
             proof_bytes,
@@ -300,11 +294,7 @@ impl ProofBackend for NovaBackend {
         )
         .map_err(|e| format!("Nova setup: {e}"))?;
 
-        let z0_primary = vec![
-            bytes_to_scalar::<E1>(old_root),
-            F1::ZERO,
-            F1::ZERO,
-        ];
+        let z0_primary = vec![bytes_to_scalar::<E1>(old_root), F1::ZERO, F1::ZERO];
 
         let mut recursive_snark = RecursiveSNARK::new(&pp, &step_circuit, &z0_primary)
             .map_err(|e| format!("RecursiveSNARK::new: {e}"))?;
@@ -319,8 +309,7 @@ impl ProofBackend for NovaBackend {
         let compressed = CompressedSNARK::<E1, E2, _, S1, S2>::prove(&pp, &pk, &recursive_snark)
             .map_err(|e| format!("CompressedSNARK::prove: {e}"))?;
 
-        let proof_bytes =
-            bincode::serialize(&compressed).map_err(|e| format!("serialize: {e}"))?;
+        let proof_bytes = bincode::serialize(&compressed).map_err(|e| format!("serialize: {e}"))?;
 
         Ok(NovaProof {
             proof_bytes,
@@ -437,9 +426,8 @@ pub fn prove_fold_chain(steps: &[FoldChainStep]) -> Result<NovaProof, String> {
     ];
 
     // Create the recursive SNARK and fold each step.
-    let mut recursive_snark =
-        RecursiveSNARK::new(&pp, &first_step_circuit, &z0_primary)
-            .map_err(|e| format!("RecursiveSNARK::new: {e}"))?;
+    let mut recursive_snark = RecursiveSNARK::new(&pp, &first_step_circuit, &z0_primary)
+        .map_err(|e| format!("RecursiveSNARK::new: {e}"))?;
 
     let mut removal_commitments = Vec::with_capacity(steps.len());
 

@@ -74,11 +74,7 @@ impl MerkleAir {
 
     /// Compute what the parent hash should be given the current hash, position, and siblings.
     /// If position is out of range (>3), returns ZERO (constraint will catch this).
-    pub fn compute_parent(
-        current: BabyBear,
-        position: u8,
-        siblings: &[BabyBear; 3],
-    ) -> BabyBear {
+    pub fn compute_parent(current: BabyBear, position: u8, siblings: &[BabyBear; 3]) -> BabyBear {
         if position > 3 {
             return BabyBear::ZERO;
         }
@@ -136,8 +132,7 @@ impl Air for MerkleAir {
                         return BabyBear::ZERO;
                     }
 
-                    let expected_parent =
-                        MerkleAir::compute_parent(current, position, &siblings);
+                    let expected_parent = MerkleAir::compute_parent(current, position, &siblings);
                     let claimed_parent = row[col::PARENT];
 
                     expected_parent - claimed_parent
@@ -163,9 +158,7 @@ impl Air for MerkleAir {
             // First row's current must equal the leaf hash (public input 0).
             Constraint {
                 name: "leaf_hash_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::CURRENT] - public_inputs[0]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::CURRENT] - public_inputs[0]),
             },
         ]
     }
@@ -175,9 +168,7 @@ impl Air for MerkleAir {
             // Last row's parent must equal the expected root (public input 1).
             Constraint {
                 name: "root_match".to_string(),
-                eval: Box::new(|row, _, public_inputs| {
-                    row[col::PARENT] - public_inputs[1]
-                }),
+                eval: Box::new(|row, _, public_inputs| row[col::PARENT] - public_inputs[1]),
             },
         ]
     }
@@ -187,8 +178,7 @@ impl Air for MerkleAir {
         let mut current = self.witness.leaf_hash;
 
         for level in &self.witness.levels {
-            let parent =
-                MerkleAir::compute_parent(current, level.position, &level.siblings);
+            let parent = MerkleAir::compute_parent(current, level.position, &level.siblings);
 
             let row = vec![
                 current,
@@ -242,7 +232,11 @@ mod tests {
         let witness = create_test_witness(leaf, TREE_DEPTH);
         let air = MerkleAir::new(witness);
         let result = MockProver::verify(&air);
-        assert!(result.is_valid(), "Merkle AIR should verify: {:?}", result.violations());
+        assert!(
+            result.is_valid(),
+            "Merkle AIR should verify: {:?}",
+            result.violations()
+        );
     }
 
     #[test]

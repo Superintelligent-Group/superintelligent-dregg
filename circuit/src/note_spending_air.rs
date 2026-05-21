@@ -150,6 +150,54 @@ impl NoteSpendingWitness {
         }
         current
     }
+
+    /// Create a witness from a real Poseidon2 Merkle proof (from a Poseidon2MerkleTree).
+    ///
+    /// This is the bridge between the persistent note tree and the STARK prover:
+    /// given a note's field-element preimage, a spending key, and a real Merkle proof
+    /// from the Poseidon2 tree, construct a witness that can be used to generate
+    /// a valid STARK proof.
+    ///
+    /// # Arguments
+    ///
+    /// * `owner` - The note owner (field element)
+    /// * `value` - The note value (field element)
+    /// * `asset_type` - The asset type (field element)
+    /// * `creation_nonce` - The creation nonce (field element)
+    /// * `randomness` - The randomness/blinding factor (field element)
+    /// * `spending_key` - The spending key (secret, field element)
+    /// * `merkle_siblings` - Siblings from the Poseidon2MerkleProof
+    /// * `merkle_positions` - Positions from the Poseidon2MerkleProof
+    ///
+    /// # Panics
+    ///
+    /// Panics if `merkle_siblings.len() != merkle_positions.len()`.
+    pub fn from_real_proof(
+        owner: BabyBear,
+        value: BabyBear,
+        asset_type: BabyBear,
+        creation_nonce: BabyBear,
+        randomness: BabyBear,
+        spending_key: BabyBear,
+        merkle_siblings: Vec<[BabyBear; 3]>,
+        merkle_positions: Vec<u8>,
+    ) -> Self {
+        assert_eq!(
+            merkle_siblings.len(),
+            merkle_positions.len(),
+            "siblings and positions must have the same length"
+        );
+        Self {
+            owner,
+            value,
+            asset_type,
+            creation_nonce,
+            randomness,
+            spending_key,
+            merkle_siblings,
+            merkle_positions,
+        }
+    }
 }
 
 /// The note spending AIR. Proves knowledge of spending key + note preimage + Merkle membership.
@@ -160,7 +208,10 @@ pub struct NoteSpendingAir {
 
 impl NoteSpendingAir {
     pub fn new(depth: usize) -> Self {
-        assert!(depth >= MIN_MERKLE_DEPTH, "Merkle depth must be at least {MIN_MERKLE_DEPTH}");
+        assert!(
+            depth >= MIN_MERKLE_DEPTH,
+            "Merkle depth must be at least {MIN_MERKLE_DEPTH}"
+        );
         Self { depth }
     }
 
@@ -172,7 +223,10 @@ impl NoteSpendingAir {
     pub fn generate_trace(witness: &NoteSpendingWitness) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         let depth = witness.merkle_siblings.len();
         assert_eq!(witness.merkle_positions.len(), depth);
-        assert!(depth >= MIN_MERKLE_DEPTH, "Need at least depth {MIN_MERKLE_DEPTH}");
+        assert!(
+            depth >= MIN_MERKLE_DEPTH,
+            "Need at least depth {MIN_MERKLE_DEPTH}"
+        );
 
         let commitment = witness.commitment();
         let nullifier = witness.nullifier();
@@ -234,7 +288,8 @@ impl NoteSpendingAir {
         let merkle_root = current;
 
         // Pad to power of 2
-        let padding_parent = hash_4_to_1(&[merkle_root, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO]);
+        let padding_parent =
+            hash_4_to_1(&[merkle_root, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO]);
         for _ in total_rows..padded_rows {
             let mut row = vec![BabyBear::ZERO; NOTE_SPENDING_WIDTH];
             row[merkle_col::CURRENT] = merkle_root;
@@ -333,7 +388,8 @@ impl StarkAir for NoteSpendingAir {
         let commitment = local[col::COMMITMENT];
 
         let is_commitment_row = BabyBear::ONE - is_merkle;
-        let expected_commitment = hash_many(&[owner, value, asset_type, creation_nonce, randomness]);
+        let expected_commitment =
+            hash_many(&[owner, value, asset_type, creation_nonce, randomness]);
         let c_commitment = is_commitment_row * (commitment - expected_commitment);
         combined = combined + alpha_pow * c_commitment;
         alpha_pow = alpha_pow * alpha;
@@ -553,7 +609,8 @@ mod tests {
         // Each Merkle level: parent[i] = current[i+1]
         for i in 1..4 {
             assert_eq!(
-                trace[i][merkle_col::PARENT], trace[i + 1][merkle_col::CURRENT],
+                trace[i][merkle_col::PARENT],
+                trace[i + 1][merkle_col::CURRENT],
                 "Merkle chain broken at level {i}"
             );
         }
@@ -562,8 +619,11 @@ mod tests {
     #[test]
     fn constraint_zero_on_all_valid_rows() {
         let witness = create_test_witness(
-            BabyBear::new(1000), BabyBear::new(500), BabyBear::new(1),
-            BabyBear::new(0xDEAD_BEEF), 4,
+            BabyBear::new(1000),
+            BabyBear::new(500),
+            BabyBear::new(1),
+            BabyBear::new(0xDEAD_BEEF),
+            4,
         );
         let (trace, public_inputs) = NoteSpendingAir::generate_trace(&witness);
         let air = NoteSpendingAir::new(witness.merkle_siblings.len());
@@ -571,15 +631,24 @@ mod tests {
         for i in 0..trace.len() {
             let next_idx = if i + 1 < trace.len() { i + 1 } else { 0 };
             let c = air.eval_constraints(&trace[i], &trace[next_idx], &public_inputs, alpha);
-            assert_eq!(c, BabyBear::ZERO, "Constraint non-zero at row {}: c = {}", i, c.0);
+            assert_eq!(
+                c,
+                BabyBear::ZERO,
+                "Constraint non-zero at row {}: c = {}",
+                i,
+                c.0
+            );
         }
     }
 
     #[test]
     fn tampered_commitment_detected() {
         let witness = create_test_witness(
-            BabyBear::new(1000), BabyBear::new(500), BabyBear::new(1),
-            BabyBear::new(0xDEAD_BEEF), 4,
+            BabyBear::new(1000),
+            BabyBear::new(500),
+            BabyBear::new(1),
+            BabyBear::new(0xDEAD_BEEF),
+            4,
         );
         let (mut trace, pi) = NoteSpendingAir::generate_trace(&witness);
         let air = NoteSpendingAir::new(witness.merkle_siblings.len());
@@ -592,8 +661,11 @@ mod tests {
     #[test]
     fn tampered_nullifier_detected() {
         let witness = create_test_witness(
-            BabyBear::new(1000), BabyBear::new(500), BabyBear::new(1),
-            BabyBear::new(0xDEAD_BEEF), 4,
+            BabyBear::new(1000),
+            BabyBear::new(500),
+            BabyBear::new(1),
+            BabyBear::new(0xDEAD_BEEF),
+            4,
         );
         let (mut trace, pi) = NoteSpendingAir::generate_trace(&witness);
         let air = NoteSpendingAir::new(witness.merkle_siblings.len());
@@ -606,8 +678,11 @@ mod tests {
     #[test]
     fn tampered_merkle_parent_detected() {
         let witness = create_test_witness(
-            BabyBear::new(1000), BabyBear::new(500), BabyBear::new(1),
-            BabyBear::new(0xDEAD_BEEF), 4,
+            BabyBear::new(1000),
+            BabyBear::new(500),
+            BabyBear::new(1),
+            BabyBear::new(0xDEAD_BEEF),
+            4,
         );
         let (mut trace, pi) = NoteSpendingAir::generate_trace(&witness);
         let air = NoteSpendingAir::new(witness.merkle_siblings.len());
@@ -714,7 +789,10 @@ mod tests {
             witness_correct.merkle_root(),
             &proof_wrong,
         );
-        assert!(result.is_err(), "Proof with wrong spending key should fail against correct nullifier");
+        assert!(
+            result.is_err(),
+            "Proof with wrong spending key should fail against correct nullifier"
+        );
     }
 
     #[test]
@@ -787,7 +865,10 @@ mod tests {
         // The commitment changes
         assert_ne!(witness_correct.commitment(), witness_tampered.commitment());
         // Therefore the Merkle root changes (path no longer matches)
-        assert_ne!(witness_correct.merkle_root(), witness_tampered.merkle_root());
+        assert_ne!(
+            witness_correct.merkle_root(),
+            witness_tampered.merkle_root()
+        );
 
         // Proof with tampered witness won't verify against correct root
         let proof = prove_note_spend(&witness_tampered);
@@ -796,7 +877,10 @@ mod tests {
             witness_correct.merkle_root(),
             &proof,
         );
-        assert!(result.is_err(), "Tampered commitment should fail Merkle verification");
+        assert!(
+            result.is_err(),
+            "Tampered commitment should fail Merkle verification"
+        );
     }
 
     #[test]

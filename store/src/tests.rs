@@ -4,7 +4,7 @@
 //! concurrent access safety, edge cases, and integrity checking.
 
 use crate::audit::{AuditEventType, StoredAuditEvent};
-use crate::federation::{StoredAttestedRoot, PublicKey, Signature};
+use crate::federation::{PublicKey, Signature, StoredAttestedRoot};
 use crate::tokens::{StoredFoldStep, TokenChain};
 use crate::{PersistentStore, StoreError};
 
@@ -381,7 +381,9 @@ fn signing_key_store_and_load() {
     let key = [0x42; 32];
     let master = [0xAA; 32];
 
-    store.store_signing_key("authority-1", &key, &master).unwrap();
+    store
+        .store_signing_key("authority-1", &key, &master)
+        .unwrap();
     let loaded = store.load_signing_key("authority-1", &master).unwrap();
     assert_eq!(loaded, Some(key));
 }
@@ -393,7 +395,9 @@ fn signing_key_wrong_master() {
     let master = [0xAA; 32];
     let wrong_master = [0xBB; 32];
 
-    store.store_signing_key("authority-1", &key, &master).unwrap();
+    store
+        .store_signing_key("authority-1", &key, &master)
+        .unwrap();
     let result = store.load_signing_key("authority-1", &wrong_master);
     assert!(matches!(result, Err(StoreError::Crypto(_))));
 }
@@ -412,10 +416,15 @@ fn signing_key_delete() {
     let key = [0x42; 32];
     let master = [0xAA; 32];
 
-    store.store_signing_key("authority-1", &key, &master).unwrap();
+    store
+        .store_signing_key("authority-1", &key, &master)
+        .unwrap();
     assert!(store.delete_signing_key("authority-1").unwrap());
     assert!(!store.delete_signing_key("authority-1").unwrap());
-    assert_eq!(store.load_signing_key("authority-1", &master).unwrap(), None);
+    assert_eq!(
+        store.load_signing_key("authority-1", &master).unwrap(),
+        None
+    );
 }
 
 #[test]
@@ -437,8 +446,12 @@ fn signing_key_overwrite() {
     let store = new_store();
     let master = [0xAA; 32];
 
-    store.store_signing_key("key", &[0x11; 32], &master).unwrap();
-    store.store_signing_key("key", &[0x22; 32], &master).unwrap();
+    store
+        .store_signing_key("key", &[0x11; 32], &master)
+        .unwrap();
+    store
+        .store_signing_key("key", &[0x22; 32], &master)
+        .unwrap();
 
     let loaded = store.load_signing_key("key", &master).unwrap();
     assert_eq!(loaded, Some([0x22; 32]));
@@ -449,11 +462,21 @@ fn signing_key_different_names_independent() {
     let store = new_store();
     let master = [0xAA; 32];
 
-    store.store_signing_key("key-a", &[0x11; 32], &master).unwrap();
-    store.store_signing_key("key-b", &[0x22; 32], &master).unwrap();
+    store
+        .store_signing_key("key-a", &[0x11; 32], &master)
+        .unwrap();
+    store
+        .store_signing_key("key-b", &[0x22; 32], &master)
+        .unwrap();
 
-    assert_eq!(store.load_signing_key("key-a", &master).unwrap(), Some([0x11; 32]));
-    assert_eq!(store.load_signing_key("key-b", &master).unwrap(), Some([0x22; 32]));
+    assert_eq!(
+        store.load_signing_key("key-a", &master).unwrap(),
+        Some([0x11; 32])
+    );
+    assert_eq!(
+        store.load_signing_key("key-b", &master).unwrap(),
+        Some([0x22; 32])
+    );
 }
 
 #[test]
@@ -570,7 +593,10 @@ fn audit_events_for_token() {
         .append_audit_event(&sample_audit_event(token_a, AuditEventType::TokenPresented))
         .unwrap();
     store
-        .append_audit_event(&sample_audit_event(token_a, AuditEventType::TokenAttenuated))
+        .append_audit_event(&sample_audit_event(
+            token_a,
+            AuditEventType::TokenAttenuated,
+        ))
         .unwrap();
     store
         .append_audit_event(&sample_audit_event(token_b, AuditEventType::TokenRevoked))
@@ -744,15 +770,14 @@ fn recovery_simulated_restart_file_based() {
         let store = PersistentStore::open(&path).unwrap();
         store.store_revocation("revoked-token-1").unwrap();
         store.store_revocation("revoked-token-2").unwrap();
-        store.store_attested_root(&sample_attested_root(10)).unwrap();
+        store
+            .store_attested_root(&sample_attested_root(10))
+            .unwrap();
         store
             .store_token_chain(&[0xAB; 32], &sample_token_chain())
             .unwrap();
         store
-            .append_audit_event(&sample_audit_event(
-                [0xAB; 32],
-                AuditEventType::TokenIssued,
-            ))
+            .append_audit_event(&sample_audit_event([0xAB; 32], AuditEventType::TokenIssued))
             .unwrap();
         store
             .append_audit_event(&sample_audit_event(
@@ -769,8 +794,16 @@ fn recovery_simulated_restart_file_based() {
         let state = store.recover_federation_state().unwrap();
 
         assert_eq!(state.revocation_count, 2);
-        assert!(state.revoked_tokens.contains(&"revoked-token-1".to_string()));
-        assert!(state.revoked_tokens.contains(&"revoked-token-2".to_string()));
+        assert!(
+            state
+                .revoked_tokens
+                .contains(&"revoked-token-1".to_string())
+        );
+        assert!(
+            state
+                .revoked_tokens
+                .contains(&"revoked-token-2".to_string())
+        );
         assert_eq!(state.latest_root.unwrap().height, 10);
         assert_eq!(state.token_count, 1);
         assert_eq!(state.audit_count, 2);
@@ -970,7 +1003,10 @@ fn audit_event_with_metadata() {
 
     let loaded = store.get_audit_event(0).unwrap().unwrap();
     assert_eq!(loaded.metadata, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    assert_eq!(loaded.event_type, AuditEventType::Custom("test".to_string()));
+    assert_eq!(
+        loaded.event_type,
+        AuditEventType::Custom("test".to_string())
+    );
 }
 
 #[test]
@@ -1133,9 +1169,7 @@ fn test_attested_root_includes_note_tree() {
         nullifier_set_root: Some(nullifier_root),
         height: 1,
         timestamp: 1700000000,
-        quorum_signatures: vec![
-            (PublicKey([0x11; 32]), Signature([0x22; 64])),
-        ],
+        quorum_signatures: vec![(PublicKey([0x11; 32]), Signature([0x22; 64]))],
         threshold_qc: None,
         threshold: 1,
     };

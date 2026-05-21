@@ -14,13 +14,11 @@
 
 use pyana_cell::program::{CellProgram, ProgramError, StateConstraint, field_from_u64};
 use pyana_cell::state::CellState;
-use pyana_cell::{
-    AuthRequired, Cell, Ledger, Permissions, VerificationKey,
-};
-use pyana_turn::executor::{ComputronCosts, ProofVerifier, TurnExecutor};
-use pyana_turn::{Action, Authorization, DelegationMode, Effect, Turn, TurnResult};
+use pyana_cell::{AuthRequired, Cell, Ledger, Permissions, VerificationKey};
 use pyana_turn::action::symbol;
+use pyana_turn::executor::{ComputronCosts, ProofVerifier, TurnExecutor};
 use pyana_turn::forest::CallForest;
+use pyana_turn::{Action, Authorization, DelegationMode, Effect, Turn, TurnResult};
 
 /// A mock proof verifier that validates proofs based on a simple protocol:
 /// The proof bytes must start with the verification key's first 4 bytes (matching check).
@@ -69,9 +67,9 @@ fn main() {
 
     // Initialize the cell state.
     let mut cell_state = CellState::new(5000);
-    cell_state.fields[0] = field_from_u64(800);   // balance = 800
-    cell_state.fields[1] = field_from_u64(42);    // account_type = 42 (immutable)
-    cell_state.fields[2] = field_from_u64(200);   // reserve = 200 (800 + 200 = 1000)
+    cell_state.fields[0] = field_from_u64(800); // balance = 800
+    cell_state.fields[1] = field_from_u64(42); // account_type = 42 (immutable)
+    cell_state.fields[2] = field_from_u64(200); // reserve = 200 (800 + 200 = 1000)
 
     // Verify initial state satisfies the program.
     let init_result = predicate_program.evaluate(&cell_state, None);
@@ -85,8 +83,8 @@ fn main() {
 
     let old_state = cell_state.clone();
     let mut new_state = cell_state.clone();
-    new_state.fields[0] = field_from_u64(500);   // balance -> 500 (still >= 100)
-    new_state.fields[2] = field_from_u64(500);   // reserve -> 500 (500 + 500 = 1000)
+    new_state.fields[0] = field_from_u64(500); // balance -> 500 (still >= 100)
+    new_state.fields[2] = field_from_u64(500); // reserve -> 500 (500 + 500 = 1000)
 
     let result = predicate_program.evaluate(&new_state, Some(&old_state));
     assert!(result.is_ok());
@@ -101,8 +99,8 @@ fn main() {
     println!("  Case 1B: Invalid withdrawal (balance drops below 100)");
 
     let mut bad_state = cell_state.clone();
-    bad_state.fields[0] = field_from_u64(50);    // balance -> 50 (< 100!)
-    bad_state.fields[2] = field_from_u64(950);   // keep sum = 1000
+    bad_state.fields[0] = field_from_u64(50); // balance -> 50 (< 100!)
+    bad_state.fields[2] = field_from_u64(950); // keep sum = 1000
 
     let result = predicate_program.evaluate(&bad_state, Some(&old_state));
     assert!(result.is_err());
@@ -119,7 +117,7 @@ fn main() {
     println!("  Case 1C: Attempt to change immutable account_type");
 
     let mut tamper_state = cell_state.clone();
-    tamper_state.fields[1] = field_from_u64(99);  // try to change type
+    tamper_state.fields[1] = field_from_u64(99); // try to change type
 
     let result = predicate_program.evaluate(&tamper_state, Some(&old_state));
     assert!(result.is_err());
@@ -136,8 +134,8 @@ fn main() {
     println!("  Case 1D: Attempt to violate conservation law");
 
     let mut inflate_state = cell_state.clone();
-    inflate_state.fields[0] = field_from_u64(900);  // balance = 900
-    inflate_state.fields[2] = field_from_u64(200);  // reserve stays 200 -> sum = 1100 != 1000
+    inflate_state.fields[0] = field_from_u64(900); // balance = 900
+    inflate_state.fields[2] = field_from_u64(200); // reserve stays 200 -> sum = 1100 != 1000
 
     let result = predicate_program.evaluate(&inflate_state, Some(&old_state));
     assert!(result.is_err());
@@ -161,8 +159,10 @@ fn main() {
     let circuit_program = CellProgram::Circuit { circuit_hash };
 
     println!("  Circuit program:");
-    println!("    circuit_hash: {:02x}{:02x}{:02x}{:02x}...",
-        circuit_hash[0], circuit_hash[1], circuit_hash[2], circuit_hash[3]);
+    println!(
+        "    circuit_hash: {:02x}{:02x}{:02x}{:02x}...",
+        circuit_hash[0], circuit_hash[1], circuit_hash[2], circuit_hash[3]
+    );
     println!("    Requires: valid STARK proof matching verification key");
     println!();
 
@@ -174,8 +174,10 @@ fn main() {
         ProgramError::CircuitProofRequired { circuit_hash: h } => {
             println!("  Direct evaluation without proof:");
             println!("    REJECTED: circuit program requires proof");
-            println!("    Expected circuit: {:02x}{:02x}{:02x}{:02x}...",
-                h[0], h[1], h[2], h[3]);
+            println!(
+                "    Expected circuit: {:02x}{:02x}{:02x}{:02x}...",
+                h[0], h[1], h[2], h[3]
+            );
         }
         other => println!("    REJECTED: {}", other),
     }
@@ -253,13 +255,11 @@ fn main() {
         args: vec![],
         authorization: Authorization::None,
         preconditions: Default::default(),
-        effects: vec![
-            Effect::SetField {
-                cell: target_id,
-                index: 0,
-                value: field_from_u64(999),
-            },
-        ],
+        effects: vec![Effect::SetField {
+            cell: target_id,
+            index: 0,
+            value: field_from_u64(999),
+        }],
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
@@ -314,13 +314,11 @@ fn main() {
         args: vec![],
         authorization: Authorization::Proof(valid_proof.clone()),
         preconditions: Default::default(),
-        effects: vec![
-            Effect::SetField {
-                cell: target_id,
-                index: 0,
-                value: field_from_u64(42),
-            },
-        ],
+        effects: vec![Effect::SetField {
+            cell: target_id,
+            index: 0,
+            value: field_from_u64(42),
+        }],
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
@@ -341,12 +339,20 @@ fn main() {
 
     let result = executor.execute(&turn_with_proof, &mut ledger);
     match &result {
-        TurnResult::Committed { receipt, computrons_used, .. } => {
+        TurnResult::Committed {
+            receipt,
+            computrons_used,
+            ..
+        } => {
             println!("    ACCEPTED: turn committed successfully");
             println!("    Computrons used: {}", computrons_used);
-            println!("    Post-state hash: {:02x}{:02x}{:02x}{:02x}...",
-                receipt.post_state_hash[0], receipt.post_state_hash[1],
-                receipt.post_state_hash[2], receipt.post_state_hash[3]);
+            println!(
+                "    Post-state hash: {:02x}{:02x}{:02x}{:02x}...",
+                receipt.post_state_hash[0],
+                receipt.post_state_hash[1],
+                receipt.post_state_hash[2],
+                receipt.post_state_hash[3]
+            );
         }
         TurnResult::Rejected { reason, .. } => {
             panic!("Should have been accepted, got: {}", reason);
@@ -380,13 +386,11 @@ fn main() {
         args: vec![],
         authorization: Authorization::Proof(invalid_proof),
         preconditions: Default::default(),
-        effects: vec![
-            Effect::SetField {
-                cell: target_id,
-                index: 0,
-                value: field_from_u64(9999),
-            },
-        ],
+        effects: vec![Effect::SetField {
+            cell: target_id,
+            index: 0,
+            value: field_from_u64(9999),
+        }],
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
@@ -420,7 +424,10 @@ fn main() {
     let target_after = ledger.get(&target_id).unwrap();
     let field_val = u64::from_le_bytes(target_after.state.fields[0][..8].try_into().unwrap());
     assert_eq!(field_val, 42, "State must not change on rejected turn");
-    println!("    Target cell field[0] unchanged: {} [atomicity preserved]", field_val);
+    println!(
+        "    Target cell field[0] unchanged: {} [atomicity preserved]",
+        field_val
+    );
     println!();
 
     // =========================================================================

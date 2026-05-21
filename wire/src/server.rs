@@ -8,7 +8,7 @@
 //! - Initiate outgoing connections for cross-silo token presentation
 
 use crate::connection::{ConnectionError, PeerConnection};
-use crate::message::{AuthorizationRequest, PublicKey, Signature, WireMessage, PROTOCOL_VERSION};
+use crate::message::{AuthorizationRequest, PROTOCOL_VERSION, PublicKey, Signature, WireMessage};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -216,7 +216,10 @@ impl DefaultRevocationHandler {
 impl RevocationHandler for DefaultRevocationHandler {
     fn submit_revocation(&self, token_id: &str, sig: &[u8; 64]) -> bool {
         let mut tokens = self.revoked_tokens.write().unwrap();
-        let new_height = self.height.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let new_height = self
+            .height
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
         tokens.push(token_id.to_string());
 
         let mut root = self.root.write().unwrap();
@@ -274,7 +277,12 @@ impl SiloState {
     }
 
     /// Apply a revocation event and update the root.
-    pub fn apply_revocation(&mut self, token_id: &str, authority: &PublicKey, authority_sig: &Signature) {
+    pub fn apply_revocation(
+        &mut self,
+        token_id: &str,
+        authority: &PublicKey,
+        authority_sig: &Signature,
+    ) {
         self.revoked_tokens.push(token_id.to_string());
         self.height += 1;
 
@@ -324,7 +332,10 @@ pub enum ServerEvent {
     /// A new connection was accepted.
     ConnectionAccepted { remote: SocketAddr },
     /// A Hello message was received.
-    HelloReceived { node_name: String, remote: SocketAddr },
+    HelloReceived {
+        node_name: String,
+        remote: SocketAddr,
+    },
     /// A token was presented.
     TokenPresented {
         proof_size: usize,
@@ -416,7 +427,15 @@ impl SiloServer {
             let revocation_handler = self.revocation_handler.clone();
 
             tokio::spawn(async move {
-                Self::handle_connection(stream, remote_addr, config, state, event_log, revocation_handler).await;
+                Self::handle_connection(
+                    stream,
+                    remote_addr,
+                    config,
+                    state,
+                    event_log,
+                    revocation_handler,
+                )
+                .await;
             });
         }
     }
@@ -441,7 +460,15 @@ impl SiloServer {
             let revocation_handler = self.revocation_handler.clone();
 
             tokio::spawn(async move {
-                Self::handle_connection(stream, remote_addr, config, state, event_log, revocation_handler).await;
+                Self::handle_connection(
+                    stream,
+                    remote_addr,
+                    config,
+                    state,
+                    event_log,
+                    revocation_handler,
+                )
+                .await;
             });
         }
     }
@@ -455,7 +482,12 @@ impl SiloServer {
         event_log: Arc<Mutex<Vec<ServerEvent>>>,
         revocation_handler: Option<Arc<dyn RevocationHandler>>,
     ) {
-        event_log.lock().await.push(ServerEvent::ConnectionAccepted { remote: remote_addr });
+        event_log
+            .lock()
+            .await
+            .push(ServerEvent::ConnectionAccepted {
+                remote: remote_addr,
+            });
 
         let mut conn = PeerConnection::from_stream(stream);
 
@@ -610,11 +642,14 @@ impl SiloServer {
                     let mut st = state.write().await;
                     st.apply_revocation(&token_id, &authority, &authority_sig);
 
-                    event_log.lock().await.push(ServerEvent::RevocationSubmitted {
-                        token_id,
-                        new_height: st.height,
-                        remote: remote_addr,
-                    });
+                    event_log
+                        .lock()
+                        .await
+                        .push(ServerEvent::RevocationSubmitted {
+                            token_id,
+                            new_height: st.height,
+                            remote: remote_addr,
+                        });
 
                     Some(WireMessage::RevocationAck {
                         new_root,
@@ -625,11 +660,14 @@ impl SiloServer {
                     let mut st = state.write().await;
                     st.apply_revocation(&token_id, &authority, &authority_sig);
 
-                    event_log.lock().await.push(ServerEvent::RevocationSubmitted {
-                        token_id,
-                        new_height: st.height,
-                        remote: remote_addr,
-                    });
+                    event_log
+                        .lock()
+                        .await
+                        .push(ServerEvent::RevocationSubmitted {
+                            token_id,
+                            new_height: st.height,
+                            remote: remote_addr,
+                        });
 
                     Some(WireMessage::RevocationAck {
                         new_root: st.federation_root,
@@ -642,11 +680,14 @@ impl SiloServer {
                 let st = state.read().await;
                 let is_revoked = st.is_revoked(&token_id);
 
-                event_log.lock().await.push(ServerEvent::NonMembershipRequested {
-                    token_id: token_id.clone(),
-                    found: !is_revoked,
-                    remote: remote_addr,
-                });
+                event_log
+                    .lock()
+                    .await
+                    .push(ServerEvent::NonMembershipRequested {
+                        token_id: token_id.clone(),
+                        found: !is_revoked,
+                        remote: remote_addr,
+                    });
 
                 if is_revoked {
                     Some(WireMessage::NonMembershipResponse {
@@ -859,8 +900,7 @@ mod tests {
 
     #[tokio::test]
     async fn server_accepts_hello() {
-        let config = SiloConfig::new("test-silo")
-            .with_verifier(Arc::new(NoopVerifier));
+        let config = SiloConfig::new("test-silo").with_verifier(Arc::new(NoopVerifier));
         let server = SiloServer::new("127.0.0.1:0".parse().unwrap(), config);
 
         let (addr_tx, addr_rx) = tokio::sync::oneshot::channel();
@@ -897,8 +937,8 @@ mod tests {
 
     #[tokio::test]
     async fn server_handles_presentation() {
-        let config = SiloConfig::new("verifier")
-            .with_verifier(Arc::new(MinSizeVerifier { min_bytes: 100 }));
+        let config =
+            SiloConfig::new("verifier").with_verifier(Arc::new(MinSizeVerifier { min_bytes: 100 }));
         let server = SiloServer::new("127.0.0.1:0".parse().unwrap(), config);
 
         let (addr_tx, addr_rx) = tokio::sync::oneshot::channel();
@@ -940,7 +980,9 @@ mod tests {
 
         let response = client.recv().await.unwrap();
         match response {
-            WireMessage::PresentationResult { accepted, reason, .. } => {
+            WireMessage::PresentationResult {
+                accepted, reason, ..
+            } => {
                 assert!(!accepted);
                 assert!(reason.is_some());
             }
@@ -950,8 +992,7 @@ mod tests {
 
     #[tokio::test]
     async fn server_handles_revocation() {
-        let config = SiloConfig::new("revoker")
-            .with_verifier(Arc::new(NoopVerifier));
+        let config = SiloConfig::new("revoker").with_verifier(Arc::new(NoopVerifier));
         let server = SiloServer::new("127.0.0.1:0".parse().unwrap(), config);
 
         let (addr_tx, addr_rx) = tokio::sync::oneshot::channel();
@@ -1017,9 +1058,18 @@ mod tests {
         let proof_big = vec![0u8; 200];
 
         assert!(SiloServer::verify_proof_with(&proof_small, &NoopVerifier));
-        assert!(!SiloServer::verify_proof_with(&proof_small, &RejectAllVerifier));
-        assert!(!SiloServer::verify_proof_with(&proof_small, &MinSizeVerifier { min_bytes: 100 }));
-        assert!(SiloServer::verify_proof_with(&proof_big, &MinSizeVerifier { min_bytes: 100 }));
+        assert!(!SiloServer::verify_proof_with(
+            &proof_small,
+            &RejectAllVerifier
+        ));
+        assert!(!SiloServer::verify_proof_with(
+            &proof_small,
+            &MinSizeVerifier { min_bytes: 100 }
+        ));
+        assert!(SiloServer::verify_proof_with(
+            &proof_big,
+            &MinSizeVerifier { min_bytes: 100 }
+        ));
     }
 
     #[test]

@@ -16,6 +16,7 @@ pyana-turn = { path = "../turn" }
 pyana-store = { path = "../store" }
 pyana-federation = { path = "../federation" }
 pyana-sdk = { path = "../sdk" }
+pyana-intent = { path = "../intent" }
 pyana-circuit = { path = "../circuit" }
 
 tokio = { version = "1", features = ["full"] }
@@ -26,9 +27,13 @@ serde_json = "1"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-getrandom = "0.3"
+getrandom = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
 ed25519-dalek = { version = "2", features = ["std"] }
 
 [[bin]]
 name = "pyana-node"
 path = "src/main.rs"
+
+[lints]
+workspace = true

@@ -31,7 +31,9 @@ fn main() {
     let minimum_bid: u64 = 500;
     let deadline: u64 = 1700200000; // Bidding deadline
     let auction_id: u64 = u64::from_le_bytes(
-        blake3::hash(b"auction-2024-001").as_bytes()[..8].try_into().unwrap()
+        blake3::hash(b"auction-2024-001").as_bytes()[..8]
+            .try_into()
+            .unwrap(),
     );
 
     println!("Auction Setup:");
@@ -39,10 +41,22 @@ fn main() {
     println!("  Minimum bid:      {} units", minimum_bid);
     println!("  Deadline:         {} (unix)", deadline);
     println!("  Auction ID:       0x{:016x}", auction_id);
-    println!("  Seller:           {:02x}{:02x}{:02x}{:02x}...", seller_pubkey[0], seller_pubkey[1], seller_pubkey[2], seller_pubkey[3]);
-    println!("  Bidder A:         {:02x}{:02x}{:02x}{:02x}...", bidder_a_pubkey[0], bidder_a_pubkey[1], bidder_a_pubkey[2], bidder_a_pubkey[3]);
-    println!("  Bidder B:         {:02x}{:02x}{:02x}{:02x}...", bidder_b_pubkey[0], bidder_b_pubkey[1], bidder_b_pubkey[2], bidder_b_pubkey[3]);
-    println!("  Bidder C:         {:02x}{:02x}{:02x}{:02x}...", bidder_c_pubkey[0], bidder_c_pubkey[1], bidder_c_pubkey[2], bidder_c_pubkey[3]);
+    println!(
+        "  Seller:           {:02x}{:02x}{:02x}{:02x}...",
+        seller_pubkey[0], seller_pubkey[1], seller_pubkey[2], seller_pubkey[3]
+    );
+    println!(
+        "  Bidder A:         {:02x}{:02x}{:02x}{:02x}...",
+        bidder_a_pubkey[0], bidder_a_pubkey[1], bidder_a_pubkey[2], bidder_a_pubkey[3]
+    );
+    println!(
+        "  Bidder B:         {:02x}{:02x}{:02x}{:02x}...",
+        bidder_b_pubkey[0], bidder_b_pubkey[1], bidder_b_pubkey[2], bidder_b_pubkey[3]
+    );
+    println!(
+        "  Bidder C:         {:02x}{:02x}{:02x}{:02x}...",
+        bidder_c_pubkey[0], bidder_c_pubkey[1], bidder_c_pubkey[2], bidder_c_pubkey[3]
+    );
     println!();
 
     // =======================================================================
@@ -115,12 +129,18 @@ fn main() {
     let bid_note_c = Note::with_randomness(bidder_c_pubkey, bid_c_fields, [0xC0u8; 32]);
     let commitment_c = bid_note_c.commitment();
 
-    println!("  Bidder A submits sealed bid (commitment: {:02x}{:02x}{:02x}{:02x}...)",
-        commitment_a.0[0], commitment_a.0[1], commitment_a.0[2], commitment_a.0[3]);
-    println!("  Bidder B submits sealed bid (commitment: {:02x}{:02x}{:02x}{:02x}...)",
-        commitment_b.0[0], commitment_b.0[1], commitment_b.0[2], commitment_b.0[3]);
-    println!("  Bidder C submits sealed bid (commitment: {:02x}{:02x}{:02x}{:02x}...)",
-        commitment_c.0[0], commitment_c.0[1], commitment_c.0[2], commitment_c.0[3]);
+    println!(
+        "  Bidder A submits sealed bid (commitment: {:02x}{:02x}{:02x}{:02x}...)",
+        commitment_a.0[0], commitment_a.0[1], commitment_a.0[2], commitment_a.0[3]
+    );
+    println!(
+        "  Bidder B submits sealed bid (commitment: {:02x}{:02x}{:02x}{:02x}...)",
+        commitment_b.0[0], commitment_b.0[1], commitment_b.0[2], commitment_b.0[3]
+    );
+    println!(
+        "  Bidder C submits sealed bid (commitment: {:02x}{:02x}{:02x}{:02x}...)",
+        commitment_c.0[0], commitment_c.0[1], commitment_c.0[2], commitment_c.0[3]
+    );
     println!("  (All bid amounts are hidden behind commitments)");
     println!();
 
@@ -134,7 +154,10 @@ fn main() {
 
     // Reveal Bidder A: 1000 units
     println!("  Bidder A reveals: {} units", bid_a_amount);
-    assert_eq!(bid_note_a.fields[0], auction_id, "Bid must reference correct auction");
+    assert_eq!(
+        bid_note_a.fields[0], auction_id,
+        "Bid must reference correct auction"
+    );
     assert!(bid_a_amount >= minimum_bid, "Bid must meet minimum");
     println!("    Auction ID match: [PASS]");
     println!("    Bid >= minimum ({}): [PASS]", minimum_bid);
@@ -155,14 +178,18 @@ fn main() {
     println!();
 
     // Determine winner
-    let bids = [(bid_a_amount, "A", &bidder_a_pubkey),
-                (bid_b_amount, "B", &bidder_b_pubkey),
-                (bid_c_amount, "C", &bidder_c_pubkey)];
-    let (winning_amount, winner_name, winner_key) = bids.iter()
-        .max_by_key(|(amount, _, _)| *amount)
-        .unwrap();
+    let bids = [
+        (bid_a_amount, "A", &bidder_a_pubkey),
+        (bid_b_amount, "B", &bidder_b_pubkey),
+        (bid_c_amount, "C", &bidder_c_pubkey),
+    ];
+    let (winning_amount, winner_name, winner_key) =
+        bids.iter().max_by_key(|(amount, _, _)| *amount).unwrap();
 
-    println!("  WINNER: Bidder {} with {} units!", winner_name, winning_amount);
+    println!(
+        "  WINNER: Bidder {} with {} units!",
+        winner_name, winning_amount
+    );
     println!();
 
     // Update auction cell with winner info
@@ -185,17 +212,26 @@ fn main() {
 
     // Winner's bid note is spent (funds go to seller)
     let winner_nullifier = bid_note_b.nullifier(&bidder_b_key);
-    nullifier_set.insert(winner_nullifier).expect("Winner spend should succeed");
+    nullifier_set
+        .insert(winner_nullifier)
+        .expect("Winner spend should succeed");
     println!("  Winner (Bidder B) spends bid note");
-    println!("    Nullifier: {:02x}{:02x}{:02x}{:02x}...",
-        winner_nullifier.0[0], winner_nullifier.0[1], winner_nullifier.0[2], winner_nullifier.0[3]);
+    println!(
+        "    Nullifier: {:02x}{:02x}{:02x}{:02x}...",
+        winner_nullifier.0[0], winner_nullifier.0[1], winner_nullifier.0[2], winner_nullifier.0[3]
+    );
 
     // Create payment note for seller
     let payment_fields = [auction_id, *winning_amount, 0, 0, 0, 0, 0, 0];
     let seller_note = Note::with_randomness(seller_pubkey, payment_fields, [0xFFu8; 32]);
     let seller_commitment = seller_note.commitment();
-    println!("  Payment note created for seller: {:02x}{:02x}{:02x}{:02x}...",
-        seller_commitment.0[0], seller_commitment.0[1], seller_commitment.0[2], seller_commitment.0[3]);
+    println!(
+        "  Payment note created for seller: {:02x}{:02x}{:02x}{:02x}...",
+        seller_commitment.0[0],
+        seller_commitment.0[1],
+        seller_commitment.0[2],
+        seller_commitment.0[3]
+    );
     println!("    Amount: {} units", winning_amount);
     println!();
 
@@ -204,23 +240,49 @@ fn main() {
 
     // Bidder A refund
     let refund_a_nullifier = bid_note_a.nullifier(&bidder_a_key);
-    nullifier_set.insert(refund_a_nullifier).expect("Refund A should succeed");
-    let refund_note_a = Note::with_randomness(bidder_a_pubkey, [0, bid_a_amount, 0, 0, 0, 0, 0, 0], [0xA1u8; 32]);
+    nullifier_set
+        .insert(refund_a_nullifier)
+        .expect("Refund A should succeed");
+    let refund_note_a = Note::with_randomness(
+        bidder_a_pubkey,
+        [0, bid_a_amount, 0, 0, 0, 0, 0, 0],
+        [0xA1u8; 32],
+    );
     let refund_commitment_a = refund_note_a.commitment();
-    println!("    Bidder A: bid note spent, refund note created ({} units)",
-        bid_a_amount);
-    println!("      Refund commitment: {:02x}{:02x}{:02x}{:02x}...",
-        refund_commitment_a.0[0], refund_commitment_a.0[1], refund_commitment_a.0[2], refund_commitment_a.0[3]);
+    println!(
+        "    Bidder A: bid note spent, refund note created ({} units)",
+        bid_a_amount
+    );
+    println!(
+        "      Refund commitment: {:02x}{:02x}{:02x}{:02x}...",
+        refund_commitment_a.0[0],
+        refund_commitment_a.0[1],
+        refund_commitment_a.0[2],
+        refund_commitment_a.0[3]
+    );
 
     // Bidder C refund
     let refund_c_nullifier = bid_note_c.nullifier(&bidder_c_key);
-    nullifier_set.insert(refund_c_nullifier).expect("Refund C should succeed");
-    let refund_note_c = Note::with_randomness(bidder_c_pubkey, [0, bid_c_amount, 0, 0, 0, 0, 0, 0], [0xC1u8; 32]);
+    nullifier_set
+        .insert(refund_c_nullifier)
+        .expect("Refund C should succeed");
+    let refund_note_c = Note::with_randomness(
+        bidder_c_pubkey,
+        [0, bid_c_amount, 0, 0, 0, 0, 0, 0],
+        [0xC1u8; 32],
+    );
     let refund_commitment_c = refund_note_c.commitment();
-    println!("    Bidder C: bid note spent, refund note created ({} units)",
-        bid_c_amount);
-    println!("      Refund commitment: {:02x}{:02x}{:02x}{:02x}...",
-        refund_commitment_c.0[0], refund_commitment_c.0[1], refund_commitment_c.0[2], refund_commitment_c.0[3]);
+    println!(
+        "    Bidder C: bid note spent, refund note created ({} units)",
+        bid_c_amount
+    );
+    println!(
+        "      Refund commitment: {:02x}{:02x}{:02x}{:02x}...",
+        refund_commitment_c.0[0],
+        refund_commitment_c.0[1],
+        refund_commitment_c.0[2],
+        refund_commitment_c.0[3]
+    );
     println!();
 
     // =======================================================================

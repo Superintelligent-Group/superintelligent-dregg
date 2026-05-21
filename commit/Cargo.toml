@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
+pyana-circuit = { path = "../circuit" }
+
+[lints]
+workspace = true

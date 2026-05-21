@@ -165,19 +165,14 @@ impl<'a> Verifier<'a> {
     /// Step 1: Check that the token's issuer is a federation member with Issuer role.
     fn check_issuer_membership(&self, token: &TokenState) -> bool {
         self.federation.is_member(&token.issuer)
-            && self.federation.has_role(&token.issuer, &FederationRole::Issuer)
+            && self
+                .federation
+                .has_role(&token.issuer, &FederationRole::Issuer)
     }
 
     /// Step 2: Verify the complete derivation trace.
-    fn check_derivation_trace(
-        &self,
-        token: &TokenState,
-    ) -> trace::TraceVerificationResult {
-        trace::verify_trace(
-            &token.derivation_trace,
-            &token.state_root,
-            self.federation,
-        )
+    fn check_derivation_trace(&self, token: &TokenState) -> trace::TraceVerificationResult {
+        trace::verify_trace(&token.derivation_trace, &token.state_root, self.federation)
     }
 
     /// Step 3: Check authorization of the request against the token.
@@ -217,10 +212,7 @@ impl<'a> Verifier<'a> {
     }
 
     /// Verify only the trace (for demo display).
-    pub fn verify_trace_only(
-        &self,
-        token: &TokenState,
-    ) -> trace::TraceVerificationResult {
+    pub fn verify_trace_only(&self, token: &TokenState) -> trace::TraceVerificationResult {
         self.check_derivation_trace(token)
     }
 }
@@ -274,13 +266,13 @@ mod tests {
         fed.add_member(
             "acme.corp",
             &auth1,
-            vec![FederationRole::Issuer, FederationRole::Verifier, FederationRole::Revoker],
+            vec![
+                FederationRole::Issuer,
+                FederationRole::Verifier,
+                FederationRole::Revoker,
+            ],
         );
-        fed.add_member(
-            "partner.org",
-            &auth2,
-            vec![FederationRole::Verifier],
-        );
+        fed.add_member("partner.org", &auth2, vec![FederationRole::Verifier]);
         fed.compute_root();
 
         let mut registry = RevocationRegistry::new();
@@ -313,10 +305,7 @@ mod tests {
     fn test_verification_with_attenuation() {
         let (auth1, _auth2, fed, registry) = setup();
 
-        let facts = vec![
-            Fact::app("frontend", "rwcd"),
-            Fact::app("backend", "rw"),
-        ];
+        let facts = vec![Fact::app("frontend", "rwcd"), Fact::app("backend", "rw")];
         let rules = vec![Rule::allow_app(), Rule::deny_default()];
         let token = auth1.mint_token(facts, rules);
 
@@ -354,10 +343,7 @@ mod tests {
         let token = auth1.mint_token(facts, rules);
 
         // Revoke the token.
-        registry
-            .get(&auth1.public_key)
-            .unwrap()
-            .revoke(&token.id);
+        registry.get(&auth1.public_key).unwrap().revoke(&token.id);
 
         let verifier = Verifier::new("partner.org", &fed, &registry);
         let request = AuthorizationRequest {

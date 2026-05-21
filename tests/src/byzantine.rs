@@ -6,28 +6,30 @@
 //! - Split-brain scenarios
 //! - Flood attacks (rapid revocation submission)
 
+use pyana_federation::revocation::RevocationVerifier;
+use pyana_federation::types::{
+    QuorumCertificate, RevocationBlock, RevocationEvent, Signature, Vote, generate_keypair, sign,
+};
 use pyana_federation::{
     ConsensusConfig, ConsensusOrchestrator, ConsensusState, Federation, FederationNode,
 };
-use pyana_federation::types::{
-    RevocationBlock, RevocationEvent, Signature, Vote, QuorumCertificate, generate_keypair, sign,
-};
-use pyana_federation::revocation::RevocationVerifier;
 
 // =============================================================================
 // Helper functions
 // =============================================================================
 
 fn make_federation(n: usize) -> Federation {
-    let names: Vec<&str> = (0..n).map(|i| match i {
-        0 => "alpha",
-        1 => "beta",
-        2 => "gamma",
-        3 => "delta",
-        4 => "epsilon",
-        5 => "zeta",
-        _ => "node",
-    }).collect();
+    let names: Vec<&str> = (0..n)
+        .map(|i| match i {
+            0 => "alpha",
+            1 => "beta",
+            2 => "gamma",
+            3 => "delta",
+            4 => "epsilon",
+            5 => "zeta",
+            _ => "node",
+        })
+        .collect();
     Federation::new(&names)
 }
 
@@ -224,7 +226,10 @@ fn split_brain_at_most_one_block_finalizes() {
 
     // Partition A (nodes 0,1) tries to finalize - should fail
     let result_a = fed.run_consensus_round();
-    assert!(result_a.is_none(), "Partition of 2 cannot finalize with threshold 3");
+    assert!(
+        result_a.is_none(),
+        "Partition of 2 cannot finalize with threshold 3"
+    );
 }
 
 #[test]
@@ -418,7 +423,10 @@ fn block_hash_mismatch_prevents_vote_collection() {
         signature: Signature([0xBB; 64]),
     };
     let result = state.collect_vote(bad_vote);
-    assert!(result.is_none(), "Vote for wrong block hash must be rejected");
+    assert!(
+        result.is_none(),
+        "Vote for wrong block hash must be rejected"
+    );
 }
 
 // =============================================================================
@@ -436,7 +444,10 @@ fn revoked_token_cannot_get_non_membership_proof() {
 
     // Try to get a non-membership proof for the revoked token
     let proof = fed.verify_non_membership_from(0, &token.id);
-    assert!(proof.is_none(), "Revoked token must not get non-membership proof");
+    assert!(
+        proof.is_none(),
+        "Revoked token must not get non-membership proof"
+    );
 }
 
 #[test]
@@ -451,7 +462,10 @@ fn non_revoked_token_has_valid_proof() {
 
     // token_b should have a valid non-membership proof
     let proof = fed.verify_non_membership_from(0, &token_b.id);
-    assert!(proof.is_some(), "Non-revoked token should have non-membership proof");
+    assert!(
+        proof.is_some(),
+        "Non-revoked token should have non-membership proof"
+    );
 
     let proof = proof.unwrap();
     let verification = RevocationVerifier::verify(&proof);

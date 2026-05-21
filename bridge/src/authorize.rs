@@ -10,8 +10,8 @@
 use pyana_commit::{FieldElement, SymbolTable, TokenState};
 use pyana_token::AuthRequest;
 use pyana_trace::{
-    AuthorizationRequest as TraceRequest, AuthorizationTrace, Conclusion, Evaluator, Fact as TraceFact,
-    Rule, Term, symbol_from_str,
+    AuthorizationRequest as TraceRequest, AuthorizationTrace, Conclusion, Evaluator,
+    Fact as TraceFact, Rule, Term, symbol_from_str,
 };
 
 /// Errors that can occur during authorization evaluation.
@@ -188,8 +188,7 @@ fn field_element_to_int(fe: &FieldElement) -> Option<i64> {
     // Check for non-negative integer: bytes[0..24] all zero.
     if bytes[0..24].iter().all(|&b| b == 0) {
         let val = u64::from_be_bytes([
-            bytes[24], bytes[25], bytes[26], bytes[27],
-            bytes[28], bytes[29], bytes[30], bytes[31],
+            bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31],
         ]);
         return Some(val as i64);
     }

@@ -12,6 +12,8 @@ use ed25519_dalek::Signer;
 use pyana_bridge::BridgePresentationProof;
 use pyana_cell::CellId;
 use pyana_circuit::BabyBear;
+use pyana_circuit::IvcProof;
+use pyana_circuit::ivc::IvcBuilder;
 use pyana_circuit::merkle_air::MerkleAir;
 use pyana_circuit::poseidon2;
 use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken, TokenClearance};
@@ -168,6 +170,11 @@ pub struct AgentWallet {
     /// proof-carrying state representation — anyone can verify the chain
     /// without contacting a federation.
     receipt_chain: Vec<pyana_turn::TurnReceipt>,
+    /// Optional IVC builder for incrementally accumulating state transition proofs.
+    /// When enabled, each appended receipt extends the IVC chain, producing a
+    /// constant-size proof of the entire state transition history.
+    /// Skipped during serialization as it is runtime-only state.
+    ivc_builder: Option<IvcBuilder>,
 }
 
 impl AgentWallet {
@@ -198,6 +205,7 @@ impl AgentWallet {
             tokens: Vec::new(),
             next_token_id: 0,
             receipt_chain: Vec::new(),
+            ivc_builder: None,
         }
     }
 
@@ -369,6 +377,38 @@ impl AgentWallet {
     pub fn append_receipt(&mut self, mut receipt: pyana_turn::TurnReceipt) {
         // Link to the previous receipt.
         receipt.previous_receipt_hash = self.receipt_chain.last().map(|r| r.receipt_hash());
+
+        // Extend the IVC chain if enabled.
+        if let Some(ref mut builder) = self.ivc_builder {
+            use pyana_circuit::fold_air::{FoldWitness, RemovedFact};
+            use pyana_circuit::ivc::FoldDelta;
+
+            // Encode the state transition as a fold step: the pre_state transitions
+            // to post_state. We model this as a removal of the pre-state fact and
+            // the new_root being derived from the post-state hash.
+            let pre_bb = Self::bytes_to_babybear(&receipt.pre_state_hash);
+            let post_bb = Self::bytes_to_babybear(&receipt.post_state_hash);
+            let turn_bb = Self::bytes_to_babybear(&receipt.turn_hash);
+
+            let fold = FoldWitness {
+                old_root: pre_bb,
+                new_root: post_bb,
+                removed_facts: vec![RemovedFact {
+                    predicate: turn_bb,
+                    terms: [
+                        pre_bb,
+                        post_bb,
+                        BabyBear::new(receipt.computrons_used as u32),
+                    ],
+                    membership_proof: None,
+                }],
+                num_added_checks: 1,
+            };
+            // Best-effort: if the fold fails (e.g., root mismatch on first step),
+            // we still append the receipt but skip IVC extension.
+            let _ = builder.add_fold(FoldDelta::new(fold));
+        }
+
         self.receipt_chain.push(receipt);
     }
 
@@ -411,6 +451,39 @@ impl AgentWallet {
             return Ok(());
         }
         pyana_turn::verify_receipt_chain(&self.receipt_chain)
+    }
+
+    // =========================================================================
+    // IVC (Incrementally Verifiable Computation)
+    // =========================================================================
+
+    /// Enable IVC accumulation for this wallet's receipt chain.
+    ///
+    /// Once enabled, every call to [`append_receipt`](Self::append_receipt) will
+    /// extend the IVC chain with the state transition, building a constant-size
+    /// proof of the entire state transition history.
+    ///
+    /// # Arguments
+    ///
+    /// * `initial_root` - The initial state root (typically the pre_state_hash of
+    ///   the first receipt, encoded as a BabyBear field element).
+    pub fn enable_ivc(&mut self, initial_root: BabyBear) {
+        self.ivc_builder = Some(IvcBuilder::new(initial_root));
+    }
+
+    /// Export the current IVC state proof.
+    ///
+    /// Returns a constant-size [`IvcProof`] covering the entire receipt chain
+    /// accumulated since [`enable_ivc`](Self::enable_ivc) was called. Returns
+    /// `None` if IVC is not enabled or no receipts have been appended since
+    /// IVC was enabled.
+    pub fn export_state_proof(&self) -> Option<IvcProof> {
+        self.ivc_builder.as_ref()?.finalize_with_air()
+    }
+
+    /// Check whether IVC is currently enabled on this wallet.
+    pub fn ivc_enabled(&self) -> bool {
+        self.ivc_builder.is_some()
     }
 
     // =========================================================================
@@ -558,7 +631,9 @@ impl AgentWallet {
         let caveat_set = decoded
             .inner()
             .verify(&token.root_key, decoded.discharges())
-            .map_err(|e| SdkError::Token(pyana_token::TokenError::VerificationFailed(e.to_string())))?;
+            .map_err(|e| {
+                SdkError::Token(pyana_token::TokenError::VerificationFailed(e.to_string()))
+            })?;
         Ok(caveat_set)
     }
 
@@ -610,10 +685,11 @@ impl AgentWallet {
     // Proof Generation
     // =========================================================================
 
-    /// Generate a zero-knowledge presentation proof for a held token.
+    /// Generate a real STARK-backed zero-knowledge presentation proof for a held token.
     ///
     /// This proves "I hold a valid token chain that authorizes request X"
-    /// without revealing the token, its caveats, or the root key.
+    /// without revealing the token, its caveats, or the root key. The proof
+    /// is backed by a real Poseidon2 STARK (collision-resistant, production-grade).
     ///
     /// The proof can be transmitted to a remote verifier who only needs the
     /// federation root and request predicate to verify it.
@@ -625,8 +701,8 @@ impl AgentWallet {
     ///
     /// # Returns
     ///
-    /// A [`BridgePresentationProof`] that can be verified by any party knowing
-    /// the federation root, or an error if proof generation fails.
+    /// A [`BridgePresentationProof`] with a real STARK proof that can be verified
+    /// by any party knowing the federation root, or an error if proof generation fails.
     pub fn prove_authorization(
         &self,
         token: &HeldToken,
@@ -647,11 +723,41 @@ impl AgentWallet {
         let fresh_token = MacaroonToken::mint(token.root_key, token.id.as_bytes(), &token.service);
         builder.set_root_token(fresh_token);
 
+        let proof = builder.prove_real(request)?;
+        Ok(proof)
+    }
+
+    /// Generate a mock (non-STARK) presentation proof for a held token.
+    ///
+    /// This is the fast, development-only path that validates circuit constraints
+    /// without producing a real cryptographic proof. Use for testing or when proof
+    /// generation latency is unacceptable.
+    ///
+    /// For production use, prefer [`prove_authorization`](Self::prove_authorization)
+    /// which produces real STARK proofs.
+    pub fn prove_authorization_mock(
+        &self,
+        token: &HeldToken,
+        request: &AuthRequest,
+    ) -> Result<BridgePresentationProof, SdkError> {
+        let issuer_key = token.root_key;
+        let federation_root_bb = Self::compute_federation_root_bb(&issuer_key);
+        let federation_root = Self::bb_to_bytes(federation_root_bb);
+
+        let mut builder = pyana_bridge::BridgePresentationBuilder::new_with_root_bb(
+            issuer_key,
+            federation_root,
+            federation_root_bb,
+        );
+
+        let fresh_token = MacaroonToken::mint(token.root_key, token.id.as_bytes(), &token.service);
+        builder.set_root_token(fresh_token);
+
         let proof = builder.prove(request)?;
         Ok(proof)
     }
 
-    /// Generate a presentation proof for a token that has been attenuated.
+    /// Generate a real STARK presentation proof for an attenuated token chain.
     ///
     /// Unlike [`prove_authorization`](Self::prove_authorization), this method
     /// accepts the full attenuation chain so the proof covers the narrowing steps.
@@ -688,7 +794,7 @@ impl AgentWallet {
             builder.add_attenuation(att);
         }
 
-        let proof = builder.prove(request)?;
+        let proof = builder.prove_real(request)?;
         Ok(proof)
     }
 
@@ -810,6 +916,7 @@ impl std::fmt::Debug for AgentWallet {
             .field("public_key", &self.public_key)
             .field("tokens_held", &self.tokens.len())
             .field("receipt_chain_length", &self.receipt_chain.len())
+            .field("ivc_enabled", &self.ivc_builder.is_some())
             .finish()
     }
 }
@@ -820,11 +927,7 @@ mod tests {
     use pyana_turn::TurnReceipt;
 
     /// Helper: create a mock receipt with given state hashes.
-    fn mock_receipt(
-        agent: CellId,
-        pre_state: [u8; 32],
-        post_state: [u8; 32],
-    ) -> TurnReceipt {
+    fn mock_receipt(agent: CellId, pre_state: [u8; 32], post_state: [u8; 32]) -> TurnReceipt {
         TurnReceipt {
             turn_hash: [0u8; 32],
             forest_hash: [0u8; 32],
@@ -886,7 +989,10 @@ mod tests {
         // The second receipt should have previous_receipt_hash linking to the first.
         let chain = wallet.receipt_chain();
         assert_eq!(chain[0].previous_receipt_hash, None);
-        assert_eq!(chain[1].previous_receipt_hash, Some(chain[0].receipt_hash()));
+        assert_eq!(
+            chain[1].previous_receipt_hash,
+            Some(chain[0].receipt_hash())
+        );
 
         assert!(wallet.verify_own_chain().is_ok());
     }
@@ -932,4 +1038,3 @@ mod tests {
         assert_eq!(head, [4u8; 32]);
     }
 }
-

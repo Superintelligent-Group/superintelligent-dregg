@@ -4,22 +4,16 @@
 //! convert to ZK commitments, evaluate authorization, and produce a verified
 //! presentation proof.
 
-use pyana_circuit::{
-    BabyBear, MockProver, PresentationVerification,
-};
 use pyana_circuit::fold_air::FoldAir;
 use pyana_circuit::merkle_air::MerkleAir;
-use pyana_commit::{
-    Fact, FactSet, FieldElement, SymbolTable, TokenState, verify_fold_chain,
-};
+use pyana_circuit::{BabyBear, MockProver, PresentationVerification};
+use pyana_commit::{Fact, FactSet, FieldElement, SymbolTable, TokenState, verify_fold_chain};
 use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 use pyana_trace::{Conclusion, symbol_from_str};
 
 use crate::authorize::{self, AuthError};
 use crate::convert::macaroon_to_factset;
-use crate::delta::{
-    compute_fold_delta, further_attenuation_delta, initial_attenuation_delta,
-};
+use crate::delta::{compute_fold_delta, further_attenuation_delta, initial_attenuation_delta};
 use crate::present::{BridgePresentationBuilder, verify_presentation};
 
 // ============================================================================
@@ -255,10 +249,26 @@ fn test_conversion_preserves_semantics() {
 
     // Verify all symbol resolutions work.
     assert!(symbols.resolve(FieldElement::from_symbol("app")).is_some());
-    assert!(symbols.resolve(FieldElement::from_symbol("service")).is_some());
-    assert!(symbols.resolve(FieldElement::from_symbol("feature")).is_some());
-    assert!(symbols.resolve(FieldElement::from_symbol("confine_user")).is_some());
-    assert!(symbols.resolve(FieldElement::from_symbol("valid_until")).is_some());
+    assert!(
+        symbols
+            .resolve(FieldElement::from_symbol("service"))
+            .is_some()
+    );
+    assert!(
+        symbols
+            .resolve(FieldElement::from_symbol("feature"))
+            .is_some()
+    );
+    assert!(
+        symbols
+            .resolve(FieldElement::from_symbol("confine_user"))
+            .is_some()
+    );
+    assert!(
+        symbols
+            .resolve(FieldElement::from_symbol("valid_until"))
+            .is_some()
+    );
 
     // The Merkle root should be deterministic.
     let root1 = factset.root();
@@ -326,10 +336,7 @@ fn test_authorization_trace_generation() {
     let trace = authorize::authorize_with_trace(&state, &request, &symbols).unwrap();
 
     // Should be allowed by the APP_ACTION rule.
-    assert_eq!(
-        trace.conclusion,
-        Conclusion::Allow { policy_rule_id: 1 }
-    );
+    assert_eq!(trace.conclusion, Conclusion::Allow { policy_rule_id: 1 });
 
     // Should have at least one derivation step.
     assert!(
@@ -338,7 +345,9 @@ fn test_authorization_trace_generation() {
     );
 
     // Verify the trace.
-    assert!(authorize::verify_authorization_trace(&state, &trace, &symbols));
+    assert!(authorize::verify_authorization_trace(
+        &state, &trace, &symbols
+    ));
 }
 
 /// Test: circuit-level fold proof generation and verification.
@@ -400,7 +409,11 @@ fn test_service_scoped_full_pipeline() {
     };
 
     let proof = builder.prove(&request);
-    assert!(proof.is_ok(), "Service-scoped proof should succeed: {:?}", proof.err());
+    assert!(
+        proof.is_ok(),
+        "Service-scoped proof should succeed: {:?}",
+        proof.err()
+    );
 
     let proof = proof.unwrap();
     assert!(proof.is_valid());
@@ -432,7 +445,11 @@ fn test_unrestricted_token_proof() {
     };
 
     let proof = builder.prove(&request);
-    assert!(proof.is_ok(), "Unrestricted proof should succeed: {:?}", proof.err());
+    assert!(
+        proof.is_ok(),
+        "Unrestricted proof should succeed: {:?}",
+        proof.err()
+    );
 
     let proof = proof.unwrap();
     assert!(proof.is_valid());
@@ -656,9 +673,7 @@ fn test_fold_delta_from_raw_states() {
     state.add_fact(Fact::from_symbols("can_access", &["user-1", "public-doc"]));
 
     // Remove access to secret-doc.
-    let removed = vec![
-        Fact::from_symbols("can_access", &["user-1", "secret-doc"]),
-    ];
+    let removed = vec![Fact::from_symbols("can_access", &["user-1", "secret-doc"])];
 
     let delta = compute_fold_delta(&state, removed, vec![("no_secret_access", &["user-1"])]);
     assert!(delta.is_some());

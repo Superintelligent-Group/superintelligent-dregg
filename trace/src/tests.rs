@@ -399,10 +399,9 @@ fn test_time_bounded_deny_after_expiry() {
     let request = make_request(Some("api"), None, Some("read"), 1_700_000_000);
 
     let trace = eval.evaluate(&request);
-    // The time_bounded_policy uses Check::LessThan(Var(4), Var(3)) but Var(4) is never bound
-    // in the body atoms. This means the check will fail (non-integer comparison).
-    // This is actually the correct behavior — the time-bounded variant needs
-    // request_time in the body. Let's verify it denies.
+    // The time_bounded_policy correctly binds request_time via body atom
+    // request_time(Var(4)). Since now (1_700_000_000) > valid_until (1_600_000_000),
+    // the LessThan(Var(4), Var(3)) check fails and the rule does not fire.
     assert_eq!(trace.conclusion, Conclusion::Deny);
     assert!(verify_trace(&facts, &rules, &trace));
 }
@@ -472,10 +471,7 @@ fn test_verify_tampered_substitution() {
 #[test]
 fn test_verify_tampered_body_indices() {
     let rules = minimal_policy();
-    let facts = vec![
-        app_fact("myapp", "read,write"),
-        app_fact("other", "delete"),
-    ];
+    let facts = vec![app_fact("myapp", "read,write"), app_fact("other", "delete")];
 
     let eval = Evaluator::new(facts.clone(), rules.clone());
     let request = make_request(Some("myapp"), None, Some("read"), 1000);
@@ -768,8 +764,7 @@ fn test_multiple_rules_first_match_wins() {
     match trace.conclusion {
         Conclusion::Allow { policy_rule_id } => {
             assert!(
-                policy_rule_id == rule_ids::APP_ACTION
-                    || policy_rule_id == rule_ids::UNRESTRICTED
+                policy_rule_id == rule_ids::APP_ACTION || policy_rule_id == rule_ids::UNRESTRICTED
             );
         }
         Conclusion::Deny => panic!("expected Allow"),
@@ -819,8 +814,12 @@ fn test_fixpoint_terminates() {
     // Should terminate with bar(a) derived, but no allow
     assert_eq!(trace.conclusion, Conclusion::Deny);
     // Should have derived bar(a) and attempted foo(a) again (but it already exists)
-    assert!(trace.steps.iter().any(|s| s.derived_fact
-        == Fact::new(sym("bar"), vec![Term::Const(sym("a"))])));
+    assert!(
+        trace
+            .steps
+            .iter()
+            .any(|s| s.derived_fact == Fact::new(sym("bar"), vec![Term::Const(sym("a"))]))
+    );
     assert!(verify_trace(&facts, &rules, &trace));
 }
 
@@ -972,4 +971,228 @@ fn test_rule_with_greater_than_check() {
     let trace2 = eval2.evaluate(&request);
     assert_eq!(trace2.conclusion, Conclusion::Deny);
     assert!(verify_trace(&facts_low, &rules, &trace2));
+}
+
+// =============================================================================
+// Bug fix verification tests
+// =============================================================================
+
+/// Bug 1/2 fix: Verify that time-bounded rules in legacy_policy correctly bind
+/// request_time and enforce expiry. Previously, Rules 10/11 had no request_time
+/// body atom and no LessThan check, making them ignore token expiry entirely.
+///
+/// We test with ONLY the time-bounded rule (isolating it from Rule 1 which
+/// would fire regardless of time). This proves the rule itself works.
+#[test]
+#[allow(deprecated)]
+fn test_legacy_time_bounded_denies_after_expiry() {
+    use crate::policy::legacy_policy;
+
+    // Extract only the time-bounded rule to test it in isolation
+    let rules: Vec<_> = legacy_policy()
+        .into_iter()
+        .filter(|r| r.id == rule_ids::APP_ACTION_TIME_BOUNDED)
+        .collect();
+    assert_eq!(rules.len(), 1, "Should have exactly one time-bounded app rule");
+
+    let facts = vec![
+        app_fact("api", "read,write"),
+        valid_until_fact(1_600_000_000), // already expired
+    ];
+
+    let eval = Evaluator::new(facts.clone(), rules.clone());
+    // Request at time AFTER expiry
+    let request = make_request(Some("api"), None, Some("read"), 1_700_000_000);
+
+    let trace = eval.evaluate(&request);
+    // Rule 10 must NOT fire (time check fails: 1_700_000_000 < 1_600_000_000 is false)
+    assert_eq!(
+        trace.conclusion,
+        Conclusion::Deny,
+        "BUG FIX: time-bounded rule must deny after token expiry"
+    );
+    assert!(verify_trace(&facts, &rules, &trace));
+}
+
+/// Bug 1/2 fix: Verify that time-bounded rules allow access BEFORE expiry.
+#[test]
+#[allow(deprecated)]
+fn test_legacy_time_bounded_allows_before_expiry() {
+    use crate::policy::legacy_policy;
+
+    // Extract only the time-bounded rule to test it in isolation
+    let rules: Vec<_> = legacy_policy()
+        .into_iter()
+        .filter(|r| r.id == rule_ids::APP_ACTION_TIME_BOUNDED)
+        .collect();
+
+    let facts = vec![
+        app_fact("api", "read,write"),
+        valid_until_fact(2_000_000_000), // expires far in the future
+    ];
+
+    let eval = Evaluator::new(facts.clone(), rules.clone());
+    let request = make_request(Some("api"), None, Some("read"), 1_700_000_000);
+
+    let trace = eval.evaluate(&request);
+    // Rule 10 fires because time is before expiry AND action matches
+    assert_eq!(
+        trace.conclusion,
+        Conclusion::Allow {
+            policy_rule_id: rule_ids::APP_ACTION_TIME_BOUNDED,
+        },
+        "BUG FIX: time-bounded rule must fire when token is not yet expired"
+    );
+    assert!(verify_trace(&facts, &rules, &trace));
+}
+
+/// Bug 2 fix: Verify time expiry in the new standard_policy (secure, MemberOf-based).
+/// Isolates the time-bounded rule to prove it correctly denies expired tokens.
+#[test]
+fn test_standard_policy_time_bounded_denies_after_expiry() {
+    use crate::policy::standard_policy;
+
+    // Extract only the time-bounded rule to test in isolation
+    let rules: Vec<_> = standard_policy()
+        .into_iter()
+        .filter(|r| r.id == rule_ids::APP_ACTION_TIME_BOUNDED)
+        .collect();
+    assert_eq!(rules.len(), 1);
+
+    let facts = vec![
+        // Per-action facts (secure model)
+        Fact::new(
+            sym("action_allowed"),
+            vec![Term::Const(sym("api")), Term::Const(sym("read"))],
+        ),
+        valid_until_fact(1_600_000_000), // already expired
+    ];
+
+    let eval = Evaluator::new(facts.clone(), rules.clone());
+    let request = make_request(Some("api"), None, Some("read"), 1_700_000_000);
+
+    let trace = eval.evaluate(&request);
+    // Time-bounded rule must NOT fire — token is expired
+    assert_eq!(
+        trace.conclusion,
+        Conclusion::Deny,
+        "Time-bounded rule must deny after expiry (request_time >= valid_until)"
+    );
+    assert!(verify_trace(&facts, &rules, &trace));
+}
+
+/// Bug 2 fix: Verify time-bounded rule fires before expiry in standard_policy.
+#[test]
+fn test_standard_policy_time_bounded_allows_before_expiry() {
+    use crate::policy::standard_policy;
+
+    // Extract only the time-bounded rule to test in isolation
+    let rules: Vec<_> = standard_policy()
+        .into_iter()
+        .filter(|r| r.id == rule_ids::APP_ACTION_TIME_BOUNDED)
+        .collect();
+
+    let facts = vec![
+        Fact::new(
+            sym("action_allowed"),
+            vec![Term::Const(sym("api")), Term::Const(sym("read"))],
+        ),
+        valid_until_fact(2_000_000_000), // far future
+    ];
+
+    let eval = Evaluator::new(facts.clone(), rules.clone());
+    let request = make_request(Some("api"), None, Some("read"), 1_700_000_000);
+
+    let trace = eval.evaluate(&request);
+    // Time-bounded rule fires: action matches AND time < expiry
+    assert_eq!(
+        trace.conclusion,
+        Conclusion::Allow {
+            policy_rule_id: rule_ids::APP_ACTION_TIME_BOUNDED,
+        },
+        "Time-bounded rule must fire when token is not yet expired"
+    );
+    assert!(verify_trace(&facts, &rules, &trace));
+}
+
+/// Bug 3 fix: Verify that "threadwrite" does NOT match "write" in the new
+/// standard_policy. The old Contains-based policy had a substring vulnerability.
+#[test]
+fn test_standard_policy_no_substring_vulnerability() {
+    use crate::policy::standard_policy;
+
+    let rules = standard_policy();
+    // Only "write" is allowed for "my-app" (as a per-action fact).
+    let facts = vec![Fact::new(
+        sym("action_allowed"),
+        vec![Term::Const(sym("my-app")), Term::Const(sym("write"))],
+    )];
+
+    let eval = Evaluator::new(facts.clone(), rules.clone());
+    // Request "threadwrite" — must NOT match "write" in the secure policy.
+    let request = make_request(Some("my-app"), None, Some("threadwrite"), 1000);
+
+    let trace = eval.evaluate(&request);
+    assert_eq!(
+        trace.conclusion,
+        Conclusion::Deny,
+        "SECURITY: 'threadwrite' must NOT match 'write' in standard_policy (MemberOf-based)"
+    );
+    assert!(verify_trace(&facts, &rules, &trace));
+}
+
+/// Bug 3 fix: Verify standard_policy correctly allows exact action match.
+#[test]
+fn test_standard_policy_exact_action_match() {
+    use crate::policy::standard_policy;
+
+    let rules = standard_policy();
+    let facts = vec![
+        Fact::new(
+            sym("action_allowed"),
+            vec![Term::Const(sym("my-app")), Term::Const(sym("write"))],
+        ),
+        Fact::new(
+            sym("action_allowed"),
+            vec![Term::Const(sym("my-app")), Term::Const(sym("read"))],
+        ),
+    ];
+
+    let eval = Evaluator::new(facts.clone(), rules.clone());
+    let request = make_request(Some("my-app"), None, Some("write"), 1000);
+
+    let trace = eval.evaluate(&request);
+    assert_eq!(
+        trace.conclusion,
+        Conclusion::Allow {
+            policy_rule_id: rule_ids::APP_ACTION_SECURE,
+        },
+        "Exact action match must be allowed in standard_policy"
+    );
+    assert!(verify_trace(&facts, &rules, &trace));
+}
+
+/// Bug 3 fix: Contrast with legacy policy showing the vulnerability still exists there.
+#[test]
+#[allow(deprecated)]
+fn test_legacy_policy_substring_vulnerability_still_exists() {
+    use crate::policy::legacy_policy;
+
+    let rules = legacy_policy();
+    // The app has action string "threadwrite" which contains "write" as substring.
+    let facts = vec![app_fact("my-app", "threadwrite")];
+
+    let eval = Evaluator::new(facts.clone(), rules.clone());
+    // Request "write" — incorrectly matches via substring in legacy policy.
+    let request = make_request(Some("my-app"), None, Some("write"), 1000);
+
+    let trace = eval.evaluate(&request);
+    assert_eq!(
+        trace.conclusion,
+        Conclusion::Allow {
+            policy_rule_id: rule_ids::APP_ACTION,
+        },
+        "KNOWN VULNERABILITY: legacy_policy allows substring matches"
+    );
+    assert!(verify_trace(&facts, &rules, &trace));
 }

@@ -141,7 +141,9 @@ impl Vote {
 
     /// Create a No vote with a reason.
     pub fn no(reason: impl Into<String>) -> Self {
-        Vote::No { reason: reason.into() }
+        Vote::No {
+            reason: reason.into(),
+        }
     }
 
     /// Whether this is a Yes vote.
@@ -392,9 +394,12 @@ impl Coordinator {
         vote: Vote,
     ) -> Result<Option<Decision>, CoordError> {
         let (forest, votes, _proposal_id) = match &mut self.state {
-            CoordinatorState::Proposing { forest, votes, proposal_id, .. } => {
-                (forest, votes, *proposal_id)
-            }
+            CoordinatorState::Proposing {
+                forest,
+                votes,
+                proposal_id,
+                ..
+            } => (forest, votes, *proposal_id),
             other => {
                 return Err(CoordError::InvalidCoordinatorState {
                     expected: "Proposing",
@@ -415,12 +420,12 @@ impl Coordinator {
 
         // CRITICAL: Verify Ed25519 signature on Yes votes.
         if let Vote::Yes { signature } = &vote {
-            let pubkey_bytes = self.participant_keys.get(&from).ok_or(
-                CoordError::UnknownParticipant { id: from },
-            )?;
-            let verifying_key = VerifyingKey::from_bytes(pubkey_bytes).map_err(|_| {
-                CoordError::InvalidVoteSignature { participant: from }
-            })?;
+            let pubkey_bytes = self
+                .participant_keys
+                .get(&from)
+                .ok_or(CoordError::UnknownParticipant { id: from })?;
+            let verifying_key = VerifyingKey::from_bytes(pubkey_bytes)
+                .map_err(|_| CoordError::InvalidVoteSignature { participant: from })?;
             let sig = Signature::from_bytes(signature);
             // The message being signed is the forest hash.
             if verifying_key.verify_strict(&forest.hash, &sig).is_err() {
@@ -432,21 +437,25 @@ impl Coordinator {
 
         // Check if we can decide.
         let decision = self.evaluate_votes();
-        Ok(if decision == Decision::Pending { None } else { Some(decision) })
+        Ok(if decision == Decision::Pending {
+            None
+        } else {
+            Some(decision)
+        })
     }
 
     /// Commit the atomic forest to a ledger after receiving enough Yes votes.
     ///
     /// Transitions: Proposing -> Committed.
     /// Returns a CommitMessage and the TurnReceipt.
-    pub fn commit(
-        &mut self,
-        ledger: &mut Ledger,
-    ) -> Result<CommitMessage, CoordError> {
+    pub fn commit(&mut self, ledger: &mut Ledger) -> Result<CommitMessage, CoordError> {
         let (forest, votes, proposal_id) = match &self.state {
-            CoordinatorState::Proposing { forest, votes, proposal_id, .. } => {
-                (forest.clone(), votes.clone(), *proposal_id)
-            }
+            CoordinatorState::Proposing {
+                forest,
+                votes,
+                proposal_id,
+                ..
+            } => (forest.clone(), votes.clone(), *proposal_id),
             other => {
                 return Err(CoordError::InvalidCoordinatorState {
                     expected: "Proposing",
@@ -465,9 +474,13 @@ impl Coordinator {
         }
 
         // Build a Turn from the atomic forest.
-        let agent_cell = ledger.get(&forest.initiator).ok_or(CoordError::TurnExecution(
-            pyana_turn::TurnError::CellNotFound { id: forest.initiator },
-        ))?;
+        let agent_cell = ledger
+            .get(&forest.initiator)
+            .ok_or(CoordError::TurnExecution(
+                pyana_turn::TurnError::CellNotFound {
+                    id: forest.initiator,
+                },
+            ))?;
         let nonce = agent_cell.state.nonce;
 
         let turn = Turn {
@@ -522,7 +535,9 @@ impl Coordinator {
     /// Returns an AbortMessage to send to all participants.
     pub fn abort(&mut self, reason: impl Into<String>) -> Result<AbortMessage, CoordError> {
         let (votes, proposal_id) = match &self.state {
-            CoordinatorState::Proposing { votes, proposal_id, .. } => (votes.clone(), *proposal_id),
+            CoordinatorState::Proposing {
+                votes, proposal_id, ..
+            } => (votes.clone(), *proposal_id),
             other => {
                 return Err(CoordError::InvalidCoordinatorState {
                     expected: "Proposing",
@@ -560,9 +575,11 @@ impl Coordinator {
     /// The caller is responsible for calling this periodically (event-loop style).
     pub fn check_timeout(&mut self, now: Instant) -> Option<AbortMessage> {
         let (proposed_at, proposal_id) = match &self.state {
-            CoordinatorState::Proposing { proposed_at, proposal_id, .. } => {
-                (*proposed_at, *proposal_id)
-            }
+            CoordinatorState::Proposing {
+                proposed_at,
+                proposal_id,
+                ..
+            } => (*proposed_at, *proposal_id),
             _ => return None,
         };
 
@@ -582,10 +599,7 @@ impl Coordinator {
             .filter_map(|(id, vote)| if vote.is_no() { Some(*id) } else { None })
             .collect();
 
-        let reason = format!(
-            "proposal timed out after {:?}",
-            self.proposal_timeout
-        );
+        let reason = format!("proposal timed out after {:?}", self.proposal_timeout);
 
         let msg = AbortMessage {
             proposal_id,
@@ -734,16 +748,16 @@ impl Participant {
     ///
     /// Called after receiving a CommitMessage from the coordinator.
     /// Replays the turn execution locally to update state.
-    pub fn apply_commit(
-        &mut self,
-        forest: &AtomicForest,
-    ) -> Result<TurnReceipt, CoordError> {
+    pub fn apply_commit(&mut self, forest: &AtomicForest) -> Result<TurnReceipt, CoordError> {
         // Build the same turn the coordinator would have built.
-        let agent_cell = self.ledger.get(&forest.initiator).ok_or(
-            CoordError::TurnExecution(pyana_turn::TurnError::CellNotFound {
-                id: forest.initiator,
-            }),
-        )?;
+        let agent_cell = self
+            .ledger
+            .get(&forest.initiator)
+            .ok_or(CoordError::TurnExecution(
+                pyana_turn::TurnError::CellNotFound {
+                    id: forest.initiator,
+                },
+            ))?;
         let nonce = agent_cell.state.nonce;
 
         let turn = Turn {
@@ -827,11 +841,7 @@ impl AtomicForestBuilder {
     }
 
     /// Add a precondition for a specific cell.
-    pub fn add_precondition(
-        &mut self,
-        cell_id: CellId,
-        preconditions: Preconditions,
-    ) -> &mut Self {
+    pub fn add_precondition(&mut self, cell_id: CellId, preconditions: Preconditions) -> &mut Self {
         self.preconditions.push((cell_id, preconditions));
         self
     }

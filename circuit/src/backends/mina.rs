@@ -46,17 +46,17 @@
 use super::ProofBackend;
 
 // Kimchi/Pasta imports
-use ark_ff::{One, PrimeField, Zero, BigInteger};
+use ark_ff::{BigInteger, One, PrimeField, Zero};
+use groupmap::GroupMap;
 use kimchi::{
     circuits::{
         gate::{CircuitGate, GateType},
         polynomials::poseidon::generate_witness,
-        wires::{Wire, COLUMNS},
+        wires::{COLUMNS, Wire},
     },
     curve::KimchiCurve,
     proof::ProverProof,
 };
-use groupmap::GroupMap;
 use mina_curves::pasta::{Fp, Vesta, VestaParameters};
 use mina_poseidon::{
     constants::PlonkSpongeConstantsKimchi,
@@ -65,9 +65,9 @@ use mina_poseidon::{
     sponge::{DefaultFqSponge, DefaultFrSponge},
 };
 use poly_commitment::{
+    SRS as SrsTrait,
     commitment::CommitmentCurve,
     ipa::{OpeningProof, SRS},
-    SRS as SrsTrait,
 };
 use rand_core::OsRng;
 use std::sync::Arc;
@@ -155,9 +155,7 @@ pub const TREE_DEPTH: usize = 16;
 /// - [1]: expected root
 ///
 /// The circuit enforces that hashing up the tree from leaf yields root.
-fn build_merkle_membership_circuit(
-    depth: usize,
-) -> (Vec<CircuitGate<Fp>>, usize) {
+fn build_merkle_membership_circuit(depth: usize) -> (Vec<CircuitGate<Fp>>, usize) {
     let mut gates = Vec::new();
     let mut row = 0;
 
@@ -217,8 +215,7 @@ fn generate_merkle_witness(
     let rows_per_level = 1 + poseidon_rows + 1; // Generic + Poseidon rows + output
     let total_rows = depth * rows_per_level + 1; // +1 for final check
 
-    let mut witness: [Vec<Fp>; COLUMNS] =
-        std::array::from_fn(|_| vec![Fp::zero(); total_rows]);
+    let mut witness: [Vec<Fp>; COLUMNS] = std::array::from_fn(|_| vec![Fp::zero(); total_rows]);
 
     let mut current = leaf;
 
@@ -353,20 +350,13 @@ impl ProofBackend for MinaBackend {
             .collect::<Result<Vec<_>, _>>()?;
 
         // Derive positions from the leaf (in production, caller provides the path)
-        let positions: Vec<u8> = (0..siblings_fp.len())
-            .map(|i| leaf[i % 32] % 4)
-            .collect();
+        let positions: Vec<u8> = (0..siblings_fp.len()).map(|i| leaf[i % 32] % 4).collect();
 
         // Build the circuit
         let (gates, public_count) = build_merkle_membership_circuit(siblings_fp.len());
 
         // Generate witness
-        let witness = generate_merkle_witness(
-            leaf_fp,
-            &siblings_fp,
-            &positions,
-            root_fp,
-        );
+        let witness = generate_merkle_witness(leaf_fp, &siblings_fp, &positions, root_fp);
 
         // Create the prover index (includes SRS generation)
         let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
@@ -380,18 +370,12 @@ impl ProofBackend for MinaBackend {
             BaseSponge,
             ScalarSponge,
             _,
-        >(
-            &group_map,
-            witness,
-            &[],
-            &index,
-            &mut OsRng,
-        )
+        >(&group_map, witness, &[], &index, &mut OsRng)
         .map_err(|e| format!("Kimchi prover error: {:?}", e))?;
 
         // Serialize the proof using rmp-serde
-        let proof_bytes = rmp_serde::to_vec(&proof)
-            .map_err(|e| format!("Proof serialization error: {}", e))?;
+        let proof_bytes =
+            rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
 
         // Serialize public inputs as bytes
         let mut public_input_bytes = Vec::with_capacity(64);
@@ -495,8 +479,7 @@ impl ProofBackend for MinaBackend {
         let public_count = 3; // old_root, new_root, num_removals
 
         // Build witness
-        let mut witness: [Vec<Fp>; COLUMNS] =
-            std::array::from_fn(|_| vec![Fp::zero(); row]);
+        let mut witness: [Vec<Fp>; COLUMNS] = std::array::from_fn(|_| vec![Fp::zero(); row]);
 
         // Fill removal rows
         for (i, removal) in removals.iter().enumerate() {
@@ -523,17 +506,11 @@ impl ProofBackend for MinaBackend {
             BaseSponge,
             ScalarSponge,
             _,
-        >(
-            &group_map,
-            witness,
-            &[],
-            &index,
-            &mut OsRng,
-        )
+        >(&group_map, witness, &[], &index, &mut OsRng)
         .map_err(|e| format!("Kimchi fold prover error: {:?}", e))?;
 
-        let proof_bytes = rmp_serde::to_vec(&proof)
-            .map_err(|e| format!("Proof serialization error: {}", e))?;
+        let proof_bytes =
+            rmp_serde::to_vec(&proof).map_err(|e| format!("Proof serialization error: {}", e))?;
 
         // Encode public inputs
         let mut public_input_bytes = Vec::with_capacity(72);
@@ -603,9 +580,7 @@ impl ProofBackend for MinaBackend {
 /// - Even steps prove on Pallas (verify Vesta proofs)
 ///
 /// This alternation is what makes the Pasta cycle work for recursion.
-pub fn recursive_fold(
-    proofs: &[MinaProof],
-) -> Result<MinaProof, String> {
+pub fn recursive_fold(proofs: &[MinaProof]) -> Result<MinaProof, String> {
     if proofs.is_empty() {
         return Err("Cannot fold empty proof sequence".into());
     }
@@ -717,7 +692,12 @@ mod tests {
 
     #[test]
     fn test_poseidon_4_to_1() {
-        let inputs = [Fp::from(1u64), Fp::from(2u64), Fp::from(3u64), Fp::from(4u64)];
+        let inputs = [
+            Fp::from(1u64),
+            Fp::from(2u64),
+            Fp::from(3u64),
+            Fp::from(4u64),
+        ];
         let h1 = poseidon_hash_4_to_1(&inputs);
         let h2 = poseidon_hash_4_to_1(&inputs);
         assert_eq!(h1, h2);

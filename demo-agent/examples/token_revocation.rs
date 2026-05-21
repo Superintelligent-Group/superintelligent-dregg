@@ -13,8 +13,8 @@
 use pyana_cell::note::Note;
 use pyana_cell::nullifier_set::{NonMembershipProof, NullifierSet};
 use pyana_trace::{
-    AuthorizationRequest, Conclusion, Evaluator, Fact, Term, symbol_from_str,
-    standard_policy, verify_trace,
+    AuthorizationRequest, Conclusion, Evaluator, Fact, Term, standard_policy, symbol_from_str,
+    verify_trace,
 };
 
 /// Simulate a token by its nonce (the nullifier of the note backing the token).
@@ -113,7 +113,8 @@ fn check_authorization_with_revocation(
             // This shouldn't happen since we checked contains() above.
             AuthResult {
                 allowed: false,
-                reason: "Token is revoked (non-membership proof could not be generated)".to_string(),
+                reason: "Token is revoked (non-membership proof could not be generated)"
+                    .to_string(),
                 non_membership_proof: None,
             }
         }
@@ -144,21 +145,36 @@ fn main() {
 
     println!(
         "  Token A (alice): commitment {:02x}{:02x}{:02x}{:02x}..., nullifier {:02x}{:02x}{:02x}{:02x}...",
-        token_a.commitment().0[0], token_a.commitment().0[1],
-        token_a.commitment().0[2], token_a.commitment().0[3],
-        nullifier_a.0[0], nullifier_a.0[1], nullifier_a.0[2], nullifier_a.0[3]
+        token_a.commitment().0[0],
+        token_a.commitment().0[1],
+        token_a.commitment().0[2],
+        token_a.commitment().0[3],
+        nullifier_a.0[0],
+        nullifier_a.0[1],
+        nullifier_a.0[2],
+        nullifier_a.0[3]
     );
     println!(
         "  Token B (bob):   commitment {:02x}{:02x}{:02x}{:02x}..., nullifier {:02x}{:02x}{:02x}{:02x}...",
-        token_b.commitment().0[0], token_b.commitment().0[1],
-        token_b.commitment().0[2], token_b.commitment().0[3],
-        nullifier_b.0[0], nullifier_b.0[1], nullifier_b.0[2], nullifier_b.0[3]
+        token_b.commitment().0[0],
+        token_b.commitment().0[1],
+        token_b.commitment().0[2],
+        token_b.commitment().0[3],
+        nullifier_b.0[0],
+        nullifier_b.0[1],
+        nullifier_b.0[2],
+        nullifier_b.0[3]
     );
     println!(
         "  Token C (carol): commitment {:02x}{:02x}{:02x}{:02x}..., nullifier {:02x}{:02x}{:02x}{:02x}...",
-        token_c.commitment().0[0], token_c.commitment().0[1],
-        token_c.commitment().0[2], token_c.commitment().0[3],
-        nullifier_c.0[0], nullifier_c.0[1], nullifier_c.0[2], nullifier_c.0[3]
+        token_c.commitment().0[0],
+        token_c.commitment().0[1],
+        token_c.commitment().0[2],
+        token_c.commitment().0[3],
+        nullifier_c.0[0],
+        nullifier_c.0[1],
+        nullifier_c.0[2],
+        nullifier_c.0[3]
     );
     println!();
 
@@ -168,32 +184,74 @@ fn main() {
     println!("--- Step 2: USE TOKENS (all valid, revocation set empty) ---\n");
 
     let mut revocation_set = NullifierSet::new();
-    println!("  Revocation set: empty (root = {:02x}{:02x}{:02x}{:02x}...)",
-        revocation_set.root()[0], revocation_set.root()[1],
-        revocation_set.root()[2], revocation_set.root()[3]);
+    println!(
+        "  Revocation set: empty (root = {:02x}{:02x}{:02x}{:02x}...)",
+        revocation_set.root()[0],
+        revocation_set.root()[1],
+        revocation_set.root()[2],
+        revocation_set.root()[3]
+    );
     println!();
 
     let result_a = check_authorization_with_revocation(&token_a, &revocation_set, "read");
-    println!("  Token A (read): {} — {}", if result_a.allowed { "ALLOWED" } else { "DENIED" }, result_a.reason);
+    println!(
+        "  Token A (read): {} — {}",
+        if result_a.allowed {
+            "ALLOWED"
+        } else {
+            "DENIED"
+        },
+        result_a.reason
+    );
     assert!(result_a.allowed);
 
     let result_b = check_authorization_with_revocation(&token_b, &revocation_set, "write");
-    println!("  Token B (write): {} — {}", if result_b.allowed { "ALLOWED" } else { "DENIED" }, result_b.reason);
+    println!(
+        "  Token B (write): {} — {}",
+        if result_b.allowed {
+            "ALLOWED"
+        } else {
+            "DENIED"
+        },
+        result_b.reason
+    );
     assert!(result_b.allowed);
 
     let result_c = check_authorization_with_revocation(&token_c, &revocation_set, "read");
-    println!("  Token C (read): {} — {}", if result_c.allowed { "ALLOWED" } else { "DENIED" }, result_c.reason);
+    println!(
+        "  Token C (read): {} — {}",
+        if result_c.allowed {
+            "ALLOWED"
+        } else {
+            "DENIED"
+        },
+        result_c.reason
+    );
     assert!(result_c.allowed);
 
     // Show that non-membership proofs exist for all tokens
     if let Some(proof) = &result_a.non_membership_proof {
         println!("\n  Non-membership proof for Token A:");
-        println!("    Absent nullifier: {:02x}{:02x}{:02x}{:02x}...",
-            proof.absent.0[0], proof.absent.0[1], proof.absent.0[2], proof.absent.0[3]);
-        println!("    Left neighbor:  {:?}", proof.left_neighbor.map(|n| format!("{:02x}{:02x}...", n.0[0], n.0[1])));
-        println!("    Right neighbor: {:?}", proof.right_neighbor.map(|n| format!("{:02x}{:02x}...", n.0[0], n.0[1])));
-        println!("    Root: {:02x}{:02x}{:02x}{:02x}...",
-            proof.root[0], proof.root[1], proof.root[2], proof.root[3]);
+        println!(
+            "    Absent nullifier: {:02x}{:02x}{:02x}{:02x}...",
+            proof.absent.0[0], proof.absent.0[1], proof.absent.0[2], proof.absent.0[3]
+        );
+        println!(
+            "    Left neighbor:  {:?}",
+            proof
+                .left_neighbor
+                .map(|n| format!("{:02x}{:02x}...", n.0[0], n.0[1]))
+        );
+        println!(
+            "    Right neighbor: {:?}",
+            proof
+                .right_neighbor
+                .map(|n| format!("{:02x}{:02x}...", n.0[0], n.0[1]))
+        );
+        println!(
+            "    Root: {:02x}{:02x}{:02x}{:02x}...",
+            proof.root[0], proof.root[1], proof.root[2], proof.root[3]
+        );
     }
     println!();
 
@@ -203,12 +261,16 @@ fn main() {
     println!("--- Step 3: REVOKE TOKEN A ---\n");
 
     println!("  Adding Token A's nullifier to revocation set...");
-    revocation_set.insert(nullifier_a).expect("First insertion should succeed");
+    revocation_set
+        .insert(nullifier_a)
+        .expect("First insertion should succeed");
 
     let new_root = revocation_set.root();
     println!("  Revocation set size: {}", revocation_set.len());
-    println!("  New root: {:02x}{:02x}{:02x}{:02x}...",
-        new_root[0], new_root[1], new_root[2], new_root[3]);
+    println!(
+        "  New root: {:02x}{:02x}{:02x}{:02x}...",
+        new_root[0], new_root[1], new_root[2], new_root[3]
+    );
     println!();
 
     // =========================================================================
@@ -219,14 +281,21 @@ fn main() {
     let result_a_revoked = check_authorization_with_revocation(&token_a, &revocation_set, "read");
     println!(
         "  Token A (read): {} — {}",
-        if result_a_revoked.allowed { "ALLOWED" } else { "DENIED" },
+        if result_a_revoked.allowed {
+            "ALLOWED"
+        } else {
+            "DENIED"
+        },
         result_a_revoked.reason
     );
     assert!(!result_a_revoked.allowed);
 
     // Double-check: trying to re-insert the same nullifier fails
     let double_revoke = revocation_set.insert(nullifier_a);
-    println!("  Double-revocation attempt: {:?}", double_revoke.err().unwrap());
+    println!(
+        "  Double-revocation attempt: {:?}",
+        double_revoke.err().unwrap()
+    );
     println!();
 
     // =========================================================================
@@ -237,7 +306,11 @@ fn main() {
     let result_b_after = check_authorization_with_revocation(&token_b, &revocation_set, "write");
     println!(
         "  Token B (write): {} — {}",
-        if result_b_after.allowed { "ALLOWED" } else { "DENIED" },
+        if result_b_after.allowed {
+            "ALLOWED"
+        } else {
+            "DENIED"
+        },
         result_b_after.reason
     );
     assert!(result_b_after.allowed);
@@ -245,7 +318,11 @@ fn main() {
     let result_c_after = check_authorization_with_revocation(&token_c, &revocation_set, "read");
     println!(
         "  Token C (read): {} — {}",
-        if result_c_after.allowed { "ALLOWED" } else { "DENIED" },
+        if result_c_after.allowed {
+            "ALLOWED"
+        } else {
+            "DENIED"
+        },
         result_c_after.reason
     );
     assert!(result_c_after.allowed);
@@ -254,7 +331,10 @@ fn main() {
     if let Some(proof_b) = &result_b_after.non_membership_proof {
         let root = revocation_set.root();
         let valid = NullifierSet::verify_non_membership(proof_b, &root);
-        println!("\n  Non-membership proof for Token B: verification = {}", if valid { "PASS" } else { "FAIL" });
+        println!(
+            "\n  Non-membership proof for Token B: verification = {}",
+            if valid { "PASS" } else { "FAIL" }
+        );
         assert!(valid);
     }
     println!();
@@ -268,15 +348,24 @@ fn main() {
     let nullifier_d = token_d.nullifier();
     println!(
         "  Token D (dave): commitment {:02x}{:02x}{:02x}{:02x}..., nullifier {:02x}{:02x}{:02x}{:02x}...",
-        token_d.commitment().0[0], token_d.commitment().0[1],
-        token_d.commitment().0[2], token_d.commitment().0[3],
-        nullifier_d.0[0], nullifier_d.0[1], nullifier_d.0[2], nullifier_d.0[3]
+        token_d.commitment().0[0],
+        token_d.commitment().0[1],
+        token_d.commitment().0[2],
+        token_d.commitment().0[3],
+        nullifier_d.0[0],
+        nullifier_d.0[1],
+        nullifier_d.0[2],
+        nullifier_d.0[3]
     );
 
     let result_d = check_authorization_with_revocation(&token_d, &revocation_set, "read");
     println!(
         "  Token D (read): {} — {}",
-        if result_d.allowed { "ALLOWED" } else { "DENIED" },
+        if result_d.allowed {
+            "ALLOWED"
+        } else {
+            "DENIED"
+        },
         result_d.reason
     );
     assert!(result_d.allowed);
@@ -316,10 +405,22 @@ fn main() {
     let proof_d2 = revocation_set.prove_non_membership(&nullifier_d).unwrap();
 
     println!("  Verification uses the SAME root for all tokens:");
-    println!("    Root: {:02x}{:02x}{:02x}{:02x}...", root[0], root[1], root[2], root[3]);
-    println!("    Token B proof valid: {}", NullifierSet::verify_non_membership(&proof_b2, &root));
-    println!("    Token C proof valid: {}", NullifierSet::verify_non_membership(&proof_c2, &root));
-    println!("    Token D proof valid: {}", NullifierSet::verify_non_membership(&proof_d2, &root));
+    println!(
+        "    Root: {:02x}{:02x}{:02x}{:02x}...",
+        root[0], root[1], root[2], root[3]
+    );
+    println!(
+        "    Token B proof valid: {}",
+        NullifierSet::verify_non_membership(&proof_b2, &root)
+    );
+    println!(
+        "    Token C proof valid: {}",
+        NullifierSet::verify_non_membership(&proof_c2, &root)
+    );
+    println!(
+        "    Token D proof valid: {}",
+        NullifierSet::verify_non_membership(&proof_d2, &root)
+    );
     println!();
 
     // =========================================================================
@@ -368,7 +469,10 @@ fn main() {
     println!("    not_revoked_ok derived: {}", has_not_revoked_ok);
     assert!(has_not_revoked_ok);
     let trace_valid = verify_trace(&facts_not_revoked, &rules, &trace_not_revoked);
-    println!("    Trace verification: {}", if trace_valid { "PASS" } else { "FAIL" });
+    println!(
+        "    Trace verification: {}",
+        if trace_valid { "PASS" } else { "FAIL" }
+    );
     assert!(trace_valid);
     println!();
 
@@ -398,7 +502,10 @@ fn main() {
     println!("    revocation deny derived: {}", has_revocation_deny);
     assert!(has_revocation_deny);
     let trace_valid2 = verify_trace(&facts_revoked, &rules, &trace_revoked);
-    println!("    Trace verification: {}", if trace_valid2 { "PASS" } else { "FAIL" });
+    println!(
+        "    Trace verification: {}",
+        if trace_valid2 { "PASS" } else { "FAIL" }
+    );
     assert!(trace_valid2);
     println!();
 
@@ -416,9 +523,13 @@ fn main() {
     println!();
     println!("  Revocation set final state:");
     println!("    Size: {} revoked token(s)", revocation_set.len());
-    println!("    Root: {:02x}{:02x}{:02x}{:02x}...",
-        revocation_set.root()[0], revocation_set.root()[1],
-        revocation_set.root()[2], revocation_set.root()[3]);
+    println!(
+        "    Root: {:02x}{:02x}{:02x}{:02x}...",
+        revocation_set.root()[0],
+        revocation_set.root()[1],
+        revocation_set.root()[2],
+        revocation_set.root()[3]
+    );
     println!();
     println!("=== Token Revocation Demo Complete ===");
 }

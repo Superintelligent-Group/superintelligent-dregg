@@ -7,9 +7,7 @@
 //! Merkle commitment and fold delta using `pyana-commit` in parallel.
 
 use pyana_commit::{
-    Fact as CommitFact,
-    FoldDelta as CommitFoldDelta,
-    FoldVerification,
+    Fact as CommitFact, FoldDelta as CommitFoldDelta, FoldVerification,
     TokenState as CommitTokenState,
 };
 
@@ -137,10 +135,7 @@ mod tests {
 
     #[test]
     fn test_merkle_root_deterministic() {
-        let facts = vec![
-            Fact::app("frontend", "rw"),
-            Fact::app("backend", "rw"),
-        ];
+        let facts = vec![Fact::app("frontend", "rw"), Fact::app("backend", "rw")];
         let rules = vec![Rule::allow_app()];
 
         let root1 = compute_merkle_root(&facts, &rules);
@@ -157,20 +152,11 @@ mod tests {
         ];
         let rules = vec![Rule::allow_app(), Rule::deny_default()];
         let removed = vec![Fact::app("backend", "rw")];
-        let new_facts = vec![
-            Fact::app("frontend", "rw"),
-            Fact::service("http", "rw"),
-        ];
+        let new_facts = vec![Fact::app("frontend", "rw"), Fact::service("http", "rw")];
         let checks = vec!["read_only"];
 
-        let result = compute_real_fold_delta(
-            &old_facts,
-            &rules,
-            &new_facts,
-            &rules,
-            &removed,
-            &checks,
-        );
+        let result =
+            compute_real_fold_delta(&old_facts, &rules, &new_facts, &rules, &removed, &checks);
 
         assert!(result.is_some());
         let (delta, valid) = result.unwrap();

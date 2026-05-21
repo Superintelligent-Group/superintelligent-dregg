@@ -49,6 +49,11 @@ pub struct CellState {
     /// Becomes `true` only when ALL 8 fields are set by a single proof-authorized action.
     /// Becomes `false` if any field is modified by a non-proof authorization.
     pub proved_state: bool,
+    /// Delegation epoch counter. Parent cells bump this to signal their children
+    /// should refresh their capability snapshots. Children whose snapshot epoch is
+    /// behind the parent's current epoch are considered stale.
+    #[serde(default)]
+    pub delegation_epoch: u64,
 }
 
 /// The public view of a field — either the actual value (if public) or its commitment hash.
@@ -70,6 +75,7 @@ impl CellState {
             nonce: 0,
             balance,
             proved_state: false,
+            delegation_epoch: 0,
         }
     }
 
@@ -164,6 +170,11 @@ impl CellState {
                 false
             }
         }
+    }
+
+    /// Bump the delegation epoch (signals children to refresh).
+    pub fn bump_delegation_epoch(&mut self) {
+        self.delegation_epoch = self.delegation_epoch.wrapping_add(1);
     }
 }
 

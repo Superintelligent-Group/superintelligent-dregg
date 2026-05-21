@@ -104,7 +104,9 @@ async fn main() {
             eprintln!("Error: {e}");
             eprintln!();
             eprintln!("Usage:");
-            eprintln!("  pyana-federation-node --id <N> --listen <ADDR> --peers <ID=ADDR,...> [--num-nodes <N>] [--interval <SECS>]");
+            eprintln!(
+                "  pyana-federation-node --id <N> --listen <ADDR> --peers <ID=ADDR,...> [--num-nodes <N>] [--interval <SECS>]"
+            );
             eprintln!();
             eprintln!("  pyana-federation-node --local-demo");
             std::process::exit(1);
@@ -123,10 +125,7 @@ async fn run_node(config: NodeConfig) {
         config.num_nodes,
         ConsensusConfig::new(config.num_nodes).threshold
     );
-    println!(
-        "[node {}] Peers: {:?}",
-        config.node_id, config.peers
-    );
+    println!("[node {}] Peers: {:?}", config.node_id, config.peers);
 
     let consensus_config = ConsensusConfig::new(config.num_nodes);
     let (signing_key, public_key) = generate_keypair();
@@ -138,13 +137,10 @@ async fn run_node(config: NodeConfig) {
     );
 
     // Create the TCP transport.
-    let (transport, actual_addr) = TcpFederationTransport::new_with_addr(
-        config.node_id,
-        config.peers,
-        config.listen_addr,
-    )
-    .await
-    .expect("failed to start transport");
+    let (transport, actual_addr) =
+        TcpFederationTransport::new_with_addr(config.node_id, config.peers, config.listen_addr)
+            .await
+            .expect("failed to start transport");
 
     println!("[node {}] Listening on {actual_addr}", config.node_id);
 
@@ -152,7 +148,10 @@ async fn run_node(config: NodeConfig) {
     let state = ConsensusState::new(config.node_id, signing_key, consensus_config.clone());
     let mut node = NetworkConsensusNode::new(state, transport, consensus_config.clone());
 
-    println!("[node {}] Ready. Running consensus rounds every {:?}", config.node_id, config.round_interval);
+    println!(
+        "[node {}] Ready. Running consensus rounds every {:?}",
+        config.node_id, config.round_interval
+    );
 
     // Main loop: periodically attempt to propose and process messages.
     let mut round = 0u64;
@@ -164,13 +163,14 @@ async fn run_node(config: NodeConfig) {
             Ok(Some((block, qc))) => {
                 println!(
                     "[node {}] FINALIZED block height={} view={} events={} qc_votes={}",
-                    config.node_id, block.height, block.view, block.events.len(), qc.votes.len()
+                    config.node_id,
+                    block.height,
+                    block.view,
+                    block.events.len(),
+                    qc.votes.len()
                 );
                 for event in &block.events {
-                    println!(
-                        "[node {}]   revoked: {}",
-                        config.node_id, event.token_id
-                    );
+                    println!("[node {}]   revoked: {}", config.node_id, event.token_id);
                 }
             }
             Ok(None) => {}
@@ -185,7 +185,10 @@ async fn run_node(config: NodeConfig) {
                 Ok(Some(block)) => {
                     println!(
                         "[node {}] PROPOSED block height={} view={} events={}",
-                        config.node_id, block.height, block.view, block.events.len()
+                        config.node_id,
+                        block.height,
+                        block.view,
+                        block.events.len()
                     );
                 }
                 Ok(None) => {}
@@ -248,10 +251,9 @@ async fn run_local_demo() {
                 peers.insert(j, addrs[j]);
             }
         }
-        let (transport, actual_addr) =
-            TcpFederationTransport::new_with_addr(i, peers, addrs[i])
-                .await
-                .unwrap();
+        let (transport, actual_addr) = TcpFederationTransport::new_with_addr(i, peers, addrs[i])
+            .await
+            .unwrap();
         addrs[i] = actual_addr;
         transports.push(transport);
     }
@@ -326,10 +328,7 @@ async fn run_local_demo() {
                     qc.votes.len(),
                     qc.is_valid()
                 );
-                println!(
-                    "  Block hash: {}",
-                    hex_encode(&block.block_hash[..8])
-                );
+                println!("  Block hash: {}", hex_encode(&block.block_hash[..8]));
 
                 // Wait for finalization broadcast.
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -350,8 +349,5 @@ async fn run_local_demo() {
     }
 
     println!("=== Demo Complete ===");
-    println!(
-        "All nodes at height: {}",
-        nodes[0].state.current_height
-    );
+    println!("All nodes at height: {}", nodes[0].state.current_height);
 }

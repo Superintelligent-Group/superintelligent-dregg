@@ -7,20 +7,32 @@
 //! This module integrates with the persistent store (redb) to durably record
 //! note commitments and nullifiers, and with the Merkle tree from `pyana-commit`
 //! for proof generation.
+//!
+//! The tree maintains BOTH a BLAKE3 tree (for fast non-ZK verification) and a
+//! Poseidon2 tree (for ZK proof generation). When a commitment is appended,
+//! both trees get updated.
 
-use pyana_commit::merkle::{MerkleProof, MerkleTree};
 use pyana_cell::note::{NoteCommitment, Nullifier};
+use pyana_circuit::field::BabyBear;
+use pyana_commit::merkle::{MerkleProof, MerkleTree};
+use pyana_commit::poseidon2_tree::{Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field};
 
-/// An append-only note commitment tree backed by a 4-ary Merkle tree.
+/// An append-only note commitment tree backed by BOTH a BLAKE3 and Poseidon2 Merkle tree.
 ///
 /// Notes are appended sequentially. Each note commitment receives a unique
 /// position (index) which is needed for nullifier derivation.
+///
+/// The dual-tree design bridges the gap between:
+/// - BLAKE3: fast, byte-oriented, used for non-ZK consensus verification
+/// - Poseidon2: arithmetic-friendly, field-element-oriented, used inside STARK proofs
 #[derive(Clone, Debug)]
 pub struct NoteTree {
     /// All note commitments ever created (append-only).
     commitments: Vec<NoteCommitment>,
-    /// The Merkle tree over commitments (from pyana-commit).
+    /// The BLAKE3 Merkle tree over commitments (from pyana-commit).
     tree: MerkleTree,
+    /// The Poseidon2 Merkle tree over field-element commitments (ZK-friendly).
+    poseidon2_tree: Poseidon2MerkleTree,
 }
 
 impl NoteTree {
@@ -29,24 +41,35 @@ impl NoteTree {
         Self {
             commitments: Vec::new(),
             tree: MerkleTree::new(),
+            poseidon2_tree: Poseidon2MerkleTree::new(),
         }
     }
 
     /// Append a new note commitment. Returns the position (for nullifier derivation).
+    ///
+    /// Both the BLAKE3 and Poseidon2 trees are updated atomically.
     pub fn append(&mut self, commitment: NoteCommitment) -> u64 {
         let position = self.commitments.len() as u64;
         self.commitments.push(commitment);
-        // Insert the commitment hash into the Merkle tree.
+        // Insert into the BLAKE3 Merkle tree.
         self.tree.insert_hash(commitment.0);
+        // Insert into the Poseidon2 Merkle tree (after field conversion).
+        let field_elem = commitment_to_field(&commitment.0);
+        self.poseidon2_tree.append(field_elem);
         position
     }
 
-    /// Current root of the note tree.
+    /// Current BLAKE3 root of the note tree.
     pub fn root(&mut self) -> [u8; 32] {
         self.tree.root()
     }
 
-    /// Prove membership of a commitment at a given position.
+    /// Current Poseidon2 root of the note tree (for use in ZK proofs).
+    pub fn poseidon2_root(&mut self) -> BabyBear {
+        self.poseidon2_tree.root()
+    }
+
+    /// Prove membership of a commitment at a given position (BLAKE3 proof).
     pub fn prove_membership(&self, position: u64) -> Option<MerkleProof> {
         let pos = position as usize;
         if pos >= self.commitments.len() {
@@ -54,6 +77,29 @@ impl NoteTree {
         }
         let commitment = &self.commitments[pos];
         self.tree.membership_proof_hash(&commitment.0)
+    }
+
+    /// Prove membership of a commitment at a given position (Poseidon2 proof).
+    ///
+    /// This proof is suitable for use as a witness in STARK proof generation
+    /// (e.g., `NoteSpendingWitness`).
+    pub fn prove_membership_poseidon2(&self, position: u64) -> Option<Poseidon2MerkleProof> {
+        let pos = position as usize;
+        if pos >= self.commitments.len() {
+            return None;
+        }
+        self.poseidon2_tree.prove_membership(pos)
+    }
+
+    /// Get the Poseidon2 leaf value for a commitment at a given position.
+    ///
+    /// This is the field element that was inserted into the Poseidon2 tree.
+    pub fn poseidon2_leaf(&self, position: u64) -> Option<BabyBear> {
+        let pos = position as usize;
+        if pos >= self.commitments.len() {
+            return None;
+        }
+        Some(commitment_to_field(&self.commitments[pos].0))
     }
 
     /// Number of notes in the tree.
@@ -66,18 +112,34 @@ impl NoteTree {
         self.tree.contains_hash(&commitment.0)
     }
 
-    /// Verify a membership proof against this tree's root.
+    /// Verify a BLAKE3 membership proof against a given root.
     pub fn verify_proof(root: &[u8; 32], proof: &MerkleProof) -> bool {
         MerkleTree::verify_membership(root, proof)
+    }
+
+    /// Verify a Poseidon2 membership proof against a given root and leaf.
+    pub fn verify_poseidon2_proof(
+        root: BabyBear,
+        leaf: BabyBear,
+        proof: &Poseidon2MerkleProof,
+    ) -> bool {
+        Poseidon2MerkleTree::verify_membership(root, leaf, proof)
     }
 
     /// Rebuild the tree from a list of commitments (for recovery from persistence).
     pub fn from_commitments(commitments: Vec<NoteCommitment>) -> Self {
         let mut tree = MerkleTree::new();
+        let mut poseidon2_tree = Poseidon2MerkleTree::new();
         for c in &commitments {
             tree.insert_hash(c.0);
+            let field_elem = commitment_to_field(&c.0);
+            poseidon2_tree.append(field_elem);
         }
-        Self { commitments, tree }
+        Self {
+            commitments,
+            tree,
+            poseidon2_tree,
+        }
     }
 }
 
@@ -125,7 +187,9 @@ impl PersistentNullifierSet {
 
     /// Check if a nullifier has been spent.
     pub fn contains(&self, nullifier: &Nullifier) -> bool {
-        self.nullifiers.binary_search_by(|n| n.0.cmp(&nullifier.0)).is_ok()
+        self.nullifiers
+            .binary_search_by(|n| n.0.cmp(&nullifier.0))
+            .is_ok()
     }
 
     /// Number of nullifiers in the set.
@@ -282,5 +346,78 @@ mod tests {
         set.insert(n2);
         let root_two = set.root();
         assert_ne!(root_one, root_two);
+    }
+
+    // =========================================================================
+    // Dual-tree (BLAKE3 + Poseidon2) tests
+    // =========================================================================
+
+    #[test]
+    fn test_dual_tree_poseidon2_root_changes_on_append() {
+        let mut tree = NoteTree::new();
+        let p2_root_empty = tree.poseidon2_root();
+
+        tree.append(make_note(1).commitment());
+        let p2_root_one = tree.poseidon2_root();
+        assert_ne!(p2_root_empty, p2_root_one);
+
+        tree.append(make_note(2).commitment());
+        let p2_root_two = tree.poseidon2_root();
+        assert_ne!(p2_root_one, p2_root_two);
+    }
+
+    #[test]
+    fn test_dual_tree_poseidon2_proof_verifies() {
+        let mut tree = NoteTree::new();
+        let notes: Vec<_> = (1..=5).map(|i| make_note(i)).collect();
+        for n in &notes {
+            tree.append(n.commitment());
+        }
+
+        let p2_root = tree.poseidon2_root();
+
+        for pos in 0..5u64 {
+            let leaf = tree.poseidon2_leaf(pos).unwrap();
+            let proof = tree.prove_membership_poseidon2(pos).unwrap();
+            assert!(
+                NoteTree::verify_poseidon2_proof(p2_root, leaf, &proof),
+                "Poseidon2 proof failed at position {pos}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dual_tree_both_proofs_work() {
+        let mut tree = NoteTree::new();
+        let note = make_note(42);
+        let pos = tree.append(note.commitment());
+
+        // BLAKE3 proof works
+        let blake3_root = tree.root();
+        let blake3_proof = tree.prove_membership(pos).unwrap();
+        assert!(NoteTree::verify_proof(&blake3_root, &blake3_proof));
+
+        // Poseidon2 proof works
+        let p2_root = tree.poseidon2_root();
+        let p2_leaf = tree.poseidon2_leaf(pos).unwrap();
+        let p2_proof = tree.prove_membership_poseidon2(pos).unwrap();
+        assert!(NoteTree::verify_poseidon2_proof(p2_root, p2_leaf, &p2_proof));
+    }
+
+    #[test]
+    fn test_dual_tree_from_commitments_preserves_poseidon2() {
+        let mut tree = NoteTree::new();
+        let notes: Vec<_> = (1..=5).map(|i| make_note(i)).collect();
+        let commitments: Vec<_> = notes.iter().map(|n| n.commitment()).collect();
+
+        for c in &commitments {
+            tree.append(*c);
+        }
+        let p2_root_original = tree.poseidon2_root();
+
+        // Rebuild from commitments
+        let mut rebuilt = NoteTree::from_commitments(commitments);
+        let p2_root_rebuilt = rebuilt.poseidon2_root();
+        assert_eq!(p2_root_original, p2_root_rebuilt);
     }
 }

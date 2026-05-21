@@ -246,8 +246,14 @@ mod tests {
     #[tokio::test]
     async fn multiple_messages_sequential() {
         let messages = vec![
-            WireMessage::Ping { seq: 1, timestamp: 100 },
-            WireMessage::Pong { seq: 1, timestamp: 101 },
+            WireMessage::Ping {
+                seq: 1,
+                timestamp: 100,
+            },
+            WireMessage::Pong {
+                seq: 1,
+                timestamp: 101,
+            },
             WireMessage::RequestAttestedRoot,
         ];
 

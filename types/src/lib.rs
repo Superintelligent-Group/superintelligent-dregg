@@ -90,7 +90,10 @@ impl fmt::Debug for Signature {
         write!(
             f,
             "Sig({})",
-            self.0[..4].iter().map(|b| format!("{b:02x}")).collect::<String>()
+            self.0[..4]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
         )
     }
 }
@@ -210,6 +213,12 @@ impl AttestedRoot {
         true
     }
 
+    /// Alias for [`is_valid`](Self::is_valid) for API compatibility with the
+    /// federation crate's previous local definition.
+    pub fn is_valid_with_keys(&self, known_keys: &[PublicKey]) -> bool {
+        self.is_valid(known_keys)
+    }
+
     /// Compute the canonical message that quorum members sign.
     pub fn signing_message(&self) -> Vec<u8> {
         let mut msg = Vec::new();
@@ -226,9 +235,32 @@ impl AttestedRoot {
         msg
     }
 
+    /// Verify that this attested root is valid AND recent enough.
+    ///
+    /// Combines cryptographic verification with a freshness check:
+    /// - Signatures must be valid against `known_keys`
+    /// - The root must not be older than `max_age_secs`
+    /// - The root's timestamp must not be more than 60s in the future (clock skew tolerance)
+    pub fn is_valid_at(&self, known_keys: &[PublicKey], now: u64, max_age_secs: u64) -> bool {
+        if !self.is_valid(known_keys) {
+            return false;
+        }
+        let ts = self.timestamp as u64;
+        if now > ts + max_age_secs {
+            return false; // too old
+        }
+        if ts > now + 60 {
+            return false; // clock skew tolerance
+        }
+        true
+    }
+
     /// Short hex of the Merkle root for display.
     pub fn root_hex(&self) -> String {
-        self.merkle_root[..4].iter().map(|b| format!("{b:02x}")).collect()
+        self.merkle_root[..4]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 }
 
@@ -315,7 +347,10 @@ impl fmt::Debug for CellId {
         write!(
             f,
             "CellId({})",
-            self.0[..4].iter().map(|b| format!("{b:02x}")).collect::<String>()
+            self.0[..4]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
         )
     }
 }
@@ -325,7 +360,10 @@ impl fmt::Display for CellId {
         write!(
             f,
             "{}",
-            self.0[..8].iter().map(|b| format!("{b:02x}")).collect::<String>()
+            self.0[..8]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
         )
     }
 }
@@ -438,7 +476,11 @@ mod tests {
         root.quorum_signatures = vec![(pk1, sig1), (pk2, sig2)];
 
         // Valid: both signers are in known_keys and signatures are correct.
-        let known_keys = vec![root.quorum_signatures[0].0, root.quorum_signatures[1].0, pk3];
+        let known_keys = vec![
+            root.quorum_signatures[0].0,
+            root.quorum_signatures[1].0,
+            pk3,
+        ];
         assert!(root.is_valid(&known_keys));
 
         // Invalid: signer not in known_keys.
@@ -459,9 +501,7 @@ mod tests {
             nullifier_set_root: Some([0x03; 32]),
             height: 99,
             timestamp: 1700000000,
-            quorum_signatures: vec![
-                (PublicKey([0xAA; 32]), Signature([0xBB; 64])),
-            ],
+            quorum_signatures: vec![(PublicKey([0xAA; 32]), Signature([0xBB; 64]))],
             threshold_qc: None,
             threshold: 1,
         };

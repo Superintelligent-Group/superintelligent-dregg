@@ -4,16 +4,17 @@
 //! verifying authorization, applying effects, and metering computrons at each step.
 //! If any action fails, ALL effects are rolled back via journal replay (atomicity guarantee).
 
+use std::cell::RefCell;
+
 use ed25519_dalek::{Signature, VerifyingKey};
 use pyana_cell::{
-    AuthRequired, Cell, CellId, CellStateDelta, Ledger, LedgerDelta,
-    Preconditions,
-    preconditions::EvalContext,
-    state::STATE_SLOTS,
+    AuthRequired, Cell, CellId, CellStateDelta, Ledger, LedgerDelta, Preconditions,
+    preconditions::EvalContext, state::STATE_SLOTS,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, Authorization, DelegationMode, Effect};
+use crate::budget_gate::BudgetGate;
 use crate::error::TurnError;
 use crate::forest::CallTree;
 use crate::journal::{JournalEntry, LedgerJournal};
@@ -98,6 +99,14 @@ pub struct TurnExecutor {
     pub block_height: u64,
     /// Optional ZK proof verifier. If None and a cell requires proof auth, the action is rejected.
     pub proof_verifier: Option<Box<dyn ProofVerifier>>,
+    /// Optional budget gate (Stingray bounded counter).
+    /// When present, the executor checks the silo's local budget slice before executing
+    /// each turn. If the slice cannot cover the turn fee, the turn is rejected with
+    /// `TurnError::BudgetExhausted`. On turn failure, the debit is refunded (fast unlock).
+    ///
+    /// Uses `RefCell` for interior mutability so that `execute(&self, ...)` can
+    /// debit and refund the slice without requiring `&mut self`.
+    pub budget_gate: Option<RefCell<BudgetGate>>,
 }
 
 impl TurnExecutor {
@@ -108,6 +117,22 @@ impl TurnExecutor {
             current_timestamp: 0,
             block_height: 0,
             proof_verifier: None,
+            budget_gate: None,
+        }
+    }
+
+    /// Create a new executor with a budget gate (Stingray bounded counter).
+    ///
+    /// When a budget gate is set, the executor checks the silo's local budget
+    /// slice before executing each turn. If the slice cannot cover the turn fee,
+    /// the turn is rejected with `TurnError::BudgetExhausted`.
+    pub fn with_budget_gate(costs: ComputronCosts, gate: BudgetGate) -> Self {
+        TurnExecutor {
+            costs,
+            current_timestamp: 0,
+            block_height: 0,
+            proof_verifier: None,
+            budget_gate: Some(RefCell::new(gate)),
         }
     }
 
@@ -118,7 +143,13 @@ impl TurnExecutor {
             current_timestamp: 0,
             block_height: 0,
             proof_verifier: Some(verifier),
+            budget_gate: None,
         }
+    }
+
+    /// Set the budget gate.
+    pub fn set_budget_gate(&mut self, gate: BudgetGate) {
+        self.budget_gate = Some(RefCell::new(gate));
     }
 
     /// Set the proof verifier.
@@ -202,6 +233,34 @@ impl TurnExecutor {
             };
         }
 
+        // =====================================================================
+        // BUDGET GATE: Check silo's bounded-counter slice (Stingray).
+        // BEFORE Phase 1 — if the silo's budget slice cannot cover the turn fee,
+        // reject without charging the agent (pre-flight check). The budget gate is
+        // a silo-level resource limit: exhaustion is not the agent's fault.
+        // On subsequent forest failure (Phase 2), the debit is refunded (fast unlock).
+        // =====================================================================
+        let budget_debit_digest = if let Some(gate_cell) = &self.budget_gate {
+            let mut turn_for_hash = turn.clone();
+            let turn_hash = turn_for_hash.hash();
+            let mut gate = gate_cell.borrow_mut();
+            match gate.try_debit(turn.fee, &turn_hash) {
+                Ok(digest) => Some((digest, turn.fee)),
+                Err(remaining) => {
+                    return TurnResult::Rejected {
+                        reason: TurnError::BudgetExhausted {
+                            silo_id: gate.silo_id,
+                            requested: turn.fee,
+                            remaining,
+                        },
+                        at_action: vec![],
+                    };
+                }
+            }
+        } else {
+            None
+        };
+
         // Compute pre-state hash before any mutations.
         let pre_state_hash = ledger.root();
 
@@ -229,7 +288,10 @@ impl TurnExecutor {
                 root_tree,
                 ledger,
                 &turn.agent,
-                DelegationMode::ParentsOwn, // top-level: agent owns all its capabilities
+                // Top-level: agent owns all its capabilities. This value propagates
+                // through Inherit and gates child cross-cell targeting (line ~738),
+                // but chain-walking (ParentsOwn vs None) is not yet implemented.
+                DelegationMode::ParentsOwn,
                 &mut computrons_used,
                 turn.fee,
                 &mut all_effects_hashes,
@@ -241,6 +303,12 @@ impl TurnExecutor {
             if let Err((error, path)) = result {
                 // Rollback: replay journal in reverse to restore ledger.
                 journal.rollback(ledger);
+                // Fast unlock: refund the budget debit on turn failure.
+                if let (Some(gate_cell), Some((digest, fee))) =
+                    (&self.budget_gate, &budget_debit_digest)
+                {
+                    gate_cell.borrow_mut().fast_unlock(*fee, digest);
+                }
                 return TurnResult::Rejected {
                     reason: error,
                     at_action: path,
@@ -251,6 +319,11 @@ impl TurnExecutor {
         // Check total cost against fee.
         if computrons_used > turn.fee {
             journal.rollback(ledger);
+            if let (Some(gate_cell), Some((digest, fee))) =
+                (&self.budget_gate, &budget_debit_digest)
+            {
+                gate_cell.borrow_mut().fast_unlock(*fee, digest);
+            }
             return TurnResult::Rejected {
                 reason: TurnError::BudgetExceeded {
                     limit: turn.fee,
@@ -265,6 +338,11 @@ impl TurnExecutor {
         // balance excess (notes are a separate value domain).
         if let Err(error) = self.check_note_conservation(turn) {
             journal.rollback(ledger);
+            if let (Some(gate_cell), Some((digest, fee))) =
+                (&self.budget_gate, &budget_debit_digest)
+            {
+                gate_cell.borrow_mut().fast_unlock(*fee, digest);
+            }
             return TurnResult::Rejected {
                 reason: TurnError::NoteConservationViolation {
                     asset_type: error.0,
@@ -278,6 +356,11 @@ impl TurnExecutor {
         // Check excess conservation law: must be zero at turn end.
         if excess != 0 {
             journal.rollback(ledger);
+            if let (Some(gate_cell), Some((digest, fee))) =
+                (&self.budget_gate, &budget_debit_digest)
+            {
+                gate_cell.borrow_mut().fast_unlock(*fee, digest);
+            }
             return TurnResult::Rejected {
                 reason: TurnError::ExcessNotZero { excess },
                 at_action: vec![],
@@ -294,7 +377,8 @@ impl TurnExecutor {
         let forest_hash = turn_clone.call_forest.forest_hash;
 
         // Build ledger delta from the journal and Phase 1 (fee + nonce) commitment.
-        let delta = Self::compute_delta_from_journal_with_fee(&journal, ledger, &turn.agent, turn.fee);
+        let delta =
+            Self::compute_delta_from_journal_with_fee(&journal, ledger, &turn.agent, turn.fee);
 
         let receipt = TurnReceipt {
             turn_hash,
@@ -343,7 +427,9 @@ impl TurnExecutor {
             }
         }
 
-        let agent_cell = ledger.get(&turn.agent).ok_or(TurnError::CellNotFound { id: turn.agent })?;
+        let agent_cell = ledger
+            .get(&turn.agent)
+            .ok_or(TurnError::CellNotFound { id: turn.agent })?;
 
         if agent_cell.state.nonce != turn.nonce {
             return Err(TurnError::NonceReplay {
@@ -394,30 +480,35 @@ impl TurnExecutor {
         *computrons_used = computrons_used.saturating_add(self.costs.action_base);
         if *computrons_used > budget {
             return Err((
-                TurnError::BudgetExceeded { limit: budget, used: *computrons_used },
+                TurnError::BudgetExceeded {
+                    limit: budget,
+                    used: *computrons_used,
+                },
                 path,
             ));
         }
 
         // Check target cell exists.
-        let target_cell = ledger.get(&action.target).ok_or_else(|| {
-            (TurnError::CellNotFound { id: action.target }, path.clone())
-        })?;
+        let target_cell = ledger
+            .get(&action.target)
+            .ok_or_else(|| (TurnError::CellNotFound { id: action.target }, path.clone()))?;
 
         // Check capability: does the parent have access to the target?
         // The agent (top-level parent) implicitly has access to itself.
         // For other cells, the parent must hold a capability.
         if &action.target != parent_cell {
-            let parent = ledger.get(parent_cell).ok_or_else(|| {
-                (TurnError::CellNotFound { id: *parent_cell }, path.clone())
-            })?;
+            let parent = ledger
+                .get(parent_cell)
+                .ok_or_else(|| (TurnError::CellNotFound { id: *parent_cell }, path.clone()))?;
 
-            let has_capability = parent.capabilities.has_access(&action.target);
+            let has_capability = Self::has_access_including_delegation(parent, &action.target);
 
             // Check delegation mode: if parent_delegation is None, child actions cannot
             // use the parent's capabilities to reach non-parent cells.
             if !has_capability {
-                // Check if delegation allows reaching this target.
+                // TODO: DelegationMode::ParentsOwn and Inherit are not yet implemented.
+                // Currently all modes fall through to direct capability check.
+                // Use Effect::Introduce for explicit capability transfer between cells.
                 match parent_delegation {
                     DelegationMode::None => {
                         return Err((
@@ -428,8 +519,10 @@ impl TurnExecutor {
                             path,
                         ));
                     }
-                    DelegationMode::ParentsOwn | DelegationMode::Inherit => {
-                        // Still need the capability to be held by someone in the chain.
+                    DelegationMode::ParentsOwn | DelegationMode::Inherit | DelegationMode::SnapshotRefresh => {
+                        // TODO: Should walk the delegation chain (Cell.delegate) to find
+                        // an ancestor that holds the capability. Currently behaves
+                        // identically to DelegationMode::None.
                         return Err((
                             TurnError::CapabilityNotHeld {
                                 actor: *parent_cell,
@@ -446,7 +539,7 @@ impl TurnExecutor {
         self.check_preconditions(&action.preconditions, target_cell, &path)?;
 
         // Verify authorization (including signature/proof verification).
-        self.verify_authorization(action, target_cell, ledger, &path)?;
+        self.verify_authorization(action, target_cell, ledger, parent_cell, &path)?;
 
         // Meter authorization cost.
         let auth_cost = match &action.authorization {
@@ -458,7 +551,10 @@ impl TurnExecutor {
         *computrons_used = computrons_used.saturating_add(auth_cost);
         if *computrons_used > budget {
             return Err((
-                TurnError::BudgetExceeded { limit: budget, used: *computrons_used },
+                TurnError::BudgetExceeded {
+                    limit: budget,
+                    used: *computrons_used,
+                },
                 path,
             ));
         }
@@ -474,13 +570,17 @@ impl TurnExecutor {
         // in verify_authorization which ran before any effects were applied).
         // This prevents an action from SetPermissions -> exploit weakened perms.
         // =====================================================================
-        let (regular_effects, permission_effects): (Vec<&Effect>, Vec<&Effect>) =
-            action.effects.iter().partition(|e| !e.is_permission_effect());
+        let (regular_effects, permission_effects): (Vec<&Effect>, Vec<&Effect>) = action
+            .effects
+            .iter()
+            .partition(|e| !e.is_permission_effect());
 
         // Apply effects, tracking which cells have fields set (for proved_state).
         let is_proof_auth = matches!(&action.authorization, Authorization::Proof(_));
-        let mut proof_field_sets: std::collections::HashMap<CellId, std::collections::HashSet<usize>> =
-            std::collections::HashMap::new();
+        let mut proof_field_sets: std::collections::HashMap<
+            CellId,
+            std::collections::HashSet<usize>,
+        > = std::collections::HashMap::new();
         let mut non_proof_field_cells: std::collections::HashSet<CellId> =
             std::collections::HashSet::new();
 
@@ -490,7 +590,10 @@ impl TurnExecutor {
             *computrons_used = computrons_used.saturating_add(effect_cost);
             if *computrons_used > budget {
                 return Err((
-                    TurnError::BudgetExceeded { limit: budget, used: *computrons_used },
+                    TurnError::BudgetExceeded {
+                        limit: budget,
+                        used: *computrons_used,
+                    },
                     path.clone(),
                 ));
             }
@@ -514,7 +617,10 @@ impl TurnExecutor {
             *computrons_used = computrons_used.saturating_add(effect_cost);
             if *computrons_used > budget {
                 return Err((
-                    TurnError::BudgetExceeded { limit: budget, used: *computrons_used },
+                    TurnError::BudgetExceeded {
+                        limit: budget,
+                        used: *computrons_used,
+                    },
                     path.clone(),
                 ));
             }
@@ -550,9 +656,9 @@ impl TurnExecutor {
 
         // Apply balance_change (Mina-style excess tracking).
         if let Some(delta) = action.balance_change {
-            let target = ledger.get(&action.target).ok_or_else(|| {
-                (TurnError::CellNotFound { id: action.target }, path.clone())
-            })?;
+            let target = ledger
+                .get(&action.target)
+                .ok_or_else(|| (TurnError::CellNotFound { id: action.target }, path.clone()))?;
             let current_balance = target.state.balance;
 
             // Check for underflow on withdrawal (negative delta).
@@ -573,7 +679,9 @@ impl TurnExecutor {
                 let abs_delta = delta as u64;
                 if current_balance.checked_add(abs_delta).is_none() {
                     return Err((
-                        TurnError::BalanceOverflow { cell: action.target },
+                        TurnError::BalanceOverflow {
+                            cell: action.target,
+                        },
                         path.clone(),
                     ));
                 }
@@ -592,7 +700,12 @@ impl TurnExecutor {
             // deposit (positive delta) CONSUMES excess (subtracts from excess).
             // excess += -delta
             *excess = excess.checked_sub(delta).ok_or_else(|| {
-                (TurnError::BalanceOverflow { cell: action.target }, path.clone())
+                (
+                    TurnError::BalanceOverflow {
+                        cell: action.target,
+                    },
+                    path.clone(),
+                )
             })?;
         }
 
@@ -602,10 +715,9 @@ impl TurnExecutor {
                 // For Circuit programs, the action must carry a proof (already verified above).
                 // For Predicate programs, evaluate constraints against new state.
                 if !target_cell.program.requires_proof() {
-                    let result = target_cell.program.evaluate(
-                        &target_cell.state,
-                        old_target_state.as_ref(),
-                    );
+                    let result = target_cell
+                        .program
+                        .evaluate(&target_cell.state, old_target_state.as_ref());
                     if let Err(e) = result {
                         return Err((
                             TurnError::ProgramViolation {
@@ -623,14 +735,19 @@ impl TurnExecutor {
         }
 
         // Recurse into children.
+        // NOTE: This resolution determines whether children can target *different* cells.
+        // DelegationMode::None prevents cross-cell targeting (enforced below).
+        // ParentsOwn/Inherit allow cross-cell targeting but do NOT yet grant the parent's
+        // capabilities — the child still needs its own direct capability to succeed.
         let child_delegation = match action.may_delegate {
             DelegationMode::None => DelegationMode::None,
             DelegationMode::ParentsOwn => DelegationMode::ParentsOwn,
             DelegationMode::Inherit => parent_delegation,
+            DelegationMode::SnapshotRefresh => DelegationMode::SnapshotRefresh,
         };
 
         for (child_idx, child) in tree.children.iter().enumerate() {
-            // Check delegation permission.
+            // Check delegation permission: None means children must target same cell as parent.
             if child_delegation == DelegationMode::None && child.action.target != action.target {
                 return Err((
                     TurnError::DelegationDenied {
@@ -677,14 +794,16 @@ impl TurnExecutor {
             timestamp: self.current_timestamp,
         };
 
-        preconditions.evaluate(&target_cell.state, &ctx).map_err(|e| {
-            (
-                TurnError::PreconditionFailed {
-                    description: format!("{e:?}"),
-                },
-                path.to_vec(),
-            )
-        })
+        preconditions
+            .evaluate(&target_cell.state, &ctx)
+            .map_err(|e| {
+                (
+                    TurnError::PreconditionFailed {
+                        description: format!("{e:?}"),
+                    },
+                    path.to_vec(),
+                )
+            })
     }
 
     /// Verify that the action's authorization satisfies the target cell's permission requirements.
@@ -697,6 +816,7 @@ impl TurnExecutor {
         action: &Action,
         target_cell: &Cell,
         ledger: &Ledger,
+        actor_cell_id: &CellId,
         path: &[usize],
     ) -> Result<(), (TurnError, Vec<usize>)> {
         // Determine ALL required permissions for this action's effects.
@@ -716,7 +836,9 @@ impl TurnExecutor {
 
         // If no effects produced any specific permission, check general access.
         if required_actions.is_empty() {
-            most_restrictive = target_cell.permissions.for_action(pyana_cell::permissions::Action::Access);
+            most_restrictive = target_cell
+                .permissions
+                .for_action(pyana_cell::permissions::Action::Access);
             most_restrictive_action_name = "Access";
         }
 
@@ -724,6 +846,8 @@ impl TurnExecutor {
         self.check_single_auth_requirement(
             action,
             target_cell,
+            ledger,
+            actor_cell_id,
             most_restrictive,
             most_restrictive_action_name,
             path,
@@ -733,7 +857,9 @@ impl TurnExecutor {
         for effect in &action.effects {
             if let Effect::Transfer { to, .. } = effect {
                 if let Some(dest_cell) = ledger.get(to) {
-                    let receive_req = dest_cell.permissions.for_action(pyana_cell::permissions::Action::Receive);
+                    let receive_req = dest_cell
+                        .permissions
+                        .for_action(pyana_cell::permissions::Action::Receive);
                     if matches!(receive_req, AuthRequired::Impossible) {
                         return Err((
                             TurnError::PermissionDenied {
@@ -766,6 +892,8 @@ impl TurnExecutor {
         &self,
         action: &Action,
         target_cell: &Cell,
+        ledger: &Ledger,
+        actor_cell_id: &CellId,
         auth_required: &AuthRequired,
         action_name: &str,
         path: &[usize],
@@ -784,9 +912,15 @@ impl TurnExecutor {
                 Authorization::Signature(r, s) => {
                     self.verify_ed25519_signature(action, target_cell, r, s, path)
                 }
-                Authorization::Breadstuff(token) => {
-                    self.check_breadstuff(target_cell, token, action_name, auth_required, path, action.target)
-                }
+                Authorization::Breadstuff(token) => self.check_breadstuff(
+                    ledger,
+                    actor_cell_id,
+                    token,
+                    action_name,
+                    auth_required,
+                    path,
+                    action.target,
+                ),
                 _ => Err((
                     TurnError::PermissionDenied {
                         cell: action.target,
@@ -816,9 +950,15 @@ impl TurnExecutor {
                 Authorization::Proof(proof_bytes) => {
                     self.verify_zk_proof(action, target_cell, proof_bytes, path)
                 }
-                Authorization::Breadstuff(token) => {
-                    self.check_breadstuff(target_cell, token, action_name, auth_required, path, action.target)
-                }
+                Authorization::Breadstuff(token) => self.check_breadstuff(
+                    ledger,
+                    actor_cell_id,
+                    token,
+                    action_name,
+                    auth_required,
+                    path,
+                    action.target,
+                ),
                 Authorization::None => Err((
                     TurnError::PermissionDenied {
                         cell: action.target,
@@ -926,18 +1066,32 @@ impl TurnExecutor {
     }
 
     /// Check breadstuff (capability token) authorization.
+    ///
+    /// The breadstuff token must be held in the ACTOR's (parent cell's) capability
+    /// list, not the target's. The actor presents a breadstuff token they hold as
+    /// proof of their authority to act on the target cell.
     fn check_breadstuff(
         &self,
-        target_cell: &Cell,
+        ledger: &Ledger,
+        actor_cell_id: &CellId,
         token: &[u8; 32],
         action_name: &str,
         auth_required: &AuthRequired,
         path: &[usize],
         target_id: CellId,
     ) -> Result<(), (TurnError, Vec<usize>)> {
-        let has_matching = target_cell.capabilities.iter().any(|cap| {
-            cap.breadstuff.as_ref() == Some(token)
-        });
+        let actor_cell = ledger.get(actor_cell_id).ok_or_else(|| {
+            (
+                TurnError::CellNotFound {
+                    id: *actor_cell_id,
+                },
+                path.to_vec(),
+            )
+        })?;
+        let has_matching = actor_cell
+            .capabilities
+            .iter()
+            .any(|cap| cap.breadstuff.as_ref() == Some(token));
         if has_matching {
             Ok(())
         } else {
@@ -1022,7 +1176,10 @@ impl TurnExecutor {
                     has_set_state = true;
                 }
                 Effect::IncrementNonce { .. } if !has_increment_nonce => {
-                    result.push((pyana_cell::permissions::Action::IncrementNonce, "IncrementNonce"));
+                    result.push((
+                        pyana_cell::permissions::Action::IncrementNonce,
+                        "IncrementNonce",
+                    ));
                     has_increment_nonce = true;
                 }
                 Effect::GrantCapability { .. } if !has_delegate => {
@@ -1034,10 +1191,16 @@ impl TurnExecutor {
                     has_delegate = true;
                 }
                 Effect::SetPermissions { .. } => {
-                    result.push((pyana_cell::permissions::Action::SetPermissions, "SetPermissions"));
+                    result.push((
+                        pyana_cell::permissions::Action::SetPermissions,
+                        "SetPermissions",
+                    ));
                 }
                 Effect::SetVerificationKey { .. } => {
-                    result.push((pyana_cell::permissions::Action::SetVerificationKey, "SetVerificationKey"));
+                    result.push((
+                        pyana_cell::permissions::Action::SetVerificationKey,
+                        "SetVerificationKey",
+                    ));
                 }
                 _ => {}
             }
@@ -1064,19 +1227,26 @@ impl TurnExecutor {
             Effect::SetField { cell, index, value } => {
                 if *index >= STATE_SLOTS {
                     return Err((
-                        TurnError::InvalidFieldIndex { cell: *cell, index: *index },
+                        TurnError::InvalidFieldIndex {
+                            cell: *cell,
+                            index: *index,
+                        },
                         path.to_vec(),
                     ));
                 }
                 if cell != action_target {
                     self.check_cross_cell_permission(
-                        ledger, actor, cell,
-                        pyana_cell::permissions::Action::SetState, "SetState", path,
+                        ledger,
+                        actor,
+                        cell,
+                        pyana_cell::permissions::Action::SetState,
+                        "SetState",
+                        path,
                     )?;
                 }
-                let c = ledger.get_mut(cell).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *cell }, path.to_vec())
-                })?;
+                let c = ledger
+                    .get_mut(cell)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *cell }, path.to_vec()))?;
                 journal.record_set_field(*cell, *index, c.state.fields[*index]);
                 c.state.fields[*index] = *value;
                 Ok(())
@@ -1085,13 +1255,17 @@ impl TurnExecutor {
             Effect::Transfer { from, to, amount } => {
                 if from != action_target {
                     self.check_cross_cell_permission(
-                        ledger, actor, from,
-                        pyana_cell::permissions::Action::Send, "Send", path,
+                        ledger,
+                        actor,
+                        from,
+                        pyana_cell::permissions::Action::Send,
+                        "Send",
+                        path,
                     )?;
                 }
-                let from_cell = ledger.get(from).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *from }, path.to_vec())
-                })?;
+                let from_cell = ledger
+                    .get(from)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *from }, path.to_vec()))?;
                 if from_cell.state.balance < *amount {
                     return Err((
                         TurnError::InsufficientBalance {
@@ -1103,17 +1277,11 @@ impl TurnExecutor {
                     ));
                 }
                 if ledger.get(to).is_none() {
-                    return Err((
-                        TurnError::TransferDestNotFound { id: *to },
-                        path.to_vec(),
-                    ));
+                    return Err((TurnError::TransferDestNotFound { id: *to }, path.to_vec()));
                 }
                 let to_balance = ledger.get(to).unwrap().state.balance;
                 if to_balance.checked_add(*amount).is_none() {
-                    return Err((
-                        TurnError::BalanceOverflow { cell: *to },
-                        path.to_vec(),
-                    ));
+                    return Err((TurnError::BalanceOverflow { cell: *to }, path.to_vec()));
                 }
                 // Record old balances, then apply.
                 let old_from_balance = ledger.get(from).unwrap().state.balance;
@@ -1128,18 +1296,30 @@ impl TurnExecutor {
             Effect::GrantCapability { from, to, cap } => {
                 if from != action_target {
                     self.check_cross_cell_permission(
-                        ledger, actor, from,
-                        pyana_cell::permissions::Action::Delegate, "Delegate", path,
+                        ledger,
+                        actor,
+                        from,
+                        pyana_cell::permissions::Action::Delegate,
+                        "Delegate",
+                        path,
                     )?;
                 }
 
-                let from_cell = ledger.get(from).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *from }, path.to_vec())
-                })?;
+                let from_cell = ledger
+                    .get(from)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *from }, path.to_vec()))?;
 
-                let held_cap = from_cell.capabilities.lookup_by_target(&cap.target)
+                let held_cap = from_cell
+                    .capabilities
+                    .lookup_by_target(&cap.target)
                     .ok_or_else(|| {
-                        (TurnError::CapabilityNotHeld { actor: *from, target: cap.target }, path.to_vec())
+                        (
+                            TurnError::CapabilityNotHeld {
+                                actor: *from,
+                                target: cap.target,
+                            },
+                            path.to_vec(),
+                        )
                     })?;
 
                 if !pyana_cell::is_attenuation(&held_cap.permissions, &cap.permissions) {
@@ -1152,9 +1332,9 @@ impl TurnExecutor {
                     ));
                 }
 
-                let to_cell = ledger.get_mut(to).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *to }, path.to_vec())
-                })?;
+                let to_cell = ledger
+                    .get_mut(to)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *to }, path.to_vec()))?;
                 let granted_slot = to_cell.capabilities.grant_with_breadstuff(
                     cap.target,
                     cap.permissions.clone(),
@@ -1167,13 +1347,17 @@ impl TurnExecutor {
             Effect::RevokeCapability { cell, slot } => {
                 if cell != action_target {
                     self.check_cross_cell_permission(
-                        ledger, actor, cell,
-                        pyana_cell::permissions::Action::Delegate, "Delegate", path,
+                        ledger,
+                        actor,
+                        cell,
+                        pyana_cell::permissions::Action::Delegate,
+                        "Delegate",
+                        path,
                     )?;
                 }
-                let c = ledger.get_mut(cell).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *cell }, path.to_vec())
-                })?;
+                let c = ledger
+                    .get_mut(cell)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *cell }, path.to_vec()))?;
                 if let Some(old_cap) = c.capabilities.lookup(*slot).cloned() {
                     journal.record_revoke_capability(*cell, old_cap);
                 }
@@ -1183,10 +1367,7 @@ impl TurnExecutor {
 
             Effect::EmitEvent { cell, .. } => {
                 if ledger.get(cell).is_none() {
-                    return Err((
-                        TurnError::CellNotFound { id: *cell },
-                        path.to_vec(),
-                    ));
+                    return Err((TurnError::CellNotFound { id: *cell }, path.to_vec()));
                 }
                 Ok(())
             }
@@ -1194,44 +1375,61 @@ impl TurnExecutor {
             Effect::IncrementNonce { cell } => {
                 if cell != action_target {
                     self.check_cross_cell_permission(
-                        ledger, actor, cell,
-                        pyana_cell::permissions::Action::IncrementNonce, "IncrementNonce", path,
+                        ledger,
+                        actor,
+                        cell,
+                        pyana_cell::permissions::Action::IncrementNonce,
+                        "IncrementNonce",
+                        path,
                     )?;
                 }
-                let c = ledger.get_mut(cell).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *cell }, path.to_vec())
-                })?;
+                let c = ledger
+                    .get_mut(cell)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *cell }, path.to_vec()))?;
                 journal.record_set_nonce(*cell, c.state.nonce);
                 c.state.increment_nonce();
                 Ok(())
             }
 
-            Effect::CreateCell { public_key, token_id, balance } => {
+            Effect::CreateCell {
+                public_key,
+                token_id,
+                balance,
+            } => {
                 if *balance != 0 {
                     return Err((
-                        TurnError::BalanceOverflow { cell: CellId::derive_raw(public_key, token_id) },
+                        TurnError::BalanceOverflow {
+                            cell: CellId::derive_raw(public_key, token_id),
+                        },
                         path.to_vec(),
                     ));
                 }
                 let new_cell = Cell::with_balance(*public_key, *token_id, 0);
                 let id = new_cell.id;
-                ledger.insert_cell(new_cell).map_err(|_| {
-                    (TurnError::CellAlreadyExists { id }, path.to_vec())
-                })?;
+                ledger
+                    .insert_cell(new_cell)
+                    .map_err(|_| (TurnError::CellAlreadyExists { id }, path.to_vec()))?;
                 journal.record_create_cell(id);
                 Ok(())
             }
 
-            Effect::SetPermissions { cell, new_permissions } => {
+            Effect::SetPermissions {
+                cell,
+                new_permissions,
+            } => {
                 if cell != action_target {
                     self.check_cross_cell_permission(
-                        ledger, actor, cell,
-                        pyana_cell::permissions::Action::SetPermissions, "SetPermissions", path,
+                        ledger,
+                        actor,
+                        cell,
+                        pyana_cell::permissions::Action::SetPermissions,
+                        "SetPermissions",
+                        path,
                     )?;
                 }
-                let c = ledger.get_mut(cell).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *cell }, path.to_vec())
-                })?;
+                let c = ledger
+                    .get_mut(cell)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *cell }, path.to_vec()))?;
                 journal.record_set_permissions(*cell, c.permissions.clone());
                 c.permissions = new_permissions.clone();
                 Ok(())
@@ -1240,13 +1438,17 @@ impl TurnExecutor {
             Effect::SetVerificationKey { cell, new_vk } => {
                 if cell != action_target {
                     self.check_cross_cell_permission(
-                        ledger, actor, cell,
-                        pyana_cell::permissions::Action::SetVerificationKey, "SetVerificationKey", path,
+                        ledger,
+                        actor,
+                        cell,
+                        pyana_cell::permissions::Action::SetVerificationKey,
+                        "SetVerificationKey",
+                        path,
                     )?;
                 }
-                let c = ledger.get_mut(cell).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *cell }, path.to_vec())
-                })?;
+                let c = ledger
+                    .get_mut(cell)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *cell }, path.to_vec()))?;
                 journal.record_set_verification_key(*cell, c.verification_key.clone());
                 c.verification_key = new_vk.clone();
                 Ok(())
@@ -1258,12 +1460,25 @@ impl TurnExecutor {
             Effect::NoteSpend { .. } => Ok(()),
             Effect::NoteCreate { .. } => Ok(()),
 
-            // PipelinedSend is resolved at pipeline time, not during turn execution.
-            Effect::PipelinedSend { .. } => Ok(()),
+            // PipelinedSend must be resolved by the pipeline executor's resolution pass
+            // before the turn reaches apply_effect. If we get here, it means the turn
+            // was executed outside of a pipeline without resolution — which is a bug.
+            Effect::PipelinedSend { target, .. } => Err((
+                TurnError::PreconditionFailed {
+                    description: format!(
+                        "unresolved PipelinedSend to EventualRef(source {:02x}{:02x}.., slot {}); \
+                         turn must be executed within a pipeline",
+                        target.source_turn[0], target.source_turn[1], target.output_slot
+                    ),
+                },
+                path.to_vec(),
+            )),
 
             // === Sealer/Unsealer effects (E-style rights amplification) ===
-
-            Effect::CreateSealPair { sealer_holder, unsealer_holder } => {
+            Effect::CreateSealPair {
+                sealer_holder,
+                unsealer_holder,
+            } => {
                 if ledger.get(sealer_holder).is_none() {
                     return Err((
                         TurnError::CellNotFound { id: *sealer_holder },
@@ -1272,7 +1487,9 @@ impl TurnExecutor {
                 }
                 if ledger.get(unsealer_holder).is_none() {
                     return Err((
-                        TurnError::CellNotFound { id: *unsealer_holder },
+                        TurnError::CellNotFound {
+                            id: *unsealer_holder,
+                        },
                         path.to_vec(),
                     ));
                 }
@@ -1302,55 +1519,119 @@ impl TurnExecutor {
                 Ok(())
             }
 
-            Effect::Seal { pair_id, capability } => {
+            Effect::Seal {
+                pair_id,
+                capability,
+            } => {
                 let sealer_cap_id = Self::seal_capability_id(pair_id, true);
-                let actor_cell = ledger.get(actor).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *actor }, path.to_vec())
-                })?;
-                let _sealer_cap = actor_cell.capabilities.lookup_by_target(&sealer_cap_id)
+                let actor_cell = ledger
+                    .get(actor)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *actor }, path.to_vec()))?;
+                let _sealer_cap = actor_cell
+                    .capabilities
+                    .lookup_by_target(&sealer_cap_id)
                     .ok_or_else(|| {
-                        (TurnError::CapabilityNotHeld { actor: *actor, target: sealer_cap_id }, path.to_vec())
+                        (
+                            TurnError::CapabilityNotHeld {
+                                actor: *actor,
+                                target: sealer_cap_id,
+                            },
+                            path.to_vec(),
+                        )
                     })?;
                 let _ = capability;
                 Ok(())
             }
 
-            Effect::Introduce { introducer, recipient, target, permissions } => {
-                let intro_cell = ledger.get(introducer).ok_or_else(|| (TurnError::CellNotFound { id: *introducer }, path.to_vec()))?;
+            Effect::Introduce {
+                introducer,
+                recipient,
+                target,
+                permissions,
+            } => {
+                let intro_cell = ledger
+                    .get(introducer)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *introducer }, path.to_vec()))?;
                 if !intro_cell.capabilities.has_access(recipient) {
-                    return Err((TurnError::IntroductionDenied { introducer: *introducer, recipient: *recipient, target: *target, reason: "introducer has no capability to recipient".to_string() }, path.to_vec()));
+                    return Err((
+                        TurnError::IntroductionDenied {
+                            introducer: *introducer,
+                            recipient: *recipient,
+                            target: *target,
+                            reason: "introducer has no capability to recipient".to_string(),
+                        },
+                        path.to_vec(),
+                    ));
                 }
-                let held_cap = intro_cell.capabilities.lookup_by_target(target).ok_or_else(|| (TurnError::IntroductionDenied { introducer: *introducer, recipient: *recipient, target: *target, reason: "introducer has no capability to target".to_string() }, path.to_vec()))?;
+                let held_cap = intro_cell
+                    .capabilities
+                    .lookup_by_target(target)
+                    .ok_or_else(|| {
+                        (
+                            TurnError::IntroductionDenied {
+                                introducer: *introducer,
+                                recipient: *recipient,
+                                target: *target,
+                                reason: "introducer has no capability to target".to_string(),
+                            },
+                            path.to_vec(),
+                        )
+                    })?;
                 if !pyana_cell::is_attenuation(&held_cap.permissions, permissions) {
-                    return Err((TurnError::IntroductionDenied { introducer: *introducer, recipient: *recipient, target: *target, reason: "granted permissions exceed introducer's own (amplification denied)".to_string() }, path.to_vec()));
+                    return Err((
+                        TurnError::IntroductionDenied {
+                            introducer: *introducer,
+                            recipient: *recipient,
+                            target: *target,
+                            reason:
+                                "granted permissions exceed introducer's own (amplification denied)"
+                                    .to_string(),
+                        },
+                        path.to_vec(),
+                    ));
                 }
-                if ledger.get(recipient).is_none() { return Err((TurnError::CellNotFound { id: *recipient }, path.to_vec())); }
+                if ledger.get(recipient).is_none() {
+                    return Err((TurnError::CellNotFound { id: *recipient }, path.to_vec()));
+                }
                 let recipient_cell = ledger.get_mut(recipient).unwrap();
-                let granted_slot = recipient_cell.capabilities.grant(*target, permissions.clone());
+                let granted_slot = recipient_cell
+                    .capabilities
+                    .grant(*target, permissions.clone());
                 journal.record_grant_capability(*recipient, granted_slot);
                 Ok(())
             }
 
-            Effect::Unseal { sealed_box, recipient } => {
+            Effect::Unseal {
+                sealed_box,
+                recipient,
+            } => {
                 if ledger.get(recipient).is_none() {
-                    return Err((
-                        TurnError::CellNotFound { id: *recipient },
-                        path.to_vec(),
-                    ));
+                    return Err((TurnError::CellNotFound { id: *recipient }, path.to_vec()));
                 }
 
                 let unsealer_cap_id = Self::seal_capability_id(&sealed_box.pair_id, false);
-                let actor_cell = ledger.get(actor).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *actor }, path.to_vec())
-                })?;
-                let unsealer_cap = actor_cell.capabilities.lookup_by_target(&unsealer_cap_id)
+                let actor_cell = ledger
+                    .get(actor)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *actor }, path.to_vec()))?;
+                let unsealer_cap = actor_cell
+                    .capabilities
+                    .lookup_by_target(&unsealer_cap_id)
                     .ok_or_else(|| {
-                        (TurnError::CapabilityNotHeld { actor: *actor, target: unsealer_cap_id }, path.to_vec())
+                        (
+                            TurnError::CapabilityNotHeld {
+                                actor: *actor,
+                                target: unsealer_cap_id,
+                            },
+                            path.to_vec(),
+                        )
                     })?;
                 let unsealer_secret = unsealer_cap.breadstuff.ok_or_else(|| {
-                    (TurnError::InvalidAuthorization {
-                        reason: "unsealer capability missing key material".to_string(),
-                    }, path.to_vec())
+                    (
+                        TurnError::InvalidAuthorization {
+                            reason: "unsealer capability missing key material".to_string(),
+                        },
+                        path.to_vec(),
+                    )
                 })?;
 
                 let mut pair = pyana_cell::SealPair::from_keys([0u8; 32], unsealer_secret);
@@ -1369,17 +1650,127 @@ impl TurnExecutor {
                         journal.record_grant_capability(*recipient, granted_slot);
                         Ok(())
                     }
-                    Err(_) => {
-                        Err((
-                            TurnError::InvalidAuthorization {
-                                reason: "sealed box decryption/verification failed".to_string(),
-                            },
-                            path.to_vec(),
-                        ))
-                    }
+                    Err(_) => Err((
+                        TurnError::InvalidAuthorization {
+                            reason: "sealed box decryption/verification failed".to_string(),
+                        },
+                        path.to_vec(),
+                    )),
                 }
             }
+            Effect::SpawnWithDelegation {
+                child_public_key,
+                child_token_id,
+                max_staleness,
+            } => {
+                let parent_cell_data = ledger.get(action_target).ok_or_else(|| {
+                    (TurnError::CellNotFound { id: *action_target }, path.to_vec())
+                })?;
+                let delegation_epoch = parent_cell_data.state.delegation_epoch;
+                let now = self.current_timestamp as u64;
+                let snapshot: Vec<pyana_cell::CapabilityRef> =
+                    parent_cell_data.capabilities.iter().cloned().collect();
+
+                let child_id = CellId::derive_raw(child_public_key, child_token_id);
+                let mut child_cell =
+                    Cell::with_balance(*child_public_key, *child_token_id, 0);
+                child_cell.id = child_id;
+                child_cell.delegate = Some(*action_target);
+                child_cell.delegation = Some(pyana_cell::DelegatedRef::new(
+                    *action_target,
+                    snapshot,
+                    delegation_epoch,
+                    now,
+                    *max_staleness,
+                ));
+
+                ledger.insert_cell(child_cell).map_err(|_| {
+                    (TurnError::CellAlreadyExists { id: child_id }, path.to_vec())
+                })?;
+                journal.record_create_cell(child_id);
+                Ok(())
+            }
+
+            Effect::RefreshDelegation => {
+                let child_cell = ledger.get(action_target).ok_or_else(|| {
+                    (TurnError::CellNotFound { id: *action_target }, path.to_vec())
+                })?;
+                let parent_id = child_cell.delegate.ok_or_else(|| {
+                    (
+                        TurnError::InvalidAuthorization {
+                            reason: "cell has no delegate (parent) to refresh from"
+                                .to_string(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                let max_staleness = child_cell
+                    .delegation
+                    .as_ref()
+                    .map(|d| d.max_staleness)
+                    .unwrap_or(0);
+
+                let parent_cell_data = ledger.get(&parent_id).ok_or_else(|| {
+                    (TurnError::CellNotFound { id: parent_id }, path.to_vec())
+                })?;
+                let new_snapshot: Vec<pyana_cell::CapabilityRef> =
+                    parent_cell_data.capabilities.iter().cloned().collect();
+                let new_epoch = parent_cell_data.state.delegation_epoch;
+                let now = self.current_timestamp as u64;
+
+                let child_mut = ledger.get_mut(action_target).unwrap();
+                child_mut.delegation = Some(pyana_cell::DelegatedRef::new(
+                    parent_id,
+                    new_snapshot,
+                    new_epoch,
+                    now,
+                    max_staleness,
+                ));
+                Ok(())
+            }
+
+            Effect::RevokeDelegation { child } => {
+                let child_cell = ledger.get(child).ok_or_else(|| {
+                    (TurnError::CellNotFound { id: *child }, path.to_vec())
+                })?;
+                if child_cell.delegate != Some(*action_target) {
+                    return Err((
+                        TurnError::DelegationDenied {
+                            parent: *action_target,
+                            child_target: *child,
+                        },
+                        path.to_vec(),
+                    ));
+                }
+
+                let parent_mut = ledger.get_mut(action_target).unwrap();
+                parent_mut.state.bump_delegation_epoch();
+
+                let child_mut = ledger.get_mut(child).unwrap();
+                child_mut.delegation = None;
+                Ok(())
+            }
         }
+    }
+
+    /// Check if a cell has access to a target, considering both direct capabilities
+    /// and delegated capability snapshots.
+    ///
+    /// NOTE: We do NOT check staleness here — that is the ACCEPTOR's job at
+    /// verification time, not execution time. The executor allows the action;
+    /// remote verifiers decide freshness.
+    fn has_access_including_delegation(cell: &Cell, target: &CellId) -> bool {
+        // Direct capability
+        if cell.capabilities.has_access(target) {
+            return true;
+        }
+        // Delegated capability (from snapshot)
+        if let Some(ref delegation) = cell.delegation {
+            if delegation.has_capability(target) {
+                return true;
+            }
+        }
+        false
     }
 
     /// SECURITY: Check that the actor holds a capability to the given cell AND that
@@ -1394,10 +1785,10 @@ impl TurnExecutor {
         path: &[usize],
     ) -> Result<(), (TurnError, Vec<usize>)> {
         if actor != target_cell_id {
-            let actor_cell = ledger.get(actor).ok_or_else(|| {
-                (TurnError::CellNotFound { id: *actor }, path.to_vec())
-            })?;
-            if !actor_cell.capabilities.has_access(target_cell_id) {
+            let actor_cell = ledger
+                .get(actor)
+                .ok_or_else(|| (TurnError::CellNotFound { id: *actor }, path.to_vec()))?;
+            if !Self::has_access_including_delegation(actor_cell, target_cell_id) {
                 return Err((
                     TurnError::CapabilityNotHeld {
                         actor: *actor,
@@ -1409,7 +1800,12 @@ impl TurnExecutor {
         }
 
         let cell = ledger.get(target_cell_id).ok_or_else(|| {
-            (TurnError::CellNotFound { id: *target_cell_id }, path.to_vec())
+            (
+                TurnError::CellNotFound {
+                    id: *target_cell_id,
+                },
+                path.to_vec(),
+            )
         })?;
         let required = cell.permissions.for_action(permission_action);
         if matches!(required, AuthRequired::Impossible) {
@@ -1445,9 +1841,7 @@ impl TurnExecutor {
             Effect::SetField { .. } => 0,
             Effect::GrantCapability { .. } => self.costs.effect_base,
             Effect::RevokeCapability { .. } => 0,
-            Effect::EmitEvent { event, .. } => {
-                (event.data.len() as u64) * self.costs.per_byte * 32
-            }
+            Effect::EmitEvent { event, .. } => (event.data.len() as u64) * self.costs.per_byte * 32,
             Effect::IncrementNonce { .. } => 0,
             Effect::SetPermissions { .. } => self.costs.effect_base,
             Effect::SetVerificationKey { .. } => self.costs.effect_base,
@@ -1458,10 +1852,12 @@ impl TurnExecutor {
             Effect::Seal { .. } => self.costs.effect_base,
             Effect::Unseal { .. } => self.costs.effect_base,
             Effect::Introduce { .. } => self.costs.effect_base,
+            Effect::SpawnWithDelegation { .. } => self.costs.create_cell,
+            Effect::RefreshDelegation => self.costs.effect_base,
+            Effect::RevokeDelegation { .. } => self.costs.effect_base,
         };
-        base.saturating_add(extra).saturating_add(
-            (effect.data_bytes() as u64).saturating_mul(self.costs.per_byte),
-        )
+        base.saturating_add(extra)
+            .saturating_add((effect.data_bytes() as u64).saturating_mul(self.costs.per_byte))
     }
 
     /// Estimate the cost of a tree (without actually applying it).
@@ -1517,10 +1913,8 @@ impl TurnExecutor {
         self.collect_note_effects(&turn.call_forest, &mut inputs, &mut outputs)?;
 
         // Check conservation for each asset type.
-        let all_asset_types: std::collections::HashSet<u64> = inputs.keys()
-            .chain(outputs.keys())
-            .copied()
-            .collect();
+        let all_asset_types: std::collections::HashSet<u64> =
+            inputs.keys().chain(outputs.keys()).copied().collect();
 
         for asset_type in all_asset_types {
             let input_total = inputs.get(&asset_type).copied().unwrap_or(0);
@@ -1555,13 +1949,21 @@ impl TurnExecutor {
     ) -> Result<(), (u64, u64, u64)> {
         for effect in &tree.action.effects {
             match effect {
-                Effect::NoteSpend { value, asset_type, .. } => {
+                Effect::NoteSpend {
+                    value, asset_type, ..
+                } => {
                     let entry = inputs.entry(*asset_type).or_insert(0);
-                    *entry = entry.checked_add(*value).ok_or((*asset_type, u64::MAX, 0))?;
+                    *entry = entry
+                        .checked_add(*value)
+                        .ok_or((*asset_type, u64::MAX, 0))?;
                 }
-                Effect::NoteCreate { value, asset_type, .. } => {
+                Effect::NoteCreate {
+                    value, asset_type, ..
+                } => {
                     let entry = outputs.entry(*asset_type).or_insert(0);
-                    *entry = entry.checked_add(*value).ok_or((*asset_type, 0, u64::MAX))?;
+                    *entry = entry
+                        .checked_add(*value)
+                        .ok_or((*asset_type, 0, u64::MAX))?;
                 }
                 _ => {}
             }
@@ -1608,7 +2010,11 @@ impl TurnExecutor {
                         created_cells.insert(*cell);
                     }
                 }
-                JournalEntry::SetField { cell, index, old_value } => {
+                JournalEntry::SetField {
+                    cell,
+                    index,
+                    old_value,
+                } => {
                     if !created_cells.contains(cell) {
                         first_fields.entry((*cell, *index)).or_insert(*old_value);
                     }
@@ -1627,7 +2033,9 @@ impl TurnExecutor {
                     if !created_cells.contains(cell) {
                         if let Some(c) = ledger.get(cell) {
                             if let Some(cap_ref) = c.capabilities.lookup(*slot) {
-                                let e = updated_cells.entry(*cell).or_insert_with(CellStateDelta::empty);
+                                let e = updated_cells
+                                    .entry(*cell)
+                                    .or_insert_with(CellStateDelta::empty);
                                 e.capability_grants.push(cap_ref.clone());
                             }
                         }
@@ -1635,7 +2043,9 @@ impl TurnExecutor {
                 }
                 JournalEntry::RevokeCapability { cell, old_cap } => {
                     if !created_cells.contains(cell) {
-                        let e = updated_cells.entry(*cell).or_insert_with(CellStateDelta::empty);
+                        let e = updated_cells
+                            .entry(*cell)
+                            .or_insert_with(CellStateDelta::empty);
                         e.capability_revocations.push(old_cap.slot);
                     }
                 }
@@ -1645,7 +2055,9 @@ impl TurnExecutor {
                 }
                 JournalEntry::SetPermissions { cell, .. } => {
                     if !created_cells.contains(cell) {
-                        let e = updated_cells.entry(*cell).or_insert_with(CellStateDelta::empty);
+                        let e = updated_cells
+                            .entry(*cell)
+                            .or_insert_with(CellStateDelta::empty);
                         // Record that permissions changed (the new perms are on the cell now).
                         if let Some(c) = ledger.get(cell) {
                             e.permission_changes = Some(c.permissions.clone());
@@ -1664,7 +2076,9 @@ impl TurnExecutor {
             if let Some(c) = ledger.get(cell_id) {
                 let new_value = c.state.fields[*index];
                 if new_value != *old_value {
-                    let e = updated_cells.entry(*cell_id).or_insert_with(CellStateDelta::empty);
+                    let e = updated_cells
+                        .entry(*cell_id)
+                        .or_insert_with(CellStateDelta::empty);
                     e.field_updates.push((*index, new_value));
                 }
             }
@@ -1674,7 +2088,9 @@ impl TurnExecutor {
             if let Some(c) = ledger.get(cell_id) {
                 let diff = c.state.balance as i128 - *old_balance as i128;
                 if diff != 0 {
-                    let e = updated_cells.entry(*cell_id).or_insert_with(CellStateDelta::empty);
+                    let e = updated_cells
+                        .entry(*cell_id)
+                        .or_insert_with(CellStateDelta::empty);
                     e.balance_change = diff as i64;
                 }
             }
@@ -1683,7 +2099,9 @@ impl TurnExecutor {
         for (cell_id, old_nonce) in &first_nonce {
             if let Some(c) = ledger.get(cell_id) {
                 if c.state.nonce > *old_nonce {
-                    let e = updated_cells.entry(*cell_id).or_insert_with(CellStateDelta::empty);
+                    let e = updated_cells
+                        .entry(*cell_id)
+                        .or_insert_with(CellStateDelta::empty);
                     e.nonce_increment = true;
                 }
             }
@@ -1749,32 +2167,250 @@ impl TurnExecutor {
         CellId::from_bytes(*hasher.finalize().as_bytes())
     }
 
-    fn collect_routing_directives(forest: &crate::forest::CallForest, turn_hash: &[u8; 32]) -> Vec<RoutingDirective> {
+    fn collect_routing_directives(
+        forest: &crate::forest::CallForest,
+        turn_hash: &[u8; 32],
+    ) -> Vec<RoutingDirective> {
         let mut directives = Vec::new();
-        for tree in &forest.roots { Self::collect_routing_directives_tree(tree, turn_hash, &mut directives); }
+        for tree in &forest.roots {
+            Self::collect_routing_directives_tree(tree, turn_hash, &mut directives);
+        }
         directives
     }
 
-    fn collect_routing_directives_tree(tree: &CallTree, turn_hash: &[u8; 32], directives: &mut Vec<RoutingDirective>) {
+    fn collect_routing_directives_tree(
+        tree: &CallTree,
+        turn_hash: &[u8; 32],
+        directives: &mut Vec<RoutingDirective>,
+    ) {
         for effect in &tree.action.effects {
-            if let Effect::Introduce { recipient, target, .. } = effect {
-                directives.push(RoutingDirective { sender: *recipient, target: *target, authorizing_turn: *turn_hash, expires: None });
+            if let Effect::Introduce {
+                recipient, target, ..
+            } = effect
+            {
+                directives.push(RoutingDirective {
+                    sender: *recipient,
+                    target: *target,
+                    authorizing_turn: *turn_hash,
+                    expires: None,
+                });
             }
         }
-        for child in &tree.children { Self::collect_routing_directives_tree(child, turn_hash, directives); }
+        for child in &tree.children {
+            Self::collect_routing_directives_tree(child, turn_hash, directives);
+        }
     }
-
 }
 
 // ─── Pipeline Execution ──────────────────────────────────────────────────────
 
-use crate::eventual::{Pipeline, PipelineError, TurnOutput};
+use crate::eventual::{EventualRef, Pipeline, PipelineError, TurnOutput};
 use std::collections::HashMap;
 
 /// A resolution table mapping (turn_hash, output_slot) to concrete outputs.
 pub type ResolutionTable = HashMap<([u8; 32], u32), TurnOutput>;
 
+/// Resolve a `TurnOutput` to a concrete `CellId`.
+///
+/// - `CreatedCell` → the created cell's ID
+/// - `GrantedCapability` → the target cell that received the capability
+/// - `StateUpdate` → the cell whose state was updated
+/// - `CreatedNote` → cannot be resolved to a CellId (returns error)
+fn resolve_output_to_cell_id(
+    output: &TurnOutput,
+    eventual_ref: &EventualRef,
+) -> Result<CellId, PipelineError> {
+    match output {
+        TurnOutput::CreatedCell { cell } => Ok(*cell),
+        TurnOutput::GrantedCapability { target, .. } => Ok(*target),
+        TurnOutput::StateUpdate { cell, .. } => Ok(*cell),
+        TurnOutput::CreatedNote { .. } => Err(PipelineError::UnresolvedRef {
+            eventual_ref: eventual_ref.clone(),
+            reason: "CreatedNote output cannot be resolved to a CellId".to_string(),
+        }),
+    }
+}
+
+/// Resolve all `PipelinedSend` effects in a turn's call forest using the resolution table.
+///
+/// Each `PipelinedSend { target: EventualRef, action }` is resolved by:
+/// 1. Looking up the EventualRef in the resolution table to get a concrete CellId
+/// 2. Replacing the PipelinedSend effect with the inner action's effects,
+///    re-targeted to the resolved CellId
+/// 3. Adding the inner action as a new root in the call forest
+///
+/// Returns the resolved turn, or a PipelineError if resolution fails.
+fn resolve_turn(turn: &Turn, table: &ResolutionTable) -> Result<Turn, PipelineError> {
+    let mut resolved_turn = turn.clone();
+    let mut new_roots: Vec<crate::forest::CallTree> = Vec::new();
+
+    for root in &mut resolved_turn.call_forest.roots {
+        resolve_tree_effects(root, table, &mut new_roots)?;
+    }
+
+    // Append any newly created roots from resolved PipelinedSend effects.
+    for new_root in new_roots {
+        resolved_turn.call_forest.roots.push(new_root);
+    }
+
+    Ok(resolved_turn)
+}
+
+/// Recursively resolve PipelinedSend effects in a call tree.
+///
+/// PipelinedSend effects are removed from the current tree's action and their
+/// inner actions are added as new roots (with the resolved target).
+///
+/// Placeholder convention: if the inner action's target is `CellId::from_bytes([0u8; 32])`,
+/// it is replaced with the resolved CellId. Similarly, effects referencing the
+/// placeholder are rewritten to use the resolved CellId.
+fn resolve_tree_effects(
+    tree: &mut crate::forest::CallTree,
+    table: &ResolutionTable,
+    new_roots: &mut Vec<crate::forest::CallTree>,
+) -> Result<(), PipelineError> {
+    let mut remaining_effects: Vec<Effect> = Vec::new();
+
+    for effect in std::mem::take(&mut tree.action.effects) {
+        match effect {
+            Effect::PipelinedSend {
+                ref target,
+                ref action,
+            } => {
+                // Resolve the EventualRef to a concrete CellId.
+                let output = resolve_eventual_ref(target, table)?;
+                let resolved_cell_id = resolve_output_to_cell_id(output, target)?;
+
+                // Create a new action with the resolved target.
+                let placeholder = CellId::from_bytes([0u8; 32]);
+                let mut resolved_action = action.as_ref().clone();
+
+                // If the inner action's target is the placeholder, replace it.
+                if resolved_action.target == placeholder {
+                    resolved_action.target = resolved_cell_id;
+                }
+
+                // Rewrite placeholder CellIds in effects.
+                rewrite_effect_targets(
+                    &mut resolved_action.effects,
+                    &placeholder,
+                    &resolved_cell_id,
+                );
+
+                // Add as a new root action in the forest.
+                new_roots.push(crate::forest::CallTree::new(resolved_action));
+            }
+            other => {
+                remaining_effects.push(other);
+            }
+        }
+    }
+
+    tree.action.effects = remaining_effects;
+
+    // Recurse into children.
+    for child in &mut tree.children {
+        resolve_tree_effects(child, table, new_roots)?;
+    }
+
+    Ok(())
+}
+
+/// Rewrite placeholder CellIds in effects with the resolved concrete CellId.
+///
+/// This allows PipelinedSend inner actions to use `CellId::from_bytes([0u8; 32])`
+/// as a placeholder meaning "the cell resolved from the EventualRef". After resolution,
+/// all occurrences of the placeholder are replaced with the actual CellId.
+fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved: &CellId) {
+    for effect in effects.iter_mut() {
+        match effect {
+            Effect::SetField { cell, .. } => {
+                if cell == placeholder {
+                    *cell = *resolved;
+                }
+            }
+            Effect::Transfer { from, to, .. } => {
+                if from == placeholder {
+                    *from = *resolved;
+                }
+                if to == placeholder {
+                    *to = *resolved;
+                }
+            }
+            Effect::GrantCapability { from, to, cap } => {
+                if from == placeholder {
+                    *from = *resolved;
+                }
+                if to == placeholder {
+                    *to = *resolved;
+                }
+                if cap.target == *placeholder {
+                    cap.target = *resolved;
+                }
+            }
+            Effect::RevokeCapability { cell, .. } => {
+                if cell == placeholder {
+                    *cell = *resolved;
+                }
+            }
+            Effect::EmitEvent { cell, .. } => {
+                if cell == placeholder {
+                    *cell = *resolved;
+                }
+            }
+            Effect::IncrementNonce { cell } => {
+                if cell == placeholder {
+                    *cell = *resolved;
+                }
+            }
+            Effect::SetPermissions { cell, .. } => {
+                if cell == placeholder {
+                    *cell = *resolved;
+                }
+            }
+            Effect::SetVerificationKey { cell, .. } => {
+                if cell == placeholder {
+                    *cell = *resolved;
+                }
+            }
+            Effect::Introduce {
+                introducer,
+                recipient,
+                target,
+                ..
+            } => {
+                if introducer == placeholder {
+                    *introducer = *resolved;
+                }
+                if recipient == placeholder {
+                    *recipient = *resolved;
+                }
+                if target == placeholder {
+                    *target = *resolved;
+                }
+            }
+            // These effects don't have mutable CellId fields needing rewrite:
+            Effect::CreateCell { .. }
+            | Effect::NoteSpend { .. }
+            | Effect::NoteCreate { .. }
+            | Effect::CreateSealPair { .. }
+            | Effect::Seal { .. }
+            | Effect::Unseal { .. }
+            | Effect::PipelinedSend { .. }
+            | Effect::SpawnWithDelegation { .. }
+            | Effect::RefreshDelegation
+            | Effect::RevokeDelegation { .. } => {}
+        }
+    }
+}
+
 /// Execute a pipeline of turns against a ledger in topological order.
+///
+/// Before executing each turn, any `PipelinedSend` effects are resolved using
+/// the resolution table (built from outputs of previously-committed turns).
+/// This implements E-style promise pipelining: turns can reference outputs of
+/// earlier turns via `EventualRef`, and the pipeline executor resolves them
+/// in causal order.
 pub fn execute_pipeline(
     pipeline: Pipeline,
     ledger: &mut Ledger,
@@ -1822,12 +2458,22 @@ pub fn execute_pipeline(
             continue;
         }
 
+        // Resolve EventualRefs in this turn before executing it.
         let turn = &pipeline.turns[idx];
-        let result = executor.execute(turn, ledger);
+        let resolved_turn = match resolve_turn(turn, &resolution_table) {
+            Ok(t) => t,
+            Err(e) => {
+                failed[idx] = true;
+                results[idx] = Some(Err(e));
+                continue;
+            }
+        };
+
+        let result = executor.execute(&resolved_turn, ledger);
 
         match result {
             TurnResult::Committed { receipt, .. } => {
-                let outputs = extract_turn_outputs(turn, ledger);
+                let outputs = extract_turn_outputs(&resolved_turn, ledger);
                 let turn_hash = turn_hashes[idx];
                 for (slot, output) in outputs.into_iter().enumerate() {
                     resolution_table.insert((turn_hash, slot as u32), output);
@@ -1866,7 +2512,11 @@ fn extract_tree_outputs(
 ) {
     for effect in &tree.action.effects {
         match effect {
-            crate::action::Effect::CreateCell { public_key, token_id, .. } => {
+            crate::action::Effect::CreateCell {
+                public_key,
+                token_id,
+                ..
+            } => {
                 let cell_id = pyana_cell::CellId::derive_raw(public_key, token_id);
                 outputs.push(TurnOutput::CreatedCell { cell: cell_id });
             }
@@ -1879,10 +2529,24 @@ fn extract_tree_outputs(
                 outputs.push(TurnOutput::GrantedCapability { target: *to, slot });
             }
             crate::action::Effect::SetField { cell, index, value } => {
-                outputs.push(TurnOutput::StateUpdate { cell: *cell, field: *index, hash: *value });
+                outputs.push(TurnOutput::StateUpdate {
+                    cell: *cell,
+                    field: *index,
+                    hash: *value,
+                });
             }
             crate::action::Effect::NoteCreate { commitment, .. } => {
-                outputs.push(TurnOutput::CreatedNote { commitment: commitment.0 });
+                outputs.push(TurnOutput::CreatedNote {
+                    commitment: commitment.0,
+                });
+            }
+            crate::action::Effect::SpawnWithDelegation {
+                child_public_key,
+                child_token_id,
+                ..
+            } => {
+                let cell_id = pyana_cell::CellId::derive_raw(child_public_key, child_token_id);
+                outputs.push(TurnOutput::CreatedCell { cell: cell_id });
             }
             _ => {}
         }

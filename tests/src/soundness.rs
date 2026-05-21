@@ -5,16 +5,16 @@
 //! a false statement.
 
 use pyana_circuit::field::BabyBear;
+use pyana_circuit::fold_air::{FoldAir, FoldWitness, RemovedFact};
+use pyana_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
+use pyana_circuit::mock_prover::{MockProof, MockProver};
+use pyana_circuit::presentation::{
+    PresentationAir, PresentationVerification, PresentationWitness, create_test_presentation,
+};
 use pyana_circuit::stark::{
     MerkleStarkAir, StarkProof, generate_merkle_trace, proof_from_bytes, proof_to_bytes, prove,
     verify,
 };
-use pyana_circuit::presentation::{
-    PresentationAir, PresentationVerification, PresentationWitness, create_test_presentation,
-};
-use pyana_circuit::fold_air::{FoldAir, FoldWitness, RemovedFact};
-use pyana_circuit::mock_prover::{MockProver, MockProof};
-use pyana_circuit::ivc::{prove_ivc, verify_ivc, FoldDelta, IvcVerification};
 
 // =============================================================================
 // Helper: generate a valid proof for reuse in tampering tests
@@ -45,7 +45,10 @@ fn wrong_leaf_hash_rejected() {
     // Provide wrong leaf value in public inputs
     let wrong_pi = vec![BabyBear::new(99999), BabyBear::new(42)];
     let result = verify(&air, &proof, &wrong_pi);
-    assert!(result.is_err(), "Must reject proof with wrong leaf public input");
+    assert!(
+        result.is_err(),
+        "Must reject proof with wrong leaf public input"
+    );
 }
 
 #[test]
@@ -55,7 +58,10 @@ fn wrong_root_in_public_inputs_rejected() {
     // Keep leaf correct but change root
     let wrong_pi = vec![pi[0], BabyBear::new(0)];
     let result = verify(&air, &proof, &wrong_pi);
-    assert!(result.is_err(), "Must reject proof with wrong root public input");
+    assert!(
+        result.is_err(),
+        "Must reject proof with wrong root public input"
+    );
 }
 
 #[test]
@@ -63,7 +69,10 @@ fn empty_public_inputs_rejected() {
     let (proof, _pi) = valid_proof_and_inputs();
     let air = MerkleStarkAir;
     let result = verify(&air, &proof, &[]);
-    assert!(result.is_err(), "Must reject proof with empty public inputs");
+    assert!(
+        result.is_err(),
+        "Must reject proof with empty public inputs"
+    );
 }
 
 #[test]
@@ -73,7 +82,10 @@ fn extra_public_inputs_rejected() {
     let mut extra = pi.clone();
     extra.push(BabyBear::new(9999));
     let result = verify(&air, &proof, &extra);
-    assert!(result.is_err(), "Must reject proof with extra public inputs");
+    assert!(
+        result.is_err(),
+        "Must reject proof with extra public inputs"
+    );
 }
 
 // =============================================================================
@@ -218,7 +230,10 @@ fn replay_proof_with_different_leaf() {
     // Try to verify proof_a against different leaf's public inputs
     let (_, pi_b) = generate_merkle_trace(99999, &siblings, &positions);
     let result = verify(&air, &proof_a, &pi_b);
-    assert!(result.is_err(), "Replayed proof with different leaf must fail");
+    assert!(
+        result.is_err(),
+        "Replayed proof with different leaf must fail"
+    );
 }
 
 #[test]
@@ -236,7 +251,10 @@ fn replay_proof_with_different_siblings() {
     // Same leaf but different tree structure => different roots
     assert_ne!(pi_a[1], pi_b[1]);
     let result = verify(&air, &proof_a, &pi_b);
-    assert!(result.is_err(), "Proof for one tree structure must not verify against another");
+    assert!(
+        result.is_err(),
+        "Proof for one tree structure must not verify against another"
+    );
 }
 
 #[test]
@@ -282,7 +300,10 @@ fn presentation_with_broken_fold_chain() {
     // Break the chain: second fold's old_root doesn't match first fold's new_root
     witness.fold_chain[1].old_root = BabyBear::new(0xBAD);
     let air = PresentationAir::new(witness);
-    assert_eq!(air.verify_all(), PresentationVerification::FoldChainBreak { index: 1 });
+    assert_eq!(
+        air.verify_all(),
+        PresentationVerification::FoldChainBreak { index: 1 }
+    );
 }
 
 #[test]
@@ -292,7 +313,10 @@ fn presentation_derivation_for_wrong_state() {
     // Derivation claims to be over a different state root
     witness.derivation.state_root = BabyBear::new(0xFA4E);
     let air = PresentationAir::new(witness);
-    assert_eq!(air.verify_all(), PresentationVerification::DerivationRootMismatch);
+    assert_eq!(
+        air.verify_all(),
+        PresentationVerification::DerivationRootMismatch
+    );
 }
 
 #[test]
@@ -316,7 +340,10 @@ fn ivc_empty_fold_chain_rejected() {
     let initial_root = BabyBear::new(12345);
     let result = prove_ivc(initial_root, vec![]);
     // An empty chain should either reject or produce a trivially invalid proof
-    assert!(result.is_none(), "Empty IVC chain should not produce a proof");
+    assert!(
+        result.is_none(),
+        "Empty IVC chain should not produce a proof"
+    );
 }
 
 #[test]
@@ -467,5 +494,8 @@ fn fold_with_unverified_removal_and_added_checks() {
 
     let air = FoldAir::new(fold);
     let result = MockProver::verify(&air);
-    assert!(!result.is_valid(), "Fold with unverified membership removals must fail");
+    assert!(
+        !result.is_valid(),
+        "Fold with unverified membership removals must fail"
+    );
 }

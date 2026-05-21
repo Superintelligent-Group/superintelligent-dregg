@@ -209,27 +209,19 @@ impl MerkleTree {
         }
 
         // Find left and right neighbors.
-        let left_neighbor = self
-            .leaves
-            .range(..key)
-            .next_back()
-            .map(|(_, &hash)| {
-                let proof = self.membership_proof_hash(&hash).unwrap();
-                (hash, proof)
-            });
+        let left_neighbor = self.leaves.range(..key).next_back().map(|(_, &hash)| {
+            let proof = self.membership_proof_hash(&hash).unwrap();
+            (hash, proof)
+        });
 
-        let right_neighbor = self
-            .leaves
-            .range(key..)
-            .next()
-            .and_then(|(k, &hash)| {
-                // Skip if same key but different hash (collision case).
-                if *k == key && hash == *leaf_hash {
-                    return None;
-                }
-                let proof = self.membership_proof_hash(&hash).unwrap();
-                Some((hash, proof))
-            });
+        let right_neighbor = self.leaves.range(key..).next().and_then(|(k, &hash)| {
+            // Skip if same key but different hash (collision case).
+            if *k == key && hash == *leaf_hash {
+                return None;
+            }
+            let proof = self.membership_proof_hash(&hash).unwrap();
+            Some((hash, proof))
+        });
 
         Some(NonMembershipProof {
             absent_key: *leaf_hash,
@@ -329,7 +321,6 @@ impl MerkleTree {
         let shift = (TREE_DEPTH - 1 - depth) * 2;
         for i in 0..HASH_ARITY {
             let child_prefix = prefix | ((i as u32) << shift);
-            // Check if any leaves exist in this subtree.
             let range_start = child_prefix;
             let range_end = child_prefix | ((1u32 << shift) - 1);
             if self.has_leaves_in_range(range_start, range_end) {
@@ -650,7 +641,10 @@ mod tests {
 
     #[test]
     fn path_key_extraction() {
-        let hash = [0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let hash = [
+            0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0,
+        ];
         let key = path_key(&hash);
         assert_eq!(key, 0x12345678);
     }

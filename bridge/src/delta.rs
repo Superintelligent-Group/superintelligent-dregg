@@ -14,9 +14,7 @@
 //! The key invariant: attenuation can only NARROW capabilities. The fold delta
 //! enforces this by only allowing fact removals and check additions.
 
-use pyana_commit::{
-    Fact, FieldElement, FoldDelta, FoldDeltaBuilder, SymbolTable, TokenState,
-};
+use pyana_commit::{Fact, FieldElement, FoldDelta, FoldDeltaBuilder, SymbolTable, TokenState};
 use pyana_token::{Attenuation, MacaroonToken};
 
 use crate::convert::{attenuation_to_facts, macaroon_to_factset};
@@ -93,12 +91,10 @@ pub fn attenuation_to_delta(
     // We encode them as checks using a bridge-specific naming convention.
     for (i, fact) in added_checks.iter().enumerate() {
         // Create a check fact that encodes the restriction.
-        let check_name = format!("bridge_check_{}", i);
-        let terms: Vec<&str> = vec![];
+        let _check_name = format!("bridge_check_{}", i);
+        let _terms: Vec<&str> = vec![];
         // Use the fact's predicate as the check name in the symbol table.
-        let pred_name = symbols
-            .resolve(fact.predicate)
-            .unwrap_or("unknown");
+        let pred_name = symbols.resolve(fact.predicate).unwrap_or("unknown");
         let check_terms: Vec<String> = fact
             .terms
             .iter()
@@ -205,9 +201,7 @@ pub fn initial_attenuation_delta(
 
     // Each new restriction becomes a named check.
     for (i, fact) in new_facts.iter().enumerate() {
-        let pred_name = symbols
-            .resolve(fact.predicate)
-            .unwrap_or("restriction");
+        let pred_name = symbols.resolve(fact.predicate).unwrap_or("restriction");
         let check_name = format!("{}_{}", pred_name, i);
         builder = builder.add_named_check(&check_name, &[]);
     }
@@ -245,10 +239,8 @@ pub fn further_attenuation_delta(
     let mut builder = FoldDeltaBuilder::new(current_state.clone());
 
     // Each new restriction becomes a check.
-    for (i, fact) in new_restrictions.iter().enumerate() {
-        let pred_name = symbols
-            .resolve(fact.predicate)
-            .unwrap_or("check");
+    for (_i, fact) in new_restrictions.iter().enumerate() {
+        let pred_name = symbols.resolve(fact.predicate).unwrap_or("check");
         let terms: Vec<String> = fact
             .terms
             .iter()
@@ -359,11 +351,7 @@ mod tests {
         let mut state = TokenState::new();
         state.add_fact(Fact::from_symbols("access", &["resource"]));
 
-        let delta = compute_fold_delta(
-            &state,
-            vec![],
-            vec![("expires", &["2025-12-31"])],
-        );
+        let delta = compute_fold_delta(&state, vec![], vec![("expires", &["2025-12-31"])]);
         assert!(delta.is_some());
 
         let delta = delta.unwrap();

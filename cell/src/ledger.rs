@@ -119,7 +119,11 @@ pub enum LedgerError {
     /// Invalid field index in a state update.
     InvalidFieldIndex { cell_id: CellId, index: usize },
     /// Insufficient balance for a transfer or deduction.
-    InsufficientBalance { cell_id: CellId, available: u64, required: u64 },
+    InsufficientBalance {
+        cell_id: CellId,
+        available: u64,
+        required: u64,
+    },
     /// Balance overflow.
     BalanceOverflow { cell_id: CellId },
     /// Transfer source cell not found.
@@ -136,7 +140,11 @@ impl core::fmt::Display for LedgerError {
             LedgerError::InvalidFieldIndex { cell_id, index } => {
                 write!(f, "invalid field index {index} for cell {cell_id}")
             }
-            LedgerError::InsufficientBalance { cell_id, available, required } => {
+            LedgerError::InsufficientBalance {
+                cell_id,
+                available,
+                required,
+            } => {
                 write!(
                     f,
                     "insufficient balance for cell {cell_id}: have {available}, need {required}"
@@ -289,9 +297,11 @@ impl Ledger {
             let to_cell = new_cells
                 .get_mut(&to_id)
                 .ok_or(LedgerError::TransferDestNotFound(to_id))?;
-            to_cell.state.balance = to_cell.state.balance.checked_add(amount).ok_or(
-                LedgerError::BalanceOverflow { cell_id: to_id },
-            )?;
+            to_cell.state.balance = to_cell
+                .state
+                .balance
+                .checked_add(amount)
+                .ok_or(LedgerError::BalanceOverflow { cell_id: to_id })?;
         }
 
         // All succeeded — swap in the new state atomically.
@@ -334,7 +344,9 @@ impl Ledger {
 
         // Helper: look up a cell in either the existing ledger or the delta's created set.
         let lookup = |id: &CellId| -> Option<&Cell> {
-            self.cells.get(id).or_else(|| created_cells.get(id).copied())
+            self.cells
+                .get(id)
+                .or_else(|| created_cells.get(id).copied())
         };
 
         // Track running balances per cell (cumulative across all operations).
@@ -384,9 +396,9 @@ impl Ledger {
                 running_balances.insert(*cell_id, balance - required);
             } else {
                 let add = state_delta.balance_change as u64;
-                let new_balance = balance.checked_add(add).ok_or(LedgerError::BalanceOverflow {
-                    cell_id: *cell_id,
-                })?;
+                let new_balance = balance
+                    .checked_add(add)
+                    .ok_or(LedgerError::BalanceOverflow { cell_id: *cell_id })?;
                 running_balances.insert(*cell_id, new_balance);
             }
         }
@@ -406,9 +418,9 @@ impl Ledger {
 
             let to_balance = get_running_balance(&mut running_balances, &to_id)
                 .ok_or(LedgerError::TransferDestNotFound(to_id))?;
-            let new_to = to_balance.checked_add(amount).ok_or(LedgerError::BalanceOverflow {
-                cell_id: to_id,
-            })?;
+            let new_to = to_balance
+                .checked_add(amount)
+                .ok_or(LedgerError::BalanceOverflow { cell_id: to_id })?;
             running_balances.insert(to_id, new_to);
         }
 
@@ -530,7 +542,11 @@ impl Ledger {
                 .get(sibling_idx)
                 .copied()
                 .unwrap_or([0u8; 32]);
-            let side = if idx % 2 == 0 { Side::Right } else { Side::Left };
+            let side = if idx % 2 == 0 {
+                Side::Right
+            } else {
+                Side::Left
+            };
             path.push((sibling_hash, side));
             idx /= 2;
         }
@@ -599,7 +615,7 @@ impl Ledger {
 
         // Collect and sort all cells by CellId bytes for deterministic ordering.
         let mut sorted_cells: Vec<(&CellId, &Cell)> = self.cells.iter().collect();
-        sorted_cells.sort_by(|a, b| a.0 .0.cmp(&b.0 .0));
+        sorted_cells.sort_by(|a, b| a.0.0.cmp(&b.0.0));
 
         // Build leaf_positions map and leaf hashes.
         self.leaf_positions.clear();
@@ -657,7 +673,7 @@ impl Ledger {
             .iter()
             .map(|(cid, c)| (*cid, Self::hash_cell(c)))
             .collect();
-        all_hashes.sort_by(|a, b| a.0 .0.cmp(&b.0 .0));
+        all_hashes.sort_by(|a, b| a.0.0.cmp(&b.0.0));
 
         let leaves: Vec<[u8; 32]> = all_hashes.iter().map(|(_, h)| *h).collect();
         Self::merkle_root(&leaves)

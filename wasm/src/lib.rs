@@ -3,8 +3,8 @@
 //! Exposes token minting, attenuation, verification, STARK proof generation,
 //! Merkle tree operations, and Datalog evaluation to JavaScript via wasm-bindgen.
 
-use wasm_bindgen::prelude::*;
 use serde::Serialize;
+use wasm_bindgen::prelude::*;
 
 // Import the AuthToken trait to bring its methods into scope.
 use pyana_token::AuthToken;
@@ -25,7 +25,9 @@ pub fn mint_token(root_key: &[u8], location: &str) -> Result<JsValue, JsError> {
     key.copy_from_slice(root_key);
 
     let token = pyana_token::MacaroonToken::mint(key, b"playground-kid", location);
-    let encoded = token.to_encoded().map_err(|e| JsError::new(&e.to_string()))?;
+    let encoded = token
+        .to_encoded()
+        .map_err(|e| JsError::new(&e.to_string()))?;
 
     #[derive(Serialize)]
     struct MintResult {
@@ -469,8 +471,8 @@ pub fn merkle_non_membership_proof(
 /// Returns the full derivation trace as JSON.
 #[wasm_bindgen]
 pub fn evaluate_datalog(facts_json: &str, request_json: &str) -> Result<JsValue, JsError> {
-    use pyana_trace::{Evaluator, standard_policy};
     use pyana_trace::types::*;
+    use pyana_trace::{Evaluator, standard_policy};
 
     // Parse facts
     let raw_facts: Vec<RawFact> =
@@ -645,6 +647,210 @@ pub fn demonstrate_fold(facts_json: &str, remove_json: &str) -> Result<JsValue, 
             Ok(serde_wasm_bindgen::to_value(&result)?)
         }
     }
+}
+
+// ============================================================================
+// BLAKE3 hashing and Intent ID computation
+// ============================================================================
+
+/// Compute a BLAKE3 hash of an arbitrary string, returning the hex digest.
+///
+/// This is exposed so the extension can produce BLAKE3 hashes without pulling
+/// in a full JS implementation.
+#[wasm_bindgen]
+pub fn blake3_hash(input: &str) -> String {
+    let hash = blake3::hash(input.as_bytes());
+    hex_encode(hash.as_bytes())
+}
+
+/// Compute a canonical intent ID exactly as the Rust intent engine does.
+///
+/// Takes a JSON object with: kind, actions, resource_pattern, constraints, expiry, creator.
+/// Returns the hex-encoded 32-byte BLAKE3 intent ID using postcard serialization,
+/// identical to `Intent::compute_id()` in the `pyana-intent` crate.
+///
+/// JSON schema:
+/// ```json
+/// {
+///   "kind": "Need" | "Offer" | "Query",
+///   "actions": [{"action": "read", "resource": "docs/*"}, ...],
+///   "constraints": [{"AppId": "x"}, {"Service": "y"}, ...],
+///   "min_budget": null | 1000,
+///   "resource_pattern": null | "docs/*",
+///   "expiry": 1716000000,
+///   "creator": [170, 170, ...] (32 bytes),
+///   "proof_of_stake": null | [1, 2, 3, ...] (32 bytes)
+/// }
+/// ```
+#[wasm_bindgen]
+pub fn compute_intent_id(intent_json: &str) -> Result<String, JsError> {
+    let input: IntentIdInput =
+        serde_json::from_str(intent_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+    // Map to the canonical serialization types that match intent/src/lib.rs exactly.
+    let kind = match input.kind.as_str() {
+        "Need" | "need" => CanonicalIntentKind::Need,
+        "Offer" | "offer" => CanonicalIntentKind::Offer,
+        "Query" | "query" => CanonicalIntentKind::Query,
+        other => return Err(JsError::new(&format!("unknown intent kind: {other}"))),
+    };
+
+    let actions: Vec<CanonicalActionPattern> = input
+        .actions
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| CanonicalActionPattern {
+            action: a.action,
+            resource: a.resource,
+        })
+        .collect();
+
+    let constraints: Vec<CanonicalConstraint> = input
+        .constraints
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| {
+            if let Some(v) = c.app_id { return CanonicalConstraint::AppId(v); }
+            if let Some(v) = c.service { return CanonicalConstraint::Service(v); }
+            if let Some(v) = c.user_id { return CanonicalConstraint::UserId(v); }
+            if let Some(v) = c.not_expired_at { return CanonicalConstraint::NotExpiredAt(v); }
+            if let Some(v) = c.feature { return CanonicalConstraint::Feature(v); }
+            if let Some(v) = c.oauth_provider { return CanonicalConstraint::OAuthProvider(v); }
+            if let (Some(p), Some(v)) = (c.predicate, c.value) {
+                return CanonicalConstraint::Custom { predicate: p, value: v };
+            }
+            // Fallback: empty custom constraint (should not happen with valid input).
+            CanonicalConstraint::Custom { predicate: String::new(), value: String::new() }
+        })
+        .collect();
+
+    let matcher = CanonicalMatchSpec {
+        actions,
+        constraints,
+        min_budget: input.min_budget,
+        resource_pattern: input.resource_pattern,
+    };
+
+    let creator = CanonicalCommitmentId(
+        input.creator.unwrap_or_else(|| vec![0u8; 32])
+            .try_into()
+            .map_err(|_| JsError::new("creator must be exactly 32 bytes"))?,
+    );
+
+    let proof_of_stake: Option<CanonicalNoteCommitment> = input
+        .proof_of_stake
+        .map(|bytes| {
+            let arr: [u8; 32] = bytes
+                .try_into()
+                .map_err(|_| JsError::new("proof_of_stake must be exactly 32 bytes"))
+                .unwrap();
+            CanonicalNoteCommitment(arr)
+        });
+
+    // Build the body struct that matches IntentBody in intent/src/lib.rs
+    let body = CanonicalIntentBody {
+        kind: &kind,
+        matcher: &matcher,
+        creator: &creator,
+        expiry: input.expiry,
+        proof_of_stake: &proof_of_stake,
+    };
+
+    let canonical = postcard::to_allocvec(&body)
+        .map_err(|e| JsError::new(&format!("postcard serialization failed: {e}")))?;
+
+    let mut hasher = blake3::Hasher::new_derive_key("pyana-intent-id-v1");
+    hasher.update(&canonical);
+    let hash = hasher.finalize();
+
+    Ok(hex_encode(hash.as_bytes()))
+}
+
+// --- Types that mirror intent/src/lib.rs for canonical serialization ---
+
+#[derive(serde::Deserialize)]
+struct IntentIdInput {
+    kind: String,
+    actions: Option<Vec<ActionPatternInput>>,
+    constraints: Option<Vec<ConstraintInput>>,
+    min_budget: Option<u64>,
+    resource_pattern: Option<String>,
+    expiry: u64,
+    creator: Option<Vec<u8>>,
+    proof_of_stake: Option<Vec<u8>>,
+}
+
+#[derive(serde::Deserialize)]
+struct ActionPatternInput {
+    action: Option<String>,
+    resource: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ConstraintInput {
+    #[serde(rename = "AppId")]
+    app_id: Option<String>,
+    #[serde(rename = "Service")]
+    service: Option<String>,
+    #[serde(rename = "UserId")]
+    user_id: Option<String>,
+    #[serde(rename = "NotExpiredAt")]
+    not_expired_at: Option<i64>,
+    #[serde(rename = "Feature")]
+    feature: Option<String>,
+    #[serde(rename = "OAuthProvider")]
+    oauth_provider: Option<String>,
+    predicate: Option<String>,
+    value: Option<String>,
+}
+
+/// These types MUST serialize identically to intent/src/lib.rs via postcard.
+/// Field order and enum variant indices must match exactly.
+#[derive(Serialize)]
+enum CanonicalIntentKind {
+    Need,
+    Offer,
+    Query,
+}
+
+#[derive(Serialize)]
+struct CanonicalActionPattern {
+    action: Option<String>,
+    resource: Option<String>,
+}
+
+#[derive(Serialize)]
+enum CanonicalConstraint {
+    AppId(String),
+    Service(String),
+    UserId(String),
+    NotExpiredAt(i64),
+    Feature(String),
+    OAuthProvider(String),
+    Custom { predicate: String, value: String },
+}
+
+#[derive(Serialize)]
+struct CanonicalMatchSpec {
+    actions: Vec<CanonicalActionPattern>,
+    constraints: Vec<CanonicalConstraint>,
+    min_budget: Option<u64>,
+    resource_pattern: Option<String>,
+}
+
+#[derive(Serialize)]
+struct CanonicalCommitmentId(pub [u8; 32]);
+
+#[derive(Serialize)]
+struct CanonicalNoteCommitment(pub [u8; 32]);
+
+#[derive(Serialize)]
+struct CanonicalIntentBody<'a> {
+    kind: &'a CanonicalIntentKind,
+    matcher: &'a CanonicalMatchSpec,
+    creator: &'a CanonicalCommitmentId,
+    expiry: u64,
+    proof_of_stake: &'a Option<CanonicalNoteCommitment>,
 }
 
 // ============================================================================

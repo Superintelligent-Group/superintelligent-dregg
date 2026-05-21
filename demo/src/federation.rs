@@ -148,9 +148,7 @@ impl Federation {
         let key = PublicKeyWrapper(public_key.clone());
         self.members.get(&key).map(|m| &m.verification_key)
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -168,11 +166,7 @@ mod tests {
             &auth1,
             vec![FederationRole::Issuer, FederationRole::Verifier],
         );
-        fed.add_member(
-            "org2",
-            &auth2,
-            vec![FederationRole::Verifier],
-        );
+        fed.add_member("org2", &auth2, vec![FederationRole::Verifier]);
         fed.compute_root();
 
         assert!(fed.is_member(&auth1.public_key));

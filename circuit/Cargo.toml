@@ -90,3 +90,6 @@ criterion = { workspace = true }
 [[bench]]
 name = "stark_bench"
 harness = false
+
+[lints]
+workspace = true

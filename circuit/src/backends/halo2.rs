@@ -15,7 +15,7 @@ use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
     halo2curves::{
         ff::{Field, PrimeField},
-        pasta::{Fp, EqAffine},
+        pasta::{EqAffine, Fp},
     },
     plonk::{
         self, Advice, Circuit, Column, ConstraintSystem, Error as Halo2Error, Fixed, Instance,
@@ -97,11 +97,7 @@ pub struct MerkleMembershipCircuit {
 
 impl MerkleMembershipCircuit {
     /// Create a circuit from raw 32-byte values.
-    pub fn from_bytes(
-        leaf: &[u8; 32],
-        siblings: &[Vec<[u8; 32]>],
-        _root: &[u8; 32],
-    ) -> Self {
+    pub fn from_bytes(leaf: &[u8; 32], siblings: &[Vec<[u8; 32]>], _root: &[u8; 32]) -> Self {
         // Convert 32-byte hashes to field elements (truncate to 254 bits for Pasta).
         let leaf_fp = bytes_to_fp(leaf);
         let depth = siblings.len();
@@ -201,9 +197,7 @@ impl Circuit<Fp> for MerkleMembershipCircuit {
         // Assign the leaf as the starting hash.
         let mut current_hash = layouter.assign_region(
             || "leaf",
-            |mut region| {
-                region.assign_advice(|| "leaf_val", config.advice[0], 0, || self.leaf)
-            },
+            |mut region| region.assign_advice(|| "leaf_val", config.advice[0], 0, || self.leaf),
         )?;
 
         // For each level, compute hash(current, sibling) or hash(sibling, current).
@@ -222,17 +216,14 @@ impl Circuit<Fp> for MerkleMembershipCircuit {
                         .value()
                         .zip(sibling)
                         .zip(position_bit)
-                        .map(|((cur, sib), bit)| {
-                            if bit {
-                                (sib, *cur)
-                            } else {
-                                (*cur, sib)
-                            }
-                        })
+                        .map(
+                            |((cur, sib), bit)| {
+                                if bit { (sib, *cur) } else { (*cur, sib) }
+                            },
+                        )
                         .unzip();
 
-                    let left =
-                        region.assign_advice(|| "left", config.advice[0], 0, || left_val)?;
+                    let left = region.assign_advice(|| "left", config.advice[0], 0, || left_val)?;
                     let right =
                         region.assign_advice(|| "right", config.advice[1], 0, || right_val)?;
 
@@ -295,7 +286,11 @@ impl Circuit<Fp> for FoldStepCircuit {
         Self {
             old_root: Value::unknown(),
             new_root: Value::unknown(),
-            removal_hashes: self.removal_hashes.iter().map(|_| Value::unknown()).collect(),
+            removal_hashes: self
+                .removal_hashes
+                .iter()
+                .map(|_| Value::unknown())
+                .collect(),
             removal_commitment: Value::unknown(),
         }
     }
@@ -403,10 +398,10 @@ impl ProofBackend for Halo2Backend {
             position_bits: vec![Value::unknown(); depth],
             depth,
         };
-        let vk = plonk::keygen_vk(&params, &empty_circuit)
-            .map_err(|e| format!("keygen_vk: {e}"))?;
-        let pk = plonk::keygen_pk(&params, vk, &empty_circuit)
-            .map_err(|e| format!("keygen_pk: {e}"))?;
+        let vk =
+            plonk::keygen_vk(&params, &empty_circuit).map_err(|e| format!("keygen_vk: {e}"))?;
+        let pk =
+            plonk::keygen_pk(&params, vk, &empty_circuit).map_err(|e| format!("keygen_pk: {e}"))?;
 
         // Compute the expected root (public input).
         let root_fp = bytes_to_fp(root);
@@ -458,8 +453,10 @@ impl ProofBackend for Halo2Backend {
     ) -> Result<Self::Proof, String> {
         let old_fp = bytes_to_fp(old_root);
         let new_fp = bytes_to_fp(new_root);
-        let removal_fps: Vec<Value<Fp>> =
-            removals.iter().map(|r| Value::known(bytes_to_fp(r))).collect();
+        let removal_fps: Vec<Value<Fp>> = removals
+            .iter()
+            .map(|r| Value::known(bytes_to_fp(r)))
+            .collect();
 
         // Compute removal commitment using the same algebraic hash.
         let mut acc = old_fp + new_fp + old_fp * new_fp;
@@ -486,10 +483,10 @@ impl ProofBackend for Halo2Backend {
             removal_hashes: vec![Value::unknown(); num_removals],
             removal_commitment: Value::unknown(),
         };
-        let vk = plonk::keygen_vk(&params, &empty_circuit)
-            .map_err(|e| format!("keygen_vk: {e}"))?;
-        let pk = plonk::keygen_pk(&params, vk, &empty_circuit)
-            .map_err(|e| format!("keygen_pk: {e}"))?;
+        let vk =
+            plonk::keygen_vk(&params, &empty_circuit).map_err(|e| format!("keygen_vk: {e}"))?;
+        let pk =
+            plonk::keygen_pk(&params, vk, &empty_circuit).map_err(|e| format!("keygen_pk: {e}"))?;
 
         let public_inputs = vec![old_fp, new_fp, acc];
 

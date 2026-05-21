@@ -16,7 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::{CellState, FieldElement, FIELD_ZERO, STATE_SLOTS};
+use crate::state::{CellState, FIELD_ZERO, FieldElement, STATE_SLOTS};
 
 /// A cell program defines valid state transitions.
 /// The executor checks the program's constraints on every state-modifying action.
@@ -54,7 +54,10 @@ pub enum StateConstraint {
     FieldLte { index: u8, value: FieldElement },
     /// Sum of fields at indices must equal value (conservation law).
     /// Fields are interpreted as little-endian u64 in the first 8 bytes.
-    SumEquals { indices: Vec<u8>, value: FieldElement },
+    SumEquals {
+        indices: Vec<u8>,
+        value: FieldElement,
+    },
     /// Field must not change from its previous value (immutable after initialization).
     Immutable { index: u8 },
     /// Custom: hash of a more complex constraint (checked by external verifier).
@@ -87,7 +90,10 @@ impl core::fmt::Display for ProgramError {
                 write!(f, "program references invalid field index: {index}")
             }
             ProgramError::CircuitProofRequired { .. } => {
-                write!(f, "circuit program requires a proof in the action authorization")
+                write!(
+                    f,
+                    "circuit program requires a proof in the action authorization"
+                )
             }
             ProgramError::CustomConstraintUnevaluable { .. } => {
                 write!(f, "custom constraint cannot be evaluated locally")
@@ -156,9 +162,7 @@ fn evaluate_constraint(
             if new_state.fields[idx] != *value {
                 return Err(ProgramError::ConstraintViolated {
                     constraint: constraint.clone(),
-                    description: format!(
-                        "field[{idx}] != expected value"
-                    ),
+                    description: format!("field[{idx}] != expected value"),
                 });
             }
             Ok(())
@@ -172,9 +176,7 @@ fn evaluate_constraint(
             if !field_gte(&new_state.fields[idx], value) {
                 return Err(ProgramError::ConstraintViolated {
                     constraint: constraint.clone(),
-                    description: format!(
-                        "field[{idx}] < minimum value"
-                    ),
+                    description: format!("field[{idx}] < minimum value"),
                 });
             }
             Ok(())
@@ -188,9 +190,7 @@ fn evaluate_constraint(
             if !field_lte(&new_state.fields[idx], value) {
                 return Err(ProgramError::ConstraintViolated {
                     constraint: constraint.clone(),
-                    description: format!(
-                        "field[{idx}] > maximum value"
-                    ),
+                    description: format!("field[{idx}] > maximum value"),
                 });
             }
             Ok(())
@@ -227,9 +227,7 @@ fn evaluate_constraint(
                 if new_state.fields[idx] != old.fields[idx] {
                     return Err(ProgramError::ConstraintViolated {
                         constraint: constraint.clone(),
-                        description: format!(
-                            "field[{idx}] was mutated but is marked immutable"
-                        ),
+                        description: format!("field[{idx}] was mutated but is marked immutable"),
                     });
                 }
             }

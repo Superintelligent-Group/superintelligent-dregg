@@ -5,7 +5,10 @@
 //! send commands (subscribe, authorize) over the WebSocket.
 
 use axum::{
-    extract::{State, ws::{Message, WebSocket, WebSocketUpgrade}},
+    extract::{
+        State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -27,15 +30,27 @@ enum ClientMessage {
     Subscribe { topics: Vec<Topic> },
     /// Authorize a token (same semantics as POST /wallet/authorize).
     Authorize { request: AuthorizeWsRequest },
+    /// Broadcast an intent to other connected clients.
+    BroadcastIntent { intent: serde_json::Value },
+    /// Unlock the wallet (accepts any non-empty passphrase for now).
+    Unlock { passphrase: String },
 }
 
 /// Topics the client can subscribe to.
+///
+/// Unknown topics deserialize to `Unknown` instead of failing, making the
+/// subscription mechanism forward-compatible.
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum Topic {
     Roots,
     Revocations,
     Receipts,
+    Intents,
+    /// Catch-all for unrecognized topics. Prevents deserialization failures
+    /// when clients send topics this node version doesn't know about.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Authorization request sent over WebSocket.
@@ -60,8 +75,18 @@ enum ServerMessage {
     Revocation { token_id: String },
     /// A new receipt hash.
     Receipt { hash: String },
+    /// An intent broadcast to subscribers.
+    Intent { intent: serde_json::Value },
     /// Response to an authorize request.
-    AuthorizeResult { authorized: bool, reason: Option<String> },
+    AuthorizeResult {
+        authorized: bool,
+        reason: Option<String>,
+    },
+    /// Response to an unlock request.
+    UnlockResult {
+        success: bool,
+        error: Option<String>,
+    },
     /// Acknowledgement of subscription.
     Subscribed { topics: Vec<String> },
     /// Error response.
@@ -73,10 +98,7 @@ enum ServerMessage {
 // =============================================================================
 
 /// Axum handler that upgrades an HTTP request to a WebSocket connection.
-pub async fn handle_ws(
-    ws: WebSocketUpgrade,
-    State(state): State<NodeState>,
-) -> impl IntoResponse {
+pub async fn handle_ws(ws: WebSocketUpgrade, State(state): State<NodeState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
@@ -125,8 +147,17 @@ async fn handle_socket(socket: WebSocket, state: NodeState) {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMessage>(&text) {
                             Ok(ClientMessage::Subscribe { topics }) => {
-                                subscribed_topics = topics.clone();
-                                let topic_names: Vec<String> = topics
+                                // Filter out unknown topics with a warning.
+                                let mut known = Vec::new();
+                                for t in &topics {
+                                    if *t == Topic::Unknown {
+                                        warn!("client subscribed to unknown topic, ignoring");
+                                    } else {
+                                        known.push(*t);
+                                    }
+                                }
+                                subscribed_topics = known.clone();
+                                let topic_names: Vec<String> = known
                                     .iter()
                                     .map(|t| format!("{t:?}").to_lowercase())
                                     .collect();
@@ -138,6 +169,39 @@ async fn handle_socket(socket: WebSocket, state: NodeState) {
                             }
                             Ok(ClientMessage::Authorize { request }) => {
                                 let resp = handle_authorize(&state, request).await;
+                                let json = serde_json::to_string(&resp).unwrap();
+                                if sender.send(Message::Text(json.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Ok(ClientMessage::BroadcastIntent { intent }) => {
+                                // Store in local intent pool.
+                                let intent_id = intent
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if !intent_id.is_empty() {
+                                    let mut s = state.write().await;
+                                    s.intent_pool.insert(intent_id, intent.clone());
+                                }
+                                // Broadcast to all WS subscribers as a NodeEvent.
+                                state.emit(NodeEvent::Intent { intent });
+                            }
+                            Ok(ClientMessage::Unlock { passphrase }) => {
+                                let resp = if passphrase.is_empty() {
+                                    ServerMessage::UnlockResult {
+                                        success: false,
+                                        error: Some("passphrase must not be empty".to_string()),
+                                    }
+                                } else {
+                                    let mut s = state.write().await;
+                                    s.unlocked = true;
+                                    ServerMessage::UnlockResult {
+                                        success: true,
+                                        error: None,
+                                    }
+                                };
                                 let json = serde_json::to_string(&resp).unwrap();
                                 if sender.send(Message::Text(json.into())).await.is_err() {
                                     break;
@@ -181,13 +245,18 @@ fn should_forward(event: &NodeEvent, topics: &[Topic]) -> bool {
         NodeEvent::Root { .. } => topics.contains(&Topic::Roots),
         NodeEvent::Revocation { .. } => topics.contains(&Topic::Revocations),
         NodeEvent::Receipt { .. } => topics.contains(&Topic::Receipts),
+        NodeEvent::Intent { .. } => topics.contains(&Topic::Intents),
     }
 }
 
 /// Convert a NodeEvent to a ServerMessage for serialization.
 fn node_event_to_server_message(event: &NodeEvent) -> ServerMessage {
     match event {
-        NodeEvent::Root { height, merkle_root, timestamp } => ServerMessage::Root {
+        NodeEvent::Root {
+            height,
+            merkle_root,
+            timestamp,
+        } => ServerMessage::Root {
             height: *height,
             merkle_root: merkle_root.clone(),
             timestamp: *timestamp,
@@ -195,8 +264,9 @@ fn node_event_to_server_message(event: &NodeEvent) -> ServerMessage {
         NodeEvent::Revocation { token_id } => ServerMessage::Revocation {
             token_id: token_id.clone(),
         },
-        NodeEvent::Receipt { hash } => ServerMessage::Receipt {
-            hash: hash.clone(),
+        NodeEvent::Receipt { hash } => ServerMessage::Receipt { hash: hash.clone() },
+        NodeEvent::Intent { intent } => ServerMessage::Intent {
+            intent: intent.clone(),
         },
     }
 }

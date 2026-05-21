@@ -63,13 +63,23 @@ pub enum TurnResult {
 }
 
 impl TurnResult {
-    pub fn is_committed(&self) -> bool { matches!(self, TurnResult::Committed { .. }) }
-    pub fn is_rejected(&self) -> bool { matches!(self, TurnResult::Rejected { .. }) }
+    pub fn is_committed(&self) -> bool {
+        matches!(self, TurnResult::Committed { .. })
+    }
+    pub fn is_rejected(&self) -> bool {
+        matches!(self, TurnResult::Rejected { .. })
+    }
 
     pub fn unwrap_committed(self) -> (LedgerDelta, TurnReceipt, u64) {
         match self {
-            TurnResult::Committed { ledger_delta, receipt, computrons_used } => (ledger_delta, receipt, computrons_used),
-            TurnResult::Rejected { reason, at_action } => panic!("turn was rejected at {:?}: {}", at_action, reason),
+            TurnResult::Committed {
+                ledger_delta,
+                receipt,
+                computrons_used,
+            } => (ledger_delta, receipt, computrons_used),
+            TurnResult::Rejected { reason, at_action } => {
+                panic!("turn was rejected at {:?}: {}", at_action, reason)
+            }
         }
     }
 
@@ -121,8 +131,13 @@ impl TurnReceipt {
         hasher.update(&(self.action_count as u64).to_le_bytes());
         hasher.update(self.agent.as_bytes());
         match &self.previous_receipt_hash {
-            Some(h) => { hasher.update(&[1u8]); hasher.update(h); }
-            None => { hasher.update(&[0u8]); }
+            Some(h) => {
+                hasher.update(&[1u8]);
+                hasher.update(h);
+            }
+            None => {
+                hasher.update(&[0u8]);
+            }
         }
         hasher.update(&(self.routing_directives.len() as u64).to_le_bytes());
         for rd in &self.routing_directives {

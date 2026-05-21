@@ -98,7 +98,8 @@ impl Authority {
     /// Verify a signature against this authority's public key.
     /// Uses Ed25519 public-key verification -- no secret key needed.
     pub fn verify_signature(&self, message: &[u8; 32], signature: &[u8; 64]) -> bool {
-        self.public_key.verify(message, &pyana_types::Signature(*signature))
+        self.public_key
+            .verify(message, &pyana_types::Signature(*signature))
     }
 }
 
@@ -121,7 +122,8 @@ impl VerificationKey {
     /// Verify that a signature over `message` was produced by this key's authority.
     /// Only requires the public key -- true asymmetric verification.
     pub fn verify(&self, message: &[u8; 32], signature: &[u8; 64]) -> bool {
-        self.public_key.verify(message, &pyana_types::Signature(*signature))
+        self.public_key
+            .verify(message, &pyana_types::Signature(*signature))
     }
 }
 
@@ -178,10 +180,7 @@ mod tests {
     #[test]
     fn test_mint_token() {
         let auth = Authority::new("acme.corp");
-        let facts = vec![
-            Fact::app("frontend", "rwcd"),
-            Fact::service("http", "rw"),
-        ];
+        let facts = vec![Fact::app("frontend", "rwcd"), Fact::service("http", "rw")];
         let rules = vec![Rule::allow_app(), Rule::deny_default()];
         let token = auth.mint_token(facts, rules);
 
@@ -193,6 +192,9 @@ mod tests {
         assert_eq!(token.derivation_trace.len(), 1);
 
         // Verify the signature with only the public key.
-        assert!(auth.public_key.verify(&token.state_root, &pyana_types::Signature(token.signature)));
+        assert!(
+            auth.public_key
+                .verify(&token.state_root, &pyana_types::Signature(token.signature))
+        );
     }
 }

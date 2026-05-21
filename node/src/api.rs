@@ -5,17 +5,17 @@
 
 use axum::{
     Json, Router,
-    extract::State,
     extract::Path as AxumPath,
+    extract::State,
     http::StatusCode,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 
-use pyana_sdk::{AuthRequest, Attenuation, CellId};
+use pyana_sdk::{Attenuation, AuthRequest, CellId};
 use pyana_turn::{CallForest, Turn};
 
-use crate::state::NodeState;
+use crate::state::{NodeEvent, NodeState};
 use crate::ws::handle_ws;
 
 // =============================================================================
@@ -121,6 +121,30 @@ pub struct AttestedRootInfo {
     pub signatures: usize,
 }
 
+#[derive(Deserialize)]
+pub struct UnlockRequest {
+    pub passphrase: String,
+}
+
+#[derive(Serialize)]
+pub struct UnlockResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct IntentSubmitResponse {
+    pub intent_id: String,
+    pub stored: bool,
+}
+
+#[derive(Serialize)]
+pub struct IntentListEntry {
+    pub id: String,
+    pub intent: serde_json::Value,
+}
+
 // =============================================================================
 // Router
 // =============================================================================
@@ -131,11 +155,13 @@ pub fn router(state: NodeState) -> Router {
         .route("/status", get(get_status))
         .route("/ws", get(handle_ws))
         .route("/wallet", get(get_wallet))
+        .route("/wallet/unlock", post(post_wallet_unlock))
         .route("/wallet/authorize", post(post_authorize))
         .route("/wallet/mint", post(post_mint))
         .route("/wallet/attenuate", post(post_attenuate))
         .route("/wallet/tokens", get(get_tokens))
         .route("/wallet/receipts", get(get_receipts))
+        .route("/intents", get(get_intents).post(post_intent))
         .route("/turn/submit", post(post_submit_turn))
         .route("/cell/{id}", get(get_cell))
         .route("/federation/roots", get(get_federation_roots))
@@ -340,6 +366,66 @@ async fn get_cell(
         found,
         balance: None, // Cell balance requires domain-specific lookup.
     }))
+}
+
+async fn post_wallet_unlock(
+    State(state): State<NodeState>,
+    Json(req): Json<UnlockRequest>,
+) -> Result<Json<UnlockResponse>, StatusCode> {
+    if req.passphrase.is_empty() {
+        return Ok(Json(UnlockResponse {
+            success: false,
+            error: Some("passphrase must not be empty".to_string()),
+        }));
+    }
+
+    // For now, accept any non-empty passphrase (real auth comes later).
+    let mut s = state.write().await;
+    s.unlocked = true;
+
+    Ok(Json(UnlockResponse {
+        success: true,
+        error: None,
+    }))
+}
+
+async fn post_intent(
+    State(state): State<NodeState>,
+    Json(intent): Json<serde_json::Value>,
+) -> Result<Json<IntentSubmitResponse>, StatusCode> {
+    // Extract or generate an intent ID.
+    let intent_id = intent
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+    // Store in the intent pool.
+    {
+        let mut s = state.write().await;
+        s.intent_pool.insert(intent_id.clone(), intent.clone());
+    }
+
+    // Broadcast to WS subscribers.
+    state.emit(NodeEvent::Intent { intent });
+
+    Ok(Json(IntentSubmitResponse {
+        intent_id,
+        stored: true,
+    }))
+}
+
+async fn get_intents(State(state): State<NodeState>) -> Json<Vec<IntentListEntry>> {
+    let s = state.read().await;
+    let entries: Vec<IntentListEntry> = s
+        .intent_pool
+        .iter()
+        .map(|(id, intent)| IntentListEntry {
+            id: id.clone(),
+            intent: intent.clone(),
+        })
+        .collect();
+    Json(entries)
 }
 
 async fn get_federation_roots(State(state): State<NodeState>) -> Json<Vec<AttestedRootInfo>> {
