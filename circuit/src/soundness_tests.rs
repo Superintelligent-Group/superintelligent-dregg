@@ -276,8 +276,8 @@ mod poseidon2_soundness {
 mod note_spending_soundness {
     use crate::field::BabyBear;
     use crate::note_spending_air::{
-        col, create_test_witness, merkle_col, prove_note_spend, verify_note_spend,
-        NoteSpendingAir,
+        col, create_test_witness, merkle_col, prove_note_spend, test_spending_key,
+        verify_note_spend, NoteSpendingAir,
     };
     use crate::poseidon2_air::MerklePoseidon2StarkAir;
     use crate::stark::{self, StarkAir};
@@ -289,11 +289,12 @@ mod note_spending_soundness {
     #[test]
     fn note_spending_wrong_key_rejected() {
         // Create a valid witness
+        let correct_key = test_spending_key(0xDEAD_BEEF);
         let witness_correct = create_test_witness(
             BabyBear::new(1000),  // owner
             BabyBear::new(500),   // value
             BabyBear::new(1),     // asset_type
-            BabyBear::new(0xDEAD_BEEF), // correct spending key
+            correct_key,          // correct spending key (8 limbs)
             4,                    // depth
         );
 
@@ -307,9 +308,9 @@ mod note_spending_soundness {
             "Baseline: valid spending proof must verify"
         );
 
-        // Create a witness with a WRONG spending key
+        // Create a witness with a WRONG spending key (flip one limb)
         let mut witness_wrong = witness_correct.clone();
-        witness_wrong.spending_key = BabyBear::new(0xBAD_CAFE); // wrong key!
+        witness_wrong.spending_key[0] = BabyBear::new(0xBAD_CAFE); // wrong key!
 
         // The wrong key produces a different nullifier
         let wrong_nullifier = witness_wrong.nullifier();
@@ -331,8 +332,8 @@ mod note_spending_soundness {
         let (mut trace, _) = NoteSpendingAir::generate_trace(&witness_correct);
         let air = NoteSpendingAir::new(4);
 
-        // Tamper: change the spending key in row 0 but keep the nullifier
-        trace[0][col::SPENDING_KEY] = BabyBear::new(0xBAD_CAFE);
+        // Tamper: change one spending key limb in row 0 but keep the nullifier
+        trace[0][col::SPENDING_KEY_START] = BabyBear::new(0xBAD_CAFE);
         // The nullifier in the trace is still the one derived from the correct key
 
         let alpha = BabyBear::new(7);
@@ -355,7 +356,7 @@ mod note_spending_soundness {
             BabyBear::new(1000),
             BabyBear::new(500),
             BabyBear::new(1),
-            BabyBear::new(0xDEAD_BEEF),
+            test_spending_key(0xDEAD_BEEF),
             4,
         );
 
@@ -421,7 +422,7 @@ mod note_spending_soundness {
             BabyBear::new(1000),
             BabyBear::new(500),
             BabyBear::new(1),
-            BabyBear::new(0xDEAD_BEEF),
+            test_spending_key(0xDEAD_BEEF),
             4,
         );
 
