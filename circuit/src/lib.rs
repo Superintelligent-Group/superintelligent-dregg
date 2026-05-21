@@ -67,6 +67,7 @@
 //! - [`mock_prover`]: Constraint evaluator for testing.
 //! - [`stark`]: Real STARK prover/verifier (FRI + Merkle + Fiat-Shamir).
 
+pub mod body_membership;
 pub mod derivation_air;
 pub mod field;
 pub mod fold_air;
@@ -96,6 +97,11 @@ pub mod backends;
 mod tests;
 
 // Re-export primary types.
+pub use body_membership::{
+    BodyFactMerkleProof, BodyMembershipProof, MembershipEntry,
+    collect_body_fact_hashes, prove_authorization_with_membership,
+    verify_authorization_with_membership,
+};
 pub use field::BabyBear;
 pub use ivc::{
     FoldDelta, IvcBuilder, IvcPresentationProof, IvcProof, IvcVerification, prove_ivc, verify_ivc,

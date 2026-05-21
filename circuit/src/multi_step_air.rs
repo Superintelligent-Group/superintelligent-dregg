@@ -102,6 +102,12 @@ pub struct MultiStepWitness {
     pub steps: Vec<DerivationWitness>,
     /// The "allow" predicate value (field element for the allow predicate).
     pub allow_predicate: BabyBear,
+    /// Optional Merkle proofs for body facts (used by `prove_authorization_with_membership`).
+    ///
+    /// When present, each entry is (fact_hash, siblings, positions) proving that the
+    /// body fact is a leaf in the Poseidon2 Merkle tree at `initial_state_root`.
+    /// This closes the soundness gap: body fact membership is PROVEN, not just asserted.
+    pub body_merkle_proofs: Option<Vec<(BabyBear, Vec<[BabyBear; 3]>, Vec<u8>)>>,
 }
 
 impl MultiStepWitness {
@@ -795,6 +801,7 @@ pub fn build_multi_step_witness(
         request_hash,
         steps,
         allow_predicate: BabyBear::new(ALLOW_PREDICATE),
+        body_merkle_proofs: None,
     }
 }
 
