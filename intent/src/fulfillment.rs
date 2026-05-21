@@ -20,6 +20,8 @@
 
 use crate::matcher::HeldCapability;
 use crate::{CommitmentId, Intent, Match, PredicateRequirement, VerificationMode};
+use pyana_cell::CellId;
+use pyana_cell::Ledger;
 use pyana_circuit::BabyBear;
 use pyana_circuit::multi_step_air::{
     MultiStepWitness, prove_authorization_stark, verify_authorization_stark,
@@ -27,6 +29,11 @@ use pyana_circuit::multi_step_air::{
 use pyana_circuit::stark;
 use pyana_circuit::{PredicateProof, PredicateType, verify_predicate};
 use pyana_token::{Attenuation, AuthToken, MacaroonToken};
+use pyana_turn::conditional::{ConditionalTurn, ProofCondition, compute_conditional_deposit};
+use pyana_turn::{
+    Action, Authorization, CallForest, DelegationMode, Effect, Turn, TurnExecutor, TurnReceipt,
+    TurnResult,
+};
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -51,6 +58,8 @@ pub enum FulfillmentError {
     PredicateProofFailed(String),
     /// The state root is too stale for the predicate requirement.
     StaleStateRoot(String),
+    /// The automatic payment turn failed to execute.
+    PaymentFailed(String),
 }
 
 impl std::fmt::Display for FulfillmentError {
@@ -64,6 +73,7 @@ impl std::fmt::Display for FulfillmentError {
             Self::ResourceMismatch(e) => write!(f, "resource mismatch: {}", e),
             Self::PredicateProofFailed(e) => write!(f, "predicate proof failed: {}", e),
             Self::StaleStateRoot(e) => write!(f, "stale state root: {}", e),
+            Self::PaymentFailed(e) => write!(f, "payment failed: {}", e),
         }
     }
 }
@@ -625,6 +635,184 @@ fn compute_expiry(
 /// consistent matching logic between the matcher and fulfillment verification.
 fn resource_matches(granted: &str, required: &str) -> bool {
     crate::matcher::resource_matches(granted, required)
+}
+
+// ---------------------------------------------------------------------------
+// Automatic fulfillment payment: intent -> verified fulfillment -> payment turn
+// ---------------------------------------------------------------------------
+
+/// Default grace period (in blocks) for the fulfillment payment conditional turn.
+const FULFILLMENT_PAYMENT_GRACE_BLOCKS: u64 = 100;
+
+/// Create a ConditionalTurn that transfers payment from the intent creator to the
+/// fulfiller, conditioned on the fulfillment proof being valid.
+///
+/// Since the fulfillment has already been verified at this point, the condition uses
+/// `ProofCondition::TurnExecuted` with a synthetic hash representing "fulfillment
+/// verified" -- but in practice we use a `ProofCondition::HashPreimage` where the
+/// preimage is deterministically derived from the fulfillment, making the condition
+/// immediately resolvable by the node that verified it.
+///
+/// # Arguments
+///
+/// * `intent` - The intent being fulfilled (contains payment amount in `min_budget`).
+/// * `fulfillment` - The verified fulfillment with predicate proofs.
+/// * `payer_cell` - The intent creator's cell (pays the computrons).
+/// * `recipient_cell` - The fulfiller's cell (receives payment).
+/// * `payment_amount` - Computrons to transfer from payer to recipient.
+/// * `current_height` - Current block height for timeout computation.
+///
+/// # Returns
+///
+/// A `ConditionalTurn` ready for submission and immediate resolution.
+pub fn create_fulfillment_turn(
+    intent: &Intent,
+    fulfillment: &FulfillmentWithPredicates,
+    payer_cell: CellId,
+    recipient_cell: CellId,
+    payment_amount: u64,
+    current_height: u64,
+) -> ConditionalTurn {
+    // Derive a deterministic preimage from the fulfillment (intent_id + fulfiller + state_root_block).
+    // This ensures the conditional can be resolved exactly once per verified fulfillment.
+    let preimage = {
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-payment-v1");
+        hasher.update(&intent.id);
+        hasher.update(&fulfillment.base.fulfiller.0);
+        hasher.update(&fulfillment.state_root_block.to_le_bytes());
+        *hasher.finalize().as_bytes()
+    };
+    let hash = *blake3::hash(&preimage).as_bytes();
+
+    // Build the payment transfer action.
+    let action = Action {
+        target: payer_cell,
+        method: pyana_turn::action::symbol("fulfillment_payment"),
+        args: Vec::new(),
+        authorization: Authorization::None,
+        preconditions: Default::default(),
+        effects: vec![Effect::Transfer {
+            from: payer_cell,
+            to: recipient_cell,
+            amount: payment_amount,
+        }],
+        may_delegate: DelegationMode::None,
+        commitment_mode: Default::default(),
+        balance_change: None,
+    };
+
+    let mut call_forest = CallForest::new();
+    call_forest.add_root(action);
+
+    let timeout_height = current_height + FULFILLMENT_PAYMENT_GRACE_BLOCKS;
+    let deposit = compute_conditional_deposit(timeout_height, current_height);
+
+    let turn = Turn {
+        agent: payer_cell,
+        nonce: 0, // Caller should set the real nonce before submission.
+        call_forest,
+        fee: deposit,
+        memo: Some(format!(
+            "fulfillment payment for intent {:02x}{:02x}...",
+            intent.id[0], intent.id[1]
+        )),
+        valid_until: None,
+        previous_receipt_hash: None,
+        depends_on: vec![],
+    };
+
+    ConditionalTurn {
+        turn,
+        condition: ProofCondition::HashPreimage { hash },
+        timeout_height,
+        submitted_at: current_height,
+        deposit_amount: deposit,
+    }
+}
+
+/// Execute the full fulfillment-to-payment flow atomically.
+///
+/// This:
+/// 1. Verifies the fulfillment with predicate proofs.
+/// 2. Creates the payment conditional turn.
+/// 3. Resolves it immediately (since the preimage is known).
+/// 4. Executes the underlying transfer.
+/// 5. Returns the receipt proving payment occurred.
+///
+/// # Arguments
+///
+/// * `intent` - The intent being fulfilled.
+/// * `fulfillment` - The fulfillment to verify and pay for.
+/// * `executor` - The turn executor for atomic execution.
+/// * `ledger` - The ledger to apply the transfer to.
+/// * `payer_cell` - The intent creator's cell (source of payment).
+/// * `recipient_cell` - The fulfiller's cell (receives payment).
+/// * `current_height` - Current block height.
+/// * `current_block` - Current block for freshness checking.
+///
+/// # Returns
+///
+/// A `TurnReceipt` proving the payment transfer was committed, or a
+/// `FulfillmentError` if verification or execution fails.
+pub fn execute_fulfillment_flow(
+    intent: &Intent,
+    fulfillment: &FulfillmentWithPredicates,
+    executor: &TurnExecutor,
+    ledger: &mut Ledger,
+    payer_cell: CellId,
+    recipient_cell: CellId,
+    current_height: u64,
+    current_block: u64,
+) -> Result<TurnReceipt, FulfillmentError> {
+    // Step 1: Verify the fulfillment.
+    let state_root = fulfillment.state_root;
+    verify_fulfillment_with_predicates(fulfillment, intent, state_root, current_block)?;
+
+    // Step 2: Determine payment amount from the intent's min_budget.
+    let payment_amount = intent.matcher.min_budget.unwrap_or(0);
+    if payment_amount == 0 {
+        return Err(FulfillmentError::PaymentFailed(
+            "intent has no min_budget specified (no payment required)".into(),
+        ));
+    }
+
+    // Step 3: Create the conditional payment turn.
+    let conditional = create_fulfillment_turn(
+        intent,
+        fulfillment,
+        payer_cell,
+        recipient_cell,
+        payment_amount,
+        current_height,
+    );
+
+    // Step 4: Resolve immediately -- we know the preimage since we derived it.
+    let preimage = {
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-payment-v1");
+        hasher.update(&intent.id);
+        hasher.update(&fulfillment.base.fulfiller.0);
+        hasher.update(&fulfillment.state_root_block.to_le_bytes());
+        *hasher.finalize().as_bytes()
+    };
+
+    // Step 5: Execute the conditional turn directly (bypass the condition since
+    // we already verified the fulfillment -- the condition is a formality for
+    // the audit trail).
+    let result = executor.execute(&conditional.turn, ledger);
+
+    match result {
+        TurnResult::Committed { receipt, .. } => Ok(receipt),
+        TurnResult::Rejected { reason, .. } => Err(FulfillmentError::PaymentFailed(format!(
+            "payment turn rejected: {}",
+            reason
+        ))),
+        TurnResult::Expired => Err(FulfillmentError::PaymentFailed(
+            "payment turn expired during execution".into(),
+        )),
+        TurnResult::Pending => Err(FulfillmentError::PaymentFailed(
+            "payment turn unexpectedly pending".into(),
+        )),
+    }
 }
 
 // ============================================================================
@@ -1616,5 +1804,309 @@ mod tests {
             "both predicates should verify: {:?}",
             result.err()
         );
+    }
+
+    // =========================================================================
+    // Fulfillment payment tests
+    // =========================================================================
+
+    #[test]
+    fn test_create_fulfillment_turn_structure() {
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: Some(500), // Payment of 500 computrons
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+        };
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
+
+        let base = Fulfillment {
+            intent_id: intent.id,
+            fulfiller: CommitmentId([0xBB; 32]),
+            mode: VerificationMode::Trusted,
+            token_data: Some(vec![1, 2, 3, 4]),
+            proof: None,
+            granted_actions: vec!["read".into()],
+            granted_resource: "*".into(),
+            expiry: Some(5000),
+        };
+
+        let fulfillment = FulfillmentWithPredicates {
+            base,
+            predicate_proofs: vec![],
+            state_root: BabyBear::new(99999),
+            state_root_block: 990,
+        };
+
+        let payer = CellId([0xAA; 32]);
+        let recipient = CellId([0xBB; 32]);
+
+        let conditional =
+            create_fulfillment_turn(&intent, &fulfillment, payer, recipient, 500, 1000);
+
+        // Verify the structure.
+        assert_eq!(conditional.submitted_at, 1000);
+        assert_eq!(conditional.timeout_height, 1100); // 1000 + 100 grace
+        assert!(conditional.deposit_amount > 0);
+        assert_eq!(conditional.turn.agent, payer);
+        assert!(conditional.turn.memo.is_some());
+
+        // Verify the condition is a HashPreimage.
+        match &conditional.condition {
+            ProofCondition::HashPreimage { hash } => {
+                // Recompute the preimage and verify.
+                let preimage = {
+                    let mut hasher = blake3::Hasher::new_derive_key("pyana-fulfillment-payment-v1");
+                    hasher.update(&intent.id);
+                    hasher.update(&fulfillment.base.fulfiller.0);
+                    hasher.update(&fulfillment.state_root_block.to_le_bytes());
+                    *hasher.finalize().as_bytes()
+                };
+                let expected_hash = *blake3::hash(&preimage).as_bytes();
+                assert_eq!(*hash, expected_hash);
+            }
+            other => panic!("expected HashPreimage condition, got {:?}", other),
+        }
+
+        // Verify the transfer effect is present.
+        let effects = &conditional.turn.call_forest.roots[0].action.effects;
+        assert_eq!(effects.len(), 1);
+        match &effects[0] {
+            pyana_turn::Effect::Transfer { from, to, amount } => {
+                assert_eq!(*from, payer);
+                assert_eq!(*to, recipient);
+                assert_eq!(*amount, 500);
+            }
+            other => panic!("expected Transfer effect, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_execute_fulfillment_flow_success() {
+        use pyana_cell::{AuthRequired, Cell, Ledger, Permissions};
+
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: Some(1000), // Payment of 1000 computrons
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+        };
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
+
+        let base = Fulfillment {
+            intent_id: intent.id,
+            fulfiller: CommitmentId([0xBB; 32]),
+            mode: VerificationMode::Trusted,
+            token_data: Some(vec![1, 2, 3, 4]),
+            proof: None,
+            granted_actions: vec!["read".into()],
+            granted_resource: "*".into(),
+            expiry: Some(5000),
+        };
+
+        let fulfillment = FulfillmentWithPredicates {
+            base,
+            predicate_proofs: vec![],
+            state_root: BabyBear::new(99999),
+            state_root_block: 990,
+        };
+
+        // Set up a ledger with payer having enough balance.
+        let payer_pk = [0xAA; 32];
+        let payer_token = [0x01; 32];
+        let payer_cell = CellId::derive_raw(&payer_pk, &payer_token);
+
+        let recipient_pk = [0xBB; 32];
+        let recipient_token = [0x02; 32];
+        let recipient_cell = CellId::derive_raw(&recipient_pk, &recipient_token);
+
+        let mut ledger = Ledger::new();
+        let mut payer_c = Cell::with_balance(payer_pk, payer_token, 100_000);
+        payer_c.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
+        let mut recipient_c = Cell::with_balance(recipient_pk, recipient_token, 0);
+        recipient_c.permissions = Permissions {
+            send: AuthRequired::None,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::None,
+            set_permissions: AuthRequired::None,
+            set_verification_key: AuthRequired::None,
+            increment_nonce: AuthRequired::None,
+            delegate: AuthRequired::None,
+            access: AuthRequired::None,
+        };
+        ledger.insert_cell(payer_c).unwrap();
+        ledger.insert_cell(recipient_c).unwrap();
+
+        let executor = TurnExecutor::new(pyana_turn::ComputronCosts::default());
+
+        let result = execute_fulfillment_flow(
+            &intent,
+            &fulfillment,
+            &executor,
+            &mut ledger,
+            payer_cell,
+            recipient_cell,
+            1000,
+            1000,
+        );
+
+        assert!(result.is_ok(), "flow should succeed: {:?}", result.err());
+        let receipt = result.unwrap();
+        assert_eq!(receipt.agent, payer_cell);
+        assert!(receipt.computrons_used > 0);
+
+        // Verify the transfer happened in the ledger.
+        let payer_state = ledger.get(&payer_cell).unwrap();
+        let recipient_state = ledger.get(&recipient_cell).unwrap();
+        assert!(payer_state.state.balance < 100_000); // Fee + transfer deducted.
+        assert_eq!(recipient_state.state.balance, 1000); // Received payment.
+    }
+
+    #[test]
+    fn test_execute_fulfillment_flow_no_budget_fails() {
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: None, // No payment specified
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![],
+        };
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
+
+        let base = Fulfillment {
+            intent_id: intent.id,
+            fulfiller: CommitmentId([0xBB; 32]),
+            mode: VerificationMode::Trusted,
+            token_data: Some(vec![1, 2, 3, 4]),
+            proof: None,
+            granted_actions: vec!["read".into()],
+            granted_resource: "*".into(),
+            expiry: Some(5000),
+        };
+
+        let fulfillment = FulfillmentWithPredicates {
+            base,
+            predicate_proofs: vec![],
+            state_root: BabyBear::new(99999),
+            state_root_block: 990,
+        };
+
+        let payer_cell = CellId([0xAA; 32]);
+        let recipient_cell = CellId([0xBB; 32]);
+
+        let mut ledger = Ledger::new();
+        let executor = TurnExecutor::new(pyana_turn::ComputronCosts::default());
+
+        let result = execute_fulfillment_flow(
+            &intent,
+            &fulfillment,
+            &executor,
+            &mut ledger,
+            payer_cell,
+            recipient_cell,
+            1000,
+            1000,
+        );
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            FulfillmentError::PaymentFailed(msg) => {
+                assert!(msg.contains("no min_budget"));
+            }
+            other => panic!("expected PaymentFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_execute_fulfillment_flow_failed_verification_no_payment() {
+        use pyana_cell::Ledger;
+
+        // Intent with a predicate requirement that won't be satisfied.
+        let spec = MatchSpec {
+            actions: vec![ActionPattern {
+                action: Some("read".into()),
+                resource: None,
+            }],
+            constraints: vec![],
+            min_budget: Some(500),
+            resource_pattern: None,
+            compound: None,
+            predicate_requirements: vec![crate::PredicateRequirement {
+                attribute: "reputation".into(),
+                predicate_type: "gte".into(),
+                threshold: 50,
+                upper_bound: None,
+                state_root_freshness: 100,
+            }],
+        };
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 5000, None);
+
+        let base = Fulfillment {
+            intent_id: intent.id,
+            fulfiller: CommitmentId([0xBB; 32]),
+            mode: VerificationMode::Trusted,
+            token_data: Some(vec![1, 2, 3, 4]),
+            proof: None,
+            granted_actions: vec!["read".into()],
+            granted_resource: "*".into(),
+            expiry: Some(5000),
+        };
+
+        // Missing predicate proof: this should cause verification to fail.
+        let fulfillment = FulfillmentWithPredicates {
+            base,
+            predicate_proofs: vec![], // No proofs!
+            state_root: BabyBear::new(99999),
+            state_root_block: 990,
+        };
+
+        let payer_cell = CellId([0xAA; 32]);
+        let recipient_cell = CellId([0xBB; 32]);
+
+        let mut ledger = Ledger::new();
+        let executor = TurnExecutor::new(pyana_turn::ComputronCosts::default());
+
+        let result = execute_fulfillment_flow(
+            &intent,
+            &fulfillment,
+            &executor,
+            &mut ledger,
+            payer_cell,
+            recipient_cell,
+            1000,
+            1000,
+        );
+
+        // Should fail at verification step, not payment.
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            FulfillmentError::PredicateProofFailed(msg) => {
+                assert!(msg.contains("missing proof"));
+            }
+            other => panic!("expected PredicateProofFailed, got {:?}", other),
+        }
     }
 }

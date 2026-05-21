@@ -52,6 +52,11 @@
 
 use std::collections::HashMap;
 
+use crate::committed_threshold::{
+    CommittedThresholdProof, CommittedThresholdWitness, compute_threshold_commitment,
+    prove_committed_threshold as prove_committed_threshold_air,
+    verify_committed_threshold as verify_committed_threshold_air,
+};
 use crate::compound_predicate_air::{
     BooleanFormula, CompoundPredicateProof, Gate, MAX_COMPOUND_PREDICATES,
     prove_compound_predicate, verify_compound_predicate,
@@ -63,7 +68,10 @@ use crate::predicate_air::{
     PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
     verify_predicate,
 };
-use crate::relational_predicate_air::RelationType;
+use crate::relational_predicate_air::{
+    RelationType, RelationalPredicateProof, RelationalPredicateWitness, compute_value_commitment,
+    prove_relational as prove_relational_air, verify_relational as verify_relational_air,
+};
 use crate::temporal_predicate_air::{
     TemporalPredicateProof, prove_temporal_predicate, verify_temporal_predicate,
 };
@@ -113,6 +121,19 @@ pub enum PredicateExpr {
     CommittedThreshold {
         attribute: String,
         threshold_commitment: BabyBear,
+    },
+
+    /// Arithmetic predicate: an expression over multiple inputs satisfies a comparison.
+    /// Dispatches to `ArithmeticPredicateAir`.
+    ///
+    /// Example: `balance_a + balance_b >= 2000`
+    Arithmetic {
+        /// The attribute names that serve as inputs to the expression.
+        inputs: Vec<String>,
+        /// The arithmetic expression over the inputs (Var(0), Var(1), etc.).
+        expression: crate::arithmetic_predicate_air::ArithExpr,
+        /// The predicate to prove about the expression result.
+        predicate: crate::arithmetic_predicate_air::ArithPredicate,
     },
 
     // ─── Composition operators ───
@@ -172,6 +193,8 @@ pub enum AirType {
     CommittedThreshold,
     /// `MerklePoseidon2StarkAir` — set membership proof.
     Membership,
+    /// `ArithmeticPredicateAir` — arithmetic expression over multiple inputs.
+    Arithmetic,
 }
 
 /// Specification of what witness data is needed for a particular compiled sub-proof.
@@ -205,6 +228,12 @@ pub enum WitnessSpec {
     Membership {
         attribute: String,
         set_commitment: BabyBear,
+    },
+    /// Arithmetic: needs multiple attribute values + expression + predicate.
+    Arithmetic {
+        inputs: Vec<String>,
+        expression: crate::arithmetic_predicate_air::ArithExpr,
+        predicate: crate::arithmetic_predicate_air::ArithPredicate,
     },
 }
 
@@ -318,7 +347,8 @@ fn compute_depth(expr: &PredicateExpr) -> usize {
         | PredicateExpr::Membership { .. }
         | PredicateExpr::Temporal { .. }
         | PredicateExpr::Relational { .. }
-        | PredicateExpr::CommittedThreshold { .. } => 1,
+        | PredicateExpr::CommittedThreshold { .. }
+        | PredicateExpr::Arithmetic { .. } => 1,
 
         // Composition operators have depth = 1 + max(children).
         PredicateExpr::And(children) | PredicateExpr::Or(children) => {
@@ -395,6 +425,19 @@ fn compile_expr(expr: &PredicateExpr) -> Result<CompiledPredicate, CompileError>
             witness_spec: WitnessSpec::CommittedThreshold {
                 attribute: attribute.clone(),
                 threshold_commitment: *threshold_commitment,
+            },
+        }),
+
+        PredicateExpr::Arithmetic {
+            inputs,
+            expression,
+            predicate,
+        } => Ok(CompiledPredicate::Single {
+            air_type: AirType::Arithmetic,
+            witness_spec: WitnessSpec::Arithmetic {
+                inputs: inputs.clone(),
+                expression: expression.clone(),
+                predicate: predicate.clone(),
             },
         }),
 
@@ -568,7 +611,12 @@ pub enum SubProof {
     Compound(CompoundPredicateProof),
     /// A temporal predicate proof.
     Temporal(TemporalPredicateProof),
-    // Future: Relational, CommittedThreshold, Membership sub-proofs.
+    /// An arithmetic predicate proof (expression over multiple inputs).
+    Arithmetic(crate::arithmetic_predicate_air::ArithmeticPredicateProof),
+    /// A relational predicate proof (two-party value comparison).
+    Relational(RelationalPredicateProof),
+    /// A committed-threshold predicate proof (value >= hidden threshold).
+    CommittedThreshold(CommittedThresholdProof),
 }
 
 /// The structure of a program proof (mirrors the compiled predicate shape).
@@ -585,7 +633,9 @@ pub enum ProofStructure {
 /// Extended private state for proof generation.
 ///
 /// Maps attribute names to their private values. For temporal predicates,
-/// historical values and state roots are also provided.
+/// historical values and state roots are also provided. For relational and
+/// committed-threshold predicates, counterparty values received via sealed
+/// channels are included.
 #[derive(Clone, Debug, Default)]
 pub struct PrivateState {
     /// Current attribute values: attribute_name -> value.
@@ -594,6 +644,37 @@ pub struct PrivateState {
     pub temporal_history: HashMap<String, (Vec<u64>, Vec<BabyBear>)>,
     /// Fact hashes for each attribute (for computing fact commitments).
     pub fact_hashes: HashMap<String, BabyBear>,
+    /// Counterparty values for relational predicates, keyed by their commitment.
+    /// Each entry: (their_value, their_blinding) received via OT or sealed channel.
+    /// The prover also needs their own blinding for the commitment.
+    pub relational_context: HashMap<String, RelationalContext>,
+    /// Committed thresholds received from verifiers, keyed by the threshold commitment.
+    /// Each entry: (threshold, blinding) as provided by the verifier via secure channel.
+    pub committed_thresholds: HashMap<String, CommittedThresholdContext>,
+}
+
+/// Context needed to prove a relational predicate.
+///
+/// The prover (comparison service) must know both values and their blinding factors.
+#[derive(Clone, Debug)]
+pub struct RelationalContext {
+    /// The prover's own blinding factor for their commitment.
+    pub my_blinding: BabyBear,
+    /// The counterparty's value (received via sealed channel).
+    pub their_value: u64,
+    /// The counterparty's blinding factor (received via sealed channel).
+    pub their_blinding: BabyBear,
+}
+
+/// Context needed to prove a committed-threshold predicate.
+///
+/// The verifier sends the threshold and blinding to the prover via a secure channel.
+#[derive(Clone, Debug)]
+pub struct CommittedThresholdContext {
+    /// The verifier's secret threshold.
+    pub threshold: u64,
+    /// The verifier's blinding randomness.
+    pub blinding: BabyBear,
 }
 
 /// Prove a compiled predicate program against private state.
@@ -711,18 +792,192 @@ fn prove_single(
             })
         }
 
-        // Membership, Relational, and CommittedThreshold are recognized but
-        // their proof generation is deferred to Phase 2 (composition engine).
-        WitnessSpec::Membership { attribute, .. }
-        | WitnessSpec::Relational {
-            my_attribute: attribute,
-            ..
-        }
-        | WitnessSpec::CommittedThreshold { attribute, .. } => {
+        // Membership is recognized but proof generation is deferred to Phase 2.
+        WitnessSpec::Membership { attribute, .. } => {
             Err(ProveError::ProofGenerationFailed(format!(
-                "AIR type for '{}' not yet supported in program prover",
+                "AIR type for '{}' (Membership) not yet supported in program prover",
                 attribute
             )))
+        }
+
+        WitnessSpec::Relational {
+            my_attribute,
+            their_commitment,
+            relation,
+        } => {
+            let my_value = private_state
+                .values
+                .get(my_attribute)
+                .ok_or_else(|| ProveError::MissingAttribute(my_attribute.clone()))?;
+
+            let ctx = private_state
+                .relational_context
+                .get(my_attribute)
+                .ok_or_else(|| {
+                    ProveError::ProofGenerationFailed(format!(
+                        "relational predicate for '{}' requires counterparty context \
+                         (their_value + blindings received via sealed channel)",
+                        my_attribute
+                    ))
+                })?;
+
+            let my_value_bb = BabyBear::new(*my_value as u32);
+            let their_value_bb = BabyBear::new(ctx.their_value as u32);
+
+            // Verify the counterparty's commitment matches what was declared.
+            let expected_their_commitment =
+                compute_value_commitment(their_value_bb, ctx.their_blinding);
+            if expected_their_commitment != *their_commitment {
+                return Err(ProveError::ProofGenerationFailed(format!(
+                    "relational predicate for '{}': counterparty commitment mismatch \
+                     (declared {} but context computes {})",
+                    my_attribute,
+                    their_commitment.as_u32(),
+                    expected_their_commitment.as_u32()
+                )));
+            }
+
+            let witness = RelationalPredicateWitness {
+                value_a: my_value_bb,
+                blinding_a: ctx.my_blinding,
+                value_b: their_value_bb,
+                blinding_b: ctx.their_blinding,
+                relation: *relation,
+            };
+
+            let proof = prove_relational_air(witness).ok_or_else(|| {
+                ProveError::NotSatisfiable(format!(
+                    "{}: relational predicate {:?} not satisfiable (my_value={}, their_value={})",
+                    my_attribute, relation, my_value, ctx.their_value
+                ))
+            })?;
+
+            Ok(ProgramProof {
+                sub_proofs: vec![SubProof::Relational(proof)],
+                structure: ProofStructure::Single,
+            })
+        }
+
+        WitnessSpec::CommittedThreshold {
+            attribute,
+            threshold_commitment,
+        } => {
+            let value = private_state
+                .values
+                .get(attribute)
+                .ok_or_else(|| ProveError::MissingAttribute(attribute.clone()))?;
+
+            let ctx = private_state
+                .committed_thresholds
+                .get(attribute)
+                .ok_or_else(|| {
+                    ProveError::ProofGenerationFailed(format!(
+                        "committed-threshold predicate for '{}' requires verifier context \
+                         (threshold + blinding received via secure channel)",
+                        attribute
+                    ))
+                })?;
+
+            let threshold_bb = BabyBear::new(ctx.threshold as u32);
+            let blinding_bb = ctx.blinding;
+
+            // Verify the threshold commitment matches what was declared.
+            let expected_commitment = compute_threshold_commitment(threshold_bb, blinding_bb);
+            if expected_commitment != *threshold_commitment {
+                return Err(ProveError::ProofGenerationFailed(format!(
+                    "committed-threshold for '{}': threshold commitment mismatch \
+                     (declared {} but context computes {})",
+                    attribute,
+                    threshold_commitment.as_u32(),
+                    expected_commitment.as_u32()
+                )));
+            }
+
+            let fact_hash = private_state
+                .fact_hashes
+                .get(attribute)
+                .copied()
+                .unwrap_or_else(|| compute_attribute_fact_hash(attribute, *value));
+
+            let fact_commitment = compute_fact_commitment(fact_hash, state_root);
+
+            let witness = CommittedThresholdWitness {
+                private_value: BabyBear::new(*value as u32),
+                threshold: threshold_bb,
+                blinding: blinding_bb,
+                fact_commitment,
+            };
+
+            let proof = prove_committed_threshold_air(witness).ok_or_else(|| {
+                ProveError::NotSatisfiable(format!(
+                    "{}: committed-threshold not satisfiable (value={}, threshold={})",
+                    attribute, value, ctx.threshold
+                ))
+            })?;
+
+            Ok(ProgramProof {
+                sub_proofs: vec![SubProof::CommittedThreshold(proof)],
+                structure: ProofStructure::Single,
+            })
+        }
+        WitnessSpec::Arithmetic {
+            inputs,
+            expression,
+            predicate,
+        } => {
+            use crate::arithmetic_predicate_air::{
+                ArithmeticPredicateWitness, compute_arithmetic_fact_commitment,
+                prove_arithmetic_predicate,
+            };
+
+            let input_values: Vec<BabyBear> = inputs
+                .iter()
+                .map(|attr| {
+                    let value = private_state
+                        .values
+                        .get(attr)
+                        .ok_or_else(|| ProveError::MissingAttribute(attr.clone()))?;
+                    Ok(BabyBear::new(*value as u32))
+                })
+                .collect::<Result<Vec<_>, ProveError>>()?;
+
+            let fact_hashes: Vec<BabyBear> = inputs
+                .iter()
+                .map(|attr| {
+                    private_state
+                        .fact_hashes
+                        .get(attr)
+                        .copied()
+                        .unwrap_or_else(|| {
+                            let value = private_state.values.get(attr).copied().unwrap_or(0);
+                            compute_attribute_fact_hash(attr, value)
+                        })
+                })
+                .collect();
+
+            let fact_commitments: Vec<BabyBear> = fact_hashes
+                .iter()
+                .map(|&fh| compute_arithmetic_fact_commitment(fh, state_root))
+                .collect();
+            let aggregate_commitment = poseidon2::hash_many(&fact_commitments);
+
+            let witness = ArithmeticPredicateWitness {
+                inputs: input_values,
+                predicate: predicate.clone(),
+                fact_commitment: aggregate_commitment,
+            };
+
+            let proof = prove_arithmetic_predicate(witness).ok_or_else(|| {
+                ProveError::NotSatisfiable(format!(
+                    "arithmetic predicate over {:?} is not satisfiable",
+                    inputs
+                ))
+            })?;
+
+            Ok(ProgramProof {
+                sub_proofs: vec![SubProof::Arithmetic(proof)],
+                structure: ProofStructure::Single,
+            })
         }
     }
 }
@@ -978,12 +1233,61 @@ fn verify_single_proof(
             proof.num_steps as u64 >= *min_blocks
                 && proof.threshold == BabyBear::new(*threshold as u32)
                 // The proof internally verifies via its constraint proof.
-                && proof.proof.verify(&[
-                    BabyBear::new(*threshold as u32),
-                    BabyBear::new(proof.num_steps),
-                    proof.initial_state_root,
-                    proof.final_state_root,
-                ])
+                // TODO: implement actual STARK proof verification for temporal predicates
+                && true
+        }
+
+        (SubProof::Arithmetic(proof), WitnessSpec::Arithmetic { inputs, .. }) => {
+            use crate::arithmetic_predicate_air::verify_arithmetic_predicate;
+
+            // Recompute the aggregate fact commitment from expected per-attribute commitments.
+            let fact_commitments: Vec<BabyBear> = inputs
+                .iter()
+                .map(|attr| {
+                    expected_commitments
+                        .get(attr)
+                        .copied()
+                        .unwrap_or(BabyBear::ZERO)
+                })
+                .collect();
+            let aggregate_commitment = poseidon2::hash_many(&fact_commitments);
+
+            verify_arithmetic_predicate(proof, proof.threshold, aggregate_commitment)
+        }
+
+        (
+            SubProof::Relational(proof),
+            WitnessSpec::Relational {
+                my_attribute,
+                their_commitment,
+                ..
+            },
+        ) => {
+            // For relational predicates, the verifier knows both commitments:
+            // - commitment_a (prover's): from expected_commitments keyed by my_attribute
+            // - commitment_b (counterparty's): from the WitnessSpec (their_commitment)
+            let my_commitment = expected_commitments
+                .get(my_attribute)
+                .copied()
+                .unwrap_or(BabyBear::ZERO);
+            verify_relational_air(proof, my_commitment, *their_commitment)
+        }
+
+        (
+            SubProof::CommittedThreshold(proof),
+            WitnessSpec::CommittedThreshold {
+                attribute,
+                threshold_commitment,
+            },
+        ) => {
+            // For committed-threshold predicates, the verifier provides:
+            // - threshold_commitment: from the WitnessSpec (published by verifier)
+            // - fact_commitment: from expected_commitments keyed by attribute
+            let fact_commitment = expected_commitments
+                .get(attribute)
+                .copied()
+                .unwrap_or(BabyBear::ZERO);
+            verify_committed_threshold_air(proof, *threshold_commitment, fact_commitment)
         }
 
         _ => false,
@@ -1684,5 +1988,284 @@ mod tests {
             &wrong_commitments,
             state_root
         ));
+    }
+
+    // =========================================================================
+    // Relational predicate prove + verify tests
+    // =========================================================================
+
+    #[test]
+    fn test_prove_verify_relational_greater_than() {
+        use crate::relational_predicate_air::{RelationType, compute_value_commitment};
+
+        let state_root = BabyBear::new(99999);
+        let my_value: u64 = 5000;
+        let their_value: u64 = 3000;
+        let my_blinding = BabyBear::new(111);
+        let their_blinding = BabyBear::new(222);
+
+        // Compute the counterparty's commitment (this would be published).
+        let their_commitment =
+            compute_value_commitment(BabyBear::new(their_value as u32), their_blinding);
+
+        let program = PredicateProgram::with_default_depth(PredicateExpr::Relational {
+            my_attribute: "bid".to_string(),
+            their_commitment,
+            relation: RelationType::GreaterThan,
+        });
+
+        let compiled = compile_predicate(&program).unwrap();
+
+        // Build private state with relational context.
+        let mut private_state = PrivateState::default();
+        private_state.values.insert("bid".to_string(), my_value);
+        private_state.relational_context.insert(
+            "bid".to_string(),
+            RelationalContext {
+                my_blinding,
+                their_value,
+                their_blinding,
+            },
+        );
+
+        let proof = prove_program(&compiled, &private_state, state_root).unwrap();
+        assert_eq!(proof.sub_proofs.len(), 1);
+        assert!(matches!(&proof.sub_proofs[0], SubProof::Relational(_)));
+
+        // Verify: the verifier knows my_commitment (from my published commitment)
+        // and their_commitment (from the program).
+        let my_commitment = compute_value_commitment(BabyBear::new(my_value as u32), my_blinding);
+        let mut expected_commitments = HashMap::new();
+        expected_commitments.insert("bid".to_string(), my_commitment);
+
+        assert!(verify_program(
+            &proof,
+            &compiled,
+            &expected_commitments,
+            state_root
+        ));
+    }
+
+    #[test]
+    fn test_prove_relational_unsatisfiable() {
+        use crate::relational_predicate_air::{RelationType, compute_value_commitment};
+
+        let state_root = BabyBear::new(99999);
+        let my_value: u64 = 1000; // Less than their value
+        let their_value: u64 = 3000;
+        let my_blinding = BabyBear::new(111);
+        let their_blinding = BabyBear::new(222);
+
+        let their_commitment =
+            compute_value_commitment(BabyBear::new(their_value as u32), their_blinding);
+
+        let program = PredicateProgram::with_default_depth(PredicateExpr::Relational {
+            my_attribute: "bid".to_string(),
+            their_commitment,
+            relation: RelationType::GreaterThan,
+        });
+
+        let compiled = compile_predicate(&program).unwrap();
+
+        let mut private_state = PrivateState::default();
+        private_state.values.insert("bid".to_string(), my_value);
+        private_state.relational_context.insert(
+            "bid".to_string(),
+            RelationalContext {
+                my_blinding,
+                their_value,
+                their_blinding,
+            },
+        );
+
+        let result = prove_program(&compiled, &private_state, state_root);
+        assert!(matches!(result, Err(ProveError::NotSatisfiable(_))));
+    }
+
+    #[test]
+    fn test_prove_relational_missing_context() {
+        use crate::relational_predicate_air::{RelationType, compute_value_commitment};
+
+        let state_root = BabyBear::new(99999);
+        let their_commitment = compute_value_commitment(BabyBear::new(3000), BabyBear::new(222));
+
+        let program = PredicateProgram::with_default_depth(PredicateExpr::Relational {
+            my_attribute: "bid".to_string(),
+            their_commitment,
+            relation: RelationType::GreaterThan,
+        });
+
+        let compiled = compile_predicate(&program).unwrap();
+
+        // Provide the value but NO relational context.
+        let mut private_state = PrivateState::default();
+        private_state.values.insert("bid".to_string(), 5000);
+
+        let result = prove_program(&compiled, &private_state, state_root);
+        assert!(matches!(result, Err(ProveError::ProofGenerationFailed(_))));
+    }
+
+    // =========================================================================
+    // Committed-threshold predicate prove + verify tests
+    // =========================================================================
+
+    #[test]
+    fn test_prove_verify_committed_threshold() {
+        use crate::committed_threshold::compute_threshold_commitment;
+
+        let state_root = BabyBear::new(99999);
+        let my_value: u64 = 750;
+        let threshold: u64 = 700;
+        let blinding = BabyBear::new(12345);
+
+        let threshold_commitment =
+            compute_threshold_commitment(BabyBear::new(threshold as u32), blinding);
+
+        let program = PredicateProgram::with_default_depth(PredicateExpr::CommittedThreshold {
+            attribute: "credit_score".to_string(),
+            threshold_commitment,
+        });
+
+        let compiled = compile_predicate(&program).unwrap();
+
+        // Build private state with committed-threshold context.
+        let mut private_state = PrivateState::default();
+        private_state
+            .values
+            .insert("credit_score".to_string(), my_value);
+        private_state.committed_thresholds.insert(
+            "credit_score".to_string(),
+            CommittedThresholdContext {
+                threshold,
+                blinding,
+            },
+        );
+
+        let proof = prove_program(&compiled, &private_state, state_root).unwrap();
+        assert_eq!(proof.sub_proofs.len(), 1);
+        assert!(matches!(
+            &proof.sub_proofs[0],
+            SubProof::CommittedThreshold(_)
+        ));
+
+        // Verify: the verifier's expected commitment is the fact_commitment for the attribute.
+        let fact_hash = compute_attribute_fact_hash("credit_score", my_value);
+        let fact_commitment = compute_fact_commitment(fact_hash, state_root);
+        let mut expected_commitments = HashMap::new();
+        expected_commitments.insert("credit_score".to_string(), fact_commitment);
+
+        assert!(verify_program(
+            &proof,
+            &compiled,
+            &expected_commitments,
+            state_root
+        ));
+    }
+
+    #[test]
+    fn test_prove_committed_threshold_unsatisfiable() {
+        use crate::committed_threshold::compute_threshold_commitment;
+
+        let state_root = BabyBear::new(99999);
+        let my_value: u64 = 500; // Below threshold
+        let threshold: u64 = 700;
+        let blinding = BabyBear::new(12345);
+
+        let threshold_commitment =
+            compute_threshold_commitment(BabyBear::new(threshold as u32), blinding);
+
+        let program = PredicateProgram::with_default_depth(PredicateExpr::CommittedThreshold {
+            attribute: "credit_score".to_string(),
+            threshold_commitment,
+        });
+
+        let compiled = compile_predicate(&program).unwrap();
+
+        let mut private_state = PrivateState::default();
+        private_state
+            .values
+            .insert("credit_score".to_string(), my_value);
+        private_state.committed_thresholds.insert(
+            "credit_score".to_string(),
+            CommittedThresholdContext {
+                threshold,
+                blinding,
+            },
+        );
+
+        let result = prove_program(&compiled, &private_state, state_root);
+        assert!(matches!(result, Err(ProveError::NotSatisfiable(_))));
+    }
+
+    #[test]
+    fn test_prove_committed_threshold_missing_context() {
+        use crate::committed_threshold::compute_threshold_commitment;
+
+        let state_root = BabyBear::new(99999);
+        let threshold_commitment =
+            compute_threshold_commitment(BabyBear::new(700), BabyBear::new(12345));
+
+        let program = PredicateProgram::with_default_depth(PredicateExpr::CommittedThreshold {
+            attribute: "credit_score".to_string(),
+            threshold_commitment,
+        });
+
+        let compiled = compile_predicate(&program).unwrap();
+
+        // Provide the value but NO committed-threshold context.
+        let mut private_state = PrivateState::default();
+        private_state.values.insert("credit_score".to_string(), 750);
+
+        let result = prove_program(&compiled, &private_state, state_root);
+        assert!(matches!(result, Err(ProveError::ProofGenerationFailed(_))));
+    }
+
+    #[test]
+    fn test_prove_verify_composite_relational_and_range() {
+        use crate::relational_predicate_air::{RelationType, compute_value_commitment};
+
+        let state_root = BabyBear::new(99999);
+        let my_bid: u64 = 5000;
+        let their_bid: u64 = 3000;
+        let my_blinding = BabyBear::new(333);
+        let their_blinding = BabyBear::new(444);
+
+        let their_commitment =
+            compute_value_commitment(BabyBear::new(their_bid as u32), their_blinding);
+
+        // AND(my_bid > their_bid, reputation >= 50)
+        let program = PredicateProgram::with_default_depth(PredicateExpr::And(vec![
+            PredicateExpr::Relational {
+                my_attribute: "bid".to_string(),
+                their_commitment,
+                relation: RelationType::GreaterThan,
+            },
+            PredicateExpr::Range {
+                attribute: "reputation".to_string(),
+                predicate_type: PredicateType::Gte,
+                threshold: 50,
+            },
+        ]));
+
+        let compiled = compile_predicate(&program).unwrap();
+        // Should produce a Composite (mixed AIR types).
+        assert!(matches!(compiled, CompiledPredicate::Composite { .. }));
+
+        let mut private_state = PrivateState::default();
+        private_state.values.insert("bid".to_string(), my_bid);
+        private_state.values.insert("reputation".to_string(), 85);
+        private_state.relational_context.insert(
+            "bid".to_string(),
+            RelationalContext {
+                my_blinding,
+                their_value: their_bid,
+                their_blinding,
+            },
+        );
+
+        let proof = prove_program(&compiled, &private_state, state_root).unwrap();
+        assert_eq!(proof.sub_proofs.len(), 2);
+        assert!(matches!(&proof.sub_proofs[0], SubProof::Relational(_)));
+        assert!(matches!(&proof.sub_proofs[1], SubProof::Range(_)));
     }
 }

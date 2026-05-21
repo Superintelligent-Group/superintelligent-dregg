@@ -26,15 +26,40 @@ pub struct EventualRef {
     pub source_turn: [u8; 32],
     /// Which output slot of that turn.
     pub output_slot: u32,
+    /// Federation ID of the turn's origin. None = local federation, Some = remote.
+    /// When set, the pipeline executor must wait for the remote federation's receipt
+    /// before this reference can be resolved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub federation_id: Option<[u8; 32]>,
 }
 
 impl EventualRef {
-    /// Create a new eventual reference.
+    /// Create a new eventual reference (local federation).
     pub fn new(source_turn: [u8; 32], output_slot: u32) -> Self {
         Self {
             source_turn,
             output_slot,
+            federation_id: None,
         }
+    }
+
+    /// Create a new eventual reference targeting a remote federation.
+    pub fn new_remote(source_turn: [u8; 32], output_slot: u32, federation_id: [u8; 32]) -> Self {
+        Self {
+            source_turn,
+            output_slot,
+            federation_id: Some(federation_id),
+        }
+    }
+
+    /// Returns true if this reference targets a remote federation.
+    pub fn is_remote(&self) -> bool {
+        self.federation_id.is_some()
+    }
+
+    /// Returns true if this reference is local (same federation).
+    pub fn is_local(&self) -> bool {
+        self.federation_id.is_none()
     }
 }
 

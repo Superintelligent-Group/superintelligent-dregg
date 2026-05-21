@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pyana": {
+      "command": "cargo",
+      "args": ["run", "--release", "-p", "pyana-node", "--", "mcp", "--data-dir", ".pyana-data"],
+      "env": {
+        "RUST_LOG": "pyana_node=info"
+      }
+    }
+  }
+}

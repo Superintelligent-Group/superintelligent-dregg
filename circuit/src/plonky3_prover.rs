@@ -22,7 +22,8 @@
 //! ## Configuration
 //!
 //! - Field: BabyBear (p = 2^31 - 2^27 + 1)
-//! - Hash: Poseidon2 (width 8, alpha=7, 4+4 external + 22 internal rounds)
+//! - Hash: Poseidon2 (width 16, alpha=7, 4+4 external + 13 internal rounds)
+//!   Parameters from Plonky3/Poseidon2 paper with 128-bit security proofs.
 //! - PCS: TwoAdicFriPcs with Poseidon2 Merkle trees
 //! - Extension field: BinomialExtensionField<BabyBear, 4> (degree-4 extension)
 //! - DFT: Radix2DitParallel (parallel NTT)
@@ -787,7 +788,7 @@ mod tests {
             inp[4] = BabyBear::new(4);
             let sts = poseidon2_trace(&inp);
             let mut c = ROUND_STATES_OFFSET;
-            for ri in 1..=TOTAL_ROUNDS {
+            for ri in 0..=TOTAL_ROUNDS {
                 for j in 0..WIDTH {
                     trace[level][c] = sts[ri][j];
                     c += 1;

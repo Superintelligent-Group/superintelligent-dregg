@@ -48,6 +48,7 @@ pub mod executor;
 pub mod forest;
 pub(crate) mod journal;
 pub mod obligation;
+pub mod pending;
 pub mod routing;
 pub mod turn;
 pub mod verify;
@@ -84,6 +85,10 @@ pub use forest::{CallForest, CallTree};
 pub use obligation::{
     MAX_OBLIGATION_DEADLINE, ObligationError, ObligationOutcome, ProofObligation, check_expiry,
     create_obligation, fulfill_obligation, validate_obligation_deadline,
+};
+pub use pending::{
+    BrokenReason, PendingEntry, PendingHandle, PendingStatus, PendingTurnRegistry,
+    ResolutionCondition, ResolutionEvent, ResolutionOutcome,
 };
 pub use routing::RoutingDirective;
 pub use turn::{Turn, TurnReceipt, TurnResult};

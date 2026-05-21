@@ -70,6 +70,10 @@ pub struct NodeStateInner {
     /// Pending conditional turns awaiting proof resolution.
     /// Garbage-collected on access when timeout_height is exceeded.
     pub pending_conditionals: Vec<pyana_turn::ConditionalTurn>,
+    /// Registry of pending turns with distributed promise semantics.
+    /// Tracks turns awaiting async resolution (cross-federation receipts, height
+    /// conditions, etc.) and propagates broken promises to dependents.
+    pub pending_turns: pyana_turn::PendingTurnRegistry,
     /// Set of proof hashes that have already been used (nullifiers).
     /// Prevents the same proof from satisfying multiple conditional turns.
     pub used_proof_hashes: HashSet<[u8; 32]>,
@@ -96,6 +100,10 @@ pub struct NodeStateInner {
     pub pruning_enabled: bool,
     /// Checkpoint interval in blocks. Defaults to 1000.
     pub checkpoint_interval: u64,
+    /// Whether to generate STARK proofs of block state transitions (--prove-transitions).
+    /// When true, after each finalized block the node generates a transition proof
+    /// and gossips it to peers.
+    pub prove_transitions: bool,
 }
 
 /// Summary of the node's sync state for the status endpoint.
@@ -179,6 +187,7 @@ impl NodeState {
                 passphrase_hash,
                 intent_pool: HashMap::new(),
                 pending_conditionals: Vec::new(),
+                pending_turns: pyana_turn::PendingTurnRegistry::new(),
                 used_proof_hashes,
                 known_federation_keys: Vec::new(),
                 max_root_age_secs: 3600,
@@ -188,6 +197,7 @@ impl NodeState {
                 routing_table: RoutingTable::new(),
                 pruning_enabled: false,
                 checkpoint_interval: pyana_federation::DEFAULT_CHECKPOINT_INTERVAL,
+                prove_transitions: false,
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -219,6 +229,7 @@ impl NodeState {
                 passphrase_hash: None,
                 intent_pool: HashMap::new(),
                 pending_conditionals: Vec::new(),
+                pending_turns: pyana_turn::PendingTurnRegistry::new(),
                 used_proof_hashes: HashSet::new(),
                 known_federation_keys: Vec::new(),
                 max_root_age_secs: 3600,
@@ -228,6 +239,7 @@ impl NodeState {
                 routing_table: RoutingTable::new(),
                 pruning_enabled: false,
                 checkpoint_interval: pyana_federation::DEFAULT_CHECKPOINT_INTERVAL,
+                prove_transitions: false,
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),

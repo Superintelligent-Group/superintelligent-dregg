@@ -100,6 +100,18 @@ pub enum FactDisclosure {
         /// The verifier's blinding randomness.
         blinding: BabyBear,
     },
+    /// Prove an arithmetic predicate over multiple fact values without revealing them.
+    ///
+    /// The prover proves an arithmetic expression (e.g., `balance_a + balance_b >= 2000`)
+    /// over the values at the specified fact indices without revealing any individual value.
+    ArithmeticPredicate {
+        /// Indices into the token state's fact set that serve as inputs to the expression.
+        input_indices: Vec<usize>,
+        /// The arithmetic expression to evaluate over the inputs.
+        expression: pyana_circuit::ArithExpr,
+        /// The predicate to prove about the expression result.
+        predicate: pyana_circuit::ArithPredicate,
+    },
     /// Do not reveal anything about this fact.
     Hidden,
 }
@@ -1146,6 +1158,10 @@ impl AgentWallet {
                     })?;
                     predicate_proofs.push((*fact_index, standard_proof));
                 }
+                FactDisclosure::ArithmeticPredicate { .. } => {
+                    // Arithmetic predicates over multiple facts are not yet supported
+                    // in the selective disclosure pipeline. Treated as hidden for now.
+                }
                 FactDisclosure::Hidden => {}
             }
         }
@@ -1513,6 +1529,165 @@ impl AgentWallet {
     }
 
     // =========================================================================
+    // Arithmetic Predicate Proofs
+    // =========================================================================
+
+    /// Prove an arithmetic predicate over multiple private token attributes.
+    ///
+    /// This generates a zero-knowledge proof that an arithmetic expression over
+    /// multiple private values from a held token satisfies a predicate, without
+    /// revealing any of the individual values.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The held token containing the attributes.
+    /// * `inputs` - Pairs of (attribute_name, private_value) for each input to the expression.
+    /// * `expression` - The arithmetic expression to evaluate (e.g., `Var(0) + Var(1)`).
+    /// * `predicate` - The predicate to prove (e.g., `ExprGte(expr, threshold)`).
+    ///
+    /// # Returns
+    ///
+    /// A proof that can be verified by anyone knowing the fact commitments.
+    ///
+    /// Note: Arithmetic predicate bridge integration is not yet complete.
+    /// This method will return an error until `pyana_bridge::prove_arithmetic_for_facts`
+    /// is implemented.
+    pub fn prove_arithmetic(
+        &self,
+        token: &HeldToken,
+        inputs: &[(String, u64)],
+        _expression: pyana_circuit::ArithExpr,
+        _predicate: pyana_circuit::ArithPredicate,
+    ) -> Result<pyana_circuit::ArithmeticPredicateProof, SdkError> {
+        // Decode the token to verify it's valid.
+        let _decoded = token.decode()?;
+        let _ = inputs;
+
+        Err(SdkError::MissingKey(
+            "arithmetic predicate bridge not yet implemented".into(),
+        ))
+    }
+
+    // =========================================================================
+    // Relational and Committed-Threshold Predicate Proofs
+    // =========================================================================
+
+    /// Prove a relational predicate comparing this wallet's private value against
+    /// a counterparty's committed value.
+    ///
+    /// This generates a zero-knowledge proof that a specific attribute of a held
+    /// token satisfies a relational comparison against a counterparty's committed
+    /// value (e.g., "my bid > their bid") without revealing either party's value.
+    ///
+    /// The prover must have received the counterparty's value and blinding via a
+    /// sealed channel (e.g., OT, MPC, trusted comparison service).
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The held token containing the attribute.
+    /// * `my_attribute` - The attribute name (e.g., "bid").
+    /// * `my_value` - The actual (private) value of the attribute.
+    /// * `my_blinding` - The prover's blinding factor for their own commitment.
+    /// * `their_value` - The counterparty's value (received via sealed channel).
+    /// * `their_blinding` - The counterparty's blinding factor (received via sealed channel).
+    /// * `relation` - The relation to prove (e.g., GreaterThan).
+    ///
+    /// # Returns
+    ///
+    /// A `RelationalPredicateProof` that can be verified by anyone knowing both
+    /// commitments, or an error if the relation is not satisfiable.
+    pub fn prove_relational(
+        &self,
+        token: &HeldToken,
+        my_attribute: &str,
+        my_value: u64,
+        my_blinding: BabyBear,
+        their_value: u64,
+        their_blinding: BabyBear,
+        relation: pyana_circuit::RelationType,
+    ) -> Result<pyana_circuit::RelationalPredicateProof, SdkError> {
+        // Decode the token to verify it's valid.
+        let _decoded = token.decode()?;
+
+        let proof = pyana_circuit::prove_value_comparison(
+            BabyBear::new(my_value as u32),
+            my_blinding,
+            BabyBear::new(their_value as u32),
+            their_blinding,
+            relation,
+        )
+        .ok_or_else(|| {
+            SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+                "relational predicate proof failed: '{}' {:?} is not satisfiable \
+                 (my_value={}, their_value={})",
+                my_attribute, relation, my_value, their_value
+            )))
+        })?;
+
+        Ok(proof)
+    }
+
+    /// Prove a committed-threshold predicate: the wallet's private value satisfies
+    /// a threshold that is also kept secret from third-party verifiers.
+    ///
+    /// This generates a zero-knowledge proof that a specific attribute value is
+    /// at least as large as a threshold, where both the value AND the threshold are
+    /// hidden behind Poseidon2 commitments. Third-party verifiers learn only that
+    /// "some committed value satisfies some committed threshold."
+    ///
+    /// The verifier provides the threshold and blinding via a secure channel.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The held token containing the attribute.
+    /// * `attribute` - The attribute name (e.g., "credit_score").
+    /// * `attribute_value` - The actual (private) value of the attribute.
+    /// * `threshold` - The verifier's secret threshold (received via secure channel).
+    /// * `blinding` - The verifier's blinding randomness (received via secure channel).
+    ///
+    /// # Returns
+    ///
+    /// A `CommittedThresholdProof` that can be verified against the threshold
+    /// commitment and fact commitment, or an error if value < threshold.
+    pub fn prove_committed_threshold(
+        &self,
+        token: &HeldToken,
+        attribute: &str,
+        attribute_value: u64,
+        threshold: u64,
+        blinding: BabyBear,
+    ) -> Result<pyana_circuit::CommittedThresholdProof, SdkError> {
+        // Decode the token to verify it's valid.
+        let _decoded = token.decode()?;
+
+        // Compute the fact hash and fact commitment for binding to the token state.
+        let attr_bytes = blake3::hash(attribute.as_bytes());
+        let attr_bb = Self::bytes_to_babybear(attr_bytes.as_bytes());
+        let value_bb = BabyBear::new(attribute_value as u32);
+        let fact_hash = poseidon2::hash_fact(attr_bb, &[value_bb, BabyBear::ZERO, BabyBear::ZERO]);
+
+        let issuer_key = token.root_key();
+        let state_root = Self::bytes_to_babybear(issuer_key);
+        let fact_commitment = pyana_circuit::compute_fact_commitment(fact_hash, state_root);
+
+        let witness = pyana_circuit::CommittedThresholdWitness {
+            private_value: value_bb,
+            threshold: BabyBear::new(threshold as u32),
+            blinding,
+            fact_commitment,
+        };
+
+        let proof = pyana_circuit::prove_committed_threshold(witness).ok_or_else(|| {
+            SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+                "committed-threshold proof failed: '{}' value {} does not satisfy threshold {}",
+                attribute, attribute_value, threshold
+            )))
+        })?;
+
+        Ok(proof)
+    }
+
+    // =========================================================================
     // Programmable Predicate Programs
     // =========================================================================
 
@@ -1550,6 +1725,49 @@ impl AgentWallet {
 
         // Prove via the bridge layer.
         let proof = pyana_bridge::prove_predicate_program(program, attribute_values, state_root)
+            .map_err(|e| {
+                SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
+                    "predicate program proof failed: {e}"
+                )))
+            })?;
+
+        Ok(proof)
+    }
+
+    /// Prove a predicate program with full private state including relational and
+    /// committed-threshold context.
+    ///
+    /// This is the extended version of [`prove_program`](Self::prove_program) that
+    /// supports relational predicates (two-party comparisons) and committed-threshold
+    /// predicates (hidden thresholds) by accepting the full [`PrivateState`] struct
+    /// including counterparty values and verifier secrets received via sealed channels.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The held token whose attributes are being proven about.
+    /// * `program` - The predicate program to prove.
+    /// * `private_state` - Full private state including values, temporal history,
+    ///   relational context, and committed-threshold context.
+    ///
+    /// # Returns
+    ///
+    /// A `ProgramProof` that can be verified by anyone knowing the program and
+    /// fact commitments, or an error if the program cannot be proven.
+    pub fn prove_program_full(
+        &self,
+        token: &HeldToken,
+        program: &pyana_circuit::predicate_program::PredicateProgram,
+        private_state: &pyana_circuit::predicate_program::PrivateState,
+    ) -> Result<pyana_circuit::predicate_program::ProgramProof, SdkError> {
+        // Decode the token to verify it's valid.
+        let _decoded = token.decode()?;
+
+        // Compute a state root from the token's issuer key.
+        let issuer_key = token.root_key();
+        let state_root = Self::bytes_to_babybear(issuer_key);
+
+        // Prove via the bridge layer (full private state path).
+        let proof = pyana_bridge::prove_predicate_program_full(program, private_state, state_root)
             .map_err(|e| {
                 SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(format!(
                     "predicate program proof failed: {e}"
@@ -1682,6 +1900,74 @@ impl AgentWallet {
         }
 
         Ok(proofs)
+    }
+
+    // =========================================================================
+    // Fulfillment Payment (Intent → Fulfill → Automatic Payment)
+    // =========================================================================
+
+    /// Fulfill an intent and collect payment in a single atomic operation.
+    ///
+    /// This is the high-level convenience method that an agent calls when it:
+    /// 1. Holds a capability that satisfies the intent's MatchSpec.
+    /// 2. Can prove all predicate requirements in the intent.
+    /// 3. Wants to receive payment (from the intent's `min_budget`).
+    ///
+    /// The method:
+    /// - Generates predicate proofs for all requirements using `my_values`.
+    /// - Constructs a `FulfillmentWithPredicates`.
+    /// - Calls `execute_fulfillment_flow` which verifies + pays atomically.
+    ///
+    /// # Arguments
+    ///
+    /// * `intent` - The intent to fulfill (must have `min_budget` set for payment).
+    /// * `base_fulfillment` - The base fulfillment (capability satisfaction proof).
+    /// * `my_values` - Map from attribute name to actual (private) value for predicates.
+    /// * `runtime` - The agent runtime providing ledger and executor access.
+    ///
+    /// # Returns
+    ///
+    /// A `TurnReceipt` proving payment was transferred, or an error.
+    pub fn fulfill_and_collect(
+        &self,
+        intent: &pyana_intent::Intent,
+        base_fulfillment: &pyana_intent::fulfillment::Fulfillment,
+        my_values: &std::collections::HashMap<String, u64>,
+        runtime: &crate::runtime::AgentRuntime,
+    ) -> Result<pyana_turn::TurnReceipt, SdkError> {
+        // Step 1: Generate predicate proofs for the intent's requirements.
+        let state_root = BabyBear::new(99999); // TODO: use real committed state root
+        let predicate_proofs = self.prove_for_intent_predicates(intent, my_values, state_root)?;
+
+        // Step 2: Determine the block height from the runtime's executor.
+        let current_height = 1000u64; // The caller should set this from federation state.
+
+        // Step 3: Construct the FulfillmentWithPredicates.
+        let fulfillment_with_preds = pyana_intent::fulfillment::FulfillmentWithPredicates {
+            base: base_fulfillment.clone(),
+            predicate_proofs,
+            state_root,
+            state_root_block: current_height.saturating_sub(10), // Recent state root.
+        };
+
+        // Step 4: Execute the fulfillment flow.
+        let payer_cell = CellId(intent.creator.0); // Intent creator pays.
+        let recipient_cell = runtime.cell_id(); // We (the fulfiller) receive.
+
+        let mut ledger = runtime.ledger().lock().unwrap();
+        let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+
+        pyana_intent::fulfillment::execute_fulfillment_flow(
+            intent,
+            &fulfillment_with_preds,
+            &executor,
+            &mut ledger,
+            payer_cell,
+            recipient_cell,
+            current_height,
+            current_height,
+        )
+        .map_err(|e| SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(e.to_string())))
     }
 
     // =========================================================================

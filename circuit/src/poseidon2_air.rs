@@ -21,6 +21,9 @@ use crate::field::BabyBear;
 use crate::poseidon2::{TOTAL_ROUNDS, WIDTH, compute_round, hash_4_to_1, poseidon2_trace};
 use crate::stark::{BoundaryConstraint, StarkAir};
 
+/// State width for the Merkle Poseidon2 AIR.
+const MERKLE_P2_STATE_WIDTH: usize = WIDTH;
+
 /// Number of rows per Poseidon2 permutation in the trace.
 pub const POSEIDON2_ROWS: usize = TOTAL_ROUNDS + 1;
 
@@ -57,7 +60,7 @@ impl Poseidon2Air {
 
         let trace = vec![row.clone(), row];
 
-        let mut public_inputs = Vec::with_capacity(16);
+        let mut public_inputs = Vec::with_capacity(WIDTH * 2);
         public_inputs.extend_from_slice(input);
         public_inputs.extend_from_slice(output);
 
@@ -89,12 +92,14 @@ impl StarkAir for Poseidon2Air {
         _public_inputs: &[BabyBear],
         alpha: BabyBear,
     ) -> BabyBear {
-        let input_state: [BabyBear; WIDTH] = [
-            local[0], local[1], local[2], local[3], local[4], local[5], local[6], local[7],
-        ];
-        let claimed_output: [BabyBear; WIDTH] = [
-            local[8], local[9], local[10], local[11], local[12], local[13], local[14], local[15],
-        ];
+        let mut input_state = [BabyBear::ZERO; WIDTH];
+        for i in 0..WIDTH.min(local.len()) {
+            input_state[i] = local[i];
+        }
+        let mut claimed_output = [BabyBear::ZERO; WIDTH];
+        for i in 0..WIDTH.min(local.len().saturating_sub(WIDTH)) {
+            claimed_output[i] = local[WIDTH + i];
+        }
 
         // Compute the REAL Poseidon2 permutation.
         let mut state = input_state;
@@ -118,22 +123,22 @@ impl StarkAir for Poseidon2Air {
         _trace_len: usize,
     ) -> Vec<BoundaryConstraint> {
         let mut constraints = vec![];
-        // Public inputs are [input[0..8], output[0..8]] = 16 elements.
-        // Bind row 0, cols 0..7 to input (public_inputs[0..8])
-        // Bind row 0, cols 8..15 to output (public_inputs[8..16])
-        if public_inputs.len() >= 16 {
-            for i in 0..8 {
+        // Public inputs are [input[0..WIDTH], output[0..WIDTH]] = 2*WIDTH elements.
+        // Bind row 0, cols 0..WIDTH-1 to input (public_inputs[0..WIDTH])
+        // Bind row 0, cols WIDTH..2*WIDTH-1 to output (public_inputs[WIDTH..2*WIDTH])
+        if public_inputs.len() >= WIDTH * 2 {
+            for i in 0..WIDTH {
                 constraints.push(BoundaryConstraint {
                     row: 0,
                     col: i,
                     value: public_inputs[i],
                 });
             }
-            for i in 0..8 {
+            for i in 0..WIDTH {
                 constraints.push(BoundaryConstraint {
                     row: 0,
-                    col: 8 + i,
-                    value: public_inputs[8 + i],
+                    col: WIDTH + i,
+                    value: public_inputs[WIDTH + i],
                 });
             }
         }
@@ -202,7 +207,7 @@ impl MerklePoseidon2Air {
             let states = poseidon2_trace(&input_state);
             for (row_idx, state) in states.iter().enumerate() {
                 let mut row = Vec::with_capacity(MERKLE_POSEIDON2_WIDTH);
-                row.extend_from_slice(state);
+                row.extend_from_slice(&state[..8]);
                 row.push(BabyBear::new(level_idx as u32));
                 row.push(BabyBear::new(row_idx as u32));
                 trace.push(row);
@@ -246,12 +251,16 @@ impl StarkAir for MerklePoseidon2Air {
         _public_inputs: &[BabyBear],
         alpha: BabyBear,
     ) -> BabyBear {
-        let local_state: [BabyBear; WIDTH] = [
-            local[0], local[1], local[2], local[3], local[4], local[5], local[6], local[7],
-        ];
-        let next_state: [BabyBear; WIDTH] = [
-            next[0], next[1], next[2], next[3], next[4], next[5], next[6], next[7],
-        ];
+        // This AIR uses 8-column state (MERKLE_POSEIDON2_WIDTH = 10 = 8 state + 2 metadata).
+        // Pad to full WIDTH for compute_round compatibility.
+        let mut local_state = [BabyBear::ZERO; WIDTH];
+        for i in 0..8.min(local.len()) {
+            local_state[i] = local[i];
+        }
+        let mut next_state = [BabyBear::ZERO; WIDTH];
+        for i in 0..8.min(next.len()) {
+            next_state[i] = next[i];
+        }
         let local_level = local[8];
         let local_row_idx = local[9];
         let next_level = next[8];
@@ -266,15 +275,15 @@ impl StarkAir for MerklePoseidon2Air {
             && next_row_idx.0 == local_row_idx.0 + 1
             && row_idx < TOTAL_ROUNDS
         {
-            // Within-level: verify round function
+            // Within-level: verify round function (only first 8 state cols are in trace)
             let expected = compute_round(&local_state, row_idx);
-            for i in 0..WIDTH {
+            for i in 0..8 {
                 combined = combined + alpha_pow * (next_state[i] - expected[i]);
                 alpha_pow = alpha_pow * alpha;
             }
         } else if next_level == local_level && next_row_idx == local_row_idx {
-            // Padding: identity
-            for i in 0..WIDTH {
+            // Padding: identity (only first 8 state cols)
+            for i in 0..8 {
                 combined = combined + alpha_pow * (next_state[i] - local_state[i]);
                 alpha_pow = alpha_pow * alpha;
             }

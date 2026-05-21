@@ -88,6 +88,7 @@ pub mod poseidon2_air;
 pub mod presentation;
 
 pub mod accumulator_air;
+pub mod arithmetic_predicate_air;
 pub mod block_transition_air;
 pub mod committed_threshold;
 pub mod compound_predicate_air;
@@ -134,6 +135,12 @@ pub use accumulator_air::{
     AccumulatorNonMembershipWitness, AccumulatorNonRevocationAir, AccumulatorNonRevocationWitness,
     ExtElem, compute_accumulator, derive_alpha, prove_accumulator_non_revocation,
     verify_accumulator_non_revocation,
+};
+pub use arithmetic_predicate_air::{
+    ArithExpr, ArithPredicate, ArithmeticPredicateAir, ArithmeticPredicateProof,
+    ArithmeticPredicateWitness, CompareOp, CompiledArith, compile_expression,
+    compute_arithmetic_fact_commitment, evaluate_expression, prove_arithmetic_predicate,
+    verify_arithmetic_predicate,
 };
 pub use binding::compute_action_binding;
 pub use block_transition_air::{

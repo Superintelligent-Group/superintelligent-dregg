@@ -44,6 +44,7 @@
 use crate::constraint_prover::{Air, Constraint};
 use crate::field::BabyBear;
 use crate::poseidon2;
+use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 
 /// Number of bits for the range check (same as PredicateAir).
 pub const COMMITTED_DIFF_BITS: usize = 31;
@@ -130,6 +131,97 @@ pub struct CommittedThresholdAir {
 impl CommittedThresholdAir {
     pub fn new(witness: CommittedThresholdWitness) -> Self {
         Self { witness }
+    }
+}
+
+impl StarkAir for CommittedThresholdAir {
+    fn width(&self) -> usize {
+        COMMITTED_THRESHOLD_AIR_WIDTH
+    }
+
+    fn constraint_degree(&self) -> usize {
+        2
+    }
+
+    fn has_chain_continuity(&self) -> bool {
+        false
+    }
+
+    fn air_name(&self) -> &'static str {
+        "pyana-committed-threshold-v1"
+    }
+
+    fn eval_constraints(
+        &self,
+        local: &[BabyBear],
+        _next: &[BabyBear],
+        public_inputs: &[BabyBear],
+        alpha: BabyBear,
+    ) -> BabyBear {
+        // C1: threshold_commitment matches public_input[0]
+        let c1 = local[col::THRESHOLD_COMMITMENT] - public_inputs[0];
+        // C2: fact_commitment matches public_input[1]
+        let c2 = local[col::FACT_COMMITMENT] - public_inputs[1];
+        // C3: poseidon2_result == threshold_commitment
+        let c3 = local[col::POSEIDON2_RESULT] - local[col::THRESHOLD_COMMITMENT];
+        // C4: diff = private_value - threshold
+        let c4 = local[col::DIFF] - (local[col::PRIVATE_VALUE] - local[col::THRESHOLD]);
+        // C5: bit decomposition correct
+        let diff = local[col::DIFF];
+        let mut recomposed = BabyBear::ZERO;
+        let mut power_of_two = BabyBear::ONE;
+        for i in 0..COMMITTED_DIFF_BITS {
+            let bit = local[col::diff_bit(i)];
+            recomposed = recomposed + bit * power_of_two;
+            power_of_two = power_of_two + power_of_two;
+        }
+        let c5 = recomposed - diff;
+        // C6: bits are binary
+        let mut c6 = BabyBear::ZERO;
+        for i in 0..COMMITTED_DIFF_BITS {
+            let bit = local[col::diff_bit(i)];
+            c6 = c6 + bit * (bit - BabyBear::ONE);
+        }
+        // C7: high bit is zero
+        let c7 = local[col::diff_bit(COMMITTED_DIFF_BITS - 1)];
+
+        // Combine with alpha powers
+        let mut combined = c1;
+        let mut alpha_pow = alpha;
+        combined = combined + alpha_pow * c2;
+        alpha_pow = alpha_pow * alpha;
+        combined = combined + alpha_pow * c3;
+        alpha_pow = alpha_pow * alpha;
+        combined = combined + alpha_pow * c4;
+        alpha_pow = alpha_pow * alpha;
+        combined = combined + alpha_pow * c5;
+        alpha_pow = alpha_pow * alpha;
+        combined = combined + alpha_pow * c6;
+        alpha_pow = alpha_pow * alpha;
+        combined = combined + alpha_pow * c7;
+
+        combined
+    }
+
+    fn boundary_constraints(
+        &self,
+        public_inputs: &[BabyBear],
+        _trace_len: usize,
+    ) -> Vec<BoundaryConstraint> {
+        let mut constraints = vec![];
+        if public_inputs.len() >= 2 {
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::THRESHOLD_COMMITMENT,
+                value: public_inputs[0],
+            });
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::FACT_COMMITMENT,
+                value: public_inputs[1],
+            });
+        }
+        constraints
     }
 }
 
@@ -255,8 +347,8 @@ pub struct CommittedThresholdProof {
     pub threshold_commitment: BabyBear,
     /// The fact commitment (public input — visible to third parties).
     pub fact_commitment: BabyBear,
-    /// The constraint proof (trace digest + public inputs).
-    pub proof: crate::constraint_prover::ConstraintProof,
+    /// The STARK proof (FRI-based, cryptographically sound).
+    pub stark_proof: StarkProof,
 }
 
 /// Generate a committed-threshold proof.
@@ -280,12 +372,19 @@ pub fn prove_committed_threshold(
     let fact_commitment = witness.fact_commitment;
 
     let air = CommittedThresholdAir::new(witness);
-    let proof = crate::constraint_prover::ConstraintProof::generate(&air)?;
+    let (mut trace, public_inputs) = air.generate_trace();
+
+    // STARK prover requires trace length >= 2 and power-of-two.
+    while trace.len() < 2 || !trace.len().is_power_of_two() {
+        trace.push(trace[0].clone());
+    }
+
+    let stark_proof = stark::prove(&air, &trace, &public_inputs);
 
     Some(CommittedThresholdProof {
         threshold_commitment,
         fact_commitment,
-        proof,
+        stark_proof,
     })
 }
 
@@ -311,8 +410,16 @@ pub fn verify_committed_threshold(
     if proof.fact_commitment != expected_fact_commitment {
         return false;
     }
-    let expected_pi = [expected_threshold_commitment, expected_fact_commitment];
-    proof.proof.verify(&expected_pi)
+    let public_inputs = vec![expected_threshold_commitment, expected_fact_commitment];
+    // Reconstruct a dummy witness for the AIR (only needed for constraint evaluation shape).
+    let dummy_witness = CommittedThresholdWitness {
+        private_value: BabyBear::ZERO,
+        threshold: BabyBear::ZERO,
+        blinding: BabyBear::ZERO,
+        fact_commitment: expected_fact_commitment,
+    };
+    let air = CommittedThresholdAir::new(dummy_witness);
+    stark::verify(&air, &proof.stark_proof, &public_inputs).is_ok()
 }
 
 /// Convenience: generate blinding randomness for the verifier.

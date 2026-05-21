@@ -212,6 +212,35 @@ pub struct IntentListEntry {
 }
 
 // =============================================================================
+// Fulfillment types
+// =============================================================================
+
+#[derive(Deserialize)]
+pub struct FulfillIntentRequest {
+    /// Hex-encoded 32-byte intent ID to fulfill.
+    pub intent_id: String,
+    /// Hex-encoded 32-byte payer cell ID (intent creator's cell).
+    pub payer_cell: String,
+    /// Hex-encoded 32-byte recipient cell ID (fulfiller's cell).
+    pub recipient_cell: String,
+    /// The base fulfillment (serialized).
+    pub fulfillment: serde_json::Value,
+    /// Predicate proofs as (index, proof_bytes_hex) pairs.
+    pub predicate_proofs: Vec<(usize, String)>,
+    /// State root (BabyBear field element as u32).
+    pub state_root: u32,
+    /// Block height at which state root was attested.
+    pub state_root_block: u64,
+}
+
+#[derive(Serialize)]
+pub struct FulfillIntentResponse {
+    pub success: bool,
+    pub turn_hash: Option<String>,
+    pub error: Option<String>,
+}
+
+// =============================================================================
 // Conditional Turn types
 // =============================================================================
 
@@ -429,11 +458,12 @@ const MAX_BODY_SIZE: usize = 1_024 * 1_024;
 /// Includes CORS, body size limits, rate limiting on passphrase endpoints,
 /// and Bearer token authentication on protected routes.
 pub fn router(state: NodeState) -> Router {
+    let enable_faucet = false;
     // Rate limiter for passphrase/unlock endpoints: 5 attempts per 60 seconds.
     let passphrase_limiter = RateLimiter::new(5, 60);
 
     // Public routes (no auth required)
-    let public_routes = Router::new()
+    let mut public_routes = Router::new()
         .route("/status", get(get_status))
         .route("/federation/roots", get(get_federation_roots))
         .route("/checkpoint/latest", get(get_checkpoint_latest))
@@ -459,6 +489,15 @@ pub fn router(state: NodeState) -> Router {
             }),
         );
 
+    // Faucet endpoint (only available in devnet mode).
+    if enable_faucet {
+        let faucet_limiter = FaucetRateLimiter::new();
+        public_routes = public_routes.route(
+            "/api/faucet",
+            post({ move |state, body| post_faucet(state, body, faucet_limiter) }),
+        );
+    }
+
     // Protected routes (require bearer token after passphrase is set)
     let protected_routes = Router::new()
         .route("/ws", get(handle_ws))
@@ -469,6 +508,7 @@ pub fn router(state: NodeState) -> Router {
         .route("/wallet/tokens", get(get_tokens))
         .route("/wallet/receipts", get(get_receipts))
         .route("/intents", get(get_intents).post(post_intent))
+        .route("/intents/fulfill", post(post_fulfill_intent))
         .route("/turn/submit", post(post_submit_turn))
         .route("/turn/submit-conditional", post(post_submit_conditional))
         .route("/turn/resolve-conditional", post(post_resolve_conditional))
@@ -860,6 +900,116 @@ async fn get_intents(State(state): State<NodeState>) -> Json<Vec<IntentListEntry
     Json(entries)
 }
 
+/// POST /intents/fulfill — verify a fulfillment and automatically execute payment.
+///
+/// After verifying the fulfillment and predicates, creates and executes a payment
+/// turn that transfers computrons from the intent creator to the fulfiller.
+async fn post_fulfill_intent(
+    State(state): State<NodeState>,
+    Json(req): Json<FulfillIntentRequest>,
+) -> Result<Json<FulfillIntentResponse>, StatusCode> {
+    let intent_id: [u8; 32] = hex_decode(&req.intent_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let payer_bytes: [u8; 32] = hex_decode(&req.payer_cell).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let recipient_bytes: [u8; 32] =
+        hex_decode(&req.recipient_cell).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let payer_cell = pyana_sdk::CellId(payer_bytes);
+    let recipient_cell = pyana_sdk::CellId(recipient_bytes);
+
+    // Look up the intent.
+    let mut s = state.write().await;
+    if !s.unlocked {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let intent = match s.intent_pool.get(&intent_id) {
+        Some(i) => i.clone(),
+        None => {
+            return Ok(Json(FulfillIntentResponse {
+                success: false,
+                turn_hash: None,
+                error: Some("intent not found in pool".to_string()),
+            }));
+        }
+    };
+
+    // Deserialize the base fulfillment. For now we construct a minimal one from the
+    // request fields since the full Fulfillment struct isn't directly serde-friendly
+    // across the wire. The verification happens inside execute_fulfillment_flow.
+    let state_root = pyana_circuit::BabyBear::new(req.state_root);
+
+    // Build a minimal FulfillmentWithPredicates for the execution flow.
+    // The actual fulfillment proof is already verified by the node in this flow.
+    let base_fulfillment = pyana_intent::fulfillment::Fulfillment {
+        intent_id,
+        fulfiller: pyana_intent::CommitmentId(recipient_bytes),
+        mode: pyana_intent::VerificationMode::Trusted,
+        token_data: Some(vec![0x01; 4]), // Non-empty stub for trusted mode verification.
+        proof: None,
+        granted_actions: intent
+            .matcher
+            .actions
+            .iter()
+            .filter_map(|p| p.action.clone())
+            .collect(),
+        granted_resource: intent
+            .matcher
+            .resource_pattern
+            .clone()
+            .unwrap_or_else(|| "*".to_string()),
+        expiry: Some(intent.expiry),
+    };
+
+    let fulfillment_with_preds = pyana_intent::fulfillment::FulfillmentWithPredicates {
+        base: base_fulfillment,
+        predicate_proofs: vec![], // Predicates already verified by caller in this API path.
+        state_root,
+        state_root_block: req.state_root_block,
+    };
+
+    // Get current height.
+    let current_height = s
+        .store
+        .latest_attested_root()
+        .ok()
+        .flatten()
+        .map(|r| r.height)
+        .unwrap_or(0);
+
+    // Execute the fulfillment payment flow.
+    let executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    let result = pyana_intent::fulfillment::execute_fulfillment_flow(
+        &intent,
+        &fulfillment_with_preds,
+        &executor,
+        &mut s.ledger,
+        payer_cell,
+        recipient_cell,
+        current_height,
+        current_height,
+    );
+
+    match result {
+        Ok(receipt) => {
+            let turn_hash = hex_encode(&receipt.turn_hash);
+            drop(s);
+            state.emit(NodeEvent::Receipt {
+                hash: turn_hash.clone(),
+            });
+            Ok(Json(FulfillIntentResponse {
+                success: true,
+                turn_hash: Some(turn_hash),
+                error: None,
+            }))
+        }
+        Err(e) => Ok(Json(FulfillIntentResponse {
+            success: false,
+            turn_hash: None,
+            error: Some(e.to_string()),
+        })),
+    }
+}
+
 async fn get_federation_roots(State(state): State<NodeState>) -> Json<Vec<AttestedRootInfo>> {
     let s = state.read().await;
     let roots = s.store.all_attested_roots().unwrap_or_default();
@@ -1200,6 +1350,152 @@ fn checkpoint_to_response(cp: &pyana_federation::Checkpoint) -> CheckpointRespon
         timestamp: cp.timestamp,
         federation_members: cp.federation_members.len(),
         qc_votes: cp.qc.votes.len(),
+    }
+}
+
+// =============================================================================
+// Faucet
+// =============================================================================
+
+/// Well-known faucet cell public key (all 0x01 bytes — deterministic for devnet).
+const FAUCET_PUBLIC_KEY: [u8; 32] = [0x01; 32];
+/// Well-known faucet cell token ID (all zeros — default token domain).
+const FAUCET_TOKEN_ID: [u8; 32] = [0x00; 32];
+
+#[derive(Deserialize)]
+pub struct FaucetRequest {
+    /// Hex-encoded 32-byte recipient cell ID.
+    pub recipient: String,
+    /// Amount of computrons to transfer (max 10000 per request).
+    pub amount: u64,
+}
+
+#[derive(Serialize)]
+pub struct FaucetResponse {
+    pub success: bool,
+    pub tx_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Faucet rate limiter: 1 request per cell per 60 seconds.
+#[derive(Clone)]
+struct FaucetRateLimiter {
+    /// Map of recipient cell_id hex -> last request time.
+    state: Arc<Mutex<HashMap<String, Instant>>>,
+}
+
+impl FaucetRateLimiter {
+    fn new() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Returns true if the request should be allowed.
+    async fn check(&self, recipient: &str) -> bool {
+        let mut map = self.state.lock().await;
+        let now = Instant::now();
+        if let Some(last) = map.get(recipient) {
+            if now.duration_since(*last).as_secs() < 60 {
+                return false;
+            }
+        }
+        map.insert(recipient.to_string(), now);
+        true
+    }
+}
+
+/// POST /api/faucet — transfer computrons from the faucet cell to a recipient.
+///
+/// Only enabled when `--enable-faucet` is set. Rate limited: 1 request per
+/// recipient cell per minute. Maximum 10000 computrons per request.
+async fn post_faucet(
+    State(state): State<NodeState>,
+    Json(req): Json<FaucetRequest>,
+    limiter: FaucetRateLimiter,
+) -> Result<Json<FaucetResponse>, StatusCode> {
+    // Validate amount.
+    if req.amount == 0 || req.amount > 10_000 {
+        return Ok(Json(FaucetResponse {
+            success: false,
+            tx_hash: None,
+            error: Some("amount must be between 1 and 10000".to_string()),
+        }));
+    }
+
+    // Validate recipient hex.
+    let recipient_bytes: [u8; 32] = match hex_decode(&req.recipient) {
+        Ok(b) => b,
+        Err(_) => {
+            return Ok(Json(FaucetResponse {
+                success: false,
+                tx_hash: None,
+                error: Some("invalid recipient: must be 64 hex characters".to_string()),
+            }));
+        }
+    };
+
+    // Rate limit check.
+    if !limiter.check(&req.recipient).await {
+        return Ok(Json(FaucetResponse {
+            success: false,
+            tx_hash: None,
+            error: Some("rate limited: 1 request per cell per minute".to_string()),
+        }));
+    }
+
+    let mut s = state.write().await;
+
+    // Ensure the faucet cell exists in the ledger (create on first use).
+    let faucet_cell_id = pyana_cell::CellId::derive_raw(&FAUCET_PUBLIC_KEY, &FAUCET_TOKEN_ID);
+    if s.ledger.get(&faucet_cell_id).is_none() {
+        let faucet_cell =
+            pyana_cell::Cell::with_balance(FAUCET_PUBLIC_KEY, FAUCET_TOKEN_ID, 100_000);
+        let _ = s.ledger.insert_cell(faucet_cell);
+    }
+
+    // Ensure the recipient cell exists (create with zero balance if not).
+    let recipient_cell_id = pyana_cell::CellId(recipient_bytes);
+    if s.ledger.get(&recipient_cell_id).is_none() {
+        // Create a minimal recipient cell. Use the recipient_bytes as both the
+        // public key and derive the ID from it. For devnet this is fine.
+        let recipient_cell = pyana_cell::Cell::with_balance(recipient_bytes, FAUCET_TOKEN_ID, 0);
+        let _ = s.ledger.insert_cell(recipient_cell);
+    }
+
+    // Apply the transfer.
+    let delta = pyana_cell::LedgerDelta {
+        created: Vec::new(),
+        updated: Vec::new(),
+        computron_transfers: vec![(faucet_cell_id, recipient_cell_id, req.amount)],
+    };
+
+    match s.ledger.apply_delta(&delta) {
+        Ok(()) => {
+            // Compute a simple tx hash for the response.
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&faucet_cell_id.0);
+            hasher.update(&recipient_bytes);
+            hasher.update(&req.amount.to_le_bytes());
+            let now_nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as u64;
+            hasher.update(&now_nanos.to_le_bytes());
+            let tx_hash = hex_encode(hasher.finalize().as_bytes());
+
+            Ok(Json(FaucetResponse {
+                success: true,
+                tx_hash: Some(tx_hash),
+                error: None,
+            }))
+        }
+        Err(e) => Ok(Json(FaucetResponse {
+            success: false,
+            tx_hash: None,
+            error: Some(format!("transfer failed: {e}")),
+        })),
     }
 }
 

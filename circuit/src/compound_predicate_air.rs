@@ -298,23 +298,15 @@ impl Air for CompoundPredicateAir {
                 },
             },
             // Constraint 3: Bit decomposition is correct (sum(bit_i * 2^i) = diff).
-            // Only enforced when result=1 (the predicate claims to pass).
-            // When result=0, the prover admits failure -- no bit decomp needed.
+            // Enforced UNCONDITIONALLY for all non-NEQ predicate rows.
             Constraint {
                 name: "bit_decomposition_correct".to_string(),
                 eval: {
                     Box::new(move |row, _, _| {
-                        let result = row[PREDICATE_AIR_WIDTH];
                         let neq_inverse = row[col::NEQ_INVERSE];
 
                         // Skip for NEQ predicates (they use inverse instead of bit decomp).
                         if neq_inverse != BabyBear::ZERO {
-                            return BabyBear::ZERO;
-                        }
-
-                        // Only enforce when this predicate claims to pass (result=1).
-                        // Also skip the composition row (result is formula output, not a predicate).
-                        if result == BabyBear::ZERO {
                             return BabyBear::ZERO;
                         }
 
@@ -338,15 +330,14 @@ impl Air for CompoundPredicateAir {
                 },
             },
             // Constraint 4: All bits are binary (0 or 1).
-            // Only enforced when result=1.
+            // Enforced UNCONDITIONALLY for all non-NEQ predicate rows.
             Constraint {
                 name: "bits_binary".to_string(),
                 eval: Box::new(move |row, _, _| {
-                    let result = row[PREDICATE_AIR_WIDTH];
                     let neq_inverse = row[col::NEQ_INVERSE];
 
-                    // Skip NEQ rows and non-passing rows.
-                    if neq_inverse != BabyBear::ZERO || result == BabyBear::ZERO {
+                    // Skip NEQ rows.
+                    if neq_inverse != BabyBear::ZERO {
                         return BabyBear::ZERO;
                     }
 
@@ -365,28 +356,10 @@ impl Air for CompoundPredicateAir {
                     check
                 }),
             },
-            // Constraint 5: High bit is 0 (proves diff < 2^30 < p/2, i.e., non-negative).
-            // Only enforced when result=1 (predicate claims to pass).
+            // Constraint 5: (Subsumed by constraint 8 - result derivation.)
             Constraint {
                 name: "high_bit_zero".to_string(),
-                eval: Box::new(move |row, _, _| {
-                    let result = row[PREDICATE_AIR_WIDTH];
-                    let neq_inverse = row[col::NEQ_INVERSE];
-
-                    // Skip NEQ rows and non-passing rows.
-                    if neq_inverse != BabyBear::ZERO || result == BabyBear::ZERO {
-                        return BabyBear::ZERO;
-                    }
-
-                    // Skip composition row.
-                    let value = row[col::PRIVATE_VALUE];
-                    let threshold = row[col::THRESHOLD];
-                    if value == BabyBear::ZERO && threshold == BabyBear::ZERO {
-                        return BabyBear::ZERO;
-                    }
-
-                    row[col::diff_bit(PREDICATE_DIFF_BITS - 1)]
-                }),
+                eval: Box::new(move |_row, _, _| BabyBear::ZERO),
             },
             // Constraint 6: NEQ inverse valid (diff * inverse = 1 for NEQ predicates).
             // Only enforced when result=1 (the NEQ predicate claims to pass).
@@ -415,7 +388,34 @@ impl Air for CompoundPredicateAir {
                     result * (result - BabyBear::ONE)
                 }),
             },
-            // Constraint 8: Final result (last public input) equals ONE.
+            // Constraint 8: Result column is DERIVED from the range check (soundness).
+            Constraint {
+                name: "result_derived_from_range_check".to_string(),
+                eval: Box::new(move |row, _, _| {
+                    let result = row[PREDICATE_AIR_WIDTH];
+                    let value = row[col::PRIVATE_VALUE];
+                    let threshold = row[col::THRESHOLD];
+                    let neq_inverse = row[col::NEQ_INVERSE];
+
+                    // Skip the composition row.
+                    if value == BabyBear::ZERO && threshold == BabyBear::ZERO {
+                        return BabyBear::ZERO;
+                    }
+
+                    if neq_inverse != BabyBear::ZERO {
+                        // NEQ predicate path.
+                        let diff = row[col::DIFF];
+                        let pass_check = result * (BabyBear::ONE - diff * neq_inverse);
+                        let fail_check = (BabyBear::ONE - result) * diff;
+                        pass_check + fail_check
+                    } else {
+                        // Range-check predicate path: result = 1 - high_bit.
+                        let high_bit = row[col::diff_bit(PREDICATE_DIFF_BITS - 1)];
+                        result - (BabyBear::ONE - high_bit)
+                    }
+                }),
+            },
+            // Constraint 9: Final result (last public input) equals ONE.
             Constraint {
                 name: "final_result_is_one".to_string(),
                 eval: Box::new(move |row, _, public_inputs| {
@@ -488,29 +488,29 @@ impl Air for CompoundPredicateAir {
 
             let satisfiable = w.is_satisfiable();
 
-            if satisfiable {
-                // Only fill diff/bits/inverse when the predicate passes.
-                // When result=1, the constraints verify these columns.
-                let diff = w.compute_diff();
-                row[col::DIFF] = diff;
+            // Always compute diff and fill bit decomposition (constraints are unconditional).
+            let diff = w.compute_diff();
+            row[col::DIFF] = diff;
 
-                match w.predicate_type {
-                    PredicateType::Neq => {
+            match w.predicate_type {
+                PredicateType::Neq => {
+                    if satisfiable {
                         if let Some(inv) = diff.inverse() {
                             row[col::NEQ_INVERSE] = inv;
                         }
+                    } else {
+                        // diff=0 (equal). Set neq_inverse=1 as NEQ-row signal.
+                        row[col::NEQ_INVERSE] = BabyBear::ONE;
                     }
-                    _ => {
-                        let diff_val = diff.as_u32();
-                        for i in 0..PREDICATE_DIFF_BITS {
-                            let bit = (diff_val >> i) & 1;
-                            row[col::diff_bit(i)] = BabyBear::new(bit);
-                        }
+                }
+                _ => {
+                    let diff_val = diff.as_u32();
+                    for i in 0..PREDICATE_DIFF_BITS {
+                        let bit = (diff_val >> i) & 1;
+                        row[col::diff_bit(i)] = BabyBear::new(bit);
                     }
                 }
             }
-            // When !satisfiable, diff/bits/inverse stay at ZERO. The constraints
-            // are not enforced for result=0 rows, so this is safe.
 
             let result = if satisfiable {
                 BabyBear::ONE
