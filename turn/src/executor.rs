@@ -9,8 +9,9 @@ use std::sync::Mutex;
 use ed25519_dalek::{Signature, VerifyingKey};
 use pyana_cell::{
     AuthRequired, Cell, CellId, CellStateDelta, Ledger, LedgerDelta, Preconditions,
-    preconditions::EvalContext, state::STATE_SLOTS,
+    note_bridge::BridgedNullifierSet, preconditions::EvalContext, state::STATE_SLOTS,
 };
+use pyana_types::AttestedRoot;
 use serde::{Deserialize, Serialize};
 
 use crate::action::{Action, Authorization, DelegationMode, Effect};
@@ -108,6 +109,13 @@ pub struct TurnExecutor {
     /// mutability to remain sound under concurrent access (future-proofing for async
     /// execution or parallel turn processing).
     pub budget_gate: Option<Mutex<BudgetGate>>,
+    /// Trusted federation roots for cross-federation note bridging.
+    /// When a BridgeMint effect is processed, the portable proof's source root
+    /// must be in this set. Empty = no cross-federation bridges accepted.
+    pub trusted_federation_roots: Vec<AttestedRoot>,
+    /// Bridged nullifier set: tracks nullifiers from OTHER federations that have
+    /// been bridged into this one. Prevents the same note from being bridged twice.
+    pub bridged_nullifiers: Mutex<BridgedNullifierSet>,
 }
 
 impl TurnExecutor {
@@ -119,6 +127,8 @@ impl TurnExecutor {
             block_height: 0,
             proof_verifier: None,
             budget_gate: None,
+            trusted_federation_roots: Vec::new(),
+            bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
         }
     }
 
@@ -134,6 +144,8 @@ impl TurnExecutor {
             block_height: 0,
             proof_verifier: None,
             budget_gate: Some(Mutex::new(gate)),
+            trusted_federation_roots: Vec::new(),
+            bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
         }
     }
 
@@ -145,6 +157,8 @@ impl TurnExecutor {
             block_height: 0,
             proof_verifier: Some(verifier),
             budget_gate: None,
+            trusted_federation_roots: Vec::new(),
+            bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
         }
     }
 
@@ -166,6 +180,61 @@ impl TurnExecutor {
     /// Set the current block height (used for network preconditions).
     pub fn set_block_height(&mut self, height: u64) {
         self.block_height = height;
+    }
+
+    /// Execute a conditional turn by first resolving its condition.
+    ///
+    /// This checks:
+    /// 1. Whether the timeout has been exceeded (returns `TurnResult::Expired`)
+    /// 2. Whether the proof satisfies the condition
+    /// 3. If satisfied, executes the underlying turn normally
+    ///
+    /// No fee is charged if the turn expires or the condition is not met.
+    pub fn execute_conditional(
+        &self,
+        conditional: &crate::conditional::ConditionalTurn,
+        proof: &crate::conditional::ConditionProof,
+        current_height: u64,
+        trusted_roots: &[[u8; 32]],
+        ledger: &mut Ledger,
+    ) -> TurnResult {
+        // Check timeout.
+        if current_height > conditional.timeout_height {
+            return TurnResult::Expired;
+        }
+
+        // Resolve condition.
+        match crate::conditional::resolve_condition(
+            &conditional.condition,
+            proof,
+            current_height,
+            conditional.timeout_height,
+            trusted_roots,
+        ) {
+            crate::conditional::ConditionalResult::Resolved => {
+                self.execute(&conditional.turn, ledger)
+            }
+            crate::conditional::ConditionalResult::Expired => TurnResult::Expired,
+            crate::conditional::ConditionalResult::Pending => TurnResult::Pending,
+            crate::conditional::ConditionalResult::InvalidProof(e) => TurnResult::Rejected {
+                reason: TurnError::ConditionNotMet(e),
+                at_action: vec![],
+            },
+        }
+    }
+
+    /// Set the trusted federation roots for cross-federation note bridging.
+    ///
+    /// Only portable note proofs whose source_root matches one of these roots
+    /// will be accepted. Call this to configure which remote federations this
+    /// executor trusts for bridge mints.
+    pub fn set_trusted_federation_roots(&mut self, roots: Vec<AttestedRoot>) {
+        self.trusted_federation_roots = roots;
+    }
+
+    /// Add a single trusted federation root.
+    pub fn add_trusted_federation_root(&mut self, root: AttestedRoot) {
+        self.trusted_federation_roots.push(root);
     }
 
     /// Execute a turn against a ledger, returning the result.
@@ -1465,6 +1534,11 @@ impl TurnExecutor {
             Effect::NoteSpend { .. } => Ok(()),
             Effect::NoteCreate { .. } => Ok(()),
 
+            // BridgeMint: verification happens at the note layer above the executor.
+            // The executor records it for conservation tracking (it contributes to
+            // the output side of note conservation, like NoteCreate).
+            Effect::BridgeMint { .. } => Ok(()),
+
             // PipelinedSend must be resolved by the pipeline executor's resolution pass
             // before the turn reaches apply_effect. If we get here, it means the turn
             // was executed outside of a pipeline without resolution — which is a bug.
@@ -1862,6 +1936,7 @@ impl TurnExecutor {
             Effect::SetVerificationKey { .. } => self.costs.effect_base,
             Effect::NoteSpend { .. } => self.costs.proof_verify, // note spends carry a proof
             Effect::NoteCreate { .. } => self.costs.effect_base,
+            Effect::BridgeMint { .. } => self.costs.proof_verify, // bridge mints verify a STARK proof
             Effect::PipelinedSend { .. } => self.costs.effect_base,
             Effect::CreateSealPair { .. } => self.costs.effect_base,
             Effect::Seal { .. } => self.costs.effect_base,
@@ -1979,6 +2054,20 @@ impl TurnExecutor {
                     *entry = entry
                         .checked_add(*value)
                         .ok_or((*asset_type, 0, u64::MAX))?;
+                }
+                Effect::BridgeMint { portable_proof } => {
+                    // BridgeMint contributes to BOTH sides of conservation:
+                    // it's an external input (from another federation) AND creates output.
+                    // For local conservation, bridge mints are treated as matching
+                    // input+output (self-balancing) since the value comes from outside.
+                    let entry = inputs.entry(portable_proof.asset_type).or_insert(0);
+                    *entry = entry
+                        .checked_add(portable_proof.value)
+                        .ok_or((portable_proof.asset_type, u64::MAX, 0))?;
+                    let entry = outputs.entry(portable_proof.asset_type).or_insert(0);
+                    *entry = entry
+                        .checked_add(portable_proof.value)
+                        .ok_or((portable_proof.asset_type, 0, u64::MAX))?;
                 }
                 _ => {}
             }
@@ -2506,6 +2595,7 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
             Effect::CreateCell { .. }
             | Effect::NoteSpend { .. }
             | Effect::NoteCreate { .. }
+            | Effect::BridgeMint { .. }
             | Effect::CreateSealPair { .. }
             | Effect::Seal { .. }
             | Effect::Unseal { .. }
@@ -2597,6 +2687,13 @@ pub fn execute_pipeline(
                 results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
                     index: idx,
                     reason: format!("{}", reason),
+                }));
+            }
+            TurnResult::Expired | TurnResult::Pending => {
+                failed[idx] = true;
+                results[idx] = Some(Err(PipelineError::TurnExecutionFailed {
+                    index: idx,
+                    reason: "conditional turn not resolved in pipeline context".to_string(),
                 }));
             }
         }

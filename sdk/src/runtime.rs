@@ -267,6 +267,8 @@ impl AgentRuntime {
                 Ok(receipt)
             }
             TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
+            TurnResult::Expired => Err(SdkError::Rejected("turn expired".to_string())),
+            TurnResult::Pending => Err(SdkError::Rejected("turn pending".to_string())),
         }
     }
 
@@ -292,6 +294,8 @@ impl AgentRuntime {
                 Ok(receipt)
             }
             TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
+            TurnResult::Expired => Err(SdkError::Rejected("turn expired".to_string())),
+            TurnResult::Pending => Err(SdkError::Rejected("turn pending".to_string())),
         }
     }
 
@@ -465,6 +469,8 @@ impl SubAgent {
         match result {
             TurnResult::Committed { receipt, .. } => Ok(receipt),
             TurnResult::Rejected { reason, .. } => Err(SdkError::Turn(reason)),
+            TurnResult::Expired => Err(SdkError::Rejected("turn expired".to_string())),
+            TurnResult::Pending => Err(SdkError::Rejected("turn pending".to_string())),
         }
     }
 

@@ -158,6 +158,44 @@ pub struct IntentListEntry {
 }
 
 // =============================================================================
+// Conditional Turn types
+// =============================================================================
+
+#[derive(Deserialize)]
+pub struct SubmitConditionalRequest {
+    pub turn: serde_json::Value,
+    pub condition: serde_json::Value,
+    pub timeout_height: u64,
+}
+
+#[derive(Serialize)]
+pub struct SubmitConditionalResponse {
+    pub accepted: bool,
+    pub conditional_hash: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ResolveConditionalRequest {
+    pub conditional_hash: String,
+    pub proof: serde_json::Value,
+}
+
+#[derive(Serialize)]
+pub struct ResolveConditionalResponse {
+    pub resolved: bool,
+    pub turn_hash: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct PendingConditionalInfo {
+    pub hash: String,
+    pub timeout_height: u64,
+    pub submitted_at: u64,
+    pub condition_type: String,
+}
+
+// =============================================================================
 // Router
 // =============================================================================
 
@@ -176,6 +214,9 @@ pub fn router(state: NodeState) -> Router {
         .route("/wallet/receipts", get(get_receipts))
         .route("/intents", get(get_intents).post(post_intent))
         .route("/turn/submit", post(post_submit_turn))
+        .route("/turn/submit-conditional", post(post_submit_conditional))
+        .route("/turn/resolve-conditional", post(post_resolve_conditional))
+        .route("/turn/pending", get(get_pending_conditionals))
         .route("/cell/{id}", get(get_cell))
         .route("/federation/roots", get(get_federation_roots))
         .with_state(state)
@@ -522,6 +563,176 @@ async fn get_federation_roots(State(state): State<NodeState>) -> Json<Vec<Attest
             merkle_root: hex_encode(&r.merkle_root),
             timestamp: r.timestamp,
             signatures: r.quorum_signatures.len(),
+        })
+        .collect();
+    Json(infos)
+}
+
+// =============================================================================
+// Conditional Turn handlers
+// =============================================================================
+
+async fn post_submit_conditional(
+    State(state): State<NodeState>,
+    Json(req): Json<SubmitConditionalRequest>,
+) -> Result<Json<SubmitConditionalResponse>, StatusCode> {
+    let s = state.read().await;
+    if !s.unlocked {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let current_height = s
+        .store
+        .latest_attested_root()
+        .ok()
+        .flatten()
+        .map(|r| r.height)
+        .unwrap_or(0);
+    drop(s);
+
+    // Deserialize the condition and turn from JSON.
+    let condition: pyana_turn::ProofCondition =
+        serde_json::from_value(req.condition).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let turn: pyana_turn::Turn =
+        serde_json::from_value(req.turn).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let conditional = pyana_turn::ConditionalTurn {
+        turn,
+        condition,
+        timeout_height: req.timeout_height,
+        submitted_at: current_height,
+    };
+
+    let hash = conditional.hash();
+    let hash_hex = hex_encode(&hash);
+
+    // Store in pending pool.
+    {
+        let mut s = state.write().await;
+        s.pending_conditionals.push(conditional);
+    }
+
+    Ok(Json(SubmitConditionalResponse {
+        accepted: true,
+        conditional_hash: Some(hash_hex),
+    }))
+}
+
+async fn post_resolve_conditional(
+    State(state): State<NodeState>,
+    Json(req): Json<ResolveConditionalRequest>,
+) -> Result<Json<ResolveConditionalResponse>, StatusCode> {
+    let hash_bytes = hex_decode(&req.conditional_hash).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let proof: pyana_turn::ConditionProof =
+        serde_json::from_value(req.proof).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let mut s = state.write().await;
+    let current_height = s
+        .store
+        .latest_attested_root()
+        .ok()
+        .flatten()
+        .map(|r| r.height)
+        .unwrap_or(0);
+
+    // Find the conditional turn by hash.
+    let idx = s
+        .pending_conditionals
+        .iter()
+        .position(|ct| ct.hash() == hash_bytes);
+
+    let idx = match idx {
+        Some(i) => i,
+        None => {
+            return Ok(Json(ResolveConditionalResponse {
+                resolved: false,
+                turn_hash: None,
+                reason: Some("conditional turn not found".to_string()),
+            }));
+        }
+    };
+
+    // Resolve: check the condition against the proof.
+    let conditional = &s.pending_conditionals[idx];
+    let trusted_roots: Vec<[u8; 32]> = s
+        .store
+        .all_attested_roots()
+        .unwrap_or_default()
+        .iter()
+        .map(|r| r.merkle_root)
+        .collect();
+
+    let result = pyana_turn::resolve_condition(
+        &conditional.condition,
+        &proof,
+        current_height,
+        conditional.timeout_height,
+        &trusted_roots,
+    );
+
+    match result {
+        pyana_turn::ConditionalResult::Resolved => {
+            let conditional = s.pending_conditionals.remove(idx);
+            let turn_hash = hex_encode(&conditional.turn.hash());
+            Ok(Json(ResolveConditionalResponse {
+                resolved: true,
+                turn_hash: Some(turn_hash),
+                reason: None,
+            }))
+        }
+        pyana_turn::ConditionalResult::Expired => {
+            s.pending_conditionals.remove(idx);
+            Ok(Json(ResolveConditionalResponse {
+                resolved: false,
+                turn_hash: None,
+                reason: Some("conditional turn has expired".to_string()),
+            }))
+        }
+        pyana_turn::ConditionalResult::Pending => Ok(Json(ResolveConditionalResponse {
+            resolved: false,
+            turn_hash: None,
+            reason: Some("condition not yet satisfied".to_string()),
+        })),
+        pyana_turn::ConditionalResult::InvalidProof(e) => Ok(Json(ResolveConditionalResponse {
+            resolved: false,
+            turn_hash: None,
+            reason: Some(format!("invalid proof: {e}")),
+        })),
+    }
+}
+
+async fn get_pending_conditionals(
+    State(state): State<NodeState>,
+) -> Json<Vec<PendingConditionalInfo>> {
+    let mut s = state.write().await;
+    let current_height = s
+        .store
+        .latest_attested_root()
+        .ok()
+        .flatten()
+        .map(|r| r.height)
+        .unwrap_or(0);
+
+    // GC: remove expired conditionals.
+    s.pending_conditionals
+        .retain(|ct| !ct.is_expired(current_height));
+
+    let infos: Vec<PendingConditionalInfo> = s
+        .pending_conditionals
+        .iter()
+        .map(|ct| {
+            let condition_type = match &ct.condition {
+                pyana_turn::ProofCondition::HashPreimage { .. } => "hash_preimage",
+                pyana_turn::ProofCondition::RemoteProof { .. } => "remote_proof",
+                pyana_turn::ProofCondition::LocalProof { .. } => "local_proof",
+                pyana_turn::ProofCondition::TurnExecuted { .. } => "turn_executed",
+            };
+            PendingConditionalInfo {
+                hash: hex_encode(&ct.hash()),
+                timeout_height: ct.timeout_height,
+                submitted_at: ct.submitted_at,
+                condition_type: condition_type.to_string(),
+            }
         })
         .collect();
     Json(infos)

@@ -17,6 +17,7 @@ pub mod derivation;
 pub mod id;
 pub mod ledger;
 pub mod note;
+pub mod note_bridge;
 pub mod nullifier_set;
 pub mod permissions;
 pub mod preconditions;
@@ -37,6 +38,10 @@ pub use derivation::{
 pub use id::CellId;
 pub use ledger::{CellStateDelta, Ledger, LedgerDelta, LedgerError, MembershipProof, Side};
 pub use note::{Note, NoteCommitment, NoteError, Nullifier, PositionedNote};
+pub use note_bridge::{
+    BridgeError, BridgedNullifierSet, PortableNoteProof, create_portable_note,
+    verify_portable_note,
+};
 pub use nullifier_set::{NonMembershipProof, NullifierSet};
 pub use permissions::{Action, AuthKind, AuthRequired, Permissions};
 pub use preconditions::{

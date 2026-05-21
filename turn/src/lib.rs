@@ -39,6 +39,7 @@ pub mod action;
 pub mod budget_gate;
 pub mod builder;
 pub mod composer;
+pub mod conditional;
 pub mod error;
 pub mod eventual;
 pub mod executor;
@@ -56,6 +57,9 @@ pub use action::{Action, Authorization, CommitmentMode, DelegationMode, Effect, 
 pub use budget_gate::{BudgetGate, BudgetSlice};
 pub use builder::{ActionBuilder, TurnBuilder};
 pub use composer::{ComposeError, SignedFragment, TurnComposer};
+pub use conditional::{
+    ConditionProof, ConditionalResult, ConditionalTurn, ProofCondition, resolve_condition,
+};
 pub use error::TurnError;
 pub use eventual::{CycleError, EventualRef, Pipeline, PipelineError, Target, TurnOutput};
 pub use executor::{

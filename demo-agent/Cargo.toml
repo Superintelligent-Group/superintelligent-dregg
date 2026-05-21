@@ -113,5 +113,8 @@ name = "compute_marketplace"
 [[example]]
 name = "agent_network"
 
+[[example]]
+name = "note_bridge"
+
 [lints]
 workspace = true

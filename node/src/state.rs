@@ -66,6 +66,9 @@ pub struct NodeStateInner {
     pub passphrase_hash: Option<[u8; 32]>,
     /// Local intent pool: id -> intent JSON.
     pub intent_pool: HashMap<String, serde_json::Value>,
+    /// Pending conditional turns awaiting proof resolution.
+    /// Garbage-collected on access when timeout_height is exceeded.
+    pub pending_conditionals: Vec<pyana_turn::ConditionalTurn>,
 }
 
 /// Summary of the node's sync state for the status endpoint.
@@ -106,6 +109,7 @@ impl NodeState {
                 unlocked: false,
                 passphrase_hash: None,
                 intent_pool: HashMap::new(),
+                pending_conditionals: Vec::new(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -136,6 +140,7 @@ impl NodeState {
                 unlocked: false,
                 passphrase_hash: None,
                 intent_pool: HashMap::new(),
+                pending_conditionals: Vec::new(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),

@@ -105,6 +105,13 @@ pub enum TurnError {
         requested: u64,
         remaining: u64,
     },
+
+    /// A conditional turn's condition was not satisfied by the presented proof.
+    ConditionNotMet(String),
+
+    /// A BridgeMint effect failed verification (untrusted root, invalid proof,
+    /// or double-bridge attempt).
+    BridgeMintFailed { reason: String },
 }
 
 impl core::fmt::Display for TurnError {
@@ -230,6 +237,12 @@ impl core::fmt::Display for TurnError {
                     f,
                     "budget exhausted on silo {silo_id}: requested {requested}, remaining {remaining}"
                 )
+            }
+            TurnError::ConditionNotMet(reason) => {
+                write!(f, "conditional turn condition not met: {reason}")
+            }
+            TurnError::BridgeMintFailed { reason } => {
+                write!(f, "bridge mint failed: {reason}")
             }
         }
     }

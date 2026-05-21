@@ -60,6 +60,12 @@ pub enum TurnResult {
         reason: TurnError,
         at_action: Vec<usize>,
     },
+    /// The conditional turn's timeout height has been exceeded.
+    /// No state change occurs and no fee is charged.
+    Expired,
+    /// The conditional turn's condition has not yet been satisfied.
+    /// The turn remains in the pending pool.
+    Pending,
 }
 
 impl TurnResult {
@@ -68,6 +74,12 @@ impl TurnResult {
     }
     pub fn is_rejected(&self) -> bool {
         matches!(self, TurnResult::Rejected { .. })
+    }
+    pub fn is_expired(&self) -> bool {
+        matches!(self, TurnResult::Expired)
+    }
+    pub fn is_pending(&self) -> bool {
+        matches!(self, TurnResult::Pending)
     }
 
     pub fn unwrap_committed(self) -> (LedgerDelta, TurnReceipt, u64) {
@@ -80,6 +92,8 @@ impl TurnResult {
             TurnResult::Rejected { reason, at_action } => {
                 panic!("turn was rejected at {:?}: {}", at_action, reason)
             }
+            TurnResult::Expired => panic!("turn was expired, expected committed"),
+            TurnResult::Pending => panic!("turn is pending, expected committed"),
         }
     }
 
@@ -87,6 +101,8 @@ impl TurnResult {
         match self {
             TurnResult::Rejected { reason, at_action } => (reason, at_action),
             TurnResult::Committed { .. } => panic!("turn was committed, expected rejection"),
+            TurnResult::Expired => panic!("turn was expired, expected rejection"),
+            TurnResult::Pending => panic!("turn is pending, expected rejection"),
         }
     }
 }

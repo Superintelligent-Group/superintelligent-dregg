@@ -526,6 +526,9 @@ impl Coordinator {
                 Ok(msg)
             }
             TurnResult::Rejected { reason, .. } => Err(CoordError::TurnExecution(reason)),
+            TurnResult::Expired | TurnResult::Pending => {
+                unreachable!("execute() never returns Expired/Pending")
+            }
         }
     }
 
@@ -777,6 +780,9 @@ impl Participant {
         match result {
             TurnResult::Committed { receipt, .. } => Ok(receipt),
             TurnResult::Rejected { reason, .. } => Err(CoordError::TurnExecution(reason)),
+            TurnResult::Expired | TurnResult::Pending => {
+                unreachable!("execute() never returns Expired/Pending")
+            }
         }
     }
 

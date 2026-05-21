@@ -4,6 +4,7 @@
 //! Each action targets a cell, specifies a method, carries authorization, declares
 //! preconditions, and produces effects.
 
+use pyana_cell::note_bridge::PortableNoteProof;
 use pyana_cell::state::FieldElement;
 use pyana_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox};
 use serde::{Deserialize, Serialize};
@@ -249,6 +250,17 @@ pub enum Effect {
         /// The child cell whose delegation is being revoked.
         child: CellId,
     },
+    /// Bridge a note from another federation by presenting a portable spending proof.
+    ///
+    /// When processed:
+    /// 1. Verify the portable note proof against trusted federation roots.
+    /// 2. Check the nullifier hasn't already been bridged (prevent double-bridge).
+    /// 3. Create a new note commitment in the local note tree.
+    /// 4. Credit the value to the receiving cell.
+    BridgeMint {
+        /// The portable proof carrying the STARK spending proof from the source federation.
+        portable_proof: PortableNoteProof,
+    },
     /// Pipelined send: dispatch an action to the result of a pending turn.
     /// Three-party introduction.
     Introduce {
@@ -466,6 +478,15 @@ impl Effect {
                 hasher.update(&sealed_box.nonce);
                 hasher.update(recipient.as_bytes());
             }
+            Effect::BridgeMint { portable_proof } => {
+                hasher.update(&[21u8]);
+                hasher.update(&portable_proof.nullifier);
+                hasher.update(&portable_proof.destination_commitment.0);
+                hasher.update(&portable_proof.value.to_le_bytes());
+                hasher.update(&portable_proof.asset_type.to_le_bytes());
+                hasher.update(&portable_proof.source_root.merkle_root);
+                hasher.update(&portable_proof.source_root.height.to_le_bytes());
+            }
             Effect::Introduce {
                 introducer,
                 recipient,
@@ -533,6 +554,9 @@ impl Effect {
             Effect::Seal { .. } => 32 + 32 + 4,
             Effect::Unseal { sealed_box, .. } => {
                 32 + 32 + 32 + sealed_box.ciphertext.len() + 32 + 32
+            }
+            Effect::BridgeMint { portable_proof } => {
+                32 + 32 + 8 + 8 + portable_proof.spending_proof.len() // nullifier + commitment + value + asset + proof
             }
             Effect::PipelinedSend { .. } => 32 + 4 + 32,
             Effect::Introduce { .. } => 97,
