@@ -993,7 +993,11 @@ fn test_legacy_time_bounded_denies_after_expiry() {
         .into_iter()
         .filter(|r| r.id == rule_ids::APP_ACTION_TIME_BOUNDED)
         .collect();
-    assert_eq!(rules.len(), 1, "Should have exactly one time-bounded app rule");
+    assert_eq!(
+        rules.len(),
+        1,
+        "Should have exactly one time-bounded app rule"
+    );
 
     let facts = vec![
         app_fact("api", "read,write"),

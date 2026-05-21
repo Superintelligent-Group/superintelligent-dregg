@@ -713,7 +713,11 @@ mod tests {
 
         // Check rule IDs are present (secure MemberOf-based rules)
         assert!(rules.iter().any(|r| r.id == rule_ids::APP_ACTION_SECURE));
-        assert!(rules.iter().any(|r| r.id == rule_ids::SERVICE_ACTION_SECURE));
+        assert!(
+            rules
+                .iter()
+                .any(|r| r.id == rule_ids::SERVICE_ACTION_SECURE)
+        );
         assert!(rules.iter().any(|r| r.id == rule_ids::UNRESTRICTED));
         // Budget and revocation rules
         assert!(rules.iter().any(|r| r.id == rule_ids::BUDGET_OK));
@@ -721,8 +725,16 @@ mod tests {
         assert!(rules.iter().any(|r| r.id == rule_ids::REVOCATION_OK));
         assert!(rules.iter().any(|r| r.id == rule_ids::REVOCATION_DENY));
         // Time-bounded rules
-        assert!(rules.iter().any(|r| r.id == rule_ids::APP_ACTION_TIME_BOUNDED));
-        assert!(rules.iter().any(|r| r.id == rule_ids::SERVICE_ACTION_TIME_BOUNDED));
+        assert!(
+            rules
+                .iter()
+                .any(|r| r.id == rule_ids::APP_ACTION_TIME_BOUNDED)
+        );
+        assert!(
+            rules
+                .iter()
+                .any(|r| r.id == rule_ids::SERVICE_ACTION_TIME_BOUNDED)
+        );
     }
 
     #[test]

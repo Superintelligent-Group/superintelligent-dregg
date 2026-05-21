@@ -10,7 +10,9 @@
 //! membership proofs that can be verified inside a STARK proof.
 
 use pyana_circuit::field::BabyBear;
-use pyana_commit::poseidon2_tree::{Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field};
+use pyana_commit::poseidon2_tree::{
+    Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field,
+};
 
 /// A persistent Poseidon2 note tree.
 ///
@@ -73,11 +75,7 @@ impl Poseidon2NoteTree {
     }
 
     /// Verify a membership proof against a root and leaf.
-    pub fn verify_membership(
-        root: BabyBear,
-        leaf: BabyBear,
-        proof: &Poseidon2MerkleProof,
-    ) -> bool {
+    pub fn verify_membership(root: BabyBear, leaf: BabyBear, proof: &Poseidon2MerkleProof) -> bool {
         Poseidon2MerkleTree::verify_membership(root, leaf, proof)
     }
 

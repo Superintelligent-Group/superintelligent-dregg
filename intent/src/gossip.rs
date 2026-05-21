@@ -70,7 +70,10 @@ impl std::fmt::Display for ReceiveError {
             Self::Invalid(e) => write!(f, "validation error: {e}"),
             Self::MissingStake => write!(f, "intent lacks stake proof for gossip"),
             Self::InvalidStakeProof => {
-                write!(f, "stake proof failed Merkle verification against known root")
+                write!(
+                    f,
+                    "stake proof failed Merkle verification against known root"
+                )
             }
             Self::InsufficientStakeValue { claimed, minimum } => {
                 write!(

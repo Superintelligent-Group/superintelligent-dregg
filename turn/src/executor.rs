@@ -523,7 +523,9 @@ impl TurnExecutor {
                             path,
                         ));
                     }
-                    DelegationMode::ParentsOwn | DelegationMode::Inherit | DelegationMode::SnapshotRefresh => {
+                    DelegationMode::ParentsOwn
+                    | DelegationMode::Inherit
+                    | DelegationMode::SnapshotRefresh => {
                         // TODO: Should walk the delegation chain (Cell.delegate) to find
                         // an ancestor that holds the capability. Currently behaves
                         // identically to DelegationMode::None.
@@ -1086,9 +1088,7 @@ impl TurnExecutor {
     ) -> Result<(), (TurnError, Vec<usize>)> {
         let actor_cell = ledger.get(actor_cell_id).ok_or_else(|| {
             (
-                TurnError::CellNotFound {
-                    id: *actor_cell_id,
-                },
+                TurnError::CellNotFound { id: *actor_cell_id },
                 path.to_vec(),
             )
         })?;
@@ -1668,7 +1668,10 @@ impl TurnExecutor {
                 max_staleness,
             } => {
                 let parent_cell_data = ledger.get(action_target).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *action_target }, path.to_vec())
+                    (
+                        TurnError::CellNotFound { id: *action_target },
+                        path.to_vec(),
+                    )
                 })?;
                 let delegation_epoch = parent_cell_data.state.delegation_epoch;
                 let now = self.current_timestamp as u64;
@@ -1676,8 +1679,7 @@ impl TurnExecutor {
                     parent_cell_data.capabilities.iter().cloned().collect();
 
                 let child_id = CellId::derive_raw(child_public_key, child_token_id);
-                let mut child_cell =
-                    Cell::with_balance(*child_public_key, *child_token_id, 0);
+                let mut child_cell = Cell::with_balance(*child_public_key, *child_token_id, 0);
                 child_cell.id = child_id;
                 child_cell.delegate = Some(*action_target);
                 child_cell.delegation = Some(pyana_cell::DelegatedRef::new(
@@ -1688,22 +1690,24 @@ impl TurnExecutor {
                     *max_staleness,
                 ));
 
-                ledger.insert_cell(child_cell).map_err(|_| {
-                    (TurnError::CellAlreadyExists { id: child_id }, path.to_vec())
-                })?;
+                ledger
+                    .insert_cell(child_cell)
+                    .map_err(|_| (TurnError::CellAlreadyExists { id: child_id }, path.to_vec()))?;
                 journal.record_create_cell(child_id);
                 Ok(())
             }
 
             Effect::RefreshDelegation => {
                 let child_cell = ledger.get(action_target).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *action_target }, path.to_vec())
+                    (
+                        TurnError::CellNotFound { id: *action_target },
+                        path.to_vec(),
+                    )
                 })?;
                 let parent_id = child_cell.delegate.ok_or_else(|| {
                     (
                         TurnError::InvalidAuthorization {
-                            reason: "cell has no delegate (parent) to refresh from"
-                                .to_string(),
+                            reason: "cell has no delegate (parent) to refresh from".to_string(),
                         },
                         path.to_vec(),
                     )
@@ -1714,9 +1718,9 @@ impl TurnExecutor {
                     .map(|d| d.max_staleness)
                     .unwrap_or(0);
 
-                let parent_cell_data = ledger.get(&parent_id).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: parent_id }, path.to_vec())
-                })?;
+                let parent_cell_data = ledger
+                    .get(&parent_id)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: parent_id }, path.to_vec()))?;
                 let new_snapshot: Vec<pyana_cell::CapabilityRef> =
                     parent_cell_data.capabilities.iter().cloned().collect();
                 let new_epoch = parent_cell_data.state.delegation_epoch;
@@ -1734,9 +1738,9 @@ impl TurnExecutor {
             }
 
             Effect::RevokeDelegation { child } => {
-                let child_cell = ledger.get(child).ok_or_else(|| {
-                    (TurnError::CellNotFound { id: *child }, path.to_vec())
-                })?;
+                let child_cell = ledger
+                    .get(child)
+                    .ok_or_else(|| (TurnError::CellNotFound { id: *child }, path.to_vec()))?;
                 if child_cell.delegate != Some(*action_target) {
                     return Err((
                         TurnError::DelegationDenied {

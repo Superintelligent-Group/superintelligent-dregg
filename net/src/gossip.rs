@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use quinn::{Connection, Endpoint, RecvStream};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, info, trace, warn};
 
 use crate::message::PeerMessage;
@@ -389,9 +389,7 @@ enum GossipEnvelope {
         msg_hash: MessageHash,
     },
     /// Prune: "demote me from your eager set for this topic".
-    Prune {
-        topic_id: TopicId,
-    },
+    Prune { topic_id: TopicId },
     /// Anti-entropy: hash set of recently-seen messages.
     AntiEntropy {
         topic_id: TopicId,
@@ -461,7 +459,10 @@ impl GossipNetwork {
             Self::cache_cleanup_loop(cache_state).await;
         });
 
-        info!("GossipNetwork started (plumtree): {}", fmt_node_id(&node_id));
+        info!(
+            "GossipNetwork started (plumtree): {}",
+            fmt_node_id(&node_id)
+        );
 
         network
     }
@@ -477,10 +478,7 @@ impl GossipNetwork {
         // First, ensure the topic exists and add peer addresses
         {
             let mut state = self.state.write().await;
-            let topic_state = state
-                .topics
-                .entry(topic_id)
-                .or_insert_with(TopicState::new);
+            let topic_state = state.topics.entry(topic_id).or_insert_with(TopicState::new);
             for &addr in bootstrap_peers {
                 topic_state.add_peer(addr);
             }
@@ -653,10 +651,7 @@ impl GossipNetwork {
 
                     // Lazy push: IHave to lazy peers
                     if !lazy_targets.is_empty() {
-                        let ihave_envelope = GossipEnvelope::IHave {
-                            topic_id,
-                            msg_hash,
-                        };
+                        let ihave_envelope = GossipEnvelope::IHave { topic_id, msg_hash };
                         let ihave_bytes = postcard::to_stdvec(&ihave_envelope)
                             .expect("envelope serialization cannot fail");
                         Self::send_to_peers(&ihave_bytes, &lazy_targets, &state).await;
@@ -668,10 +663,7 @@ impl GossipNetwork {
                     msg_hash,
                     targets,
                 } => {
-                    let envelope = GossipEnvelope::IHave {
-                        topic_id,
-                        msg_hash,
-                    };
+                    let envelope = GossipEnvelope::IHave { topic_id, msg_hash };
                     let envelope_bytes =
                         postcard::to_stdvec(&envelope).expect("envelope serialization cannot fail");
                     Self::send_to_peers(&envelope_bytes, &targets, &state).await;
@@ -682,10 +674,7 @@ impl GossipNetwork {
                     msg_hash,
                     target,
                 } => {
-                    let envelope = GossipEnvelope::Graft {
-                        topic_id,
-                        msg_hash,
-                    };
+                    let envelope = GossipEnvelope::Graft { topic_id, msg_hash };
                     let envelope_bytes =
                         postcard::to_stdvec(&envelope).expect("envelope serialization cannot fail");
                     Self::send_to_peers(&envelope_bytes, &[target], &state).await;
@@ -719,11 +708,7 @@ impl GossipNetwork {
     }
 
     /// Send envelope bytes to a list of peer addresses.
-    async fn send_to_peers(
-        data: &[u8],
-        targets: &[SocketAddr],
-        state: &Arc<RwLock<GossipState>>,
-    ) {
+    async fn send_to_peers(data: &[u8], targets: &[SocketAddr], state: &Arc<RwLock<GossipState>>) {
         let mut dead_peers: Vec<SocketAddr> = Vec::new();
 
         for &addr in targets {
@@ -914,10 +899,7 @@ impl GossipNetwork {
 
                     // Send IHave to lazy peers
                     if !lazy_targets.is_empty() {
-                        let ihave_envelope = GossipEnvelope::IHave {
-                            topic_id,
-                            msg_hash,
-                        };
+                        let ihave_envelope = GossipEnvelope::IHave { topic_id, msg_hash };
                         let ihave_bytes = postcard::to_stdvec(&ihave_envelope)
                             .expect("envelope serialization cannot fail");
                         Self::send_to_peers(&ihave_bytes, &lazy_targets, state).await;
@@ -925,10 +907,7 @@ impl GossipNetwork {
                 }
             }
 
-            GossipEnvelope::IHave {
-                topic_id,
-                msg_hash,
-            } => {
+            GossipEnvelope::IHave { topic_id, msg_hash } => {
                 let already_have = {
                     let s = state.read().await;
                     s.seen.contains(&msg_hash)
@@ -947,10 +926,7 @@ impl GossipNetwork {
                     .or_insert((remote_addr, Instant::now()));
             }
 
-            GossipEnvelope::Graft {
-                topic_id,
-                msg_hash,
-            } => {
+            GossipEnvelope::Graft { topic_id, msg_hash } => {
                 // A peer is requesting the full message. Promote them to eager.
                 {
                     let mut s = state.write().await;
@@ -1008,16 +984,13 @@ impl GossipNetwork {
                         topic_id,
                         messages: missing_messages,
                     };
-                    let response_bytes = postcard::to_stdvec(&response)
-                        .expect("envelope serialization cannot fail");
+                    let response_bytes =
+                        postcard::to_stdvec(&response).expect("envelope serialization cannot fail");
                     Self::send_to_peers(&response_bytes, &[remote_addr], state).await;
                 }
             }
 
-            GossipEnvelope::AntiEntropyResponse {
-                topic_id,
-                messages,
-            } => {
+            GossipEnvelope::AntiEntropyResponse { topic_id, messages } => {
                 // We received messages we were missing. Process each one.
                 for (msg_hash, payload) in messages {
                     let is_new = {
@@ -1075,7 +1048,9 @@ impl GossipNetwork {
                 let expired: Vec<_> = s
                     .pending_ihaves
                     .iter()
-                    .filter(|(_, (_, received_at))| now.duration_since(*received_at) > IHAVE_TIMEOUT)
+                    .filter(|(_, (_, received_at))| {
+                        now.duration_since(*received_at) > IHAVE_TIMEOUT
+                    })
                     .map(|((topic_id, msg_hash), (addr, _))| (*topic_id, *msg_hash, *addr))
                     .collect();
 
@@ -1183,9 +1158,7 @@ async fn read_gossip_envelope(recv: &mut RecvStream) -> Result<GossipEnvelope, S
     }
 
     let mut buf = vec![0u8; len];
-    recv.read_exact(&mut buf)
-        .await
-        .map_err(|e| e.to_string())?;
+    recv.read_exact(&mut buf).await.map_err(|e| e.to_string())?;
 
     postcard::from_bytes(&buf).map_err(|e| e.to_string())
 }
@@ -1386,10 +1359,7 @@ mod tests {
         let bytes = postcard::to_stdvec(&envelope).unwrap();
         let decoded: GossipEnvelope = postcard::from_bytes(&bytes).unwrap();
         match decoded {
-            GossipEnvelope::IHave {
-                topic_id,
-                msg_hash,
-            } => {
+            GossipEnvelope::IHave { topic_id, msg_hash } => {
                 assert_eq!(topic_id, [0xcc; 32]);
                 assert_eq!(msg_hash, [0xdd; 32]);
             }
@@ -1406,10 +1376,7 @@ mod tests {
         let bytes = postcard::to_stdvec(&envelope).unwrap();
         let decoded: GossipEnvelope = postcard::from_bytes(&bytes).unwrap();
         match decoded {
-            GossipEnvelope::Graft {
-                topic_id,
-                msg_hash,
-            } => {
+            GossipEnvelope::Graft { topic_id, msg_hash } => {
                 assert_eq!(topic_id, [0xee; 32]);
                 assert_eq!(msg_hash, [0xff; 32]);
             }

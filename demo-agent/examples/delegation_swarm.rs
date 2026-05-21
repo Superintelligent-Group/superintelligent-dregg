@@ -17,12 +17,12 @@
 //! 7. Staleness semantics demonstration
 
 use pyana_cell::{AuthRequired, Cell, CellId, DelegatedRef, Ledger, Permissions};
+use pyana_turn::action::symbol;
+use pyana_turn::turn::Turn;
 use pyana_turn::{
     Action, Authorization, CallForest, CommitmentMode, ComputronCosts, DelegationMode, Effect,
     TurnExecutor, TurnResult,
 };
-use pyana_turn::action::symbol;
-use pyana_turn::turn::Turn;
 
 const NUM_WORKERS: usize = 10;
 const TURNS_PER_WORKER: usize = 3;
@@ -121,8 +121,14 @@ fn main() {
     //         max_staleness = 60 seconds
     // =========================================================================
 
-    println!("Step 1: Controller spawns {} workers with SpawnWithDelegation", NUM_WORKERS);
-    println!("        max_staleness = 60s, each gets snapshot of {} capabilities", service_ids.len());
+    println!(
+        "Step 1: Controller spawns {} workers with SpawnWithDelegation",
+        NUM_WORKERS
+    );
+    println!(
+        "        max_staleness = 60s, each gets snapshot of {} capabilities",
+        service_ids.len()
+    );
     println!();
 
     let mut worker_ids: Vec<CellId> = Vec::new();
@@ -165,10 +171,18 @@ fn main() {
         ledger.get_mut(&expected_id).unwrap().state.balance = 100_000;
 
         worker_ids.push(expected_id);
-        println!("  Worker {:2}: {} (snapshot: {} caps)", i, short_id(&expected_id), snap_len);
+        println!(
+            "  Worker {:2}: {} (snapshot: {} caps)",
+            i,
+            short_id(&expected_id),
+            snap_len
+        );
     }
     println!();
-    println!("  All {} workers spawned with {} SpawnWithDelegation effects total.", NUM_WORKERS, NUM_WORKERS);
+    println!(
+        "  All {} workers spawned with {} SpawnWithDelegation effects total.",
+        NUM_WORKERS, NUM_WORKERS
+    );
     println!();
 
     // =========================================================================
@@ -176,8 +190,12 @@ fn main() {
     //         Each worker acts on different target cells using delegated caps
     // =========================================================================
 
-    println!("Step 2: Workers execute independently ({} workers x {} turns = {} total)",
-             NUM_WORKERS, TURNS_PER_WORKER, NUM_WORKERS * TURNS_PER_WORKER);
+    println!(
+        "Step 2: Workers execute independently ({} workers x {} turns = {} total)",
+        NUM_WORKERS,
+        TURNS_PER_WORKER,
+        NUM_WORKERS * TURNS_PER_WORKER
+    );
     println!("        Each uses delegated capabilities (no network calls to controller)");
     println!();
 
@@ -219,14 +237,19 @@ fn main() {
             assert!(
                 result.is_committed(),
                 "Worker {} turn {} failed (nonce={}, target={})",
-                worker_idx, turn_idx, nonce, short_id(&target_svc)
+                worker_idx,
+                turn_idx,
+                nonce,
+                short_id(&target_svc)
             );
             total_committed += 1;
         }
     }
 
     println!("  {} turns committed successfully.", total_committed);
-    println!("  All workers acted using delegated authority (snapshot-based, no controller contact).");
+    println!(
+        "  All workers acted using delegated authority (snapshot-based, no controller contact)."
+    );
     println!();
 
     // =========================================================================
@@ -247,7 +270,11 @@ fn main() {
         .capabilities
         .grant(new_svc_id, AuthRequired::None);
 
-    println!("  New service: {} (controller now has {} caps)", short_id(&new_svc_id), service_ids.len() + 1);
+    println!(
+        "  New service: {} (controller now has {} caps)",
+        short_id(&new_svc_id),
+        service_ids.len() + 1
+    );
 
     // Worker 0 tries to access new service -> FAILS.
     let worker_0_id = worker_ids[0];
@@ -270,7 +297,10 @@ fn main() {
 
     let turn = make_turn(worker_0_id, worker_0_nonce, try_new_svc);
     let result = executor.execute(&turn, &mut ledger);
-    assert!(!result.is_committed(), "Worker should NOT access new service before refresh");
+    assert!(
+        !result.is_committed(),
+        "Worker should NOT access new service before refresh"
+    );
     println!("  Worker 0 tries new service: REJECTED (not in snapshot)");
     println!();
 
@@ -280,7 +310,10 @@ fn main() {
     //         Refresh is O(1) per worker
     // =========================================================================
 
-    println!("Step 4: All {} workers refresh delegation (O(1) per worker)", NUM_WORKERS);
+    println!(
+        "Step 4: All {} workers refresh delegation (O(1) per worker)",
+        NUM_WORKERS
+    );
     println!("        After refresh, all workers can access the new service");
     println!();
 
@@ -319,7 +352,10 @@ fn main() {
         assert!(delegation.has_capability(&new_svc_id));
     }
 
-    println!("  All workers refreshed. Snapshot now has {} capabilities each.", service_ids.len() + 1);
+    println!(
+        "  All workers refreshed. Snapshot now has {} capabilities each.",
+        service_ids.len() + 1
+    );
 
     // Worker 0 can now access the new service.
     let worker_0_nonce = ledger.get(&worker_0_id).unwrap().state.nonce;
@@ -341,7 +377,10 @@ fn main() {
 
     let turn = make_turn(worker_0_id, worker_0_nonce, use_new_svc);
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "Worker 0 should access new service after refresh");
+    assert!(
+        result.is_committed(),
+        "Worker 0 should access new service after refresh"
+    );
     println!("  Worker 0 accesses new service after refresh: SUCCESS");
     println!();
 
@@ -385,7 +424,10 @@ fn main() {
 
     // Verify worker 7's delegation is cleared.
     let revoked = ledger.get(&compromised_worker).unwrap();
-    assert!(revoked.delegation.is_none(), "Worker 7 delegation should be None after revocation");
+    assert!(
+        revoked.delegation.is_none(),
+        "Worker 7 delegation should be None after revocation"
+    );
     println!("  Worker 7 delegation: CLEARED (None)");
 
     // Verify other 9 workers are unaffected.
@@ -399,9 +441,15 @@ fn main() {
             "Worker {} should still have delegation",
             i
         );
-        assert_eq!(w.delegation.as_ref().unwrap().snapshot.len(), service_ids.len() + 1);
+        assert_eq!(
+            w.delegation.as_ref().unwrap().snapshot.len(),
+            service_ids.len() + 1
+        );
     }
-    println!("  Other 9 workers: UNAFFECTED (still have {} caps each)", service_ids.len() + 1);
+    println!(
+        "  Other 9 workers: UNAFFECTED (still have {} caps each)",
+        service_ids.len() + 1
+    );
 
     // Worker 7 tries to act -> FAILS.
     let w7_nonce = ledger.get(&compromised_worker).unwrap().state.nonce;
@@ -423,7 +471,10 @@ fn main() {
 
     let turn = make_turn(compromised_worker, w7_nonce, w7_try);
     let result = executor.execute(&turn, &mut ledger);
-    assert!(!result.is_committed(), "Revoked worker 7 should not be able to act");
+    assert!(
+        !result.is_committed(),
+        "Revoked worker 7 should not be able to act"
+    );
     println!("  Worker 7 tries to act: REJECTED (delegation revoked)");
 
     // Worker 3 (unaffected) can still act.
@@ -458,28 +509,50 @@ fn main() {
     println!("Step 6: Scaling Analysis");
     println!();
     println!("  WITHOUT delegation (individual GrantCapability):");
-    println!("    Initial setup: {} workers x {} caps = {} GrantCapability effects",
-             NUM_WORKERS, service_ids.len(), NUM_WORKERS * service_ids.len());
-    println!("    New capability: {} additional GrantCapability effects (one per worker)",
-             NUM_WORKERS);
-    println!("    Revocation: revoke {} caps from compromised worker = {} RevokeCapability effects",
-             service_ids.len() + 1, service_ids.len() + 1);
-    println!("    Total for lifecycle: {} effects",
-             NUM_WORKERS * service_ids.len() + NUM_WORKERS + service_ids.len() + 1);
+    println!(
+        "    Initial setup: {} workers x {} caps = {} GrantCapability effects",
+        NUM_WORKERS,
+        service_ids.len(),
+        NUM_WORKERS * service_ids.len()
+    );
+    println!(
+        "    New capability: {} additional GrantCapability effects (one per worker)",
+        NUM_WORKERS
+    );
+    println!(
+        "    Revocation: revoke {} caps from compromised worker = {} RevokeCapability effects",
+        service_ids.len() + 1,
+        service_ids.len() + 1
+    );
+    println!(
+        "    Total for lifecycle: {} effects",
+        NUM_WORKERS * service_ids.len() + NUM_WORKERS + service_ids.len() + 1
+    );
     println!();
     println!("  WITH delegation (snapshot+refresh):");
-    println!("    Initial setup: {} SpawnWithDelegation effects (one snapshot each)",
-             NUM_WORKERS);
-    println!("    New capability: {} RefreshDelegation effects (workers pull when ready)",
-             NUM_WORKERS);
+    println!(
+        "    Initial setup: {} SpawnWithDelegation effects (one snapshot each)",
+        NUM_WORKERS
+    );
+    println!(
+        "    New capability: {} RefreshDelegation effects (workers pull when ready)",
+        NUM_WORKERS
+    );
     println!("    Revocation: 1 RevokeDelegation effect (clears entire snapshot at once)");
-    println!("    Total for lifecycle: {} effects", NUM_WORKERS + NUM_WORKERS + 1);
+    println!(
+        "    Total for lifecycle: {} effects",
+        NUM_WORKERS + NUM_WORKERS + 1
+    );
     println!();
 
     let without = NUM_WORKERS * service_ids.len() + NUM_WORKERS + service_ids.len() + 1;
     let with = NUM_WORKERS + NUM_WORKERS + 1;
-    println!("  Reduction: {} effects -> {} effects ({:.1}x fewer)",
-             without, with, without as f64 / with as f64);
+    println!(
+        "  Reduction: {} effects -> {} effects ({:.1}x fewer)",
+        without,
+        with,
+        without as f64 / with as f64
+    );
     println!("  Key insight: delegation cost is O(workers), not O(workers x caps).");
     println!();
 
@@ -496,8 +569,8 @@ fn main() {
         controller_id,
         vec![], // snapshot content doesn't matter for staleness check
         0,
-        2000,   // refreshed_at = 2000 (from step 4)
-        60,     // max_staleness = 60s
+        2000, // refreshed_at = 2000 (from step 4)
+        60,   // max_staleness = 60s
     );
 
     // Simulate various timestamps.
@@ -548,9 +621,12 @@ fn main() {
     assert_eq!(d.refreshed_at, 2100);
     assert!(!d.is_stale(2100));
     assert!(!d.is_stale(2160)); // within 60s window
-    assert!(d.is_stale(2161));  // just past window
-    println!("  Worker 0 refreshed at t=2100: is_stale(2160)={}, is_stale(2161)={}",
-             d.is_stale(2160), d.is_stale(2161));
+    assert!(d.is_stale(2161)); // just past window
+    println!(
+        "  Worker 0 refreshed at t=2100: is_stale(2160)={}, is_stale(2161)={}",
+        d.is_stale(2160),
+        d.is_stale(2161)
+    );
     println!();
 
     // =========================================================================
@@ -560,8 +636,14 @@ fn main() {
     println!("=== Demo Complete ===");
     println!();
     println!("Key properties demonstrated:");
-    println!("  [1] Snapshot delegation: {} workers spawned with O(1) effect each", NUM_WORKERS);
-    println!("  [2] Parallel execution: {} turns committed using delegated authority", total_committed);
+    println!(
+        "  [1] Snapshot delegation: {} workers spawned with O(1) effect each",
+        NUM_WORKERS
+    );
+    println!(
+        "  [2] Parallel execution: {} turns committed using delegated authority",
+        total_committed
+    );
     println!("  [3] Frozen snapshots: new caps invisible until explicit refresh");
     println!("  [4] Batch refresh: all workers update with O(1) RefreshDelegation each");
     println!("  [5] Targeted revocation: 1 RevokeDelegation clears 1 worker, 9 unaffected");

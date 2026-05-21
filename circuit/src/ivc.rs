@@ -541,12 +541,7 @@ pub fn generate_state_transition_trace(
         let step = (i + 1) as u32;
         let new_hash = extend_accumulated_hash(current_hash, new_root, step);
 
-        trace.push(vec![
-            BabyBear::new(step),
-            current_hash,
-            new_root,
-            new_hash,
-        ]);
+        trace.push(vec![BabyBear::new(step), current_hash, new_root, new_hash]);
         current_hash = new_hash;
     }
 
@@ -1126,7 +1121,11 @@ impl IvcBuilder {
             return None;
         }
         let new_roots: Vec<BabyBear> = self.deltas.iter().map(|d| d.fold.new_root).collect();
-        Some(finalize_ivc(self.initial_root, &self.accumulated, Some(&new_roots)))
+        Some(finalize_ivc(
+            self.initial_root,
+            &self.accumulated,
+            Some(&new_roots),
+        ))
     }
 
     /// Finalize using the full AIR-based prover (stronger, but requires all deltas).
@@ -1639,7 +1638,11 @@ mod tests {
 
             // Verify each proof
             let result = verify_ivc(&ivc_proof, Some(initial_root));
-            assert_eq!(result, IvcVerification::Valid, "proof for {n}-step must verify");
+            assert_eq!(
+                result,
+                IvcVerification::Valid,
+                "proof for {n}-step must verify"
+            );
             println!("  {n:>2}-step: IVC STARK = {ivc_size:>6} B");
         }
 
@@ -1837,7 +1840,11 @@ mod tests {
 
         // Verify the proof
         let result = verify_ivc_stark(&stark_proof, &public_inputs);
-        assert!(result.is_ok(), "StateTransitionAir STARK must verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "StateTransitionAir STARK must verify: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -1856,7 +1863,10 @@ mod tests {
             BabyBear::new(0),
         ];
         let result = verify_ivc_stark(&stark_proof, &wrong_pi);
-        assert!(result.is_err(), "Wrong public inputs must fail verification");
+        assert!(
+            result.is_err(),
+            "Wrong public inputs must fail verification"
+        );
     }
 
     #[test]

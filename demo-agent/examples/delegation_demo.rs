@@ -14,12 +14,12 @@
 //! (bounded by max_staleness).
 
 use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
+use pyana_turn::action::symbol;
+use pyana_turn::turn::Turn;
 use pyana_turn::{
     Action, Authorization, CallForest, CallTree, CommitmentMode, ComputronCosts, DelegationMode,
     Effect, TurnExecutor, TurnResult,
 };
-use pyana_turn::action::symbol;
-use pyana_turn::turn::Turn;
 
 /// Create a cell with open permissions and a given balance.
 fn make_open_cell(seed: u8, balance: u64) -> Cell {
@@ -134,10 +134,22 @@ fn main() {
     let child = ledger.get(&child_id).unwrap();
     let delegation = child.delegation.as_ref().unwrap();
     println!("  Child {} created", short_id(&child_id));
-    println!("  Delegation snapshot: {} capabilities", delegation.snapshot.len());
-    println!("  - has Service A: {}", delegation.has_capability(&svc_a_id));
-    println!("  - has Service B: {}", delegation.has_capability(&svc_b_id));
-    println!("  - has Service C: {}", delegation.has_capability(&svc_c_id));
+    println!(
+        "  Delegation snapshot: {} capabilities",
+        delegation.snapshot.len()
+    );
+    println!(
+        "  - has Service A: {}",
+        delegation.has_capability(&svc_a_id)
+    );
+    println!(
+        "  - has Service B: {}",
+        delegation.has_capability(&svc_b_id)
+    );
+    println!(
+        "  - has Service C: {}",
+        delegation.has_capability(&svc_c_id)
+    );
     println!("  Refreshed at: {}", delegation.refreshed_at);
     println!("  Delegation epoch: {}", delegation.delegation_epoch);
     println!();
@@ -239,8 +251,14 @@ fn main() {
 
     let child = ledger.get(&child_id).unwrap();
     let delegation = child.delegation.as_ref().unwrap();
-    println!("  Snapshot updated: {} capabilities", delegation.snapshot.len());
-    println!("  - has Service D: {}", delegation.has_capability(&svc_d_id));
+    println!(
+        "  Snapshot updated: {} capabilities",
+        delegation.snapshot.len()
+    );
+    println!(
+        "  - has Service D: {}",
+        delegation.has_capability(&svc_d_id)
+    );
     println!("  Refreshed at: {}", delegation.refreshed_at);
 
     // Now child can use Service D.
@@ -299,8 +317,14 @@ fn main() {
 
     let parent = ledger.get(&parent_id).unwrap();
     let child = ledger.get(&child_id).unwrap();
-    println!("  Parent delegation_epoch: {}", parent.state.delegation_epoch);
-    println!("  Child delegation: {:?}", child.delegation.as_ref().map(|_| "Some(...)"));
+    println!(
+        "  Parent delegation_epoch: {}",
+        parent.state.delegation_epoch
+    );
+    println!(
+        "  Child delegation: {:?}",
+        child.delegation.as_ref().map(|_| "Some(...)")
+    );
     println!("  Child delegation cleared: {}", child.delegation.is_none());
 
     // Child tries to use Service A again — now fails (delegation cleared).
@@ -342,10 +366,22 @@ fn main() {
     );
 
     println!("  Delegation refreshed_at=1000, max_staleness=300");
-    println!("  is_stale(t=1100): {} (within window)", delegation.is_stale(1100));
-    println!("  is_stale(t=1300): {} (at boundary)", delegation.is_stale(1300));
-    println!("  is_stale(t=1301): {} (past boundary)", delegation.is_stale(1301));
-    println!("  is_stale(t=2000): {} (way past)", delegation.is_stale(2000));
+    println!(
+        "  is_stale(t=1100): {} (within window)",
+        delegation.is_stale(1100)
+    );
+    println!(
+        "  is_stale(t=1300): {} (at boundary)",
+        delegation.is_stale(1300)
+    );
+    println!(
+        "  is_stale(t=1301): {} (past boundary)",
+        delegation.is_stale(1301)
+    );
+    println!(
+        "  is_stale(t=2000): {} (way past)",
+        delegation.is_stale(2000)
+    );
     println!();
 
     println!("=== Demo Complete ===");

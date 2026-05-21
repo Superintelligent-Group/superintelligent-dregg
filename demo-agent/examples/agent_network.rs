@@ -70,11 +70,7 @@ fn short_id(id: &CellId) -> String {
     format!("{:02x}{:02x}{:02x}{:02x}", b[0], b[1], b[2], b[3])
 }
 
-fn make_turn(
-    agent: CellId,
-    nonce: u64,
-    effects: Vec<Effect>,
-) -> pyana_turn::Turn {
+fn make_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> pyana_turn::Turn {
     let action = Action {
         target: agent,
         method: [0u8; 32],
@@ -352,7 +348,10 @@ fn main() {
 
     assert!(pipeline.validate().is_ok(), "Pipeline should be acyclic");
     let order = pipeline.topological_order().unwrap();
-    println!("  Topological order: {:?} (A={ia}, B={ib}, C={ic}, D={id})", order);
+    println!(
+        "  Topological order: {:?} (A={ia}, B={ib}, C={ic}, D={id})",
+        order
+    );
 
     let results = execute_pipeline(pipeline, &mut ledger, &executor);
 
@@ -391,10 +390,7 @@ fn main() {
         ledger.get(&provider_id).unwrap().state.fields[0],
         inference_result
     );
-    assert_eq!(
-        ledger.get(&audit_id).unwrap().state.fields[0],
-        audit_entry
-    );
+    assert_eq!(ledger.get(&audit_id).unwrap().state.fields[0], audit_entry);
     println!();
     println!("  Verified: all 4 cells updated across 4 boundaries in one pipeline!");
     println!();
@@ -491,19 +487,28 @@ fn main() {
 
     // Budget is UNCHANGED after rejection.
     assert_eq!(budget_gate.slice.remaining(), 10_000);
-    println!("  Budget unchanged after rejection: remaining = {}", budget_gate.slice.remaining());
+    println!(
+        "  Budget unchanged after rejection: remaining = {}",
+        budget_gate.slice.remaining()
+    );
 
     // Successful debit.
     let valid_turn_hash = *blake3::hash(b"valid-turn").as_bytes();
     let debit_result = budget_gate.try_debit(500, &valid_turn_hash);
     assert!(debit_result.is_ok());
-    println!("  Valid debit of 500: ACCEPTED (remaining: {})", budget_gate.slice.remaining());
+    println!(
+        "  Valid debit of 500: ACCEPTED (remaining: {})",
+        budget_gate.slice.remaining()
+    );
 
     // Demonstrate fast_unlock (rollback on turn failure).
     let digest = debit_result.unwrap();
     budget_gate.fast_unlock(500, &digest);
     assert_eq!(budget_gate.slice.remaining(), 10_000);
-    println!("  Fast unlock (rollback): remaining restored to {}", budget_gate.slice.remaining());
+    println!(
+        "  Fast unlock (rollback): remaining restored to {}",
+        budget_gate.slice.remaining()
+    );
     println!();
 
     // Now use BudgetGate integration with executor (high-fee turn rejected).
@@ -520,7 +525,10 @@ fn main() {
     }
     let expensive_turn = builder.build();
     let result = executor_with_budget.execute(&expensive_turn, &mut ledger);
-    assert!(result.is_rejected(), "Turn exceeding budget must be rejected");
+    assert!(
+        result.is_rejected(),
+        "Turn exceeding budget must be rejected"
+    );
     println!("  Executor with BudgetGate(ceiling=50): fee=100 turn REJECTED");
 
     // Turn with fee=30 succeeds (reset the gate for a fresh slice).
@@ -793,19 +801,34 @@ fn main() {
     let mut revocation_set: HashSet<(CellId, u32)> = HashSet::new();
     revocation_set.insert((agent_id, 0));
     let tool_revoked = cdt.has_revoked_ancestor(&tool_id, 0, &revocation_set);
-    assert!(tool_revoked, "Tool's cap should be invalid after ancestor revocation");
+    assert!(
+        tool_revoked,
+        "Tool's cap should be invalid after ancestor revocation"
+    );
     println!("  Revoked AgentRuntime slot 0 in revocation set.");
-    println!("  ToolProvider slot 0 has revoked ancestor? {} (cascading revocation works)", tool_revoked);
+    println!(
+        "  ToolProvider slot 0 has revoked ancestor? {} (cascading revocation works)",
+        tool_revoked
+    );
 
     // The agent's own cap (slot 0) is also revoked (it's in the set).
     let agent_revoked = cdt.has_revoked_ancestor(&agent_id, 0, &revocation_set);
     assert!(agent_revoked, "Agent's own cap is in the revocation set");
-    println!("  AgentRuntime slot 0 revoked? {} (direct membership)", agent_revoked);
+    println!(
+        "  AgentRuntime slot 0 revoked? {} (direct membership)",
+        agent_revoked
+    );
 
     // But agent slot 1 (from gateway introduction) is NOT revoked.
     let agent_slot1_revoked = cdt.has_revoked_ancestor(&agent_id, 1, &revocation_set);
-    assert!(!agent_slot1_revoked, "Agent slot 1 should NOT be revoked (different lineage)");
-    println!("  AgentRuntime slot 1 revoked? {} (independent lineage, unaffected)", agent_slot1_revoked);
+    assert!(
+        !agent_slot1_revoked,
+        "Agent slot 1 should NOT be revoked (different lineage)"
+    );
+    println!(
+        "  AgentRuntime slot 1 revoked? {} (independent lineage, unaffected)",
+        agent_slot1_revoked
+    );
     println!();
 
     // =========================================================================
@@ -831,7 +854,11 @@ fn main() {
         let turn = builder.build();
         let result = audit_executor.execute(&turn, &mut ledger);
         match result {
-            TurnResult::Committed { receipt, computrons_used, .. } => {
+            TurnResult::Committed {
+                receipt,
+                computrons_used,
+                ..
+            } => {
                 println!(
                     "    Receipt {i}: turn_hash={} computrons={computrons_used}",
                     &hex_prefix(&receipt.turn_hash)
@@ -848,7 +875,10 @@ fn main() {
     // Verify the receipt chain.
     match verify_receipt_chain(&receipts) {
         Ok(()) => {
-            println!("  Receipt chain verified: {} receipts, hash-linked + state-continuous", receipts.len());
+            println!(
+                "  Receipt chain verified: {} receipts, hash-linked + state-continuous",
+                receipts.len()
+            );
         }
         Err(e) => {
             // The verify_receipt_chain requires previous_receipt_hash linking which
@@ -860,11 +890,23 @@ fn main() {
 
     // Verify each receipt has valid structure.
     for (i, receipt) in receipts.iter().enumerate() {
-        assert_ne!(receipt.turn_hash, [0u8; 32], "Receipt {i} should have non-zero turn hash");
-        assert_ne!(receipt.post_state_hash, [0u8; 32], "Receipt {i} should have non-zero post state");
-        assert_eq!(receipt.agent, agent_id, "All receipts should belong to agent");
+        assert_ne!(
+            receipt.turn_hash, [0u8; 32],
+            "Receipt {i} should have non-zero turn hash"
+        );
+        assert_ne!(
+            receipt.post_state_hash, [0u8; 32],
+            "Receipt {i} should have non-zero post state"
+        );
+        assert_eq!(
+            receipt.agent, agent_id,
+            "All receipts should belong to agent"
+        );
     }
-    println!("  All {} receipts structurally valid (non-zero hashes, correct agent)", receipts.len());
+    println!(
+        "  All {} receipts structurally valid (non-zero hashes, correct agent)",
+        receipts.len()
+    );
     println!();
 
     // =========================================================================
@@ -876,9 +918,18 @@ fn main() {
     // Verify final state of all 8 cells.
     assert!(ledger.get(&dev_id).is_some(), "Developer cell exists");
     assert!(ledger.get(&agent_id).is_some(), "AgentRuntime cell exists");
-    assert!(ledger.get(&registry_id).is_some(), "ModelRegistry cell exists");
-    assert!(ledger.get(&gateway_id).is_some(), "GatewayRouter cell exists");
-    assert!(ledger.get(&provider_id).is_some(), "InferenceProvider cell exists");
+    assert!(
+        ledger.get(&registry_id).is_some(),
+        "ModelRegistry cell exists"
+    );
+    assert!(
+        ledger.get(&gateway_id).is_some(),
+        "GatewayRouter cell exists"
+    );
+    assert!(
+        ledger.get(&provider_id).is_some(),
+        "InferenceProvider cell exists"
+    );
     assert!(ledger.get(&tool_id).is_some(), "ToolProvider cell exists");
     assert!(ledger.get(&budget_id).is_some(), "BudgetLedger cell exists");
     assert!(ledger.get(&audit_id).is_some(), "AuditLog cell exists");
@@ -888,10 +939,16 @@ fn main() {
     assert_eq!(reg_field, model_hash, "Registry should have model hash");
 
     let gw_field = ledger.get(&gateway_id).unwrap().state.fields[0];
-    assert_eq!(gw_field, routing_record, "Gateway should have routing record");
+    assert_eq!(
+        gw_field, routing_record,
+        "Gateway should have routing record"
+    );
 
     let prov_field = ledger.get(&provider_id).unwrap().state.fields[0];
-    assert_eq!(prov_field, inference_result, "Provider should have inference result");
+    assert_eq!(
+        prov_field, inference_result,
+        "Provider should have inference result"
+    );
 
     let audit_field = ledger.get(&audit_id).unwrap().state.fields[0];
     assert_eq!(audit_field, audit_entry, "AuditLog should have audit entry");
@@ -913,7 +970,10 @@ fn main() {
     println!("  Budget enforcement:        verified (overdraft rejected, fast_unlock)");
     println!("  Breadstuff attenuation:    4-level chain (root->dev->agent->tool)");
     println!("  CDT tracking:              4 nodes, cascading revocation verified");
-    println!("  Receipt chain:             {} receipts, structurally valid", receipts.len());
+    println!(
+        "  Receipt chain:             {} receipts, structurally valid",
+        receipts.len()
+    );
     println!("  Capability introductions:  6 (5 from developer + 1 from gateway)");
     println!("=========================================================================");
     println!();

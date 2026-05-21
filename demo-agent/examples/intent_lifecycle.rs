@@ -148,7 +148,9 @@ fn main() {
             println!("    - multi_sig feature: NOT revealed");
             println!("    - Other wallet contents: NOT revealed\n");
             println!("  Privacy guarantee: the matcher reveals NOTHING about the agent's");
-            println!("  other capabilities. The service learns only that SOMEONE can satisfy it.\n");
+            println!(
+                "  other capabilities. The service learns only that SOMEONE can satisfy it.\n"
+            );
         }
         other => {
             println!("  ERROR: unexpected match result: {:?}", other);
@@ -465,7 +467,9 @@ fn main() {
     match escalation_result {
         MatchResult::NoMatch => {
             println!("  REJECTED: Eve's token does not grant sign_treasury.");
-            println!("  The matcher evaluates action sets locally -- view_treasury != sign_treasury.");
+            println!(
+                "  The matcher evaluates action sets locally -- view_treasury != sign_treasury."
+            );
             println!("  Eve cannot generate a valid match (and therefore no valid STARK proof)");
             println!("  because the proof commits to a token that ACTUALLY satisfies the spec.\n");
             println!("  Even if Eve fabricated a fulfillment claiming sign_treasury,");

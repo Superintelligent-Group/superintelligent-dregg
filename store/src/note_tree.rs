@@ -15,7 +15,9 @@
 use pyana_cell::note::{NoteCommitment, Nullifier};
 use pyana_circuit::field::BabyBear;
 use pyana_commit::merkle::{MerkleProof, MerkleTree};
-use pyana_commit::poseidon2_tree::{Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field};
+use pyana_commit::poseidon2_tree::{
+    Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field,
+};
 
 /// An append-only note commitment tree backed by BOTH a BLAKE3 and Poseidon2 Merkle tree.
 ///
@@ -401,7 +403,9 @@ mod tests {
         let p2_root = tree.poseidon2_root();
         let p2_leaf = tree.poseidon2_leaf(pos).unwrap();
         let p2_proof = tree.prove_membership_poseidon2(pos).unwrap();
-        assert!(NoteTree::verify_poseidon2_proof(p2_root, p2_leaf, &p2_proof));
+        assert!(NoteTree::verify_poseidon2_proof(
+            p2_root, p2_leaf, &p2_proof
+        ));
     }
 
     #[test]

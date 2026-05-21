@@ -98,14 +98,13 @@ mod tests;
 
 // Re-export primary types.
 pub use body_membership::{
-    BodyFactMerkleProof, BodyMembershipProof, MembershipEntry,
-    collect_body_fact_hashes, prove_authorization_with_membership,
-    verify_authorization_with_membership,
+    BodyFactMerkleProof, BodyMembershipProof, MembershipEntry, collect_body_fact_hashes,
+    prove_authorization_with_membership, verify_authorization_with_membership,
 };
 pub use field::BabyBear;
 pub use ivc::{
-    FoldDelta, IvcBuilder, IvcPresentationProof, IvcProof, IvcVerification,
-    StateTransitionAir, prove_ivc, prove_ivc_stark, verify_ivc, verify_ivc_stark,
+    FoldDelta, IvcBuilder, IvcPresentationProof, IvcProof, IvcVerification, StateTransitionAir,
+    prove_ivc, prove_ivc_stark, verify_ivc, verify_ivc_stark,
 };
 pub use mock_prover::{Air, MockProof, MockProofResult, MockProver};
 pub use multi_step_air::{

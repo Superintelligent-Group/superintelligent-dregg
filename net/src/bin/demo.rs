@@ -45,7 +45,11 @@ async fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
     let id_b = node_b.node_id();
     let addr_b = node_b.local_addr();
 
-    println!("  \u{2192} Node A: {} @ {}", fmt_node_id(&id_a), node_a.local_addr());
+    println!(
+        "  \u{2192} Node A: {} @ {}",
+        fmt_node_id(&id_a),
+        node_a.local_addr()
+    );
     println!("  \u{2192} Node B: {} @ {}", fmt_node_id(&id_b), addr_b);
     println!();
 
@@ -64,7 +68,9 @@ async fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect A -> B
     let conn_a = node_a.connect(addr_b).await?;
-    let conn_b = conn_b_rx.await.map_err(|_| "failed to receive connection from node B")?;
+    let conn_b = conn_b_rx
+        .await
+        .map_err(|_| "failed to receive connection from node B")?;
 
     println!("  \u{2192} A \u{2192} B: connected via QUIC");
     println!(
@@ -201,7 +207,11 @@ async fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
         },
         // A: request
         async {
-            conn_a.request(&PeerMessage::RequestTurn { turn_hash: t1_hash_copy }).await
+            conn_a
+                .request(&PeerMessage::RequestTurn {
+                    turn_hash: t1_hash_copy,
+                })
+                .await
         }
     );
 
@@ -213,7 +223,11 @@ async fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
             let has_it = turn_data.is_some();
             println!(
                 "  \u{2192} A requests T1 from B: {}",
-                if has_it { "received \u{2713}" } else { "not found \u{2717}" }
+                if has_it {
+                    "received \u{2713}"
+                } else {
+                    "not found \u{2717}"
+                }
             );
             if let Some(data) = turn_data {
                 assert_eq!(data, t1_data);
@@ -273,9 +287,13 @@ async fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
     node_a.close();
     node_b_handle.abort();
 
-    println!("\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}");
+    println!(
+        "\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}"
+    );
     println!("  Demo complete. All P2P operations successful.");
-    println!("\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}");
+    println!(
+        "\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}"
+    );
 
     Ok(())
 }

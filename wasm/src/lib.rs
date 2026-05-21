@@ -710,17 +710,35 @@ pub fn compute_intent_id(intent_json: &str) -> Result<String, JsError> {
         .unwrap_or_default()
         .into_iter()
         .map(|c| {
-            if let Some(v) = c.app_id { return CanonicalConstraint::AppId(v); }
-            if let Some(v) = c.service { return CanonicalConstraint::Service(v); }
-            if let Some(v) = c.user_id { return CanonicalConstraint::UserId(v); }
-            if let Some(v) = c.not_expired_at { return CanonicalConstraint::NotExpiredAt(v); }
-            if let Some(v) = c.feature { return CanonicalConstraint::Feature(v); }
-            if let Some(v) = c.oauth_provider { return CanonicalConstraint::OAuthProvider(v); }
+            if let Some(v) = c.app_id {
+                return CanonicalConstraint::AppId(v);
+            }
+            if let Some(v) = c.service {
+                return CanonicalConstraint::Service(v);
+            }
+            if let Some(v) = c.user_id {
+                return CanonicalConstraint::UserId(v);
+            }
+            if let Some(v) = c.not_expired_at {
+                return CanonicalConstraint::NotExpiredAt(v);
+            }
+            if let Some(v) = c.feature {
+                return CanonicalConstraint::Feature(v);
+            }
+            if let Some(v) = c.oauth_provider {
+                return CanonicalConstraint::OAuthProvider(v);
+            }
             if let (Some(p), Some(v)) = (c.predicate, c.value) {
-                return CanonicalConstraint::Custom { predicate: p, value: v };
+                return CanonicalConstraint::Custom {
+                    predicate: p,
+                    value: v,
+                };
             }
             // Fallback: empty custom constraint (should not happen with valid input).
-            CanonicalConstraint::Custom { predicate: String::new(), value: String::new() }
+            CanonicalConstraint::Custom {
+                predicate: String::new(),
+                value: String::new(),
+            }
         })
         .collect();
 
@@ -732,20 +750,20 @@ pub fn compute_intent_id(intent_json: &str) -> Result<String, JsError> {
     };
 
     let creator = CanonicalCommitmentId(
-        input.creator.unwrap_or_else(|| vec![0u8; 32])
+        input
+            .creator
+            .unwrap_or_else(|| vec![0u8; 32])
             .try_into()
             .map_err(|_| JsError::new("creator must be exactly 32 bytes"))?,
     );
 
-    let proof_of_stake: Option<CanonicalNoteCommitment> = input
-        .proof_of_stake
-        .map(|bytes| {
-            let arr: [u8; 32] = bytes
-                .try_into()
-                .map_err(|_| JsError::new("proof_of_stake must be exactly 32 bytes"))
-                .unwrap();
-            CanonicalNoteCommitment(arr)
-        });
+    let proof_of_stake: Option<CanonicalNoteCommitment> = input.proof_of_stake.map(|bytes| {
+        let arr: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| JsError::new("proof_of_stake must be exactly 32 bytes"))
+            .unwrap();
+        CanonicalNoteCommitment(arr)
+    });
 
     // Build the body struct that matches IntentBody in intent/src/lib.rs
     let body = CanonicalIntentBody {

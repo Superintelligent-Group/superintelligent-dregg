@@ -551,14 +551,8 @@ fn main() {
 
     // Verify the new cell was created.
     let new_cell_id = CellId::derive_raw(&new_pk, &new_token);
-    assert!(
-        ledger4.get(&new_cell_id).is_some(),
-        "new cell should exist"
-    );
-    println!(
-        "  New cell created: {}",
-        short_hex(new_cell_id.as_bytes())
-    );
+    assert!(ledger4.get(&new_cell_id).is_some(), "new cell should exist");
+    println!("  New cell created: {}", short_hex(new_cell_id.as_bytes()));
     println!();
 
     println!("=== Pipeline Demo Complete ===");

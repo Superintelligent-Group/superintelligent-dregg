@@ -19,8 +19,8 @@ use std::time::{Duration, Instant};
 // Re-use federation consensus types.
 use pyana_federation::types::{NodeIdentity, hex_encode};
 use pyana_federation::{
-    ConsensusConfig, ConsensusState, NetworkConsensusNode, RevocationEvent,
-    TcpFederationTransport, generate_keypair, sign,
+    ConsensusConfig, ConsensusState, NetworkConsensusNode, RevocationEvent, TcpFederationTransport,
+    generate_keypair, sign,
 };
 
 /// Hex-encode the first N bytes of a slice for display.
@@ -210,10 +210,7 @@ async fn main() {
 
     // Leader proposes and broadcasts over TCP.
     let proposal = consensus_nodes[leader_id].try_propose().await.unwrap();
-    assert!(
-        proposal.is_some(),
-        "leader should create a proposal"
-    );
+    assert!(proposal.is_some(), "leader should create a proposal");
     println!(
         "  [Node {}] Proposed block (height 1) broadcast over TCP",
         leader_id + 1
@@ -242,7 +239,11 @@ async fn main() {
             // Print individual votes
             for (voter_id, sig) in &qc.votes {
                 let sig_hex = hex_encode(&sig.0[..4]);
-                println!("  [Node {}] Vote recorded (sig: {}...)", voter_id + 1, sig_hex);
+                println!(
+                    "  [Node {}] Vote recorded (sig: {}...)",
+                    voter_id + 1,
+                    sig_hex
+                );
             }
 
             println!(
@@ -272,10 +273,7 @@ async fn main() {
                 );
                 let (fin_block, _fin_qc) = fin.unwrap();
                 assert_eq!(fin_block.block_hash, block.block_hash);
-                println!(
-                    "  [Node {}] Finalized block (hash matches leader)",
-                    i + 1
-                );
+                println!("  [Node {}] Finalized block (hash matches leader)", i + 1);
             }
 
             // Verify all nodes are now at the same height.

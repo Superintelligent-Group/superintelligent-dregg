@@ -227,7 +227,11 @@ mod tests {
     fn test_mnemonic_roundtrip() {
         let mnemonic = generate_mnemonic();
         let result = validate_mnemonic(&mnemonic);
-        assert!(result.is_ok(), "valid mnemonic failed validation: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "valid mnemonic failed validation: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -291,7 +295,11 @@ mod tests {
         let mut modified: Vec<&str> = words.clone();
         // Replace last word with a different valid word.
         let last_word = modified[23];
-        let replacement = if last_word == "abandon" { "ability" } else { "abandon" };
+        let replacement = if last_word == "abandon" {
+            "ability"
+        } else {
+            "abandon"
+        };
         modified[23] = replacement;
         let bad_mnemonic = modified.join(" ");
         let result = validate_mnemonic(&bad_mnemonic);

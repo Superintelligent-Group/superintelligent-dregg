@@ -213,8 +213,7 @@ impl PeerNode {
 
     fn build_server_config(cert_der: &[u8], key_der: &[u8]) -> Result<ServerConfig, PeerError> {
         let cert = CertificateDer::from(cert_der.to_vec());
-        let key =
-            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der.to_vec()));
+        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der.to_vec()));
 
         let mut server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()

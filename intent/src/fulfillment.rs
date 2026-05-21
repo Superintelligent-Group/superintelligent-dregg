@@ -20,11 +20,11 @@
 
 use crate::matcher::HeldCapability;
 use crate::{CommitmentId, Intent, Match, VerificationMode};
+use pyana_circuit::BabyBear;
 use pyana_circuit::multi_step_air::{
     MultiStepWitness, prove_authorization_stark, verify_authorization_stark,
 };
 use pyana_circuit::stark;
-use pyana_circuit::BabyBear;
 use pyana_token::{Attenuation, AuthToken, MacaroonToken};
 
 // ---------------------------------------------------------------------------
@@ -220,9 +220,7 @@ pub fn verify_fulfillment(
                 FulfillmentError::MissingData("trusted mode requires token_data".into())
             })?;
             if token_data.is_empty() {
-                return Err(FulfillmentError::MissingData(
-                    "token_data is empty".into(),
-                ));
+                return Err(FulfillmentError::MissingData("token_data is empty".into()));
             }
         }
         VerificationMode::Private | VerificationMode::Selective => {
@@ -250,9 +248,8 @@ pub fn verify_fulfillment(
                 ));
             }
 
-            verify_authorization_stark(conclusion, accumulated_hash, &proof).map_err(|e| {
-                FulfillmentError::ProofVerificationFailed(e)
-            })?;
+            verify_authorization_stark(conclusion, accumulated_hash, &proof)
+                .map_err(|e| FulfillmentError::ProofVerificationFailed(e))?;
         }
     }
 
@@ -306,9 +303,7 @@ fn produce_attenuated_token(
     options: &FulfillOptions,
 ) -> Result<Vec<u8>, FulfillmentError> {
     let root_key = options.root_key.ok_or_else(|| {
-        FulfillmentError::AttenuationFailed(
-            "root_key required for Trusted mode fulfillment".into(),
-        )
+        FulfillmentError::AttenuationFailed("root_key required for Trusted mode fulfillment".into())
     })?;
 
     // Mint a macaroon from the root key (the wallet holds the key for its own tokens)
@@ -634,13 +629,21 @@ mod tests {
         assert!(proof_bytes.len() > 100, "STARK proof should be substantial");
 
         // Verify the proof starts with the PYNA header
-        assert_eq!(&proof_bytes[0..4], b"PYNA", "proof should have STARK header");
+        assert_eq!(
+            &proof_bytes[0..4],
+            b"PYNA",
+            "proof should have STARK header"
+        );
 
         // The proof should be independently verifiable
         let proof = stark::proof_from_bytes(proof_bytes).unwrap();
         let conclusion = BabyBear(proof.public_inputs[2]);
         let acc_hash = BabyBear(proof.public_inputs[4]);
-        assert_eq!(conclusion, BabyBear::ONE, "proof conclusion should be ALLOW");
+        assert_eq!(
+            conclusion,
+            BabyBear::ONE,
+            "proof conclusion should be ALLOW"
+        );
         assert!(verify_authorization_stark(conclusion, acc_hash, &proof).is_ok());
     }
 
@@ -877,7 +880,11 @@ mod tests {
 
         let fulfillment = fulfill(&intent, &matched, &token, our_id, &options).unwrap();
         let result = verify_fulfillment(&fulfillment, &intent, BabyBear::ZERO);
-        assert!(result.is_ok(), "trusted fulfillment should verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "trusted fulfillment should verify: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -902,7 +909,11 @@ mod tests {
 
         let fulfillment = fulfill(&intent, &matched, &token, our_id, &options).unwrap();
         let result = verify_fulfillment(&fulfillment, &intent, BabyBear::ZERO);
-        assert!(result.is_ok(), "private STARK fulfillment should verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "private STARK fulfillment should verify: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -969,7 +980,10 @@ mod tests {
         assert!(resource_matches("documents/*", "documents/*"));
         assert!(resource_matches("*", "anything"));
         assert!(resource_matches("documents/*", "documents/reports/*"));
-        assert!(!resource_matches("documents/public/*", "documents/private/*"));
+        assert!(!resource_matches(
+            "documents/public/*",
+            "documents/private/*"
+        ));
     }
 
     #[test]
@@ -1003,6 +1017,10 @@ mod tests {
 
         // Verify with known-good public inputs
         let result = verify_authorization_stark(conclusion, acc_hash, &proof);
-        assert!(result.is_ok(), "deserialized proof should verify: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "deserialized proof should verify: {:?}",
+            result.err()
+        );
     }
 }

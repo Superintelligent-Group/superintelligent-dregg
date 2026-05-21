@@ -70,7 +70,7 @@ pub use pyana_turn::{
 pub use pyana_types::{PublicKey, Signature};
 
 // Re-export verifier types from the bridge layer for standalone proof verification.
-pub use pyana_bridge::present::{verify_presentation, BridgePresentationProof};
+pub use pyana_bridge::present::{BridgePresentationProof, verify_presentation};
 pub use pyana_bridge::verifier::StarkProofVerifier;
 pub use pyana_circuit::PresentationVerification;
 

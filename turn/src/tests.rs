@@ -1985,9 +1985,11 @@ fn test_breadstuff_authorization() {
     // The actor holds a capability with a matching breadstuff token (targeting the target cell).
     let token_hash = [0xAB; 32];
     let mut agent_with_cap = agent;
-    agent_with_cap
-        .capabilities
-        .grant_with_breadstuff(target_id, AuthRequired::None, Some(token_hash));
+    agent_with_cap.capabilities.grant_with_breadstuff(
+        target_id,
+        AuthRequired::None,
+        Some(token_hash),
+    );
     ledger.insert_cell(agent_with_cap).unwrap();
     ledger.insert_cell(target).unwrap();
 
@@ -4507,9 +4509,7 @@ fn test_budget_gate_multiple_turns_deplete_slice() {
     let result = executor.execute(&turn, &mut ledger);
     assert!(result.is_rejected());
     match result.unwrap_rejected().0 {
-        TurnError::BudgetExhausted {
-            remaining: 200, ..
-        } => {}
+        TurnError::BudgetExhausted { remaining: 200, .. } => {}
         other => panic!("expected BudgetExhausted with remaining=200, got: {other}"),
     }
 }
@@ -4688,7 +4688,10 @@ fn test_spawn_with_delegation_child_gets_parent_caps() {
     // Verify the child cell was created with delegation snapshot.
     let child = ledger.get(&child_id).expect("child should exist");
     assert_eq!(child.delegate, Some(parent_id));
-    let delegation = child.delegation.as_ref().expect("child should have delegation");
+    let delegation = child
+        .delegation
+        .as_ref()
+        .expect("child should have delegation");
     assert_eq!(delegation.source, parent_id);
     assert_eq!(delegation.snapshot.len(), 3);
     assert_eq!(delegation.max_staleness, 300);
@@ -4790,7 +4793,11 @@ fn test_child_acts_via_delegated_caps() {
         depends_on: vec![],
     };
     let result = executor.execute(&turn2, &mut ledger);
-    assert!(result.is_committed(), "child should act via delegation: {:?}", result);
+    assert!(
+        result.is_committed(),
+        "child should act via delegation: {:?}",
+        result
+    );
 
     // Verify the field was set.
     let target_cell = ledger.get(&target_id).unwrap();
@@ -4862,7 +4869,13 @@ fn test_refresh_delegation_updates_snapshot() {
 
     // Child doesn't have target_b yet.
     let child = ledger.get(&child_id).unwrap();
-    assert!(!child.delegation.as_ref().unwrap().has_capability(&target_b_id));
+    assert!(
+        !child
+            .delegation
+            .as_ref()
+            .unwrap()
+            .has_capability(&target_b_id)
+    );
 
     // Child refreshes delegation.
     ledger.get_mut(&child_id).unwrap().state.balance = 100_000;
@@ -5159,7 +5172,11 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
     executor.execute(&turn1, &mut ledger);
 
     // Parent revokes its own capability to target.
-    ledger.get_mut(&parent_id).unwrap().capabilities.revoke(slot);
+    ledger
+        .get_mut(&parent_id)
+        .unwrap()
+        .capabilities
+        .revoke(slot);
 
     // Child still has target in delegation snapshot — can still act.
     ledger.get_mut(&child_id).unwrap().state.balance = 100_000;

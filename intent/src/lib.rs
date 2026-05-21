@@ -113,10 +113,7 @@ impl StakeRequirement {
 ///
 /// This proves the staker has knowledge of a real note that EXISTS in the tree,
 /// preventing spam from entities that have never committed real state.
-pub fn verify_stake(
-    stake: &StakeProof,
-    known_root: pyana_circuit::field::BabyBear,
-) -> bool {
+pub fn verify_stake(stake: &StakeProof, known_root: pyana_circuit::field::BabyBear) -> bool {
     // The proof's root must match the federation's attested root
     if stake.merkle_root != known_root {
         return false;
@@ -133,10 +130,7 @@ pub fn verify_stake(
 ///
 /// Returns true if the intent carries a valid stake proof that verifies against
 /// the given known note tree root.
-pub fn verify_intent_stake(
-    intent: &Intent,
-    known_root: pyana_circuit::field::BabyBear,
-) -> bool {
+pub fn verify_intent_stake(intent: &Intent, known_root: pyana_circuit::field::BabyBear) -> bool {
     match &intent.stake_proof {
         Some(proof) => verify_stake(proof, known_root),
         None => false,
@@ -487,13 +481,7 @@ mod tests {
             min_budget: None,
             resource_pattern: None,
         };
-        let intent = Intent::new(
-            IntentKind::Need,
-            spec,
-            CommitmentId([0xAA; 32]),
-            9999,
-            None,
-        );
+        let intent = Intent::new(IntentKind::Need, spec, CommitmentId([0xAA; 32]), 9999, None);
 
         let root = BabyBear::new(42);
         assert!(!verify_intent_stake(&intent, root));

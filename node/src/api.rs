@@ -334,9 +334,7 @@ async fn post_submit_turn(
 
     // Sign the turn.
     let signed = s.wallet.sign_turn(&turn);
-    let turn_hash_bytes: [u8; 32] = signed.signature.0[..32]
-        .try_into()
-        .unwrap_or([0u8; 32]);
+    let turn_hash_bytes: [u8; 32] = signed.signature.0[..32].try_into().unwrap_or([0u8; 32]);
     let turn_hash = hex_encode(&turn_hash_bytes);
     let turn_data = signed.signature.0.to_vec();
 

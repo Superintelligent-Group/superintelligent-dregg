@@ -97,7 +97,10 @@ enum Status {
 
 fn short_hex(bytes: &[u8]) -> String {
     if bytes.len() >= 4 {
-        format!("{:02x}{:02x}{:02x}{:02x}", bytes[0], bytes[1], bytes[2], bytes[3])
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     } else {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
@@ -147,7 +150,11 @@ fn compute_poseidon2_federation_root(issuer_key: &[u8; 32]) -> BabyBear {
     current
 }
 
-fn run_demo(name: &'static str, phase: &'static str, f: impl FnOnce() -> Result<(), Box<dyn Error>>) -> DemoResult {
+fn run_demo(
+    name: &'static str,
+    phase: &'static str,
+    f: impl FnOnce() -> Result<(), Box<dyn Error>>,
+) -> DemoResult {
     let start = Instant::now();
     let status = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
         Ok(Ok(())) => Status::Pass,
@@ -164,14 +171,33 @@ fn run_demo(name: &'static str, phase: &'static str, f: impl FnOnce() -> Result<
         }
     };
     let duration = start.elapsed();
-    let sym = match &status { Status::Pass => "[PASS]", Status::Fail(_) => "[FAIL]", Status::Skipped(_) => "[SKIP]" };
-    println!("    {} {} ({:.1}ms)", sym, name, duration.as_secs_f64() * 1000.0);
-    DemoResult { name, phase, status, duration }
+    let sym = match &status {
+        Status::Pass => "[PASS]",
+        Status::Fail(_) => "[FAIL]",
+        Status::Skipped(_) => "[SKIP]",
+    };
+    println!(
+        "    {} {} ({:.1}ms)",
+        sym,
+        name,
+        duration.as_secs_f64() * 1000.0
+    );
+    DemoResult {
+        name,
+        phase,
+        status,
+        duration,
+    }
 }
 
 fn run_demo_skip(name: &'static str, phase: &'static str, reason: &'static str) -> DemoResult {
     println!("    [SKIP] {} ({})", name, reason);
-    DemoResult { name, phase, status: Status::Skipped(reason.to_string()), duration: std::time::Duration::ZERO }
+    DemoResult {
+        name,
+        phase,
+        status: Status::Skipped(reason.to_string()),
+        duration: std::time::Duration::ZERO,
+    }
 }
 
 // ============================================================================
@@ -188,7 +214,9 @@ fn setup_genesis() -> Result<SharedState, Box<dyn Error>> {
         merkle_root: [0u8; 32],
         height: 0,
         timestamp: 1700000000,
-        threshold_qc: None, note_tree_root: None, nullifier_set_root: None,
+        threshold_qc: None,
+        note_tree_root: None,
+        nullifier_set_root: None,
         quorum_signatures: Vec::new(),
         threshold: 2,
     };
@@ -236,12 +264,26 @@ fn setup_genesis() -> Result<SharedState, Box<dyn Error>> {
     alice_cell.capabilities.grant(dave_id, AuthRequired::None);
 
     Ok(SharedState {
-        federation: SharedFederation { sk_alpha, sk_beta, sk_gamma, pk_alpha, pk_beta, pk_gamma, members, genesis_root },
+        federation: SharedFederation {
+            sk_alpha,
+            sk_beta,
+            sk_gamma,
+            pk_alpha,
+            pk_beta,
+            pk_gamma,
+            members,
+            genesis_root,
+        },
         ledger,
         nullifier_set: NullifierSet::new(),
         issuer_key,
         root_token,
-        alice_id, bob_id, carol_id, dave_id, eve_id, treasury_id,
+        alice_id,
+        bob_id,
+        carol_id,
+        dave_id,
+        eve_id,
+        treasury_id,
     })
 }
 
@@ -253,41 +295,108 @@ fn run_rbac_datalog(_issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error>> {
     let rules = vec![
         Rule {
             id: 100,
-            head: pyana_trace::Atom { predicate: symbol_from_str("allow"), terms: vec![] },
+            head: pyana_trace::Atom {
+                predicate: symbol_from_str("allow"),
+                terms: vec![],
+            },
             body: vec![
-                pyana_trace::Atom { predicate: symbol_from_str("has_role"), terms: vec![Term::Var(0), Term::Const(symbol_from_str("admin"))] },
-                pyana_trace::Atom { predicate: symbol_from_str("request_user"), terms: vec![Term::Var(0)] },
-                pyana_trace::Atom { predicate: symbol_from_str("request_action"), terms: vec![Term::Var(1)] },
+                pyana_trace::Atom {
+                    predicate: symbol_from_str("has_role"),
+                    terms: vec![Term::Var(0), Term::Const(symbol_from_str("admin"))],
+                },
+                pyana_trace::Atom {
+                    predicate: symbol_from_str("request_user"),
+                    terms: vec![Term::Var(0)],
+                },
+                pyana_trace::Atom {
+                    predicate: symbol_from_str("request_action"),
+                    terms: vec![Term::Var(1)],
+                },
             ],
             checks: vec![],
         },
         Rule {
             id: 102,
-            head: pyana_trace::Atom { predicate: symbol_from_str("allow"), terms: vec![] },
+            head: pyana_trace::Atom {
+                predicate: symbol_from_str("allow"),
+                terms: vec![],
+            },
             body: vec![
-                pyana_trace::Atom { predicate: symbol_from_str("has_role"), terms: vec![Term::Var(0), Term::Var(1)] },
-                pyana_trace::Atom { predicate: symbol_from_str("role_permission"), terms: vec![Term::Var(1), Term::Var(2), Term::Var(3)] },
-                pyana_trace::Atom { predicate: symbol_from_str("request_user"), terms: vec![Term::Var(0)] },
-                pyana_trace::Atom { predicate: symbol_from_str("request_action"), terms: vec![Term::Var(4)] },
+                pyana_trace::Atom {
+                    predicate: symbol_from_str("has_role"),
+                    terms: vec![Term::Var(0), Term::Var(1)],
+                },
+                pyana_trace::Atom {
+                    predicate: symbol_from_str("role_permission"),
+                    terms: vec![Term::Var(1), Term::Var(2), Term::Var(3)],
+                },
+                pyana_trace::Atom {
+                    predicate: symbol_from_str("request_user"),
+                    terms: vec![Term::Var(0)],
+                },
+                pyana_trace::Atom {
+                    predicate: symbol_from_str("request_action"),
+                    terms: vec![Term::Var(4)],
+                },
             ],
             checks: vec![pyana_trace::Check::Contains(Term::Var(3), Term::Var(4))],
         },
     ];
     let facts = vec![
-        Fact::new(symbol_from_str("has_role"), vec![Term::Const(symbol_from_str("alice")), Term::Const(symbol_from_str("admin"))]),
-        Fact::new(symbol_from_str("has_role"), vec![Term::Const(symbol_from_str("bob")), Term::Const(symbol_from_str("editor"))]),
-        Fact::new(symbol_from_str("role_permission"), vec![Term::Const(symbol_from_str("editor")), Term::Const(symbol_from_str("/docs")), Term::Const(symbol_from_str("read,write"))]),
+        Fact::new(
+            symbol_from_str("has_role"),
+            vec![
+                Term::Const(symbol_from_str("alice")),
+                Term::Const(symbol_from_str("admin")),
+            ],
+        ),
+        Fact::new(
+            symbol_from_str("has_role"),
+            vec![
+                Term::Const(symbol_from_str("bob")),
+                Term::Const(symbol_from_str("editor")),
+            ],
+        ),
+        Fact::new(
+            symbol_from_str("role_permission"),
+            vec![
+                Term::Const(symbol_from_str("editor")),
+                Term::Const(symbol_from_str("/docs")),
+                Term::Const(symbol_from_str("read,write")),
+            ],
+        ),
     ];
     let evaluator = Evaluator::new(facts.clone(), rules.clone());
 
-    let trace = evaluator.evaluate(&AuthorizationRequest { app_id: None, service: Some(symbol_from_str("/docs")), action: Some(symbol_from_str("read")), features: vec![], user_id: Some(symbol_from_str("alice")), now: 1700000000 });
+    let trace = evaluator.evaluate(&AuthorizationRequest {
+        app_id: None,
+        service: Some(symbol_from_str("/docs")),
+        action: Some(symbol_from_str("read")),
+        features: vec![],
+        user_id: Some(symbol_from_str("alice")),
+        now: 1700000000,
+    });
     assert!(matches!(trace.conclusion, Conclusion::Allow { .. }));
     assert!(verify_trace(&facts, &rules, &trace));
 
-    let trace2 = evaluator.evaluate(&AuthorizationRequest { app_id: None, service: Some(symbol_from_str("/docs")), action: Some(symbol_from_str("write")), features: vec![], user_id: Some(symbol_from_str("bob")), now: 1700000000 });
+    let trace2 = evaluator.evaluate(&AuthorizationRequest {
+        app_id: None,
+        service: Some(symbol_from_str("/docs")),
+        action: Some(symbol_from_str("write")),
+        features: vec![],
+        user_id: Some(symbol_from_str("bob")),
+        now: 1700000000,
+    });
     assert!(matches!(trace2.conclusion, Conclusion::Allow { .. }));
 
-    let trace3 = evaluator.evaluate(&AuthorizationRequest { app_id: None, service: Some(symbol_from_str("/docs")), action: Some(symbol_from_str("delete")), features: vec![], user_id: Some(symbol_from_str("bob")), now: 1700000000 });
+    let trace3 = evaluator.evaluate(&AuthorizationRequest {
+        app_id: None,
+        service: Some(symbol_from_str("/docs")),
+        action: Some(symbol_from_str("delete")),
+        features: vec![],
+        user_id: Some(symbol_from_str("bob")),
+        now: 1700000000,
+    });
     assert!(matches!(trace3.conclusion, Conclusion::Deny));
 
     Ok(())
@@ -301,16 +410,48 @@ fn run_multi_org_delegation(_issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error>
     federation_root_bytes[..4].copy_from_slice(&federation_root_bb.0.to_le_bytes());
 
     let root_token = MacaroonToken::mint(org_a_key, b"org-a:agent-alpha-7", "org-a.internal");
-    let att = Attenuation { services: vec![("data-warehouse".into(), "r".into())], apps: vec![("cross-org-query".into(), "r".into())], not_after: Some(1800000000), not_before: Some(1700000000), confine_user: Some("agent-alpha-7".into()), ..Default::default() };
+    let att = Attenuation {
+        services: vec![("data-warehouse".into(), "r".into())],
+        apps: vec![("cross-org-query".into(), "r".into())],
+        not_after: Some(1800000000),
+        not_before: Some(1700000000),
+        confine_user: Some("agent-alpha-7".into()),
+        ..Default::default()
+    };
     let attenuated = root_token.attenuate(&att)?;
-    attenuated.verify(&AuthRequest { service: Some("data-warehouse".into()), app_id: Some("cross-org-query".into()), action: Some("r".into()), user_id: Some("agent-alpha-7".into()), now: Some(1750000000), ..Default::default() })?;
+    attenuated.verify(&AuthRequest {
+        service: Some("data-warehouse".into()),
+        app_id: Some("cross-org-query".into()),
+        action: Some("r".into()),
+        user_id: Some("agent-alpha-7".into()),
+        now: Some(1750000000),
+        ..Default::default()
+    })?;
 
-    let mut builder = BridgePresentationBuilder::new_with_root_bb(org_a_key, federation_root_bytes, federation_root_bb);
-    builder.set_root_token(MacaroonToken::mint(org_a_key, b"org-a:agent-alpha-7", "org-a.internal"));
-    builder.add_attenuation(&Attenuation { services: vec![("data-warehouse".into(), "r".into())], apps: vec![("cross-org-query".into(), "r".into())], ..Default::default() });
+    let mut builder = BridgePresentationBuilder::new_with_root_bb(
+        org_a_key,
+        federation_root_bytes,
+        federation_root_bb,
+    );
+    builder.set_root_token(MacaroonToken::mint(
+        org_a_key,
+        b"org-a:agent-alpha-7",
+        "org-a.internal",
+    ));
+    builder.add_attenuation(&Attenuation {
+        services: vec![("data-warehouse".into(), "r".into())],
+        apps: vec![("cross-org-query".into(), "r".into())],
+        ..Default::default()
+    });
     assert!(builder.verify_chain());
 
-    let proof_result = builder.prove_real(&AuthRequest { service: Some("data-warehouse".into()), app_id: Some("cross-org-query".into()), action: Some("r".into()), now: Some(1750000000), ..Default::default() });
+    let proof_result = builder.prove_real(&AuthRequest {
+        service: Some("data-warehouse".into()),
+        app_id: Some("cross-org-query".into()),
+        action: Some("r".into()),
+        now: Some(1750000000),
+        ..Default::default()
+    });
     match proof_result {
         Ok(presentation) => {
             assert!(verify_presentation(&presentation));
@@ -327,13 +468,53 @@ fn run_multi_org_delegation(_issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error>
 }
 
 fn run_sub_agent_spawn(issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error>> {
-    let parent_token = MacaroonToken::mint(*issuer_key, b"parent-orchestrator-v1", "platform.internal");
-    for (name, service, budget_limit) in &[("compute-worker", "compute", 3000u64), ("storage-worker", "storage", 3000), ("network-worker", "network", 3000)] {
-        let sub_att = Attenuation { services: vec![((*service).into(), "rw".into())], budget: Some(BudgetSpec { id: format!("{}-budget", name), parent_id: None, class: "computrons".into(), limit: *budget_limit, window: Some("1h".into()) }), confine_user: Some((*name).into()), ..Default::default() };
+    let parent_token =
+        MacaroonToken::mint(*issuer_key, b"parent-orchestrator-v1", "platform.internal");
+    for (name, service, budget_limit) in &[
+        ("compute-worker", "compute", 3000u64),
+        ("storage-worker", "storage", 3000),
+        ("network-worker", "network", 3000),
+    ] {
+        let sub_att = Attenuation {
+            services: vec![((*service).into(), "rw".into())],
+            budget: Some(BudgetSpec {
+                id: format!("{}-budget", name),
+                parent_id: None,
+                class: "computrons".into(),
+                limit: *budget_limit,
+                window: Some("1h".into()),
+            }),
+            confine_user: Some((*name).into()),
+            ..Default::default()
+        };
         let sub_token = parent_token.attenuate(&sub_att)?;
-        sub_token.verify(&AuthRequest { service: Some((*service).into()), action: Some("rw".into()), user_id: Some((*name).into()), now: Some(1750000000), budget_states: [(format!("{}-budget", name), 3000)].into_iter().collect(), request_cost: Some(500), ..Default::default() })?;
-        let wrong = if *service == "compute" { "storage" } else { "compute" };
-        assert!(sub_token.verify(&AuthRequest { service: Some(wrong.into()), action: Some("rw".into()), user_id: Some((*name).into()), now: Some(1750000000), budget_states: [(format!("{}-budget", name), 3000)].into_iter().collect(), request_cost: Some(100), ..Default::default() }).is_err());
+        sub_token.verify(&AuthRequest {
+            service: Some((*service).into()),
+            action: Some("rw".into()),
+            user_id: Some((*name).into()),
+            now: Some(1750000000),
+            budget_states: [(format!("{}-budget", name), 3000)].into_iter().collect(),
+            request_cost: Some(500),
+            ..Default::default()
+        })?;
+        let wrong = if *service == "compute" {
+            "storage"
+        } else {
+            "compute"
+        };
+        assert!(
+            sub_token
+                .verify(&AuthRequest {
+                    service: Some(wrong.into()),
+                    action: Some("rw".into()),
+                    user_id: Some((*name).into()),
+                    now: Some(1750000000),
+                    budget_states: [(format!("{}-budget", name), 3000)].into_iter().collect(),
+                    request_cost: Some(100),
+                    ..Default::default()
+                })
+                .is_err()
+        );
     }
     Ok(())
 }
@@ -352,7 +533,10 @@ fn run_token_revocation(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn 
     assert!(!nullifier_set.contains(&nul_a));
     assert!(!nullifier_set.contains(&nul_b));
     let proof_a = nullifier_set.prove_non_membership(&nul_a).unwrap();
-    assert!(NullifierSet::verify_non_membership(&proof_a, &nullifier_set.root()));
+    assert!(NullifierSet::verify_non_membership(
+        &proof_a,
+        &nullifier_set.root()
+    ));
 
     nullifier_set.insert(nul_a)?;
     assert!(nullifier_set.contains(&nul_a));
@@ -361,11 +545,24 @@ fn run_token_revocation(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn 
 
     let rules = standard_policy();
     let facts_revoked = vec![
-        Fact::new(symbol_from_str("revocable"), vec![Term::Const(symbol_from_str("token-a"))]),
-        Fact::new(symbol_from_str("revoked"), vec![Term::Const(symbol_from_str("token-a"))]),
+        Fact::new(
+            symbol_from_str("revocable"),
+            vec![Term::Const(symbol_from_str("token-a"))],
+        ),
+        Fact::new(
+            symbol_from_str("revoked"),
+            vec![Term::Const(symbol_from_str("token-a"))],
+        ),
     ];
     let eval = Evaluator::new(facts_revoked.clone(), rules.clone());
-    let trace = eval.evaluate(&AuthorizationRequest { app_id: None, service: None, action: Some(symbol_from_str("read")), features: vec![], user_id: None, now: 1700000000 });
+    let trace = eval.evaluate(&AuthorizationRequest {
+        app_id: None,
+        service: None,
+        action: Some(symbol_from_str("read")),
+        features: vec![],
+        user_id: None,
+        now: 1700000000,
+    });
     assert!(matches!(trace.conclusion, Conclusion::Deny));
     Ok(())
 }
@@ -374,12 +571,43 @@ fn run_progressive_disclosure(issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error
     use pyana_sdk::{AgentWallet, AuthorizationPresentation, VerificationMode};
     let mut wallet = AgentWallet::new();
     let root_token = wallet.mint_token(issuer_key, "infrastructure");
-    let attenuated = wallet.attenuate(&root_token, &Attenuation { apps: vec![("deployments".into(), "rwcd".into())], services: vec![("secrets".into(), "r".into())], features: vec!["top_secret_clearance".into(), "budget_1000".into()], confine_user: Some("agent-007".into()), not_after: Some(1800000000), ..Default::default() })?;
-    let request = AuthRequest { app_id: Some("deployments".into()), action: Some("r".into()), user_id: Some("agent-007".into()), now: Some(1716000000), ..Default::default() };
+    let attenuated = wallet.attenuate(
+        &root_token,
+        &Attenuation {
+            apps: vec![("deployments".into(), "rwcd".into())],
+            services: vec![("secrets".into(), "r".into())],
+            features: vec!["top_secret_clearance".into(), "budget_1000".into()],
+            confine_user: Some("agent-007".into()),
+            not_after: Some(1800000000),
+            ..Default::default()
+        },
+    )?;
+    let request = AuthRequest {
+        app_id: Some("deployments".into()),
+        action: Some("r".into()),
+        user_id: Some("agent-007".into()),
+        now: Some(1716000000),
+        ..Default::default()
+    };
 
-    assert!(matches!(wallet.authorize(&attenuated, &request, VerificationMode::Trusted), Ok(AuthorizationPresentation::Trusted { .. })));
-    assert!(matches!(wallet.authorize(&attenuated, &request, VerificationMode::SelectiveDisclosure { reveal: vec![pyana_sdk::FactIndex(0)] }), Ok(AuthorizationPresentation::Selective { .. })));
-    assert!(matches!(wallet.authorize(&attenuated, &request, VerificationMode::FullyPrivate), Ok(AuthorizationPresentation::Private { .. })));
+    assert!(matches!(
+        wallet.authorize(&attenuated, &request, VerificationMode::Trusted),
+        Ok(AuthorizationPresentation::Trusted { .. })
+    ));
+    assert!(matches!(
+        wallet.authorize(
+            &attenuated,
+            &request,
+            VerificationMode::SelectiveDisclosure {
+                reveal: vec![pyana_sdk::FactIndex(0)]
+            }
+        ),
+        Ok(AuthorizationPresentation::Selective { .. })
+    ));
+    assert!(matches!(
+        wallet.authorize(&attenuated, &request, VerificationMode::FullyPrivate),
+        Ok(AuthorizationPresentation::Private { .. })
+    ));
     Ok(())
 }
 
@@ -389,9 +617,15 @@ fn run_progressive_disclosure(issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error
 
 fn run_programmable_cell(_ledger: &mut Ledger) -> Result<(), Box<dyn Error>> {
     let program = CellProgram::Predicate(vec![
-        StateConstraint::FieldGte { index: 0, value: field_from_u64(100) },
+        StateConstraint::FieldGte {
+            index: 0,
+            value: field_from_u64(100),
+        },
         StateConstraint::Immutable { index: 1 },
-        StateConstraint::SumEquals { indices: vec![0, 2], value: field_from_u64(1000) },
+        StateConstraint::SumEquals {
+            indices: vec![0, 2],
+            value: field_from_u64(1000),
+        },
     ]);
     let mut state = CellState::new(5000);
     state.fields[0] = field_from_u64(800);
@@ -421,10 +655,18 @@ fn run_programmable_cell(_ledger: &mut Ledger) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_three_party_introduction(ledger: &mut Ledger, alice_id: CellId, bob_id: CellId, carol_id: CellId) -> Result<(), Box<dyn Error>> {
+fn run_three_party_introduction(
+    ledger: &mut Ledger,
+    alice_id: CellId,
+    bob_id: CellId,
+    carol_id: CellId,
+) -> Result<(), Box<dyn Error>> {
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut builder = TurnBuilder::new(alice_id, 0);
-    { let action = builder.action(alice_id, "introduce_bob_to_carol"); action.introduce(alice_id, bob_id, carol_id, AuthRequired::None); }
+    {
+        let action = builder.action(alice_id, "introduce_bob_to_carol");
+        action.introduce(alice_id, bob_id, carol_id, AuthRequired::None);
+    }
     let turn = builder.fee(0).build();
     let result = executor.execute(&turn, ledger);
     assert!(result.is_committed(), "Introduction should succeed");
@@ -444,19 +686,65 @@ fn run_pipeline(_ledger: &mut Ledger) -> Result<(), Box<dyn Error>> {
     let id_b = cb.id;
     pl.insert_cell(ca)?;
     pl.insert_cell(cb)?;
-    { let a = pl.get_mut(&id_a).unwrap(); a.capabilities.grant(id_a, AuthRequired::None); }
-
-    fn mk(agent: CellId, nonce: u64, effects: Vec<Effect>) -> Turn {
-        let action = Action { target: agent, method: [0u8; 32], args: vec![], authorization: Authorization::None, preconditions: Preconditions::default(), effects, may_delegate: DelegationMode::ParentsOwn, commitment_mode: CommitmentMode::Full, balance_change: None };
-        let mut forest = CallForest::new();
-        forest.add_root(action);
-        Turn { agent, nonce, call_forest: forest, fee: 0, memo: None, valid_until: None, depends_on: vec![], previous_receipt_hash: None }
+    {
+        let a = pl.get_mut(&id_a).unwrap();
+        a.capabilities.grant(id_a, AuthRequired::None);
     }
 
-    let ta = mk(id_a, 0, vec![Effect::Transfer { from: id_a, to: id_b, amount: 500 }]);
-    let tb = mk(id_b, 0, vec![Effect::Transfer { from: id_b, to: id_a, amount: 100 }]);
+    fn mk(agent: CellId, nonce: u64, effects: Vec<Effect>) -> Turn {
+        let action = Action {
+            target: agent,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::None,
+            preconditions: Preconditions::default(),
+            effects,
+            may_delegate: DelegationMode::ParentsOwn,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+        };
+        let mut forest = CallForest::new();
+        forest.add_root(action);
+        Turn {
+            agent,
+            nonce,
+            call_forest: forest,
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            depends_on: vec![],
+            previous_receipt_hash: None,
+        }
+    }
+
+    let ta = mk(
+        id_a,
+        0,
+        vec![Effect::Transfer {
+            from: id_a,
+            to: id_b,
+            amount: 500,
+        }],
+    );
+    let tb = mk(
+        id_b,
+        0,
+        vec![Effect::Transfer {
+            from: id_b,
+            to: id_a,
+            amount: 100,
+        }],
+    );
     let sv = *blake3::hash(b"pipeline-unified").as_bytes();
-    let tc = mk(id_a, 1, vec![Effect::SetField { cell: id_a, index: 0, value: sv }]);
+    let tc = mk(
+        id_a,
+        1,
+        vec![Effect::SetField {
+            cell: id_a,
+            index: 0,
+            value: sv,
+        }],
+    );
 
     let mut pipeline = Pipeline::new();
     let ia = pipeline.add_turn(ta);
@@ -468,7 +756,9 @@ fn run_pipeline(_ledger: &mut Ledger) -> Result<(), Box<dyn Error>> {
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
     let results = execute_pipeline(pipeline, &mut pl, &executor);
-    for (i, r) in results.iter().enumerate() { assert!(r.is_ok(), "Pipeline turn {} failed: {:?}", i, r); }
+    for (i, r) in results.iter().enumerate() {
+        assert!(r.is_ok(), "Pipeline turn {} failed: {:?}", i, r);
+    }
     assert_eq!(pl.get(&id_a).unwrap().state.balance, 1_000_000 - 500 + 100);
     assert_eq!(pl.get(&id_b).unwrap().state.balance, 1_000_000 + 500 - 100);
     Ok(())
@@ -483,7 +773,11 @@ fn run_nft_mint_transfer(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn
     let apk = blake3::derive_key("nft-alice-pubkey-v1", &ask);
     let bsk = blake3::derive_key("nft-bob-spending-v1", b"bob-nft-secret");
     let bpk = blake3::derive_key("nft-bob-pubkey-v1", &bsk);
-    let asset_id = u64::from_le_bytes(blake3::hash(b"unified-harness-nft-001").as_bytes()[..8].try_into().unwrap());
+    let asset_id = u64::from_le_bytes(
+        blake3::hash(b"unified-harness-nft-001").as_bytes()[..8]
+            .try_into()
+            .unwrap(),
+    );
 
     let nft_a = Note::with_randomness(apk, [asset_id, 0, 1, 1700000000, 0, 0, 0, 0], [0x42u8; 32]);
     assert!(!nft_a.is_fungible());
@@ -497,7 +791,10 @@ fn run_nft_mint_transfer(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn
 
     let bnul = nft_b.nullifier(&bsk);
     let proof = nullifier_set.prove_non_membership(&bnul).unwrap();
-    assert!(NullifierSet::verify_non_membership(&proof, &nullifier_set.root()));
+    assert!(NullifierSet::verify_non_membership(
+        &proof,
+        &nullifier_set.root()
+    ));
     Ok(())
 }
 
@@ -528,8 +825,8 @@ fn run_note_privacy(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Erro
 }
 
 fn run_atomic_swap(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Error>> {
-    use pyana_turn::action::symbol;
     use pyana_cell::Preconditions;
+    use pyana_turn::action::symbol;
     use pyana_turn::{Action, Authorization, CommitmentMode};
 
     let asset_a: u64 = 0xAAAA_0000_0000_0001;
@@ -547,25 +844,91 @@ fn run_atomic_swap(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Error
     let b_cell = CellId::derive_raw(&[0xB0u8; 32], &[0u8; 32]);
 
     let a_recv = Note::with_randomness([0xA0u8; 32], [asset_b, 50, 0, 0, 0, 0, 0, 0], [0xA1u8; 32]);
-    let b_recv = Note::with_randomness([0xB0u8; 32], [asset_a, 100, 0, 0, 0, 0, 0, 0], [0xB1u8; 32]);
+    let b_recv =
+        Note::with_randomness([0xB0u8; 32], [asset_a, 100, 0, 0, 0, 0, 0, 0], [0xB1u8; 32]);
 
-    let aa = Action { target: a_cell, method: symbol("atomic_swap"), args: vec![], authorization: Authorization::None, preconditions: Preconditions::default(), effects: vec![
-        Effect::NoteSpend { nullifier: a_nul, note_tree_root: [0u8; 32], value: 100, asset_type: asset_a },
-        Effect::NoteCreate { commitment: a_recv.commitment(), value: 50, asset_type: asset_b, encrypted_note: vec![0xAA; 64] },
-    ], may_delegate: DelegationMode::None, commitment_mode: CommitmentMode::Partial, balance_change: None };
+    let aa = Action {
+        target: a_cell,
+        method: symbol("atomic_swap"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Preconditions::default(),
+        effects: vec![
+            Effect::NoteSpend {
+                nullifier: a_nul,
+                note_tree_root: [0u8; 32],
+                value: 100,
+                asset_type: asset_a,
+            },
+            Effect::NoteCreate {
+                commitment: a_recv.commitment(),
+                value: 50,
+                asset_type: asset_b,
+                encrypted_note: vec![0xAA; 64],
+            },
+        ],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Partial,
+        balance_change: None,
+    };
 
-    let ba = Action { target: b_cell, method: symbol("atomic_swap"), args: vec![], authorization: Authorization::None, preconditions: Preconditions::default(), effects: vec![
-        Effect::NoteSpend { nullifier: b_nul, note_tree_root: [0u8; 32], value: 50, asset_type: asset_b },
-        Effect::NoteCreate { commitment: b_recv.commitment(), value: 100, asset_type: asset_a, encrypted_note: vec![0xBB; 64] },
-    ], may_delegate: DelegationMode::None, commitment_mode: CommitmentMode::Partial, balance_change: None };
+    let ba = Action {
+        target: b_cell,
+        method: symbol("atomic_swap"),
+        args: vec![],
+        authorization: Authorization::None,
+        preconditions: Preconditions::default(),
+        effects: vec![
+            Effect::NoteSpend {
+                nullifier: b_nul,
+                note_tree_root: [0u8; 32],
+                value: 50,
+                asset_type: asset_b,
+            },
+            Effect::NoteCreate {
+                commitment: b_recv.commitment(),
+                value: 100,
+                asset_type: asset_a,
+                encrypted_note: vec![0xBB; 64],
+            },
+        ],
+        may_delegate: DelegationMode::None,
+        commitment_mode: CommitmentMode::Partial,
+        balance_change: None,
+    };
 
     // Conservation
-    let mut ai: u64 = 0; let mut ao: u64 = 0; let mut bi: u64 = 0; let mut bo: u64 = 0;
-    for act in [&aa, &ba] { for e in &act.effects { match e {
-        Effect::NoteSpend { value, asset_type, .. } => { if *asset_type == asset_a { ai += value; } if *asset_type == asset_b { bi += value; } }
-        Effect::NoteCreate { value, asset_type, .. } => { if *asset_type == asset_a { ao += value; } if *asset_type == asset_b { bo += value; } }
-        _ => {}
-    }}}
+    let mut ai: u64 = 0;
+    let mut ao: u64 = 0;
+    let mut bi: u64 = 0;
+    let mut bo: u64 = 0;
+    for act in [&aa, &ba] {
+        for e in &act.effects {
+            match e {
+                Effect::NoteSpend {
+                    value, asset_type, ..
+                } => {
+                    if *asset_type == asset_a {
+                        ai += value;
+                    }
+                    if *asset_type == asset_b {
+                        bi += value;
+                    }
+                }
+                Effect::NoteCreate {
+                    value, asset_type, ..
+                } => {
+                    if *asset_type == asset_a {
+                        ao += value;
+                    }
+                    if *asset_type == asset_b {
+                        bo += value;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     assert_eq!(ai, ao);
     assert_eq!(bi, bo);
 
@@ -586,19 +949,30 @@ fn run_ivc_attenuation_chain() -> Result<(), Box<dyn Error>> {
 
     let mut state = TokenState::new();
     state.add_fact(CommitFact::from_symbols("can_read", &["alice", "database"]));
-    state.add_fact(CommitFact::from_symbols("can_write", &["alice", "database"]));
+    state.add_fact(CommitFact::from_symbols(
+        "can_write",
+        &["alice", "database"],
+    ));
     state.add_fact(CommitFact::from_symbols("can_read", &["alice", "logs"]));
     state.add_fact(CommitFact::from_symbols("can_write", &["alice", "logs"]));
-    state.add_fact(CommitFact::from_symbols("can_admin", &["alice", "database"]));
+    state.add_fact(CommitFact::from_symbols(
+        "can_admin",
+        &["alice", "database"],
+    ));
 
     let mut deltas = Vec::new();
 
     // Step 1: Remove can_admin
     let delta = FoldDeltaBuilder::new(state.clone())
-        .remove_fact(CommitFact::from_symbols("can_admin", &["alice", "database"]))
+        .remove_fact(CommitFact::from_symbols(
+            "can_admin",
+            &["alice", "database"],
+        ))
         .build();
     if let Some(d) = delta {
-        if let Some(ns) = d.reconstruct_new_state(&state) { state = ns; }
+        if let Some(ns) = d.reconstruct_new_state(&state) {
+            state = ns;
+        }
         deltas.push(d);
     }
 
@@ -607,7 +981,9 @@ fn run_ivc_attenuation_chain() -> Result<(), Box<dyn Error>> {
         .remove_fact(CommitFact::from_symbols("can_write", &["alice", "logs"]))
         .build();
     if let Some(d) = delta {
-        if let Some(ns) = d.reconstruct_new_state(&state) { state = ns; }
+        if let Some(ns) = d.reconstruct_new_state(&state) {
+            state = ns;
+        }
         deltas.push(d);
     }
 
@@ -620,7 +996,12 @@ fn run_seal_unseal_transfer() -> Result<(), Box<dyn Error>> {
     use pyana_cell::capability::CapabilityRef;
 
     let carol_id = CellId::from_bytes([0xCC; 32]);
-    let cap = CapabilityRef { target: carol_id, slot: 7, permissions: AuthRequired::Signature, breadstuff: None };
+    let cap = CapabilityRef {
+        target: carol_id,
+        slot: 7,
+        permissions: AuthRequired::Signature,
+        breadstuff: None,
+    };
 
     let pair = test_seal_pair(0xA0);
     let sealed = pair.seal(&cap);
@@ -674,7 +1055,10 @@ fn run_causal_ordering() -> Result<(), Box<dyn Error>> {
 fn run_multi_silo_budget() -> Result<(), Box<dyn Error>> {
     use pyana_coord::budget::BudgetCoordinator;
     let agent = CellId::from_bytes([0xAA; 32]);
-    let sa = [1u8; 32]; let sb = [2u8; 32]; let sc = [3u8; 32]; let sd = [4u8; 32];
+    let sa = [1u8; 32];
+    let sb = [2u8; 32];
+    let sc = [3u8; 32];
+    let sd = [4u8; 32];
     let mut coord = BudgetCoordinator::new(agent, 1000, vec![sa, sb, sc, sd], 1)?;
     let rem = coord.remaining(&sa).unwrap();
     assert!(rem > 0);
@@ -700,8 +1084,7 @@ fn run_federation_bootstrap(federation: &SharedFederation) -> Result<(), Box<dyn
     let attested = fed.nodes[0].get_attested_root().unwrap();
     // Verify the attested root has enough signatures or a threshold QC
     assert!(
-        attested.quorum_signatures.len() >= attested.threshold
-            || attested.threshold_qc.is_some()
+        attested.quorum_signatures.len() >= attested.threshold || attested.threshold_qc.is_some()
     );
     Ok(())
 }
@@ -712,8 +1095,23 @@ fn run_wallet_lifecycle() -> Result<(), Box<dyn Error>> {
     assert_ne!(wallet.public_key().0, [0u8; 32]);
     let ik = *blake3::hash(b"wallet-lifecycle-issuer").as_bytes();
     let rt = wallet.mint_token(&ik, "test-service");
-    let att = wallet.attenuate(&rt, &Attenuation { services: vec![("test-service".into(), "r".into())], ..Default::default() })?;
-    let result = wallet.authorize(&att, &AuthRequest { service: Some("test-service".into()), action: Some("r".into()), now: Some(1750000000), ..Default::default() }, pyana_sdk::VerificationMode::Trusted);
+    let att = wallet.attenuate(
+        &rt,
+        &Attenuation {
+            services: vec![("test-service".into(), "r".into())],
+            ..Default::default()
+        },
+    )?;
+    let result = wallet.authorize(
+        &att,
+        &AuthRequest {
+            service: Some("test-service".into()),
+            action: Some("r".into()),
+            now: Some(1750000000),
+            ..Default::default()
+        },
+        pyana_sdk::VerificationMode::Trusted,
+    );
     assert!(result.is_ok());
     Ok(())
 }
@@ -735,77 +1133,190 @@ fn main() {
     println!("  PHASE 1: GENESIS\n  ----------------");
     let gs = Instant::now();
     let mut shared = match setup_genesis() {
-        Ok(s) => { println!("    [PASS] Genesis setup ({:.1}ms)", gs.elapsed().as_secs_f64() * 1000.0); results.push(DemoResult { name: "Genesis setup", phase: "Genesis", status: Status::Pass, duration: gs.elapsed() }); s }
-        Err(e) => { println!("    [FAIL] Genesis setup: {}\n  FATAL: Cannot continue.", e); return; }
+        Ok(s) => {
+            println!(
+                "    [PASS] Genesis setup ({:.1}ms)",
+                gs.elapsed().as_secs_f64() * 1000.0
+            );
+            results.push(DemoResult {
+                name: "Genesis setup",
+                phase: "Genesis",
+                status: Status::Pass,
+                duration: gs.elapsed(),
+            });
+            s
+        }
+        Err(e) => {
+            println!("    [FAIL] Genesis setup: {}\n  FATAL: Cannot continue.", e);
+            return;
+        }
     };
-    println!("    Shared: 3-node federation, 6 cells, issuer={}, nullifiers=0\n", short_hex(&shared.issuer_key));
+    println!(
+        "    Shared: 3-node federation, 6 cells, issuer={}, nullifiers=0\n",
+        short_hex(&shared.issuer_key)
+    );
 
     // PHASE 2
     println!("  PHASE 2: TOKEN/AUTH\n  -------------------");
     let ik = shared.issuer_key;
-    results.push(run_demo("RBAC Datalog evaluation", "Token/Auth", || run_rbac_datalog(&ik)));
-    results.push(run_demo("Multi-org delegation (ZK)", "Token/Auth", || run_multi_org_delegation(&ik)));
-    results.push(run_demo("Sub-agent spawn (attenuation)", "Token/Auth", || run_sub_agent_spawn(&ik)));
-    results.push(run_demo("Token revocation", "Token/Auth", || run_token_revocation(&mut shared.nullifier_set)));
-    results.push(run_demo("Progressive disclosure (3 modes)", "Token/Auth", || run_progressive_disclosure(&ik)));
+    results.push(run_demo("RBAC Datalog evaluation", "Token/Auth", || {
+        run_rbac_datalog(&ik)
+    }));
+    results.push(run_demo("Multi-org delegation (ZK)", "Token/Auth", || {
+        run_multi_org_delegation(&ik)
+    }));
+    results.push(run_demo(
+        "Sub-agent spawn (attenuation)",
+        "Token/Auth",
+        || run_sub_agent_spawn(&ik),
+    ));
+    results.push(run_demo("Token revocation", "Token/Auth", || {
+        run_token_revocation(&mut shared.nullifier_set)
+    }));
+    results.push(run_demo(
+        "Progressive disclosure (3 modes)",
+        "Token/Auth",
+        || run_progressive_disclosure(&ik),
+    ));
     println!();
 
     // PHASE 3
     println!("  PHASE 3: CELL/TURN OPERATIONS\n  -----------------------------");
-    results.push(run_demo("Programmable cell (predicates)", "Cell/Turn", || run_programmable_cell(&mut shared.ledger)));
+    results.push(run_demo(
+        "Programmable cell (predicates)",
+        "Cell/Turn",
+        || run_programmable_cell(&mut shared.ledger),
+    ));
     let (ai, bi, ci) = (shared.alice_id, shared.bob_id, shared.carol_id);
-    results.push(run_demo("Three-party introduction", "Cell/Turn", || run_three_party_introduction(&mut shared.ledger, ai, bi, ci)));
-    results.push(run_demo("Pipeline (topological exec)", "Cell/Turn", || run_pipeline(&mut shared.ledger)));
+    results.push(run_demo("Three-party introduction", "Cell/Turn", || {
+        run_three_party_introduction(&mut shared.ledger, ai, bi, ci)
+    }));
+    results.push(run_demo("Pipeline (topological exec)", "Cell/Turn", || {
+        run_pipeline(&mut shared.ledger)
+    }));
     println!();
 
     // PHASE 4
     println!("  PHASE 4: NOTE OPERATIONS\n  ------------------------");
-    results.push(run_demo("NFT mint + transfer", "Note", || run_nft_mint_transfer(&mut shared.nullifier_set)));
-    results.push(run_demo("Note privacy (A->B->C)", "Note", || run_note_privacy(&mut shared.nullifier_set)));
-    results.push(run_demo("Atomic swap (multi-party)", "Note", || run_atomic_swap(&mut shared.nullifier_set)));
+    results.push(run_demo("NFT mint + transfer", "Note", || {
+        run_nft_mint_transfer(&mut shared.nullifier_set)
+    }));
+    results.push(run_demo("Note privacy (A->B->C)", "Note", || {
+        run_note_privacy(&mut shared.nullifier_set)
+    }));
+    results.push(run_demo("Atomic swap (multi-party)", "Note", || {
+        run_atomic_swap(&mut shared.nullifier_set)
+    }));
     println!();
 
     // PHASE 5
     println!("  PHASE 5: ADVANCED\n  -----------------");
-    results.push(run_demo("IVC attenuation chain", "Advanced", || run_ivc_attenuation_chain()));
-    results.push(run_demo("Seal/unseal transfer", "Advanced", || run_seal_unseal_transfer()));
-    results.push(run_demo("Offline verification", "Advanced", || run_offline_verification(&shared.federation)));
-    results.push(run_demo("Wallet lifecycle", "Advanced", || run_wallet_lifecycle()));
-    results.push(run_demo("Multi-silo budget", "Advanced", || run_multi_silo_budget()));
-    results.push(run_demo("Causal ordering", "Advanced", || run_causal_ordering()));
-    results.push(run_demo("Federation bootstrap", "Advanced", || run_federation_bootstrap(&shared.federation)));
-    results.push(run_demo_skip("Payment channel", "Advanced", "requires persistent channel state"));
-    results.push(run_demo_skip("Private orderbook", "Advanced", "requires matching engine"));
-    results.push(run_demo_skip("Escrow", "Advanced", "requires multi-step stateful flow"));
-    results.push(run_demo_skip("Auction", "Advanced", "requires bidding rounds"));
-    results.push(run_demo_skip("Web auth flow", "Advanced", "requires HTTP simulation"));
+    results.push(run_demo("IVC attenuation chain", "Advanced", || {
+        run_ivc_attenuation_chain()
+    }));
+    results.push(run_demo("Seal/unseal transfer", "Advanced", || {
+        run_seal_unseal_transfer()
+    }));
+    results.push(run_demo("Offline verification", "Advanced", || {
+        run_offline_verification(&shared.federation)
+    }));
+    results.push(run_demo("Wallet lifecycle", "Advanced", || {
+        run_wallet_lifecycle()
+    }));
+    results.push(run_demo("Multi-silo budget", "Advanced", || {
+        run_multi_silo_budget()
+    }));
+    results.push(run_demo("Causal ordering", "Advanced", || {
+        run_causal_ordering()
+    }));
+    results.push(run_demo("Federation bootstrap", "Advanced", || {
+        run_federation_bootstrap(&shared.federation)
+    }));
+    results.push(run_demo_skip(
+        "Payment channel",
+        "Advanced",
+        "requires persistent channel state",
+    ));
+    results.push(run_demo_skip(
+        "Private orderbook",
+        "Advanced",
+        "requires matching engine",
+    ));
+    results.push(run_demo_skip(
+        "Escrow",
+        "Advanced",
+        "requires multi-step stateful flow",
+    ));
+    results.push(run_demo_skip(
+        "Auction",
+        "Advanced",
+        "requires bidding rounds",
+    ));
+    results.push(run_demo_skip(
+        "Web auth flow",
+        "Advanced",
+        "requires HTTP simulation",
+    ));
     println!();
 
     // SUMMARY
     let total = total_start.elapsed();
-    let pass = results.iter().filter(|r| matches!(r.status, Status::Pass)).count();
-    let fail = results.iter().filter(|r| matches!(r.status, Status::Fail(_))).count();
-    let skip = results.iter().filter(|r| matches!(r.status, Status::Skipped(_))).count();
+    let pass = results
+        .iter()
+        .filter(|r| matches!(r.status, Status::Pass))
+        .count();
+    let fail = results
+        .iter()
+        .filter(|r| matches!(r.status, Status::Fail(_)))
+        .count();
+    let skip = results
+        .iter()
+        .filter(|r| matches!(r.status, Status::Skipped(_)))
+        .count();
 
     println!("================================================================");
     println!("  SUMMARY\n================================================================\n");
     println!("  {:<40} {:>6} {:>8}", "Demo", "Status", "Time");
     println!("  {:-<40} {:-<6} {:-<8}", "", "", "");
     for r in &results {
-        let s = match &r.status { Status::Pass => "PASS", Status::Fail(_) => "FAIL", Status::Skipped(_) => "SKIP" };
-        let t = if r.duration.as_millis() > 0 { format!("{:.1}ms", r.duration.as_secs_f64() * 1000.0) } else { "-".into() };
+        let s = match &r.status {
+            Status::Pass => "PASS",
+            Status::Fail(_) => "FAIL",
+            Status::Skipped(_) => "SKIP",
+        };
+        let t = if r.duration.as_millis() > 0 {
+            format!("{:.1}ms", r.duration.as_secs_f64() * 1000.0)
+        } else {
+            "-".into()
+        };
         println!("  {:<40} {:>6} {:>8}", r.name, s, t);
     }
     println!("  {:-<40} {:-<6} {:-<8}", "", "", "");
-    println!("  Total: {} pass, {} fail, {} skip in {:.1}ms\n", pass, fail, skip, total.as_secs_f64() * 1000.0);
+    println!(
+        "  Total: {} pass, {} fail, {} skip in {:.1}ms\n",
+        pass,
+        fail,
+        skip,
+        total.as_secs_f64() * 1000.0
+    );
 
     if fail > 0 {
         println!("  FAILURES:");
-        for r in &results { if let Status::Fail(ref e) = r.status { println!("    {} ({}): {}", r.name, r.phase, e); } }
+        for r in &results {
+            if let Status::Fail(ref e) = r.status {
+                println!("    {} ({}): {}", r.name, r.phase, e);
+            }
+        }
         println!();
     }
 
-    println!("  Shared state final: nullifiers={}, root={}", shared.nullifier_set.len(), short_hex(&shared.nullifier_set.root()));
+    println!(
+        "  Shared state final: nullifiers={}, root={}",
+        shared.nullifier_set.len(),
+        short_hex(&shared.nullifier_set.root())
+    );
     println!();
-    if fail > 0 { std::process::exit(1); }
+    if fail > 0 {
+        std::process::exit(1);
+    }
 }

@@ -158,7 +158,10 @@ fn main() {
     // Audit Trail Summary
     // -------------------------------------------------------------------------
     println!("=== Audit Trail ===");
-    println!("  Parent agent: {}", wallet_arc.read().unwrap().public_key());
+    println!(
+        "  Parent agent: {}",
+        wallet_arc.read().unwrap().public_key()
+    );
     println!("  Sub-agent:    {}", sub_agent.public_key());
     println!("  Domain:       {}", runtime.domain());
     println!("  Root token:   {}", root_token.id);

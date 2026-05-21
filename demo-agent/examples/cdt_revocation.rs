@@ -182,11 +182,7 @@ fn main() {
     let intern_cap_valid = !tree.has_revoked_ancestor(&intern, 0, &revocation_set);
     println!(
         "  Intern base cap (slot 0): {}",
-        if intern_cap_valid {
-            "VALID"
-        } else {
-            "REVOKED"
-        }
+        if intern_cap_valid { "VALID" } else { "REVOKED" }
     );
     assert!(intern_cap_valid);
     println!();
@@ -195,7 +191,10 @@ fn main() {
     // STEP 3: VP is compromised — REVOKE VP's capability
     // =========================================================================
     println!("--- Step 3: VP COMPROMISED -- REVOKE VP ---\n");
-    println!("  Adding VP (cell={}, slot=0) to revocation set...", cell_short(&vp));
+    println!(
+        "  Adding VP (cell={}, slot=0) to revocation set...",
+        cell_short(&vp)
+    );
 
     let mut revocation_set: HashSet<(CellId, u32)> = HashSet::new();
     revocation_set.insert((vp, 0));
@@ -261,7 +260,9 @@ fn main() {
     println!("  Contrast with flat revocation:");
     println!("    Without CDT: must enumerate and individually revoke VP, Manager, Intern,");
     println!("    Intern's DB cap, and any future delegates. O(n) insertions.");
-    println!("    With CDT: revoke VP once (1 insertion), all descendants are transitively invalid.");
+    println!(
+        "    With CDT: revoke VP once (1 insertion), all descendants are transitively invalid."
+    );
     println!();
 
     // =========================================================================
@@ -363,10 +364,7 @@ fn main() {
     });
 
     println!();
-    println!(
-        "  CDT now has {} nodes (original 5 + 2 new)",
-        tree.len()
-    );
+    println!("  CDT now has {} nodes (original 5 + 2 new)", tree.len());
     println!();
 
     // Check: new branch is NOT affected by the VP revocation.

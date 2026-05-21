@@ -249,10 +249,7 @@ mod tests {
     /// and return (root, leaf_proofs).
     ///
     /// This is a minimal 4-ary tree for testing.
-    fn build_test_tree(
-        leaves: &[BabyBear],
-        depth: usize,
-    ) -> (BabyBear, Vec<BodyFactMerkleProof>) {
+    fn build_test_tree(leaves: &[BabyBear], depth: usize) -> (BabyBear, Vec<BodyFactMerkleProof>) {
         // Compute full tree bottom-up
         let capacity = 4usize.pow(depth as u32);
         let mut level_nodes: Vec<BabyBear> = Vec::with_capacity(capacity);
@@ -583,7 +580,10 @@ mod tests {
             acc_hash,
             &expected_body_hashes,
         );
-        assert!(result.is_err(), "Should reject when membership proof missing");
+        assert!(
+            result.is_err(),
+            "Should reject when membership proof missing"
+        );
         assert!(
             result.unwrap_err().contains("Missing membership proof"),
             "Error should mention missing membership proof"
@@ -671,7 +671,12 @@ mod tests {
 
         // Build a Merkle tree containing both facts
         let tree_depth = 2;
-        let leaves = vec![fact1_hash, fact2_hash, BabyBear::new(333), BabyBear::new(444)];
+        let leaves = vec![
+            fact1_hash,
+            fact2_hash,
+            BabyBear::new(333),
+            BabyBear::new(444),
+        ];
         let (state_root, merkle_proofs) = build_test_tree(&leaves, tree_depth);
 
         // Step 1: app_authorized(alice, app) :- has_capability(alice, app, read)
@@ -696,8 +701,7 @@ mod tests {
             vec![alice, app],
         );
 
-        let witness =
-            build_multi_step_witness(state_root, BabyBear::new(42), vec![step1, step2]);
+        let witness = build_multi_step_witness(state_root, BabyBear::new(42), vec![step1, step2]);
         let conclusion = witness.conclusion();
         let acc_hash = witness.final_accumulated_hash();
 
@@ -759,7 +763,12 @@ mod tests {
 
         // Build tree with all 3 facts + padding
         let tree_depth = 2;
-        let leaves = vec![fact_has_cap, fact_app_auth, fact_action_perm, BabyBear::new(999)];
+        let leaves = vec![
+            fact_has_cap,
+            fact_app_auth,
+            fact_action_perm,
+            BabyBear::new(999),
+        ];
         let (state_root, merkle_proofs) = build_test_tree(&leaves, tree_depth);
 
         // 3-step derivation
@@ -791,11 +800,8 @@ mod tests {
             vec![alice, app1],
         );
 
-        let witness = build_multi_step_witness(
-            state_root,
-            BabyBear::new(42),
-            vec![step1, step2, step3],
-        );
+        let witness =
+            build_multi_step_witness(state_root, BabyBear::new(42), vec![step1, step2, step3]);
         let conclusion = witness.conclusion();
         let acc_hash = witness.final_accumulated_hash();
 
@@ -832,7 +838,10 @@ mod tests {
         );
 
         // Verify the structure
-        assert_eq!(composite_proof.membership_proofs.len(), body_fact_hashes.len());
+        assert_eq!(
+            composite_proof.membership_proofs.len(),
+            body_fact_hashes.len()
+        );
         assert_eq!(composite_proof.state_root, state_root);
 
         println!(
@@ -846,7 +855,11 @@ mod tests {
                 .iter()
                 .map(|e| stark::proof_to_bytes(&e.proof).len())
                 .sum::<usize>();
-        println!("Total composite proof size: {} bytes ({:.1} KiB)", total_size, total_size as f64 / 1024.0);
+        println!(
+            "Total composite proof size: {} bytes ({:.1} KiB)",
+            total_size,
+            total_size as f64 / 1024.0
+        );
     }
 
     // ========================================================================
@@ -863,7 +876,12 @@ mod tests {
         let body_fact_hash = hash_fact(has_role_pred, &[alice, app, BabyBear::ZERO]);
 
         let tree_depth = 2;
-        let leaves = vec![body_fact_hash, BabyBear::new(222), BabyBear::new(333), BabyBear::new(444)];
+        let leaves = vec![
+            body_fact_hash,
+            BabyBear::new(222),
+            BabyBear::new(333),
+            BabyBear::new(444),
+        ];
         let (state_root, merkle_proofs) = build_test_tree(&leaves, tree_depth);
 
         let step = make_step(
@@ -921,7 +939,12 @@ mod tests {
         let body_fact_hash = hash_fact(has_role_pred, &[alice, app, BabyBear::ZERO]);
 
         let tree_depth = 2;
-        let leaves = vec![body_fact_hash, BabyBear::new(222), BabyBear::new(333), BabyBear::new(444)];
+        let leaves = vec![
+            body_fact_hash,
+            BabyBear::new(222),
+            BabyBear::new(333),
+            BabyBear::new(444),
+        ];
         let (state_root, merkle_proofs) = build_test_tree(&leaves, tree_depth);
 
         let step = make_step(

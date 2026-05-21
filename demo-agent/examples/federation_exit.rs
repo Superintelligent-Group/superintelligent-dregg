@@ -45,11 +45,7 @@ fn short_hex(bytes: &[u8]) -> String {
 /// In production, this comes from TurnExecutor::execute(). The executor signs
 /// the receipt AFTER the chain link is set (since receipt_hash includes
 /// previous_receipt_hash). See `sign_chain_receipts` below.
-fn simulate_turn(
-    agent: CellId,
-    turn_number: u64,
-    pre_state: [u8; 32],
-) -> TurnReceipt {
+fn simulate_turn(agent: CellId, turn_number: u64, pre_state: [u8; 32]) -> TurnReceipt {
     // Deterministic state transition: hash the pre-state with the turn number.
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"pyana-autarky-state-transition");
@@ -151,8 +147,11 @@ fn main() {
         short_hex(&attested_root.merkle_root)
     ));
 
-    let federation_pubkeys: Vec<PublicKey> =
-        federation.nodes.iter().map(|n| n.identity.public_key).collect();
+    let federation_pubkeys: Vec<PublicKey> = federation
+        .nodes
+        .iter()
+        .map(|n| n.identity.public_key)
+        .collect();
 
     // NOTE: The high-level Federation API stores vote-message signatures in the
     // AttestedRoot (from the QC). In production with a threshold committee, the
@@ -188,10 +187,7 @@ fn main() {
     let agent_cell = wallet.cell_id("autarky-demo");
 
     item(&format!("Agent pubkey: {}", short_hex(&agent_pubkey.0)));
-    item(&format!(
-        "Agent cell: {}",
-        short_hex(agent_cell.as_bytes())
-    ));
+    item(&format!("Agent cell: {}", short_hex(agent_cell.as_bytes())));
 
     // Agent receives a root token from the federation (proving membership).
     let root_key: [u8; 32] = *blake3::hash(b"autarky-demo-issuer-key").as_bytes();
@@ -217,10 +213,7 @@ fn main() {
     );
     wallet.enable_ivc(initial_root_bb);
     item("IVC accumulation enabled");
-    item(&format!(
-        "  Initial root (BabyBear): {:?}",
-        initial_root_bb
-    ));
+    item(&format!("  Initial root (BabyBear): {:?}", initial_root_bb));
 
     let mut current_state = genesis_state;
 
@@ -350,10 +343,7 @@ fn main() {
             IvcVerification::Valid => {
                 item("      IVC proof: VALID [PASS]");
                 item(&format!("      Steps covered: {}", proof.step_count));
-                item(&format!(
-                    "      Initial root: {:?}",
-                    proof.initial_root
-                ));
+                item(&format!("      Initial root: {:?}", proof.initial_root));
                 item(&format!("      Final root: {:?}", proof.final_root));
             }
             other => {
@@ -376,8 +366,7 @@ fn main() {
 
     // --- Verification Step D: State Commitment ---
     item("  [D] Verify final state commitment...");
-    let verified_head =
-        pyana_turn::verify_receipt_chain_head(&exported_chain).unwrap();
+    let verified_head = pyana_turn::verify_receipt_chain_head(&exported_chain).unwrap();
     assert_eq!(verified_head, final_state);
     item(&format!(
         "      Verified state: {} [MATCHES]",
@@ -522,8 +511,8 @@ fn main() {
     // Step 4: Verify computational history metrics.
     let total_computrons: u64 = exported_chain.iter().map(|r| r.computrons_used).sum();
     let total_actions: usize = exported_chain.iter().map(|r| r.action_count).sum();
-    let time_span = exported_chain.last().unwrap().timestamp
-        - exported_chain.first().unwrap().timestamp;
+    let time_span =
+        exported_chain.last().unwrap().timestamp - exported_chain.first().unwrap().timestamp;
     item(&format!(
         "    [4] History: {} turns, {} computrons, {} actions, {}s span",
         exported_chain.len(),

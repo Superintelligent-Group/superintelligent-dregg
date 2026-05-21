@@ -292,11 +292,7 @@ pub async fn run_federation_sync(state: NodeState) {
 }
 
 /// Process an incoming turn from the gossip network.
-async fn handle_turn_message(
-    state: &NodeState,
-    from: SocketAddr,
-    message: PeerMessage,
-) {
+async fn handle_turn_message(state: &NodeState, from: SocketAddr, message: PeerMessage) {
     match message {
         PeerMessage::PublishTurn {
             turn_hash,
@@ -316,11 +312,7 @@ async fn handle_turn_message(
 }
 
 /// Process an incoming revocation from the gossip network.
-async fn handle_revocation_message(
-    state: &NodeState,
-    from: SocketAddr,
-    message: PeerMessage,
-) {
+async fn handle_revocation_message(state: &NodeState, from: SocketAddr, message: PeerMessage) {
     match message {
         PeerMessage::RevocationGossip {
             token_id,
@@ -336,16 +328,9 @@ async fn handle_revocation_message(
 }
 
 /// Process an incoming intent from the gossip network.
-async fn handle_intent_message(
-    state: &NodeState,
-    from: SocketAddr,
-    message: PeerMessage,
-) {
+async fn handle_intent_message(state: &NodeState, from: SocketAddr, message: PeerMessage) {
     match message {
-        PeerMessage::PublishTurn {
-            turn_data,
-            ..
-        } => {
+        PeerMessage::PublishTurn { turn_data, .. } => {
             // Decode the intent JSON from turn_data.
             if let Ok(intent) = serde_json::from_slice::<serde_json::Value>(&turn_data) {
                 let intent_id = intent
@@ -371,11 +356,7 @@ async fn handle_intent_message(
 }
 
 /// Process an incoming attested root from the gossip network.
-async fn handle_root_message(
-    state: &NodeState,
-    from: SocketAddr,
-    message: PeerMessage,
-) {
+async fn handle_root_message(state: &NodeState, from: SocketAddr, message: PeerMessage) {
     match message {
         PeerMessage::AttestedRootUpdate { root } => {
             info!(from = %from, root_len = root.len(), "received attested root via gossip");

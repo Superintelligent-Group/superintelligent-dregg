@@ -1446,8 +1446,16 @@ mod tests {
         let results = execute_pipeline(pipeline, &mut ledger, &executor);
 
         assert_eq!(results.len(), 2);
-        assert!(results[0].is_ok(), "Turn A should succeed: {:?}", results[0]);
-        assert!(results[1].is_ok(), "Turn B should succeed: {:?}", results[1]);
+        assert!(
+            results[0].is_ok(),
+            "Turn A should succeed: {:?}",
+            results[0]
+        );
+        assert!(
+            results[1].is_ok(),
+            "Turn B should succeed: {:?}",
+            results[1]
+        );
 
         // Verify Alice's fields were set by the resolved pipelined actions.
         let alice_cell = ledger.get(&id_alice).unwrap();

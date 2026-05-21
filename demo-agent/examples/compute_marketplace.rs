@@ -192,15 +192,21 @@ fn main() {
     // Providers get capability to marketplace (to submit bids)
     // They also get a breadstuff token proving they're registered providers
     let provider_breadstuff = *blake3::hash(b"registered-provider-v1").as_bytes();
-    provider_a_cell
-        .capabilities
-        .grant_with_breadstuff(marketplace_id, AuthRequired::None, Some(provider_breadstuff));
-    provider_b_cell
-        .capabilities
-        .grant_with_breadstuff(marketplace_id, AuthRequired::None, Some(provider_breadstuff));
-    provider_c_cell
-        .capabilities
-        .grant_with_breadstuff(marketplace_id, AuthRequired::None, Some(provider_breadstuff));
+    provider_a_cell.capabilities.grant_with_breadstuff(
+        marketplace_id,
+        AuthRequired::None,
+        Some(provider_breadstuff),
+    );
+    provider_b_cell.capabilities.grant_with_breadstuff(
+        marketplace_id,
+        AuthRequired::None,
+        Some(provider_breadstuff),
+    );
+    provider_c_cell.capabilities.grant_with_breadstuff(
+        marketplace_id,
+        AuthRequired::None,
+        Some(provider_breadstuff),
+    );
 
     // Insert all cells
     ledger.insert_cell(client_cell).unwrap();
@@ -249,14 +255,23 @@ fn main() {
     nullifier_set.insert(Nullifier(commit_b)).unwrap();
     nullifier_set.insert(Nullifier(commit_c)).unwrap();
 
-    println!("  Provider A (GPU) commits: {:02x}{:02x}{:02x}{:02x}...",
-        commit_a[0], commit_a[1], commit_a[2], commit_a[3]);
-    println!("  Provider B (TPU) commits: {:02x}{:02x}{:02x}{:02x}...",
-        commit_b[0], commit_b[1], commit_b[2], commit_b[3]);
-    println!("  Provider C (CPU) commits: {:02x}{:02x}{:02x}{:02x}...",
-        commit_c[0], commit_c[1], commit_c[2], commit_c[3]);
+    println!(
+        "  Provider A (GPU) commits: {:02x}{:02x}{:02x}{:02x}...",
+        commit_a[0], commit_a[1], commit_a[2], commit_a[3]
+    );
+    println!(
+        "  Provider B (TPU) commits: {:02x}{:02x}{:02x}{:02x}...",
+        commit_b[0], commit_b[1], commit_b[2], commit_b[3]
+    );
+    println!(
+        "  Provider C (CPU) commits: {:02x}{:02x}{:02x}{:02x}...",
+        commit_c[0], commit_c[1], commit_c[2], commit_c[3]
+    );
     println!("  (Bid amounts are hidden behind BLAKE3 commitments)");
-    println!("  NullifierSet size: {} (double-submit impossible)", nullifier_set.len());
+    println!(
+        "  NullifierSet size: {} (double-submit impossible)",
+        nullifier_set.len()
+    );
 
     // Verify double-submit is rejected
     let double_submit = nullifier_set.insert(Nullifier(commit_a));
@@ -275,9 +290,18 @@ fn main() {
         hash_commit(amount, nonce) == *commitment
     };
 
-    assert!(verify_reveal(bid_a, &nonce_a, &commit_a), "A's reveal valid");
-    assert!(verify_reveal(bid_b, &nonce_b, &commit_b), "B's reveal valid");
-    assert!(verify_reveal(bid_c, &nonce_c, &commit_c), "C's reveal valid");
+    assert!(
+        verify_reveal(bid_a, &nonce_a, &commit_a),
+        "A's reveal valid"
+    );
+    assert!(
+        verify_reveal(bid_b, &nonce_b, &commit_b),
+        "B's reveal valid"
+    );
+    assert!(
+        verify_reveal(bid_c, &nonce_c, &commit_c),
+        "C's reveal valid"
+    );
 
     println!("  Provider A reveals: {} computrons (GPU)", bid_a);
     println!("  Provider B reveals: {} computrons (TPU)", bid_b);
@@ -285,11 +309,18 @@ fn main() {
     println!();
 
     // Lowest bid wins (reverse auction for compute)
-    let bids = [(bid_a, "A (GPU)", PROVIDER_A), (bid_b, "B (TPU)", PROVIDER_B), (bid_c, "C (CPU)", PROVIDER_C)];
+    let bids = [
+        (bid_a, "A (GPU)", PROVIDER_A),
+        (bid_b, "B (TPU)", PROVIDER_B),
+        (bid_c, "C (CPU)", PROVIDER_C),
+    ];
     let (winning_bid, winner_name, winner_tag) = bids.iter().min_by_key(|(b, _, _)| *b).unwrap();
     let winner_id = cell_id_for(*winner_tag);
 
-    println!("  WINNER: Provider {} with bid {} computrons", winner_name, winning_bid);
+    println!(
+        "  WINNER: Provider {} with bid {} computrons",
+        winner_name, winning_bid
+    );
     println!("  (Lowest bidder wins — this is a reverse auction for compute)\n");
 
     // =====================================================================
@@ -331,13 +362,26 @@ fn main() {
 
     let (_, lock_receipt, _) = lock_result.unwrap_committed();
     println!("  Escrow locked: {} computrons", job_price);
-    println!("  Job hash: {:02x}{:02x}{:02x}{:02x}...", job_hash[0], job_hash[1], job_hash[2], job_hash[3]);
-    println!("  Turn receipt: {:02x}{:02x}{:02x}{:02x}...",
-        lock_receipt.turn_hash[0], lock_receipt.turn_hash[1],
-        lock_receipt.turn_hash[2], lock_receipt.turn_hash[3]);
-    println!("  Client balance: {} -> {}",
-        100_000, ledger.get(&client_id).unwrap().state.balance);
-    println!("  Escrow balance: {}", ledger.get(&escrow_id).unwrap().state.balance);
+    println!(
+        "  Job hash: {:02x}{:02x}{:02x}{:02x}...",
+        job_hash[0], job_hash[1], job_hash[2], job_hash[3]
+    );
+    println!(
+        "  Turn receipt: {:02x}{:02x}{:02x}{:02x}...",
+        lock_receipt.turn_hash[0],
+        lock_receipt.turn_hash[1],
+        lock_receipt.turn_hash[2],
+        lock_receipt.turn_hash[3]
+    );
+    println!(
+        "  Client balance: {} -> {}",
+        100_000,
+        ledger.get(&client_id).unwrap().state.balance
+    );
+    println!(
+        "  Escrow balance: {}",
+        ledger.get(&escrow_id).unwrap().state.balance
+    );
 
     // Verify escrow program constraints hold
     let escrow_state = &ledger.get(&escrow_id).unwrap().state;
@@ -364,8 +408,10 @@ fn main() {
     };
 
     println!("  Provider B commits result hash:");
-    println!("    Commitment: {:02x}{:02x}{:02x}{:02x}...",
-        result_commitment[0], result_commitment[1], result_commitment[2], result_commitment[3]);
+    println!(
+        "    Commitment: {:02x}{:02x}{:02x}{:02x}...",
+        result_commitment[0], result_commitment[1], result_commitment[2], result_commitment[3]
+    );
 
     // Later, provider reveals...
     let revealed_ok = {
@@ -377,8 +423,10 @@ fn main() {
     assert!(revealed_ok, "result reveal must match commitment");
 
     println!("  Provider B reveals result:");
-    println!("    Result hash: {:02x}{:02x}{:02x}{:02x}...",
-        result_hash[0], result_hash[1], result_hash[2], result_hash[3]);
+    println!(
+        "    Result hash: {:02x}{:02x}{:02x}{:02x}...",
+        result_hash[0], result_hash[1], result_hash[2], result_hash[3]
+    );
     println!("    Commitment match: VERIFIED");
     println!();
 
@@ -469,18 +517,34 @@ fn main() {
     let settle_result = executor.execute(&settle_turn, &mut ledger);
 
     match &settle_result {
-        TurnResult::Committed { receipt, computrons_used, .. } => {
+        TurnResult::Committed {
+            receipt,
+            computrons_used,
+            ..
+        } => {
             println!("  SETTLEMENT COMMITTED!");
-            println!("    Turn hash: {:02x}{:02x}{:02x}{:02x}...",
-                receipt.turn_hash[0], receipt.turn_hash[1],
-                receipt.turn_hash[2], receipt.turn_hash[3]);
+            println!(
+                "    Turn hash: {:02x}{:02x}{:02x}{:02x}...",
+                receipt.turn_hash[0],
+                receipt.turn_hash[1],
+                receipt.turn_hash[2],
+                receipt.turn_hash[3]
+            );
             println!("    Computrons used: {}", computrons_used);
-            println!("    Pre-state:  {:02x}{:02x}{:02x}{:02x}...",
-                receipt.pre_state_hash[0], receipt.pre_state_hash[1],
-                receipt.pre_state_hash[2], receipt.pre_state_hash[3]);
-            println!("    Post-state: {:02x}{:02x}{:02x}{:02x}...",
-                receipt.post_state_hash[0], receipt.post_state_hash[1],
-                receipt.post_state_hash[2], receipt.post_state_hash[3]);
+            println!(
+                "    Pre-state:  {:02x}{:02x}{:02x}{:02x}...",
+                receipt.pre_state_hash[0],
+                receipt.pre_state_hash[1],
+                receipt.pre_state_hash[2],
+                receipt.pre_state_hash[3]
+            );
+            println!(
+                "    Post-state: {:02x}{:02x}{:02x}{:02x}...",
+                receipt.post_state_hash[0],
+                receipt.post_state_hash[1],
+                receipt.post_state_hash[2],
+                receipt.post_state_hash[3]
+            );
         }
         TurnResult::Rejected { reason, at_action } => {
             panic!("Settlement REJECTED at {:?}: {}", at_action, reason);
@@ -494,12 +558,28 @@ fn main() {
 
     println!();
     println!("  Post-settlement state:");
-    println!("    Client:   100,000 -> {} (-{})", client_final, 100_000 - client_final);
-    println!("    Provider: 5,000 -> {} (+{})", provider_final, provider_final - 5_000);
+    println!(
+        "    Client:   100,000 -> {} (-{})",
+        client_final,
+        100_000 - client_final
+    );
+    println!(
+        "    Provider: 5,000 -> {} (+{})",
+        provider_final,
+        provider_final - 5_000
+    );
     println!("    Escrow:   {} (drained)", escrow_final);
 
-    assert_eq!(client_final, 100_000 - job_price, "client debited correctly");
-    assert_eq!(provider_final, 5_000 + job_price, "provider credited correctly");
+    assert_eq!(
+        client_final,
+        100_000 - job_price,
+        "client debited correctly"
+    );
+    assert_eq!(
+        provider_final,
+        5_000 + job_price,
+        "provider credited correctly"
+    );
     assert_eq!(escrow_final, 0, "escrow fully released");
 
     // Verify reputation chain
@@ -508,17 +588,25 @@ fn main() {
     assert_eq!(field_u64(&rep_state.fields[1]), 1, "successful = 1");
     assert_eq!(field_u64(&rep_state.fields[2]), 95, "score_sum = 95");
     assert_ne!(rep_state.fields[3], [0u8; 32], "chain hash is non-zero");
-    println!("    Reputation: 1 job, score 95, chain {:02x}{:02x}{:02x}{:02x}...",
-        rep_state.fields[3][0], rep_state.fields[3][1],
-        rep_state.fields[3][2], rep_state.fields[3][3]);
+    println!(
+        "    Reputation: 1 job, score 95, chain {:02x}{:02x}{:02x}{:02x}...",
+        rep_state.fields[3][0],
+        rep_state.fields[3][1],
+        rep_state.fields[3][2],
+        rep_state.fields[3][3]
+    );
 
     // Verify receipt log
     let log_state = &ledger.get(&receipt_log_id).unwrap().state;
     assert_eq!(field_u64(&log_state.fields[0]), 1, "receipt_count = 1");
     assert_ne!(log_state.fields[1], [0u8; 32], "receipt hash recorded");
-    println!("    ReceiptLog: 1 entry, hash {:02x}{:02x}{:02x}{:02x}...",
-        log_state.fields[1][0], log_state.fields[1][1],
-        log_state.fields[1][2], log_state.fields[1][3]);
+    println!(
+        "    ReceiptLog: 1 entry, hash {:02x}{:02x}{:02x}{:02x}...",
+        log_state.fields[1][0],
+        log_state.fields[1][1],
+        log_state.fields[1][2],
+        log_state.fields[1][3]
+    );
 
     // Conservation of value
     let total_value: u64 = ledger.get(&client_id).unwrap().state.balance
@@ -527,8 +615,11 @@ fn main() {
     // The other providers still have their original balances
     let others: u64 = ledger.get(&provider_a_id).unwrap().state.balance
         + ledger.get(&provider_c_id).unwrap().state.balance;
-    println!("    Conservation: client + winner + escrow = {} (expected {})",
-        total_value, 100_000 + 5_000);
+    println!(
+        "    Conservation: client + winner + escrow = {} (expected {})",
+        total_value,
+        100_000 + 5_000
+    );
     assert_eq!(total_value, 100_000 + 5_000);
     println!();
 
@@ -602,7 +693,10 @@ fn main() {
     let bad_turn = bad_settle.build();
     let bad_result = executor.execute(&bad_turn, &mut ledger);
 
-    assert!(bad_result.is_rejected(), "invalid settlement must be rejected");
+    assert!(
+        bad_result.is_rejected(),
+        "invalid settlement must be rejected"
+    );
     let (reason, _) = bad_result.unwrap_rejected();
     println!("  Turn REJECTED: {}", reason);
 
@@ -644,9 +738,18 @@ fn main() {
     // The receipt proves the state transition
     println!("  Receipt chain properties:");
     println!("    Agent: {}", settle_receipt.agent);
-    println!("    Pre-state:  {:02x}{:02x}...", settle_receipt.pre_state_hash[0], settle_receipt.pre_state_hash[1]);
-    println!("    Post-state: {:02x}{:02x}...", settle_receipt.post_state_hash[0], settle_receipt.post_state_hash[1]);
-    println!("    Effects hash: {:02x}{:02x}...", settle_receipt.effects_hash[0], settle_receipt.effects_hash[1]);
+    println!(
+        "    Pre-state:  {:02x}{:02x}...",
+        settle_receipt.pre_state_hash[0], settle_receipt.pre_state_hash[1]
+    );
+    println!(
+        "    Post-state: {:02x}{:02x}...",
+        settle_receipt.post_state_hash[0], settle_receipt.post_state_hash[1]
+    );
+    println!(
+        "    Effects hash: {:02x}{:02x}...",
+        settle_receipt.effects_hash[0], settle_receipt.effects_hash[1]
+    );
     println!();
     println!("  What the receipt chain proves:");
     println!("    - The exact sequence of state transitions");
@@ -666,9 +769,10 @@ fn main() {
 
     println!("  Marketplace holds {} capabilities:", mkt_caps.len());
     for cap in &mkt_caps {
-        println!("    slot {}: -> {} (perms: {:?})",
-            cap.slot, cap.target,
-            cap.permissions);
+        println!(
+            "    slot {}: -> {} (perms: {:?})",
+            cap.slot, cap.target, cap.permissions
+        );
     }
     println!();
     println!("  Provenance guarantees:");

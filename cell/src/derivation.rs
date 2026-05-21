@@ -239,11 +239,7 @@ impl DerivationTree {
     ///
     /// Walks the ancestor chain from `child` upward, checking if any node
     /// matches `ancestor`. Returns true if a path exists.
-    pub fn is_descendant_of(
-        &self,
-        child: (&CellId, u32),
-        ancestor: (&CellId, u32),
-    ) -> bool {
+    pub fn is_descendant_of(&self, child: (&CellId, u32), ancestor: (&CellId, u32)) -> bool {
         let ancestor_key = (*ancestor.0, ancestor.1);
         let mut current_key = Some((*child.0, child.1));
 
@@ -279,10 +275,7 @@ impl DerivationTree {
         }
 
         // Walk ancestors.
-        let mut current_key = self
-            .nodes
-            .get(&start_key)
-            .and_then(|n| n.parent_key());
+        let mut current_key = self.nodes.get(&start_key).and_then(|n| n.parent_key());
 
         while let Some(key) = current_key {
             if revocation_set.contains(&key) {
@@ -323,10 +316,7 @@ impl DerivationTree {
 
     /// Get all root nodes (nodes with no parent — original mints).
     pub fn roots(&self) -> Vec<&DerivationNode> {
-        self.nodes
-            .values()
-            .filter(|n| n.parent.is_none())
-            .collect()
+        self.nodes.values().filter(|n| n.parent.is_none()).collect()
     }
 
     /// Collect the full derivation path from a node to its root.

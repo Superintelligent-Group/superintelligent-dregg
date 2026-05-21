@@ -182,11 +182,7 @@ impl Poseidon2MerkleTree {
     ///
     /// Given a root, a leaf value, and a proof, verify that the leaf is a member
     /// of the tree with the given root.
-    pub fn verify_membership(
-        root: BabyBear,
-        leaf: BabyBear,
-        proof: &Poseidon2MerkleProof,
-    ) -> bool {
+    pub fn verify_membership(root: BabyBear, leaf: BabyBear, proof: &Poseidon2MerkleProof) -> bool {
         if proof.siblings.len() != proof.positions.len() {
             return false;
         }
@@ -251,7 +247,9 @@ impl Poseidon2MerkleTree {
         // Optimization: if the entire subtree rooted here is beyond the
         // populated leaves, return the precomputed empty hash for this level.
         // The first leaf index under this node is index * 4^level.
-        let first_leaf = index.checked_mul(4usize.pow(level as u32)).unwrap_or(usize::MAX);
+        let first_leaf = index
+            .checked_mul(4usize.pow(level as u32))
+            .unwrap_or(usize::MAX);
         if first_leaf >= self.leaves.len() {
             return empty_hash_at_level(level);
         }

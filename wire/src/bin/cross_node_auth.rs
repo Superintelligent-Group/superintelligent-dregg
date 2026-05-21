@@ -16,14 +16,14 @@
 //! Run with:
 //!   cargo run -p pyana-wire --bin cross_node_auth
 
-use pyana_bridge::present::{bytes_to_babybear, hash_index, BridgePresentationBuilder};
-use pyana_circuit::poseidon2;
+use pyana_bridge::present::{BridgePresentationBuilder, bytes_to_babybear, hash_index};
 use pyana_circuit::BabyBear;
+use pyana_circuit::poseidon2;
+use pyana_token::{AuthRequest, MacaroonToken};
 use pyana_wire::prelude::*;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
-use pyana_token::{AuthRequest, MacaroonToken};
 
 /// Hex-encode the first N bytes of a slice for display.
 fn short_hex(bytes: &[u8], n: usize) -> String {
@@ -353,9 +353,7 @@ async fn main() {
 
     match &result {
         WireMessage::PresentationResult {
-            accepted,
-            reason,
-            ..
+            accepted, reason, ..
         } => {
             if *accepted {
                 println!("  [Node B] Received proof, verifying with Poseidon2 STARK...");
@@ -392,7 +390,9 @@ async fn main() {
     }
     println!(
         "  [Attacker] Tampered {} bytes at positions {}..{}",
-        16, mid, mid + 16
+        16,
+        mid,
+        mid + 16
     );
 
     let mut conn2 = PeerConnection::connect(&addr_b.to_string()).await.unwrap();
@@ -420,9 +420,7 @@ async fn main() {
 
     match &tampered_result {
         WireMessage::PresentationResult {
-            accepted,
-            reason,
-            ..
+            accepted, reason, ..
         } => {
             assert!(!accepted, "tampered proof should be REJECTED");
             println!(
@@ -478,9 +476,7 @@ async fn main() {
 
     match &wrong_root_result {
         WireMessage::PresentationResult {
-            accepted,
-            reason,
-            ..
+            accepted, reason, ..
         } => {
             assert!(!accepted, "wrong federation root should be REJECTED");
             println!(
@@ -518,10 +514,7 @@ async fn main() {
         format_size(stark_proof_bytes.len()),
         stark_proof_bytes.len()
     );
-    println!(
-        "    Generation: {:.1}ms",
-        proof_time.as_secs_f64() * 1000.0
-    );
+    println!("    Generation: {:.1}ms", proof_time.as_secs_f64() * 1000.0);
     println!();
     println!("  Authorization Results:");
     println!("    Valid proof + correct root:   AUTHORIZED");

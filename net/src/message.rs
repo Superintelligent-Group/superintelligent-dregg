@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PeerMessage {
     // ─── Turn dissemination (causal chaining) ───────────────────────
-
     /// Publish a new turn to peers. Contains the turn hash, serialized turn data,
     /// and the hashes of causally-preceding turns.
     PublishTurn {
@@ -26,7 +25,6 @@ pub enum PeerMessage {
     TurnResponse { turn_data: Option<Vec<u8>> },
 
     // ─── Federation sync ────────────────────────────────────────────
-
     /// Broadcast an updated attested root (serialized AttestedRoot).
     AttestedRootUpdate { root: Vec<u8> },
 
@@ -37,7 +35,6 @@ pub enum PeerMessage {
     },
 
     // ─── Cell state sync ────────────────────────────────────────────
-
     /// Request the current state of a cell by ID.
     CellStateRequest { cell_id: [u8; 32] },
 
@@ -45,7 +42,6 @@ pub enum PeerMessage {
     CellStateResponse { cell: Option<Vec<u8>> },
 
     // ─── Atomic multi-party coordination ────────────────────────────
-
     /// Propose an atomic turn affecting multiple cells.
     ProposeAtomicTurn {
         forest_hash: [u8; 32],
@@ -151,9 +147,7 @@ mod tests {
                 turn_data: vec![10, 20, 30],
                 causal_deps: vec![],
             },
-            PeerMessage::RequestTurn {
-                turn_hash: [2; 32],
-            },
+            PeerMessage::RequestTurn { turn_hash: [2; 32] },
             PeerMessage::TurnResponse {
                 turn_data: Some(vec![99]),
             },
@@ -165,9 +159,7 @@ mod tests {
                 token_id: "token-xyz-123".to_string(),
                 signature: vec![0xaa; 64],
             },
-            PeerMessage::CellStateRequest {
-                cell_id: [3; 32],
-            },
+            PeerMessage::CellStateRequest { cell_id: [3; 32] },
             PeerMessage::CellStateResponse {
                 cell: Some(vec![42; 100]),
             },

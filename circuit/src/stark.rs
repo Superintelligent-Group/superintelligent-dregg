@@ -1415,10 +1415,18 @@ mod tests {
         // We use a wrapper struct to simulate a different AIR with the same width
         struct FakeAir;
         impl StarkAir for FakeAir {
-            fn width(&self) -> usize { 6 }
-            fn constraint_degree(&self) -> usize { 4 }
-            fn air_name(&self) -> &'static str { "pyana-poseidon2-v1" }
-            fn has_chain_continuity(&self) -> bool { true }
+            fn width(&self) -> usize {
+                6
+            }
+            fn constraint_degree(&self) -> usize {
+                4
+            }
+            fn air_name(&self) -> &'static str {
+                "pyana-poseidon2-v1"
+            }
+            fn has_chain_continuity(&self) -> bool {
+                true
+            }
             fn eval_constraints(
                 &self,
                 local: &[BabyBear],
@@ -1547,7 +1555,10 @@ mod tests {
             timestamp: Some(1716000001),
         };
         let result = verify_with_context(&air, &proof, &pi, Some(&ctx_diff));
-        assert!(result.is_err(), "Different timestamp must cause verification failure");
+        assert!(
+            result.is_err(),
+            "Different timestamp must cause verification failure"
+        );
     }
 
     #[test]
