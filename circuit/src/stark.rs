@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 // Polynomial operations over BabyBear
 // ============================================================================
 
-fn poly_eval(coeffs: &[BabyBear], x: BabyBear) -> BabyBear {
+pub(crate) fn poly_eval(coeffs: &[BabyBear], x: BabyBear) -> BabyBear {
     let mut result = BabyBear::ZERO;
     for &c in coeffs.iter().rev() {
         result = result * x + c;
@@ -51,7 +51,7 @@ const BABYBEAR_PRIMITIVE_ROOT: u32 = 31;
 
 /// Get a principal n-th root of unity where n = 2^log_n.
 /// BabyBear supports up to 2^27-th roots of unity.
-fn get_root_of_unity(log_n: u32) -> BabyBear {
+pub(crate) fn get_root_of_unity(log_n: u32) -> BabyBear {
     assert!(
         log_n <= 27,
         "BabyBear only supports roots of unity up to 2^27"
@@ -63,7 +63,7 @@ fn get_root_of_unity(log_n: u32) -> BabyBear {
 
 /// Build a multiplicative evaluation domain of size 2^log_n using roots of unity.
 /// Returns the domain {1, omega, omega^2, ..., omega^(n-1)} where omega^n = 1.
-fn build_evaluation_domain(num_points: usize) -> Vec<BabyBear> {
+pub(crate) fn build_evaluation_domain(num_points: usize) -> Vec<BabyBear> {
     assert!(
         num_points.is_power_of_two(),
         "Domain size must be a power of two"
@@ -79,7 +79,7 @@ fn build_evaluation_domain(num_points: usize) -> Vec<BabyBear> {
     domain
 }
 
-fn interpolate(xs: &[BabyBear], ys: &[BabyBear]) -> Vec<BabyBear> {
+pub(crate) fn interpolate(xs: &[BabyBear], ys: &[BabyBear]) -> Vec<BabyBear> {
     let n = xs.len();
     assert_eq!(n, ys.len());
     if n == 0 {

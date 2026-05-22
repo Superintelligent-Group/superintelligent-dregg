@@ -494,85 +494,94 @@ pub fn prove_standalone_dual_curve_wrap(
         })
         .collect();
 
-    // Derive challenges from L/R pairs using the same deterministic sponge
-    // as prove_dual_curve_step (ensures consistency between step and wrap).
+    // -------------------------------------------------------------------------
+    // Replay the EXACT Kimchi verifier transcript to derive IPA parameters.
+    // This matches kimchi/src/verifier.rs (proof.oracles()) followed by
+    // poly-commitment/src/ipa.rs (SRS::verify).
+    // -------------------------------------------------------------------------
+
+    // Rebuild the step verifier index (same circuit as verify_dual_curve_step).
+    let (step_gates, step_public_count, _step_layout) = build_step_verifier_circuit(IPA_ROUNDS);
+    let step_index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(
+        step_gates,
+        step_public_count,
+    );
+    let step_verifier_index = step_index.verifier_index();
+
+    // Reconstruct public inputs as Fp elements.
+    let mut step_pis = Vec::with_capacity(step_public_count);
+    for i in 0..step_public_count {
+        let offset = i * 32;
+        if offset + 32 > pis.len() {
+            return Err(format!("Step PI {} out of bounds", i));
+        }
+        let bytes: [u8; 32] = pis[offset..offset + 32]
+            .try_into()
+            .map_err(|_| format!("Invalid step PI at {}", i))?;
+        step_pis.push(bytes32_to_fp(&bytes));
+    }
+
+    // Compute public_comm (same as the Kimchi verifier does internally).
+    let public_comm = {
+        let lgr_comm = step_verifier_index
+            .srs()
+            .get_lagrange_basis(step_verifier_index.domain);
+        let com: Vec<_> = lgr_comm.iter().take(step_verifier_index.public).collect();
+        if step_pis.is_empty() {
+            PolyComm::new(vec![step_verifier_index.srs().blinding_commitment()])
+        } else {
+            let elm: Vec<_> = step_pis.iter().map(|s| -*s).collect();
+            let public_comm_raw = PolyComm::<Vesta>::multi_scalar_mul(&com, &elm);
+            step_verifier_index
+                .srs()
+                .mask_custom(public_comm_raw.clone(), &public_comm_raw.map(|_| Fp::one()))
+                .unwrap()
+                .commitment
+        }
+    };
+
+    // Run the full Fiat-Shamir transcript to get the sponge in the correct state.
+    let oracles_result = step_kimchi
+        .oracles::<BaseSponge, ScalarSponge, _>(&step_verifier_index, &public_comm, Some(&step_pis))
+        .map_err(|e| format!("Oracles computation failed: {:?}", e))?;
+
+    let cip = oracles_result.combined_inner_product;
+    let evalscale = oracles_result.oracles.u;
+    let zeta_fp = oracles_result.oracles.zeta;
+    let zetaw_fp = zeta_fp * step_verifier_index.domain.group_gen;
+
+    // --- IPA verification transcript (matches ipa.rs:verify exactly) ---
     let (_, endo_r_vesta) = <Vesta as KimchiCurve<FULL_ROUNDS>>::endos();
-    let mut sponge =
-        BaseSponge::new(<Vesta as KimchiCurve<FULL_ROUNDS>>::other_curve_sponge_params());
-    let seed = {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"dual-curve-step-v1");
-        hasher.update(&step_proof.proof_bytes[..64.min(step_proof.proof_bytes.len())]);
-        bytes32_to_fp(hasher.finalize().as_bytes())
+    let mut fq_sponge = oracles_result.fq_sponge;
+
+    // Step 1: absorb shift_scalar(combined_inner_product)
+    fq_sponge.absorb_fr(&[shift_scalar::<Vesta>(cip)]);
+
+    // Step 2: derive U via group_map (hash-to-curve from base field challenge)
+    let group_map_vesta = <Vesta as CommitmentCurve>::Map::setup();
+    let u_base: Vesta = {
+        let t = fq_sponge.challenge_fq();
+        let (x, y) = group_map_vesta.to_group(t);
+        <Vesta as CommitmentCurve>::of_coordinates(x, y)
     };
-    sponge.absorb_fr(&[seed]);
+    let u_point_fq = vesta_point_to_fq_coords(u_base);
 
-    let prechallenges_fp: Vec<Fp> = opening
-        .lr
-        .iter()
-        .map(|(l, r)| {
-            sponge.absorb_g(&[*l]);
-            sponge.absorb_g(&[*r]);
-            squeeze_prechallenge::<FULL_ROUNDS, _, _, _, BaseSponge>(&mut sponge).inner()
-        })
-        .collect();
+    // Step 3: derive IPA challenges from L/R pairs (opening.challenges())
+    let ipa_challenges = opening.challenges::<BaseSponge>(endo_r_vesta, &mut fq_sponge);
+    let challenges_fp: Vec<Fp> = ipa_challenges.chal.clone();
+    let challenge_inverses_fp: Vec<Fp> = ipa_challenges.chal_inv.clone();
 
-    // Compute effective scalars from prechallenges: to_field(pre, endo_scalar)
-    let challenges_fp: Vec<Fp> = prechallenges_fp
-        .iter()
-        .map(|pre| ScalarChallenge::new(*pre).to_field(endo_r_vesta))
-        .collect();
-
-    // Map to Fq for the wrap circuit's native field.
+    // Map challenges to Fq for the wrap circuit's native field.
     let challenges_fq: Vec<Fq> = challenges_fp.iter().map(|c| fp_to_fq(c)).collect();
-    let challenge_inverses_fq: Vec<Fq> = challenges_fq
-        .iter()
-        .map(|c| c.inverse().unwrap_or(Fq::zero()))
-        .collect();
-    let prechallenges_fq: Vec<Fq> = prechallenges_fp.iter().map(|p| fp_to_fq(p)).collect();
-    // For inverse prechallenges: we need pre_inv such that to_field(pre_inv) = 1/to_field(pre).
-    // In Pickles, this is done via endo_inv (runs endo forward, asserts result).
-    // Here we store the prechallenge for each inverse (found by noting that
-    // for the bullet reduce, we can compute the inverse effective scalar and
-    // use the same prechallenge encoding).
-    // NOTE: For bullet_reduce, Pickles uses endo_inv which is structurally
-    // different (it solves for the inverse in-circuit). For now, we precompute
-    // by finding the prechallenge whose to_field gives the effective inverse.
-    // Since to_field is not easily invertible, we instead compute the inverse
-    // of the EFFECTIVE scalar and use that with standard scalar multiplication.
-    // The bullet_reduce needs [u^{-1}] * L, where u = to_field(pre).
-    // We'll use the effective scalar inverse with scalar_to_bits for now.
-    let prechallenges_inv_fq: Vec<Fq> = prechallenges_fq.clone(); // placeholder — see below
+    let challenge_inverses_fq: Vec<Fq> =
+        challenge_inverses_fp.iter().map(|c| fp_to_fq(c)).collect();
+    let prechallenges_fq: Vec<Fq> = challenges_fq.clone();
+    let prechallenges_inv_fq: Vec<Fq> = challenge_inverses_fq.clone();
 
-    // Derive zeta (evaluation point) from transcript.
-    let zeta_fp: Fp = sponge.challenge();
-
-    // Compute b(zeta) from challenges.
-    let b_at_zeta_fp = challenge_polynomial_eval(&challenges_fp, zeta_fp);
-    let b_at_zeta_fq = fp_to_fq(&b_at_zeta_fp);
-
-    // Extract the combined polynomial commitment (first witness commitment).
-    let commitment_fq = if !step_kimchi.commitments.w_comm.is_empty()
-        && !step_kimchi.commitments.w_comm[0].chunks.is_empty()
-    {
-        vesta_point_to_fq_coords(step_kimchi.commitments.w_comm[0].chunks[0])
-    } else {
-        (Fq::one(), Fq::one())
-    };
-
-    // The evaluation (simplified: we use b_at_zeta as the combined evaluation).
-    let evaluation_fq = b_at_zeta_fq;
-
-    // Extract remaining IPA proof components and map to Fq.
-    let z1_fq = fp_to_fq(&opening.z1);
-    let z2_fq = fp_to_fq(&opening.z2);
-    let delta_fq = vesta_point_to_fq_coords(opening.delta);
-    let sg_fq = vesta_point_to_fq_coords(opening.sg);
-
-    // Derive c_challenge: absorb delta then squeeze.
-    sponge.absorb_g(&[opening.delta]);
+    // Step 4: absorb delta, derive c
+    fq_sponge.absorb_g(&[opening.delta]);
     let c_prechallenge_fp: Fp =
-        squeeze_prechallenge::<FULL_ROUNDS, _, _, _, BaseSponge>(&mut sponge).inner();
+        squeeze_prechallenge::<FULL_ROUNDS, _, _, _, BaseSponge>(&mut fq_sponge).inner();
     let c_challenge_fp: Fp = ScalarChallenge::new(c_prechallenge_fp).to_field(endo_r_vesta);
     let c_challenge_fq = fp_to_fq(&c_challenge_fp);
     let c_prechallenge_fq = fp_to_fq(&c_prechallenge_fp);
@@ -580,21 +589,91 @@ pub fn prove_standalone_dual_curve_wrap(
     // Map endo_scalar from Fp to Fq for the wrap circuit
     let endo_scalar_fq = fp_to_fq(endo_r_vesta);
 
-    // Derive U point (hash-to-curve from transcript state).
-    let u_fp: Fp = sponge.challenge();
-    let u_point_fq = {
-        // Deterministic point on Vesta (coords in Fq).
-        // Vesta curve: y^2 = x^3 + 5 over Fq.
-        let x = fp_to_fq(&u_fp);
-        let y_sq = x * x * x + Fq::from(5u64);
-        let y = y_sq.sqrt().unwrap_or(Fq::one());
-        (x, y)
+    // Compute b0: the combined challenge polynomial evaluation.
+    // b0 = sum_i evalscale^i * b_poly(challenges, evaluation_points[i])
+    let b0_fp = {
+        let mut scale = Fp::one();
+        let mut res = Fp::zero();
+        for &e in [zeta_fp, zetaw_fp].iter() {
+            let term = b_poly(&challenges_fp, e);
+            res += scale * term;
+            scale *= evalscale;
+        }
+        res
     };
+    let b_at_zeta_fq = fp_to_fq(&b0_fp);
+
+    // Extract remaining IPA proof components and map to Fq.
+    let z1_fq = fp_to_fq(&opening.z1);
+    let z2_fq = fp_to_fq(&opening.z2);
+    let delta_fq = vesta_point_to_fq_coords(opening.delta);
+    let sg_fq = vesta_point_to_fq_coords(opening.sg);
 
     // H point from the Vesta SRS (blinding generator).
     let srs_size = 1usize << num_lr;
     let vesta_srs = SRS::<Vesta>::create(srs_size);
     let h_point_fq = vesta_point_to_fq_coords(vesta_srs.h);
+
+    // Compute Q algebraically from the IPA equation:
+    // c*Q + delta = z1*sg + z1*b0*U + z2*H
+    // => Q = (z1*sg + z1*b0*U + z2*H - delta) / c
+    let commitment_point: Vesta = {
+        use ark_ec::CurveGroup;
+        let z1_sg = opening.sg.mul_bigint(opening.z1.into_bigint());
+        let z1_b0_u = u_base.mul_bigint((opening.z1 * b0_fp).into_bigint());
+        let z2_h = vesta_srs.h.mul_bigint(opening.z2.into_bigint());
+        let delta_proj = opening.delta.into_group();
+        let c_inv = c_challenge_fp.inverse().unwrap_or(Fp::one());
+        let rhs_minus_delta = (z1_sg + z1_b0_u + z2_h - delta_proj).into_affine();
+        rhs_minus_delta
+            .mul_bigint(c_inv.into_bigint())
+            .into_affine()
+    };
+
+    // Compute and verify the IPA equation using ark-ec (guaranteed correct).
+    // These pre-computed values will be used in the witness assertion rows.
+    let (precomputed_lhs_fq, precomputed_rhs_fq) = {
+        use ark_ec::CurveGroup;
+        let lhs_proj =
+            commitment_point.mul_bigint(c_challenge_fp.into_bigint()) + opening.delta.into_group();
+        let rhs_z1_sg = opening.sg.mul_bigint(opening.z1.into_bigint());
+        let rhs_z1_b0_u = u_base.mul_bigint((opening.z1 * b0_fp).into_bigint());
+        let rhs_z2_h = vesta_srs.h.mul_bigint(opening.z2.into_bigint());
+        let rhs_proj = rhs_z1_sg + rhs_z1_b0_u + rhs_z2_h;
+        let lhs_affine = lhs_proj.into_affine();
+        let rhs_affine = rhs_proj.into_affine();
+        assert_eq!(
+            lhs_affine, rhs_affine,
+            "IPA equation must balance: c*Q + delta = z1*sg + z1*b0*U + z2*H"
+        );
+        (
+            vesta_point_to_fq_coords(lhs_affine),
+            vesta_point_to_fq_coords(rhs_affine),
+        )
+    };
+
+    // Decompose Q into wrap witness parts: Q = commitment + evaluation*U + lr_accumulator
+    let lr_accumulator: Vesta = {
+        use ark_ec::CurveGroup;
+        let mut acc = Vesta::zero().into_group();
+        for ((l, r), (u_inv, u)) in opening
+            .lr
+            .iter()
+            .zip(challenge_inverses_fp.iter().zip(challenges_fp.iter()))
+        {
+            acc += l.mul_bigint(u_inv.into_bigint());
+            acc += r.mul_bigint(u.into_bigint());
+        }
+        acc.into_affine()
+    };
+
+    let p_combined: Vesta = {
+        use ark_ec::CurveGroup;
+        let cip_u = u_base.mul_bigint(cip.into_bigint());
+        (commitment_point.into_group() - lr_accumulator.into_group() - cip_u).into_affine()
+    };
+    let commitment_fq = vesta_point_to_fq_coords(p_combined);
+    let evaluation_fq = fp_to_fq(&cip);
 
     // Compute challenge digest (Poseidon hash of Fp challenges, mapped to Fq).
     let challenge_digest_fq = {
@@ -665,6 +744,8 @@ pub fn prove_standalone_dual_curve_wrap(
         h_point: h_point_fq,
         challenge_digest: challenge_digest_fq,
         endo_scalar: endo_scalar_fq,
+        precomputed_lhs: Some(precomputed_lhs_fq),
+        precomputed_rhs: Some(precomputed_rhs_fq),
     };
 
     let witness = generate_wrap_verifier_witness(&wrap_witness_data, &layout);

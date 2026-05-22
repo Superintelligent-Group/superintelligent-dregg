@@ -108,6 +108,9 @@ pub mod schnorr_curve;
 pub mod schnorr_sig;
 pub mod stark;
 pub mod temporal_absence_air;
+
+#[cfg(feature = "mina")]
+pub mod poseidon_stark;
 pub mod temporal_predicate_air;
 pub mod turn_validity_air;
 

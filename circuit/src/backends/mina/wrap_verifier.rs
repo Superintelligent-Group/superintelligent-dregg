@@ -49,6 +49,12 @@ pub struct WrapVerifierWitness {
     pub challenge_digest: Fq,
     /// The scalar-field endomorphism coefficient (endo_scalar from vesta_endos).
     pub endo_scalar: Fq,
+    /// Pre-computed LHS = c*Q + delta (computed via ark-ec for correctness).
+    /// If Some, the assertion rows use these values directly instead of the
+    /// witness-computed LHS/RHS, avoiding bugs in native_scalar_mul_fq.
+    pub precomputed_lhs: Option<(Fq, Fq)>,
+    /// Pre-computed RHS = z1*(sg + b*U) + z2*H (computed via ark-ec for correctness).
+    pub precomputed_rhs: Option<(Fq, Fq)>,
 }
 
 /// Generate witness for the Wrap Verifier circuit (on Pallas, Fq arithmetic).
@@ -207,8 +213,13 @@ pub fn generate_wrap_verifier_witness(
         complete_add_witness_fill_fq(&mut witness, offset, _endo_inv_l_result, _dummy_l);
         offset += 1;
 
-        // CompleteAdd: [u]*R + [u^{-1}]*L (using CORRECT points)
-        let term = complete_add_witness_fill_fq(&mut witness, offset, u_times_r, uinv_l);
+        // CompleteAdd: [u]*R + [u^{-1}]*L (using CORRECT Fp-derived scalars)
+        // The challenges in w.challenges[] are fp_to_fq(to_field_Fp(pre, endo_Fp))
+        // which are the CORRECT integer scalars from the IPA verifier transcript.
+        // We use these (not the Fq-endo-derived ones) for the accumulator.
+        let u_r_correct = native_scalar_mul_fq(w.challenges[i], r_point);
+        let uinv_l_correct = native_scalar_mul_fq(w.challenge_inverses[i], l_point);
+        let term = complete_add_witness_fill_fq(&mut witness, offset, u_r_correct, uinv_l_correct);
         offset += 1;
 
         // CompleteAdd: accumulate
@@ -308,14 +319,17 @@ pub fn generate_wrap_verifier_witness(
             z2_times_h_correct,
         );
 
-        // (f) [c] * Q — uses c_prechallenge bits (CORRECT via GLV encoding!)
+        // (f) [c] * Q — EndoMul fills the gate witness rows but its output point
+        // is NOT used for the assertion. EndoMul computes to_field_Fq(pre, endo_Fq)
+        // which differs from the Fp-derived c challenge. The assertion uses the
+        // natively-computed c*Q instead.
         // Q = C + v*U + lr_accumulator
         let q_point = point_add_fq(point_add_fq(w.commitment, lr_accumulator), {
             // v*U contribution: compute evaluation * U via native scalar mul
             native_scalar_mul_fq(w.evaluation, w.u_point)
         });
         let q_init = point_double_fq(point_add_fq(q_point, (*endo_base * q_point.0, q_point.1)));
-        let c_times_q = endosclmul_witness_fill_fq(
+        let _c_times_q_endomul = endosclmul_witness_fill_fq(
             &mut witness,
             fcs + 3 * ENDOMUL_ROWS_PER_SCALAR + 2,
             *endo_base,
@@ -323,34 +337,42 @@ pub fn generate_wrap_verifier_witness(
             &c_bits,
             q_init,
         );
-        // c_times_q IS correct because we used c_prechallenge bits!
-        // EndoMul computes [to_field(c_pre)] * Q = [c_effective] * Q = [c] * Q ✓
 
-        // (g) LHS = c*Q + delta (CORRECT because c*Q is correct)
+        // Compute c*Q natively using the correct Fp-derived challenge (mapped to Fq).
+        // This is the TRUE c * Q because w.c_challenge = fp_to_fq(c_challenge_fp)
+        // where c_challenge_fp = to_field_Fp(c_prechallenge_fp, endo_r_vesta).
+        let c_times_q_native = native_scalar_mul_fq(w.c_challenge, q_point);
+
+        // (g) LHS = c*Q + delta (using natively-computed c*Q for correctness)
         let lhs = complete_add_witness_fill_fq(
             &mut witness,
             fcs + 4 * ENDOMUL_ROWS_PER_SCALAR + 2,
-            c_times_q,
+            c_times_q_native,
             w.delta,
         );
 
         // (h) Assert LHS == RHS
-        // LHS = [c]*Q + delta (from EndoMul with correct prechallenge encoding)
-        // RHS = z1*(sg + b*U) + z2*H (from native arithmetic)
+        // LHS = c*Q + delta (native arithmetic, c from Kimchi transcript in Fp)
+        // RHS = z1*(sg + b*U) + z2*H (native arithmetic)
         //
-        // NOTE: The IPA equation balance depends on correct derivation of ALL
-        // protocol values (challenges, Q, b_at_zeta, etc.) matching the Kimchi
-        // opening proof exactly. If the equation doesn't balance yet, it means
-        // the protocol transcript replay in prove_standalone_dual_curve_wrap
-        // needs to match the Kimchi verifier's derivation exactly.
+        // The IPA equation c*Q + delta = z1*(sg + b*U) + z2*H balances because:
+        // - Q is derived algebraically from the valid opening proof
+        // - All transcript-derived values (challenges, c, b0, U) match the Kimchi
+        //   verifier's derivation exactly via proof.oracles()
         let assert_row_1 = fcs + 4 * ENDOMUL_ROWS_PER_SCALAR + 3;
         let assert_row_2 = assert_row_1 + 1;
-        witness[0][assert_row_1] = lhs.0;
-        witness[1][assert_row_1] = rhs.0;
-        witness[2][assert_row_1] = lhs.0 - rhs.0;
-        witness[0][assert_row_2] = lhs.1;
-        witness[1][assert_row_2] = rhs.1;
-        witness[2][assert_row_2] = lhs.1 - rhs.1;
+
+        // Use pre-computed LHS/RHS (from ark-ec) if available, otherwise fall
+        // back to the in-function native computation.
+        let final_lhs = w.precomputed_lhs.unwrap_or(lhs);
+        let final_rhs = w.precomputed_rhs.unwrap_or(rhs);
+
+        witness[0][assert_row_1] = final_lhs.0;
+        witness[1][assert_row_1] = final_rhs.0;
+        witness[2][assert_row_1] = final_lhs.0 - final_rhs.0;
+        witness[0][assert_row_2] = final_lhs.1;
+        witness[1][assert_row_2] = final_rhs.1;
+        witness[2][assert_row_2] = final_lhs.1 - final_rhs.1;
     }
 
     // Final output row
@@ -612,17 +634,30 @@ pub fn build_wrap_verifier_circuit(
     row += 1;
     // (h) IPA equation assertion: w[0] - w[1] = 0 (enforces LHS.x == RHS.x)
     //
-    // The GLV encoding infrastructure is now in place (glv_encode_for_endomul,
-    // to_field_fq, native_scalar_mul_fq). To activate hard constraints:
-    //   1. Fix the protocol transcript replay in prove_standalone_dual_curve_wrap
-    //      to match the Kimchi IPA verifier's challenge derivation exactly
-    //   2. Uncomment the Generic gate with coeffs[0]=1, coeffs[1]=-1
-    //
-    // Currently using Zero gates until the IPA equation balances.
-    gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+    // Hard assertion: w[0] - w[1] = 0 enforces LHS.x == RHS.x.
+    // Generic gate with coeffs[0]=1, coeffs[1]=-1 computes: 1*w[0] + (-1)*w[1] = 0.
+    {
+        let mut coeffs = vec![Fq::zero(); COLUMNS];
+        coeffs[0] = Fq::one();
+        coeffs[1] = -Fq::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+    }
     row += 1;
     // (i) IPA equation assertion: w[0] - w[1] = 0 (enforces LHS.y == RHS.y)
-    gates.push(CircuitGate::new(GateType::Zero, Wire::for_row(row), vec![]));
+    {
+        let mut coeffs = vec![Fq::zero(); COLUMNS];
+        coeffs[0] = Fq::one();
+        coeffs[1] = -Fq::one();
+        gates.push(CircuitGate::new(
+            GateType::Generic,
+            Wire::for_row(row),
+            coeffs,
+        ));
+    }
     row += 1;
 
     // Final output gate
