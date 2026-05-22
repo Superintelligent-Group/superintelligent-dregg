@@ -914,6 +914,55 @@ mod tests {
         );
     }
 
+    /// MulAir: a^6 * b == c (degree 7), copied from Plonky3's own test
+    struct MulAir7;
+
+    impl<F: PrimeCharacteristicRing + Sync> BaseAir<F> for MulAir7 {
+        fn width(&self) -> usize {
+            3 // [a, b, c]
+        }
+    }
+
+    impl<AB: AirBuilder> Air<AB> for MulAir7 {
+        fn eval(&self, builder: &mut AB) {
+            let main = builder.main();
+            let local = main.current_slice();
+            let a: AB::Expr = local[0].into();
+            let b: AB::Expr = local[1].into();
+            let c: AB::Expr = local[2].into();
+            // Constraint: a^6 * b == c  (total degree 7)
+            builder.assert_zero(a.exp_u64(6) * b - c);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn plonky3_mulair7_our_config() {
+        use rand::{Rng, SeedableRng, rngs::SmallRng};
+        let config = create_config();
+        let air = MulAir7;
+
+        let mut rng = SmallRng::seed_from_u64(42);
+        let values: Vec<P3BabyBear> = (0..16)
+            .flat_map(|_| {
+                let a = P3BabyBear::new(rng.random_range(1..1000000));
+                let b = P3BabyBear::new(rng.random_range(1..1000000));
+                let c = a.exp_u64(6) * b;
+                [a, b, c]
+            })
+            .collect();
+        let matrix = RowMajorMatrix::new(values, 3);
+        let public: Vec<P3BabyBear> = vec![];
+
+        let proof = prove(&config, &air, matrix, &public);
+        let result = verify(&config, &air, &proof, &public);
+        assert!(
+            result.is_ok(),
+            "MulAir7 with our config failed: {:?}",
+            result.err()
+        );
+    }
+
     /// Parameterized degree AIR: x^D == witness
     struct MinimalDegreeNAir<const D: u64>;
 
