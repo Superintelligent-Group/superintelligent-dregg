@@ -1173,6 +1173,7 @@ pub fn execute_committed_fulfillment_flow(
 
     let turn = Turn {
         conservation_proof: Some(proof_bytes),
+        sovereign_witnesses: std::collections::HashMap::new(),
         ..partial_turn
     };
 

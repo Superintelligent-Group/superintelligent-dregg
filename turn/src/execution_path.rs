@@ -113,6 +113,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
 
         assert_eq!(
@@ -164,6 +165,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
 
         assert_eq!(
@@ -188,6 +190,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![[0xaa; 32]],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
 
         assert_eq!(

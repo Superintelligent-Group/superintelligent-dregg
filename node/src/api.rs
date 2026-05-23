@@ -969,7 +969,7 @@ async fn post_submit_turn(
         depends_on: vec![],
         previous_receipt_hash: None,
         conservation_proof: None,
-        sovereign_witnesses: Default::default(),
+        sovereign_witnesses: std::collections::HashMap::new(),
     };
 
     // Sign the turn.

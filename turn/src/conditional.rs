@@ -920,6 +920,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
         let ct = ConditionalTurn {
             turn,
@@ -1058,6 +1059,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
         let ct = ConditionalTurn {
             turn,
@@ -1082,6 +1084,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
         let ct = ConditionalTurn {
             turn,
@@ -1108,6 +1111,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
         let ct = ConditionalTurn {
             turn,
@@ -1536,6 +1540,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
         let ct = ConditionalTurn {
             turn,
@@ -1562,6 +1567,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
         let ct = ConditionalTurn {
             turn,
@@ -1597,6 +1603,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
         let ct = ConditionalTurn {
             turn,
@@ -1622,6 +1629,7 @@ mod tests {
             previous_receipt_hash: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
         };
         let ct = ConditionalTurn {
             turn,

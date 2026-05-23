@@ -525,6 +525,7 @@ mod tests {
             valid_until: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
             previous_receipt_hash: None,
         }
     }
@@ -751,6 +752,7 @@ mod tests {
             valid_until: None,
             depends_on: vec![],
             conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
             previous_receipt_hash: None,
         };
 

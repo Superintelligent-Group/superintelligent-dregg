@@ -110,6 +110,8 @@ fn make_transfer_turn(
         valid_until: None,
         depends_on: vec![],
         previous_receipt_hash: None,
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
     }
 }
 
@@ -141,6 +143,8 @@ fn make_set_field_turn(agent: CellId, index: usize, value: [u8; 32], nonce: u64)
         valid_until: None,
         depends_on: vec![],
         previous_receipt_hash: None,
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
     }
 }
 
@@ -168,6 +172,8 @@ fn make_noop_turn(agent: CellId, nonce: u64) -> Turn {
         valid_until: None,
         depends_on: vec![],
         previous_receipt_hash: None,
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
     }
 }
 

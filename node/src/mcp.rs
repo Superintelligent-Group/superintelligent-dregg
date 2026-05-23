@@ -573,7 +573,7 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
         depends_on: vec![],
         previous_receipt_hash: None,
         conservation_proof: None,
-        sovereign_witnesses: Default::default(),
+        sovereign_witnesses: std::collections::HashMap::new(),
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -705,7 +705,7 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
         depends_on: vec![],
         previous_receipt_hash: None,
         conservation_proof: None,
-        sovereign_witnesses: Default::default(),
+        sovereign_witnesses: std::collections::HashMap::new(),
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -785,7 +785,7 @@ async fn tool_revoke_capability(params: &Value, state: &NodeState) -> McpToolRes
         depends_on: vec![],
         previous_receipt_hash: None,
         conservation_proof: None,
-        sovereign_witnesses: Default::default(),
+        sovereign_witnesses: std::collections::HashMap::new(),
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -1116,7 +1116,7 @@ async fn tool_delegate(params: &Value, state: &NodeState) -> McpToolResult {
         depends_on: vec![],
         previous_receipt_hash: None,
         conservation_proof: None,
-        sovereign_witnesses: Default::default(),
+        sovereign_witnesses: std::collections::HashMap::new(),
     };
 
     let signed = s.wallet.sign_turn(&turn);
@@ -1466,7 +1466,7 @@ async fn tool_bridge_note(params: &Value, state: &NodeState) -> McpToolResult {
         depends_on: vec![],
         previous_receipt_hash: None,
         conservation_proof: None,
-        sovereign_witnesses: Default::default(),
+        sovereign_witnesses: std::collections::HashMap::new(),
     };
 
     let signed = s.wallet.sign_turn(&turn);

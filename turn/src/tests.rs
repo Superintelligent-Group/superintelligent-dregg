@@ -4704,6 +4704,7 @@ fn test_budget_gate_refund_on_turn_failure() {
         depends_on: vec![],
         conservation_proof: None,
         previous_receipt_hash: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
     };
 
     let result = executor.execute(&turn, &mut ledger);

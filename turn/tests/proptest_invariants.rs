@@ -359,6 +359,7 @@ proptest! {
                         previous_receipt_hash: None,
                         depends_on: vec![],
             conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
                     };
 
                     let result = executor.execute(&turn, &mut ledger);
@@ -431,6 +432,7 @@ fn build_receipt_chain(
             previous_receipt_hash,
             depends_on: vec![],
             conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
         };
 
         let result = executor.execute(&turn, ledger);
@@ -586,6 +588,7 @@ proptest! {
                 previous_receipt_hash: None,
                 depends_on: vec![],
             conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
             };
 
             let result = executor.execute(&turn, &mut ledger);
@@ -648,6 +651,7 @@ proptest! {
                 previous_receipt_hash: None,
                 depends_on: vec![],
             conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
             };
 
             let result = executor.execute(&turn, &mut ledger);
@@ -699,6 +703,7 @@ proptest! {
                 previous_receipt_hash: None,
                 depends_on: vec![],
             conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
             };
 
             let result = executor.execute(&turn, &mut ledger);
