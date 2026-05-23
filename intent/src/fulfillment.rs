@@ -818,6 +818,7 @@ pub fn create_fulfillment_turn(
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     ConditionalTurn {
@@ -1210,6 +1211,7 @@ pub fn execute_committed_fulfillment_flow(
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     let turn_hash = partial_turn.hash();
@@ -1241,6 +1243,7 @@ pub fn execute_committed_fulfillment_flow(
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
         ..partial_turn
     };
 

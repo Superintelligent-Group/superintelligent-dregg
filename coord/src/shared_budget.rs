@@ -69,11 +69,9 @@
 //! Credits (deposits into the pool) immediately increase the true balance and can
 //! trigger allowance expansion without a full rebalance.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use pyana_blocklace::finality::{
-    self, Block as BlocBlock, BlockId as BlocBlockId, Blocklace, Payload,
-};
+use pyana_blocklace::finality::{Block as BlocBlock, BlockId as BlocBlockId, Blocklace, Payload};
 use pyana_cell::CellId;
 use serde::{Deserialize, Serialize};
 
@@ -406,14 +404,19 @@ impl SharedResourceBudget {
     /// - `blocklace`: The local blocklace view.
     /// - `resource_id`: The 32-byte resource identifier to filter debits for.
     pub fn sync_from_blocklace(&mut self, blocklace: &Blocklace, resource_id: &[u8; 32]) {
-        for participant in &self.participants {
+        // Collect participants to avoid borrow conflict (participants borrows self
+        // immutably, but we need to mutate allowances).
+        let participants: Vec<ParticipantId> = self.participants.clone();
+        for participant in &participants {
             let creator_key: [u8; 32] = *participant.as_bytes();
             let chain = blocklace.virtual_chain(&creator_key);
             let total_spent: u64 = chain
                 .iter()
                 .filter_map(|block| extract_debit_for_resource(block, resource_id))
                 .sum();
-            self.update_spent(*participant, total_spent);
+            if let Some(allowance) = self.allowances.get_mut(participant) {
+                allowance.spent = total_spent;
+            }
         }
     }
 
@@ -680,9 +683,10 @@ impl SharedBudgetObserver {
                 if let Some(budget) = self.budgets.get_mut(&resource_id) {
                     budget.record_observed_debit(agent, amount);
                     if budget.is_overspent() && budget.state == ResourceState::Open {
-                        // Collect all block IDs that contributed to this resource's debits.
-                        let conflicting = self.get_conflicting_blocks(&resource_id, budget);
-                        budget.escalate(conflicting);
+                        // Escalate with an empty conflicting set. The caller should
+                        // provide the actual conflicting blocks from their blocklace
+                        // scan when calling `resolve_with_ordering`.
+                        budget.escalate(Vec::new());
                         escalated.push(resource_id);
                     }
                 }
@@ -690,19 +694,6 @@ impl SharedBudgetObserver {
         }
 
         escalated
-    }
-
-    /// Gather the block IDs whose debits are involved in the overspend for a resource.
-    fn get_conflicting_blocks(
-        &self,
-        _resource_id: &[u8; 32],
-        _budget: &SharedResourceBudget,
-    ) -> Vec<BlocBlockId> {
-        // In a full implementation, this would walk the blocklace to find all
-        // debit blocks for this resource in the current epoch. For now we return
-        // an empty vec -- the caller should provide the actual conflicting blocks
-        // from their blocklace scan when calling `resolve_with_ordering`.
-        Vec::new()
     }
 }
 

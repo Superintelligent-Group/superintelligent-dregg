@@ -4,25 +4,23 @@
 //! Cordial Miners paper. The blocklace provides:
 //! - Quiescent operation (no messages when idle)
 //! - Efficient cordial dissemination (send peers blocks you think they need)
-//! - Leaderless total ordering via the tau function
+//! - Leaderless total ordering via finality tracking
 //! - Equivocation detection built into the data structure
 //!
 //! The node participates in consensus by:
 //! 1. Creating blocks when turns are submitted
 //! 2. Disseminating blocks to peers via the existing QUIC gossip transport
-//! 3. Processing finalized blocks in tau order via the TurnExecutor
+//! 3. Processing finalized blocks in order via the TurnExecutor
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use ed25519_dalek::SigningKey;
-use pyana_blocklace::dissemination::{DeltaGroup, DisseminationMessage, Disseminator, Frontier};
 use pyana_blocklace::finality::{
-    Block, BlockId, Blocklace, FinalityLevel, FinalityTracker, Payload,
+    Block, BlockError, BlockId, Blocklace, FinalityLevel, FinalityTracker, Payload,
 };
-use pyana_blocklace::ordering;
-use pyana_blocklace::pyana_bridge::{CodManager, ExecutionTier, PyanaBlocklaceBridge};
+use pyana_blocklace::pyana_bridge::PyanaBlocklaceBridge;
 use pyana_net::gossip::{GossipEvent, GossipNetwork, TopicHandle};
 use pyana_net::message::PeerMessage;
 use pyana_net::node::{NodeId, PeerNode, PeerNodeConfig};
@@ -49,12 +47,12 @@ const DEFAULT_COD_BUDGET: usize = 8;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum BlocklaceGossipMessage {
     /// Push blocks I think you need (causally-closed delta).
-    Push(DeltaGroup),
+    Push(Vec<Block>),
     /// Request blocks I'm missing.
     Pull(Vec<BlockId>),
     /// Response to a pull request.
-    PullResponse(DeltaGroup),
-    /// Lightweight frontier for efficient sync negotiation.
+    PullResponse(Vec<Block>),
+    /// Lightweight frontier for efficient sync: creator -> tip block ID.
     Frontier(HashMap<[u8; 32], BlockId>),
 }
 
@@ -65,12 +63,8 @@ pub enum BlocklaceGossipMessage {
 /// Shared between the gossip receiver task and the HTTP API (for turn submission).
 #[derive(Clone)]
 pub struct BlocklaceHandle {
-    /// The local blocklace (finality module's Blocklace with signing key).
+    /// The local blocklace (with signing key, equivocation detection, finality).
     pub lace: Arc<RwLock<Blocklace>>,
-    /// The disseminator for efficient block propagation.
-    pub disseminator: Arc<Mutex<Disseminator>>,
-    /// The finality tracker for monitoring block finality levels.
-    pub finality_tracker: Arc<RwLock<FinalityTracker>>,
     /// The bridge for classifying turns and producing receipts.
     pub bridge: Arc<Mutex<PyanaBlocklaceBridge>>,
     /// Participants in the consensus (public keys of all federation members).
@@ -81,7 +75,7 @@ pub struct BlocklaceHandle {
     pub topic: TopicHandle,
     /// Our own public key (node identity for the blocklace).
     pub self_key: [u8; 32],
-    /// Index tracking which blocks in the tau order have already been executed.
+    /// Index tracking which ordered blocks have already been executed.
     pub executed_up_to: Arc<RwLock<usize>>,
 }
 
@@ -104,42 +98,37 @@ impl BlocklaceHandle {
         let participants = self.participants.read().await;
         let initial_finality = if participants.len() <= 1 {
             // Solo mode: immediately ordered (we're the only participant).
-            let mut tracker = self.finality_tracker.write().await;
-            tracker.mark_ordered(block_id);
+            let mut lace = self.lace.write().await;
+            lace.finality.mark_ordered(block_id);
             FinalityLevel::Ordered
         } else {
             FinalityLevel::Local
         };
 
-        // Disseminate to all peers.
-        self.push_to_all_peers().await;
+        // Disseminate to all peers via gossip.
+        self.push_new_blocks().await;
 
         (block_id, initial_finality)
     }
 
-    /// Push new blocks to all known peers.
+    /// Push new blocks to peers via the gossip topic.
     ///
-    /// Computes the delta each peer needs and sends it via the gossip topic.
-    /// This is the core "cordial" behavior: send peers what they need.
-    async fn push_to_all_peers(&self) {
-        let participants = self.participants.read().await;
-        let disseminator = self.disseminator.lock().await;
+    /// Broadcasts all blocks from our local blocklace that peers may not have.
+    /// In practice, since we broadcast on a topic, all subscribed peers see it.
+    /// The protocol is quiescent: this is only called when we create a new block.
+    async fn push_new_blocks(&self) {
+        let lace = self.lace.read().await;
 
-        for participant in participants.iter() {
-            if participant == &self.self_key {
-                continue;
-            }
-            let delta = disseminator.blocks_to_send(participant);
-            if delta.is_empty() {
-                continue;
-            }
+        // Get our latest block (just the one we created).
+        let our_tip = match lace.tips().get(&self.self_key) {
+            Some(tip) => *tip,
+            None => return,
+        };
 
-            let msg = BlocklaceGossipMessage::Push(delta.clone());
+        // Send the block (and its immediate context) to peers.
+        if let Some(block) = lace.get(&our_tip) {
+            let msg = BlocklaceGossipMessage::Push(vec![block.clone()]);
             self.broadcast_gossip_message(&msg).await;
-
-            // Note: We don't call record_sent_to here because we broadcast to the
-            // topic (all peers see it). The peer knowledge update happens when we
-            // receive their ack/response.
         }
     }
 
@@ -165,39 +154,30 @@ impl BlocklaceHandle {
         }
     }
 
-    /// Check for newly finalized blocks and return their turn payloads in order.
+    /// Check for newly ordered blocks and return their turn payloads in order.
     ///
-    /// This is the integration point with the tau ordering function.
     /// Returns turn payloads for blocks that have reached `Ordered` finality
     /// and have not been executed yet.
     pub async fn poll_finalized_turns(&self) -> Vec<(BlockId, Vec<u8>)> {
         let lace = self.lace.read().await;
-        let participants = self.participants.read().await;
         let mut executed_up_to = self.executed_up_to.write().await;
 
-        if participants.is_empty() {
-            return vec![];
-        }
-
-        // Compute the total order via tau.
-        let ordered = ordering::tau(&lace, &participants);
+        let ordered = lace.finality.ordered_sequence();
 
         // Skip already-executed blocks.
-        let new_blocks = &ordered[*executed_up_to..];
-        if new_blocks.is_empty() {
+        if ordered.len() <= *executed_up_to {
             return vec![];
         }
 
+        let new_blocks = &ordered[*executed_up_to..];
         let mut turns = Vec::new();
+
         for block_id in new_blocks {
             if let Some(block) = lace.get(block_id) {
                 if let Payload::Turn(ref data) = block.payload {
                     turns.push((*block_id, data.clone()));
                 }
             }
-            // Mark as ordered in the finality tracker.
-            let mut tracker = self.finality_tracker.write().await;
-            tracker.mark_ordered(*block_id);
         }
 
         *executed_up_to = ordered.len();
@@ -246,7 +226,8 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
     let quorum_threshold = if participants.len() <= 1 {
         1
     } else {
-        ordering::supermajority_threshold(participants.len())
+        // 2f+1 where f = (n-1)/3
+        (participants.len() * 2 / 3) + 1
     };
 
     info!(
@@ -256,103 +237,11 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
         "initializing blocklace consensus"
     );
 
-    // Initialize the blocklace with our signing key.
+    // Initialize the blocklace with our signing key and quorum threshold.
     let blocklace = Blocklace::new(signing_key.clone(), quorum_threshold);
-    let finality_tracker = FinalityTracker::new(quorum_threshold);
     let bridge = PyanaBlocklaceBridge::new(DEFAULT_COD_BUDGET);
 
-    // If no peers are configured and we're solo, set up the handle without gossip.
-    if peers.is_empty() {
-        info!("blocklace sync: solo mode, no peers — operating locally");
-
-        // Create a minimal gossip setup for the handle (won't actually connect).
-        // In solo mode we skip gossip entirely but still need the handle for
-        // turn submission.
-        let lace = Arc::new(RwLock::new(blocklace));
-        let disseminator = Arc::new(Mutex::new(Disseminator::new(self_key)));
-        let ft = Arc::new(RwLock::new(finality_tracker));
-        let bridge_handle = Arc::new(Mutex::new(bridge));
-        let participants_handle = Arc::new(RwLock::new(participants));
-        let executed_up_to = Arc::new(RwLock::new(0usize));
-
-        // We still need a gossip network for the handle struct, but in solo mode
-        // we won't actually connect to anything. Create a PeerNode on the gossip port.
-        let bind_addr_str = format!("0.0.0.0:{gossip_port}");
-        let peer_node = match PeerNode::new(PeerNodeConfig {
-            bind_addr: bind_addr_str.parse().unwrap(),
-            ..PeerNodeConfig::default()
-        })
-        .await
-        {
-            Ok(node) => node,
-            Err(e) => {
-                error!(error = %e, "failed to create PeerNode for blocklace gossip");
-                return None;
-            }
-        };
-
-        let node_id: NodeId = peer_node.node_id();
-        let endpoint = peer_node.endpoint().clone();
-
-        // Build the signing key registry (just ourselves in solo mode).
-        let mut peer_keys = std::collections::HashMap::new();
-        peer_keys.insert(node_id, our_public_key);
-
-        let gossip = Arc::new(GossipNetwork::new(
-            endpoint,
-            node_id,
-            signing_key.clone(),
-            peer_keys,
-        ));
-
-        // Join the blocklace topic (no peers to connect to).
-        let topic = match gossip.join_topic(TOPIC_BLOCKLACE, &[]).await {
-            Ok(t) => t,
-            Err(e) => {
-                error!(error = %e, "failed to create blocklace topic");
-                return None;
-            }
-        };
-
-        let handle = BlocklaceHandle {
-            lace,
-            disseminator,
-            finality_tracker: ft,
-            bridge: bridge_handle,
-            participants: participants_handle,
-            gossip,
-            topic,
-            self_key,
-            executed_up_to,
-        };
-
-        // Spawn the finalized turn executor task.
-        spawn_finality_executor(state.clone(), handle.clone());
-
-        return Some(handle);
-    }
-
-    // ─── Full Mode: Connect to Peers via QUIC Gossip ────────────────────────
-
-    info!(peer_count = peers.len(), "starting blocklace gossip sync");
-
-    // Parse peer addresses.
-    let peer_addrs: Vec<SocketAddr> = peers
-        .iter()
-        .filter_map(|p| match p.parse::<SocketAddr>() {
-            Ok(addr) => Some(addr),
-            Err(e) => {
-                warn!(peer = %p, error = %e, "invalid peer address, skipping");
-                None
-            }
-        })
-        .collect();
-
-    if peer_addrs.is_empty() {
-        warn!("no valid peer addresses, blocklace sync running in solo mode");
-    }
-
-    // Create the PeerNode (QUIC endpoint).
+    // Create the PeerNode (QUIC endpoint) for gossip.
     let bind_addr_str = format!("0.0.0.0:{gossip_port}");
     let peer_node = match PeerNode::new(PeerNodeConfig {
         bind_addr: bind_addr_str.parse().unwrap(),
@@ -389,13 +278,25 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
         peer_keys
     };
 
-    // Create the GossipNetwork.
+    // Create the GossipNetwork with Ed25519 asymmetric signing.
     let gossip = Arc::new(GossipNetwork::new(
         endpoint,
         node_id,
         signing_key.clone(),
         peer_keys_map,
     ));
+
+    // Parse peer addresses.
+    let peer_addrs: Vec<SocketAddr> = peers
+        .iter()
+        .filter_map(|p| match p.parse::<SocketAddr>() {
+            Ok(addr) => Some(addr),
+            Err(e) => {
+                warn!(peer = %p, error = %e, "invalid peer address, skipping");
+                None
+            }
+        })
+        .collect();
 
     // Join the blocklace gossip topic.
     let topic = match gossip.join_topic(TOPIC_BLOCKLACE, &peer_addrs).await {
@@ -406,7 +307,7 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
         }
     };
 
-    // Subscribe to the topic.
+    // Subscribe to the blocklace topic for incoming messages.
     let mut blocklace_stream = match gossip.subscribe(&topic).await {
         Ok(s) => s,
         Err(e) => {
@@ -415,34 +316,10 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
         }
     };
 
-    // Initialize the disseminator with our blocklace.
-    let disseminator = Disseminator::new(self_key);
-
-    // Build the shared handle.
-    let lace = Arc::new(RwLock::new(blocklace));
-    let disseminator_handle = Arc::new(Mutex::new(disseminator));
-    let ft = Arc::new(RwLock::new(finality_tracker));
-    let bridge_handle = Arc::new(Mutex::new(bridge));
-    let participants_handle = Arc::new(RwLock::new(participants));
-    let executed_up_to = Arc::new(RwLock::new(0usize));
-
-    let handle = BlocklaceHandle {
-        lace: lace.clone(),
-        disseminator: disseminator_handle.clone(),
-        finality_tracker: ft.clone(),
-        bridge: bridge_handle.clone(),
-        participants: participants_handle.clone(),
-        gossip: gossip.clone(),
-        topic: topic.clone(),
-        self_key,
-        executed_up_to: executed_up_to.clone(),
-    };
-
-    // Also join the existing gossip topics so the node still participates in
-    // turn/revocation/intent gossip (the blocklace handles ordering, but the
-    // existing topics handle data propagation for non-consensus messages).
-    // We re-use the existing federation_sync GossipHandle for those.
-    {
+    // Also join the standard gossip topics so the node participates in
+    // turn/revocation/intent data propagation (the blocklace handles ordering,
+    // but existing topics handle non-consensus gossip).
+    if !peer_addrs.is_empty() {
         let topic_turns = gossip
             .join_topic(crate::federation_sync::TOPIC_TURNS, &peer_addrs)
             .await;
@@ -492,6 +369,22 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
     // Record initial peer count metric.
     crate::metrics::set_federation_peers_connected(peer_addrs.len() as f64);
 
+    // Build the shared handle.
+    let lace = Arc::new(RwLock::new(blocklace));
+    let bridge_handle = Arc::new(Mutex::new(bridge));
+    let participants_handle = Arc::new(RwLock::new(participants));
+    let executed_up_to = Arc::new(RwLock::new(0usize));
+
+    let handle = BlocklaceHandle {
+        lace: lace.clone(),
+        bridge: bridge_handle,
+        participants: participants_handle.clone(),
+        gossip: gossip.clone(),
+        topic: topic.clone(),
+        self_key,
+        executed_up_to,
+    };
+
     info!("blocklace gossip layer initialized, processing messages");
 
     // ─── Spawn the Gossip Receiver Task ─────────────────────────────────────
@@ -512,10 +405,10 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
                 }
                 Some(GossipEvent::PeerJoined(addr)) => {
                     info!(peer = %addr, "peer joined blocklace topic");
-                    // When a new peer joins, send them our frontier so they know
-                    // what we have (enables efficient catch-up).
+                    // When a new peer joins, send our frontier for efficient catch-up.
                     let lace = handle_for_receiver.lace.read().await;
-                    let frontier_tips = lace.tips().clone();
+                    let frontier_tips: HashMap<[u8; 32], BlockId> =
+                        lace.tips().iter().map(|(k, v)| (*k, *v)).collect();
                     drop(lace);
 
                     let msg = BlocklaceGossipMessage::Frontier(frontier_tips);
@@ -544,7 +437,7 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
 /// Process an incoming blocklace gossip message.
 async fn handle_blocklace_message(
     handle: &BlocklaceHandle,
-    state: &NodeState,
+    _state: &NodeState,
     from: SocketAddr,
     message: PeerMessage,
 ) {
@@ -562,14 +455,14 @@ async fn handle_blocklace_message(
     };
 
     match gossip_msg {
-        BlocklaceGossipMessage::Push(delta) => {
-            handle_push(handle, state, from, delta).await;
+        BlocklaceGossipMessage::Push(blocks) => {
+            handle_push(handle, from, blocks).await;
         }
         BlocklaceGossipMessage::Pull(missing_ids) => {
             handle_pull(handle, from, missing_ids).await;
         }
-        BlocklaceGossipMessage::PullResponse(delta) => {
-            handle_push(handle, state, from, delta).await;
+        BlocklaceGossipMessage::PullResponse(blocks) => {
+            handle_push(handle, from, blocks).await;
         }
         BlocklaceGossipMessage::Frontier(their_tips) => {
             handle_frontier(handle, from, their_tips).await;
@@ -578,38 +471,83 @@ async fn handle_blocklace_message(
 }
 
 /// Handle a Push (or PullResponse) message: receive blocks into our blocklace.
-async fn handle_push(
-    handle: &BlocklaceHandle,
-    _state: &NodeState,
-    from: SocketAddr,
-    delta: DeltaGroup,
-) {
-    if delta.is_empty() {
+async fn handle_push(handle: &BlocklaceHandle, from: SocketAddr, blocks: Vec<Block>) {
+    if blocks.is_empty() {
         return;
     }
 
-    let block_count = delta.len();
+    let block_count = blocks.len();
     let mut lace = handle.lace.write().await;
+    let mut inserted = 0usize;
+    let mut missing_deps: Vec<BlockId> = Vec::new();
 
-    // Merge the delta into our local blocklace.
-    match lace.merge(delta.blocks) {
-        Ok(()) => {
-            info!(
-                from = %from,
-                blocks = block_count,
-                total = lace.len(),
-                "merged blocklace delta from peer"
-            );
+    for block in blocks {
+        match lace.receive_block(block) {
+            Ok(()) => {
+                inserted += 1;
+            }
+            Err(BlockError::MissingPredecessor { missing, .. }) => {
+                missing_deps.push(missing);
+            }
+            Err(BlockError::Equivocation { creator, seq, .. }) => {
+                let creator_hex: String = creator[..4].iter().map(|b| format!("{b:02x}")).collect();
+                warn!(
+                    from = %from,
+                    creator = %creator_hex,
+                    seq = seq,
+                    "equivocation detected from peer"
+                );
+                // Block is still stored (for evidence), count as inserted.
+                inserted += 1;
+            }
+            Err(BlockError::InvalidSignature { creator, seq }) => {
+                let creator_hex: String = creator[..4].iter().map(|b| format!("{b:02x}")).collect();
+                warn!(
+                    from = %from,
+                    creator = %creator_hex,
+                    seq = seq,
+                    "invalid signature on block from peer"
+                );
+            }
         }
-        Err(e) => {
-            warn!(
-                from = %from,
-                error = %e,
-                "failed to merge blocklace delta"
-            );
-            // If merge failed due to missing predecessors, we could send a Pull
-            // request. For now, log and let the next push/frontier exchange fix it.
+    }
+
+    // In solo mode, immediately mark newly received Turn blocks as ordered.
+    let participants = handle.participants.read().await;
+    if participants.len() <= 1 {
+        // Solo: every block is immediately ordered.
+        let ordered_seq = lace.finality.ordered_sequence().to_vec();
+        let all_ids: Vec<BlockId> = lace.iter().map(|(id, _)| *id).collect();
+        for id in all_ids {
+            if !ordered_seq.contains(&id) {
+                lace.finality.mark_ordered(id);
+            }
         }
+    } else {
+        // Multi-participant: blocks progress through finality via acks.
+        // When we receive a block, its predecessors are implicitly acknowledged
+        // by the block's creator. Record these acks for finality tracking.
+        // (The finality::Blocklace already handles this in receive_block for
+        // Ack-payload blocks. For Turn payloads, the predecessors still serve
+        // as implicit acknowledgment of those blocks.)
+    }
+    drop(participants);
+    drop(lace);
+
+    if inserted > 0 {
+        info!(
+            from = %from,
+            inserted = inserted,
+            total_received = block_count,
+            "received blocks from peer"
+        );
+    }
+
+    // If we have missing dependencies, request them.
+    if !missing_deps.is_empty() {
+        missing_deps.dedup();
+        let pull_msg = BlocklaceGossipMessage::Pull(missing_deps);
+        handle.broadcast_gossip_message(&pull_msg).await;
     }
 }
 
@@ -621,34 +559,34 @@ async fn handle_pull(handle: &BlocklaceHandle, from: SocketAddr, missing_ids: Ve
 
     let lace = handle.lace.read().await;
 
-    // Collect the requested blocks and their causal predecessors.
-    let mut to_send: Vec<pyana_blocklace::finality::Block> = Vec::new();
+    // Collect requested blocks. For causal closure, also include their
+    // predecessors that the requester may be missing.
+    let mut to_send: Vec<Block> = Vec::new();
     let mut sent_ids = std::collections::HashSet::new();
 
     for block_id in &missing_ids {
-        if let Some(block) = lace.get(block_id) {
-            // Add predecessors first (causal closure).
-            let past = lace.causal_past(block_id);
-            // Sort so predecessors come before dependents.
-            for past_id in &past {
-                if !sent_ids.contains(past_id) {
-                    if let Some(past_block) = lace.get(past_id) {
-                        to_send.push(past_block.clone());
-                        sent_ids.insert(*past_id);
-                    }
+        // Include the causal past of the requested block.
+        let past = lace.causal_past(block_id);
+        for past_id in &past {
+            if !sent_ids.contains(past_id) {
+                if let Some(block) = lace.get(past_id) {
+                    to_send.push(block.clone());
+                    sent_ids.insert(*past_id);
                 }
             }
-            if !sent_ids.contains(block_id) {
+        }
+        // Include the block itself.
+        if !sent_ids.contains(block_id) {
+            if let Some(block) = lace.get(block_id) {
                 to_send.push(block.clone());
                 sent_ids.insert(*block_id);
             }
         }
     }
-
     drop(lace);
 
     if !to_send.is_empty() {
-        let response = BlocklaceGossipMessage::PullResponse(DeltaGroup::from_blocks(to_send));
+        let response = BlocklaceGossipMessage::PullResponse(to_send);
         handle.broadcast_gossip_message(&response).await;
         debug!(from = %from, blocks = sent_ids.len(), "sent pull response");
     }
@@ -662,19 +600,30 @@ async fn handle_frontier(
 ) {
     let lace = handle.lace.read().await;
 
-    // Convert their tips to a Frontier for the disseminator.
-    let their_frontier = Frontier { tips: their_tips };
+    // Determine which blocks we have that the peer doesn't.
+    // A peer with a given tip has all blocks in that tip's causal past.
+    let mut their_known: std::collections::HashSet<BlockId> = std::collections::HashSet::new();
+    for (_, tip_id) in &their_tips {
+        if lace.contains(tip_id) {
+            let past = lace.causal_past(tip_id);
+            their_known.extend(past);
+            their_known.insert(*tip_id);
+        }
+    }
 
-    // Compute what they're missing based on our local state.
-    let mut disseminator = handle.disseminator.lock().await;
-    let delta = disseminator.compute_delta_from_frontier(&their_frontier);
-    drop(disseminator);
+    // Collect blocks they don't have.
+    let mut to_send: Vec<Block> = Vec::new();
+    for (id, block) in lace.iter() {
+        if !their_known.contains(id) {
+            to_send.push(block.clone());
+        }
+    }
     drop(lace);
 
-    if !delta.is_empty() {
-        let msg = BlocklaceGossipMessage::Push(delta.clone());
+    if !to_send.is_empty() {
+        let msg = BlocklaceGossipMessage::Push(to_send.clone());
         handle.broadcast_gossip_message(&msg).await;
-        debug!(from = %from, blocks = delta.len(), "pushed delta after frontier exchange");
+        debug!(from = %from, blocks = to_send.len(), "pushed delta after frontier exchange");
     }
 }
 
@@ -682,13 +631,10 @@ async fn handle_frontier(
 
 /// Spawn a background task that polls for finalized blocks and executes their turns.
 ///
-/// This task is QUIESCENT-aware: it only wakes up when there are new blocks to process.
+/// This task is QUIESCENT-aware: it only wakes when there are new blocks to process.
 /// In practice it polls on a short interval, but does no work when idle.
 fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
     tokio::spawn(async move {
-        // Use a notify-driven approach: poll for new finalized blocks.
-        // The interval is short (100ms) but the task does nothing when there's
-        // no new work (quiescent-friendly).
         let mut poll_interval = tokio::time::interval(std::time::Duration::from_millis(100));
 
         loop {
@@ -715,7 +661,7 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
 
 /// Execute a single finalized turn against the node's ledger.
 ///
-/// The turn has been totally ordered by the tau function and is ready for
+/// The turn has been totally ordered by the blocklace consensus and is ready for
 /// deterministic execution.
 async fn execute_finalized_turn(state: &NodeState, block_id: BlockId, turn_data: &[u8]) {
     // Deserialize the signed turn.

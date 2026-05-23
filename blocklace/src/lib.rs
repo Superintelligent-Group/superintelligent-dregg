@@ -25,6 +25,7 @@
 //! └─────────────────────────────────────────────────────────────────────┘
 //! ```
 
+pub mod constitution;
 pub mod dissemination;
 pub mod finality;
 pub mod ordering;
