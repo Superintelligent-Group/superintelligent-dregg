@@ -291,7 +291,6 @@ fn parse_match_expr(em: &syn::ExprMatch, is_effect: bool) -> Result<Statement, s
 
     for arm in &em.arms {
         let variant = pat_to_variant_string(&arm.pat)?;
-        let pattern_tokens = quote::quote!(#(arm.pat)).to_string();
         // Store the actual pattern as tokens for faithful Rust codegen
         let pat = &arm.pat;
         let pat_tokens = quote::quote!(#pat).to_string();

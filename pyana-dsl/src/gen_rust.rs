@@ -116,13 +116,12 @@ fn generate_statement_rust(stmt: &Statement, caveat_name: &str) -> TokenStream {
                 .iter()
                 .map(|arm| {
                     let body = generate_statements_rust(&arm.body, caveat_name);
-                    if arm.variant == "_" {
-                        quote! { _ => { #body } }
-                    } else {
-                        // Use the variant as a path segment
-                        let variant_ident = format_ident!("{}", arm.variant);
-                        quote! { #variant_ident => { #body } }
-                    }
+                    // Parse the stored pattern tokens back into a TokenStream
+                    let pat_ts: TokenStream = arm
+                        .pattern_tokens
+                        .parse()
+                        .unwrap_or_else(|_| quote! { _ });
+                    quote! { #pat_ts => { #body } }
                 })
                 .collect();
             quote! {
