@@ -24,9 +24,11 @@
 //!
 //! # Production Prover
 //!
-//! For production use, prefer the Plonky3 backend (`plonky3_prover.rs`) which uses a
-//! battle-tested proving system. This custom STARK is suitable for all AIR types
-//! including those with transition constraints.
+//! For production use, prefer the Plonky3 backend (`backends::plonky3`) which uses a
+//! battle-tested proving system with proper FRI, extension-field challenges, and
+//! Poseidon2-based Merkle tree commitments. This custom STARK is classified as
+//! `ProofTier::Experimental` and is retained for AIR types not yet ported to
+//! native Plonky3 `Air` trait implementations (fold, derivation, predicates).
 
 use crate::field::{BABYBEAR_P, BabyBear};
 use serde::{Deserialize, Serialize};

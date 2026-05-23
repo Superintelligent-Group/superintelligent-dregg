@@ -116,9 +116,11 @@ impl CryptographicProof for VerifiedProof {
 /// Returns the proof tier for the custom STARK backend.
 ///
 /// The custom STARK uses extension-field (BabyBear^4) composition for 124-bit
-/// security on constraint combination, making it production-grade.
+/// security on constraint combination. However, the Fiat-Shamir transcript and
+/// FRI implementation are hobby-grade compared to Plonky3. Demoted to
+/// Experimental now that Plonky3 is the production prover.
 pub fn stark_tier() -> ProofTier {
-    ProofTier::Production
+    ProofTier::Experimental
 }
 
 /// Returns the proof tier for the Kimchi native backend.
@@ -229,8 +231,13 @@ mod tests {
     }
 
     #[test]
-    fn stark_is_production() {
-        assert_eq!(stark_tier(), ProofTier::Production);
+    fn stark_is_experimental() {
+        assert_eq!(stark_tier(), ProofTier::Experimental);
+    }
+
+    #[test]
+    fn plonky3_is_production() {
+        assert_eq!(plonky3_tier(), ProofTier::Production);
     }
 
     #[test]

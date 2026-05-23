@@ -66,6 +66,14 @@ pub mod sp1;
 /// verifies circuit logic and produces structurally-correct proofs.
 pub mod binius;
 
+/// Plonky3 backend: production-grade STARK using BabyBear + FRI.
+///
+/// Always compiled. When the `plonky3` feature is enabled, membership proofs
+/// use the native Plonky3 prover with inline Poseidon2 constraints for full
+/// algebraic soundness. Without the feature, falls back to the custom STARK.
+/// Implements the full `FullProofBackend` trait hierarchy.
+pub mod plonky3;
+
 // ============================================================================
 // Field-agnostic abstract types for backend trait boundaries.
 //
