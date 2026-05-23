@@ -184,7 +184,7 @@ pub struct NonRevocationWitness {
 /// Proves that for each ancestor in a capability's derivation path, its
 /// revocation hash does NOT appear in the committed revocation set.
 #[deprecated(
-    note = "Use pyana_dsl_runtime::descriptors::non_revocation_circuit(). This AIR is superseded by the DSL non-revocation circuit (30-bit range, sound)."
+    note = "Use crate::dsl::descriptors::non_revocation_circuit(). This AIR is superseded by the DSL non-revocation circuit (30-bit range, sound)."
 )]
 pub struct NonRevocationAir {
     /// Merkle tree depth for the revocation set.

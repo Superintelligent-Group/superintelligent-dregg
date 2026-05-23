@@ -13,6 +13,10 @@ use pyana_circuit::temporal_absence_air::{
     TIMELINE_DEPTH, TemporalAbsenceWitness, TimelineEntry, build_timeline_tree,
     prove_temporal_absence, verify_temporal_absence,
 };
+use pyana_dsl_runtime::temporal_absence::{
+    DslTimelineEntry, TemporalAbsenceDslWitness,
+    prove_temporal_absence_dsl, verify_temporal_absence_dsl,
+};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -362,4 +366,108 @@ fn test_temporal_absence_exact_boundaries() {
     assert!(witness.is_valid(), "Exact boundary should be valid");
     let proof = prove_temporal_absence(&witness).unwrap();
     assert!(verify_temporal_absence(&proof, 10, 50, attr_x, root));
+}
+
+// ─── DSL-native temporal absence tests ──────────────────────────────────────
+
+/// DSL-native temporal absence proof: valid gap between adjacent entries.
+#[test]
+fn test_temporal_absence_dsl_valid_gap() {
+    let attr_x = BabyBear::new(0xDEAD);
+    let attr_y = BabyBear::new(0xBEEF);
+    let event_type = BabyBear::new(1);
+
+    // Build timeline using the old infrastructure (for Merkle root computation).
+    let entries = vec![
+        (5u32, event_type, attr_y),
+        (10, event_type, attr_y),
+        (50, event_type, attr_y),
+        (100, event_type, attr_y),
+    ];
+
+    let (root, _timeline) = build_test_timeline(&entries);
+
+    // Build DSL witness (uses simplified trace without Merkle path in AIR).
+    let entry_before = DslTimelineEntry {
+        block_height: 10,
+        event_type,
+        attribute_hash: attr_y,
+        timeline_index: 1,
+        merkle_root: root,
+    };
+    let entry_after = DslTimelineEntry {
+        block_height: 50,
+        event_type,
+        attribute_hash: attr_y,
+        timeline_index: 2,
+        merkle_root: root,
+    };
+
+    let dsl_witness = TemporalAbsenceDslWitness {
+        entry_before,
+        entry_after,
+        t1: 11,
+        t2: 49,
+        excluded_attribute_hash: attr_x,
+    };
+
+    assert!(dsl_witness.is_valid(), "DSL witness should be valid");
+
+    let proof = prove_temporal_absence_dsl(&dsl_witness)
+        .expect("Should generate DSL temporal absence proof");
+    assert!(
+        verify_temporal_absence_dsl(&proof, 11, 49, attr_x, root),
+        "DSL temporal absence proof should verify"
+    );
+}
+
+/// DSL-native: wrong parameters rejected.
+#[test]
+fn test_temporal_absence_dsl_wrong_params_rejected() {
+    let attr_x = BabyBear::new(0xDEAD);
+    let attr_y = BabyBear::new(0xBEEF);
+    let event_type = BabyBear::new(1);
+
+    let entries = vec![
+        (5u32, event_type, attr_y),
+        (10, event_type, attr_y),
+        (50, event_type, attr_y),
+        (100, event_type, attr_y),
+    ];
+
+    let (root, _timeline) = build_test_timeline(&entries);
+
+    let dsl_witness = TemporalAbsenceDslWitness {
+        entry_before: DslTimelineEntry {
+            block_height: 10,
+            event_type,
+            attribute_hash: attr_y,
+            timeline_index: 1,
+            merkle_root: root,
+        },
+        entry_after: DslTimelineEntry {
+            block_height: 50,
+            event_type,
+            attribute_hash: attr_y,
+            timeline_index: 2,
+            merkle_root: root,
+        },
+        t1: 11,
+        t2: 49,
+        excluded_attribute_hash: attr_x,
+    };
+
+    let proof = prove_temporal_absence_dsl(&dsl_witness).unwrap();
+
+    // Correct params verify.
+    assert!(verify_temporal_absence_dsl(&proof, 11, 49, attr_x, root));
+
+    // Wrong t1
+    assert!(!verify_temporal_absence_dsl(&proof, 12, 49, attr_x, root));
+    // Wrong t2
+    assert!(!verify_temporal_absence_dsl(&proof, 11, 50, attr_x, root));
+    // Wrong attribute
+    assert!(!verify_temporal_absence_dsl(&proof, 11, 49, BabyBear::new(0xCAFE), root));
+    // Wrong root
+    assert!(!verify_temporal_absence_dsl(&proof, 11, 49, attr_x, BabyBear::new(1)));
 }

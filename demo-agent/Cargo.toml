@@ -10,6 +10,7 @@ pyana-coord = { path = "../coord" }
 pyana-types = { path = "../types" }
 pyana-bridge = { path = "../bridge", features = ["test-utils"] }
 pyana-circuit = { path = "../circuit" }
+pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
 pyana-commit = { path = "../commit" }
 pyana-sdk = { path = "../sdk" }
 pyana-trace = { path = "../trace" }

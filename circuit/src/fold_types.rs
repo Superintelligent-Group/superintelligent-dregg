@@ -373,6 +373,11 @@ impl FoldStarkAir {
 ///
 /// Returns `None` if the witness fails constraint checking or the trace is too
 /// small for the STARK prover (requires >= 2 rows, power-of-two padded).
+///
+/// DEPRECATED: Use `crate::dsl::fold::prove_fold_dsl` instead.
+/// This function is retained for backward compatibility with code that has not
+/// yet migrated to the DSL-native API.
+#[deprecated(note = "Use crate::dsl::fold::prove_fold_dsl instead")]
 pub fn prove_fold_stark(witness: &FoldWitness) -> Option<StarkProof> {
     let air = FoldStarkAir::new(witness.clone());
     let fold_air = FoldAir::new(witness.clone());
@@ -384,7 +389,6 @@ pub fn prove_fold_stark(witness: &FoldWitness) -> Option<StarkProof> {
     let padded_len = trace.len().next_power_of_two().max(2);
     let mut padded_trace = trace;
     while padded_trace.len() < padded_len {
-        // Pad with the last row (summary row) to maintain constraint satisfaction
         padded_trace.push(padded_trace.last().unwrap().clone());
     }
 
@@ -417,9 +421,12 @@ pub fn prove_fold_stark(witness: &FoldWitness) -> Option<StarkProof> {
 /// the claimed `old_root`. The `new_root` claim is then verified by the hash-chain STARK's
 /// continuity: `step[i].new_root == step[i+1].old_root`, with membership proofs proving
 /// each `old_root` is honest.
+///
+/// DEPRECATED: Use `crate::dsl::fold::verify_fold_dsl` instead.
+/// This function is retained for backward compatibility with code that has not
+/// yet migrated to the DSL-native API.
+#[deprecated(note = "Use crate::dsl::fold::verify_fold_dsl instead")]
 pub fn verify_fold_stark(proof: &StarkProof, public_inputs: &[BabyBear]) -> Result<(), String> {
-    // Reconstruct a minimal witness just for AIR metadata (width, name, etc.)
-    // The verifier doesn't need the actual witness data — only the AIR parameters.
     let dummy_witness = FoldWitness {
         old_root: BabyBear::ZERO,
         new_root: BabyBear::ZERO,

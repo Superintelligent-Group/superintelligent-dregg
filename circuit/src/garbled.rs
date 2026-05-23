@@ -472,6 +472,12 @@ pub fn prepare_private_threshold_check(threshold: u32) -> (GarbledCircuit, Garbl
 ///
 /// Returns `Some(proof)` if the evaluation produces the "true" output,
 /// or `None` if the value doesn't meet the threshold.
+///
+/// # Deprecation
+///
+/// Use `pyana_dsl_runtime::garbled::prove_private_threshold_dsl()` for new code.
+/// This function remains for backward compatibility with existing proofs.
+#[allow(deprecated)]
 pub fn prove_private_threshold(
     circuit: &GarbledCircuit,
     my_labels: &[WireLabel],
@@ -510,10 +516,15 @@ pub fn prove_private_threshold(
 
 /// Verifier side: verify a garbled evaluation proof.
 ///
+/// # Deprecation
+///
+/// Use `pyana_dsl_runtime::garbled::verify_garbled_evaluation_dsl()` for new code.
+///
 /// Checks that:
 /// 1. The circuit commitment matches the garbled circuit the verifier sent.
 /// 2. The output label hash matches the "true" output label.
 /// 3. The STARK proof verifies.
+#[allow(deprecated)]
 pub fn verify_private_threshold(
     proof: &GarbledEvaluationProof,
     expected_circuit_commitment: &crate::binding::WideHash,

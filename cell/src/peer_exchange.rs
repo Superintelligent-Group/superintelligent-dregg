@@ -47,7 +47,7 @@ pub struct PeerStateTransition {
     /// Optional STARK proof of the state transition.
     ///
     /// When present, the verifier deserializes this and verifies via
-    /// `SovereignTransitionAir`, providing proof-carrying P2P exchange
+    /// `EffectVmAir`, providing proof-carrying P2P exchange
     /// (not just signature-based). The proof binds old_commitment ->
     /// new_commitment + effects_hash + cell_id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,7 +194,7 @@ impl PeerExchange {
     /// 2. `old_commitment` matches our `last_known_commitment` for this peer
     /// 3. `sequence == last_sequence + 1` (monotonic, no skips)
     /// 4. `timestamp >= last_updated` (no going back in time)
-    /// 5. If `transition_proof` is Some, verify the STARK proof via `SovereignTransitionAir`
+    /// 5. If `transition_proof` is Some, verify the STARK proof via `EffectVmAir`
     ///
     /// If all pass, updates `peer_views` with the new state.
     pub fn verify_transition(
@@ -268,16 +268,17 @@ impl PeerExchange {
 
     /// Verify a STARK proof binding old_commitment -> new_commitment + effects_hash + cell_id.
     ///
-    /// Public inputs layout (32 BabyBear elements):
-    ///   [old_commitment(8), new_commitment(8), effects_hash(8), cell_id_hash(8)]
-    /// Each 32-byte hash encoded as 8 BabyBear elements (4 bytes LE each).
+    /// Public inputs layout (Effect VM, 7+ BabyBear elements):
+    ///   [old_commit(1), new_commit(1), net_delta_mag(1), net_delta_sign(1),
+    ///    effects_hash_lo(1), effects_hash_hi(1), custom_count(1),
+    ///    ...custom_entries(8 per custom effect)]
     #[cfg(feature = "zkvm")]
     fn verify_stark_transition(
         proof_bytes: &[u8],
-        cell_id: &CellId,
+        _cell_id: &CellId,
         old_commitment: &[u8; 32],
         new_commitment: &[u8; 32],
-        effects_hash: &[u8; 32],
+        _effects_hash: &[u8; 32],
     ) -> Result<(), PeerExchangeError> {
         use pyana_circuit::field::BabyBear;
         use pyana_circuit::stark;
@@ -286,33 +287,80 @@ impl PeerExchange {
         let proof = stark::proof_from_bytes(proof_bytes)
             .map_err(|e| PeerExchangeError::InvalidTransitionProof(e))?;
 
-        // Compute cell_id hash.
-        let cell_id_hash = *blake3::hash(cell_id.as_bytes()).as_bytes();
+        // The stored commitment encodes the Poseidon2 CellState commitment as [u8; 32]
+        // (first 4 bytes = u32 LE value).
+        let old_commit_field = Self::commitment_to_babybear(old_commitment);
+        let new_commit_field = Self::commitment_to_babybear(new_commitment);
 
-        // Reconstruct expected public inputs.
-        let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(32);
-        public_inputs.extend(Self::bytes32_to_babybear(old_commitment));
-        public_inputs.extend(Self::bytes32_to_babybear(new_commitment));
-        public_inputs.extend(Self::bytes32_to_babybear(effects_hash));
-        public_inputs.extend(Self::bytes32_to_babybear(&cell_id_hash));
-
-        // Verify proof public inputs match.
-        if proof.public_inputs.len() < 32 {
+        // Validate minimum PI count.
+        let min_pi_count = pyana_circuit::effect_vm::pi::BASE_COUNT;
+        if proof.public_inputs.len() < min_pi_count {
             return Err(PeerExchangeError::InvalidTransitionProof(format!(
-                "proof has {} public inputs, expected at least 32",
-                proof.public_inputs.len()
+                "proof has {} public inputs, expected at least {}",
+                proof.public_inputs.len(),
+                min_pi_count
             )));
         }
-        for (i, expected_bb) in public_inputs.iter().enumerate() {
-            let got = BabyBear(proof.public_inputs[i]);
-            if got != *expected_bb {
-                return Err(PeerExchangeError::InvalidTransitionProof(
-                    "public input mismatch".to_string(),
-                ));
+
+        // Extract remaining PIs from the proof (delta, effects hash, custom count).
+        let delta_mag = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_MAG],
+        );
+        let delta_sign = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_SIGN],
+        );
+        let effects_hash_lo = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_LO],
+        );
+        let effects_hash_hi = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_HI],
+        );
+        let custom_count = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::CUSTOM_EFFECT_COUNT],
+        );
+
+        // Build the public inputs vector in Effect VM layout.
+        let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(min_pi_count);
+        public_inputs.push(old_commit_field);
+        public_inputs.push(new_commit_field);
+        public_inputs.push(delta_mag);
+        public_inputs.push(delta_sign);
+        public_inputs.push(effects_hash_lo);
+        public_inputs.push(effects_hash_hi);
+        public_inputs.push(custom_count);
+
+        // Append custom proof entries from the proof's PIs.
+        let custom_count_val = custom_count.0 as usize;
+        for i in 0..custom_count_val {
+            let base = pyana_circuit::effect_vm::pi::CUSTOM_PROOFS_BASE
+                + i * pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE;
+            if base + pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE > proof.public_inputs.len() {
+                break;
+            }
+            for j in 0..pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE {
+                public_inputs.push(BabyBear::new_canonical(proof.public_inputs[base + j]));
             }
         }
 
-        // Verify the STARK proof using EffectVmAir (DSL cutover).
+        // Verify commitment PIs match what we expect.
+        let proof_old = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::OLD_COMMIT],
+        );
+        let proof_new = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT],
+        );
+        if proof_old != old_commit_field {
+            return Err(PeerExchangeError::InvalidTransitionProof(
+                "old_commitment in proof does not match expected value".to_string(),
+            ));
+        }
+        if proof_new != new_commit_field {
+            return Err(PeerExchangeError::InvalidTransitionProof(
+                "new_commitment in proof does not match expected value".to_string(),
+            ));
+        }
+
+        // Verify the STARK proof using EffectVmAir.
         let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
         stark::verify(&air, &proof, &public_inputs)
             .map_err(|e| PeerExchangeError::InvalidTransitionProof(e))?;
@@ -320,16 +368,12 @@ impl PeerExchange {
         Ok(())
     }
 
-    /// Encode a 32-byte hash as 8 BabyBear field elements (4 bytes each, little-endian).
+    /// Decode a stored [u8; 32] commitment to a single BabyBear field element.
+    /// The stored commitment encodes a Poseidon2 CellState commitment (first 4 bytes = u32 LE).
     #[cfg(feature = "zkvm")]
-    fn bytes32_to_babybear(bytes: &[u8; 32]) -> Vec<pyana_circuit::field::BabyBear> {
-        use pyana_circuit::field::{BABYBEAR_P, BabyBear};
-        let mut result = Vec::with_capacity(8);
-        for chunk in bytes.chunks(4) {
-            let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-            result.push(BabyBear(val % BABYBEAR_P));
-        }
-        result
+    fn commitment_to_babybear(bytes: &[u8; 32]) -> pyana_circuit::field::BabyBear {
+        let val = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        pyana_circuit::field::BabyBear::new_canonical(val)
     }
 
     /// Get our current view of a peer's state commitment.

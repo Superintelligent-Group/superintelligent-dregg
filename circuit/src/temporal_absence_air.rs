@@ -230,6 +230,15 @@ impl TemporalAbsenceWitness {
 /// Proves that no event for a specific attribute occurred in the timeline
 /// between blocks t1 and t2. Uses a gap proof: two adjacent timeline entries
 /// that bracket the absence window.
+///
+/// # Deprecation
+///
+/// Use `crate::dsl::temporal_absence::{prove,verify}_temporal_absence_dsl()` instead.
+/// The DSL version uses a 10-column CircuitDescriptor with hash constraints and
+/// transition constraints, providing cleaner prove/verify separation.
+#[deprecated(
+    note = "Use crate::dsl::temporal_absence::{prove,verify}_temporal_absence_dsl(). This AIR is superseded by the DSL temporal absence circuit."
+)]
 pub struct TemporalAbsenceAir {
     pub witness: TemporalAbsenceWitness,
 }

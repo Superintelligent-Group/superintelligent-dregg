@@ -15,7 +15,7 @@
 
 use pyana_circuit::binding::WideHash;
 use pyana_circuit::derivation_air::{CircuitRule, DerivationWitness};
-use pyana_circuit::fold_air::{FoldWitness, RemovedFact};
+use pyana_circuit::fold_types::{FoldWitness, RemovedFact};
 use pyana_circuit::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
 use pyana_circuit::poseidon2;
 use pyana_circuit::stark;
@@ -23,6 +23,7 @@ use pyana_circuit::{
     BabyBear, PresentationAir, PresentationProof, PresentationVerification, PresentationWitness,
     RealPresentationProof,
 };
+use pyana_dsl_runtime::fold::build_shared_tree;
 use pyana_commit::merkle::{MerkleProof, MerkleTree};
 use pyana_commit::{Fact, FieldElement, FoldDelta, SymbolTable, TokenState};
 use pyana_token::{Attenuation, AuthRequest, MacaroonToken};
@@ -1073,7 +1074,6 @@ impl BridgePresentationBuilder {
     fn build_fold_step_witnesses(
         &self,
     ) -> Result<Vec<pyana_circuit::ivc::FoldStepWitness>, AuthError> {
-        use pyana_circuit::fold_air::build_shared_tree;
         use pyana_circuit::ivc::FoldStepWitness;
         use pyana_circuit::poseidon2::hash_fact;
 
@@ -1362,7 +1362,6 @@ impl BridgePresentationBuilder {
     /// and produces membership proofs in the circuit's hash domain. The commit layer's
     /// BLAKE3-based roots/proofs are not directly usable in the circuit.
     pub fn build_fold_witnesses(&self) -> Vec<FoldWitness> {
-        use pyana_circuit::fold_air::build_shared_tree;
         use pyana_circuit::poseidon2::hash_fact;
 
         let mut witnesses = Vec::new();
@@ -1476,7 +1475,6 @@ impl BridgePresentationBuilder {
     /// If there are fold steps, this is the last fold's `new_root`. Otherwise,
     /// we compute it from the final (and only) state's facts.
     fn final_state_poseidon2_root(&self, fold_chain: &[FoldWitness]) -> BabyBear {
-        use pyana_circuit::fold_air::build_shared_tree;
         use pyana_circuit::poseidon2::hash_fact;
 
         if let Some(last_fold) = fold_chain.last() {
@@ -1887,8 +1885,8 @@ impl BridgePresentationBuilder {
 
     /// Build the issuer membership Merkle witness using Poseidon2 hashing.
     ///
-    /// This produces a witness compatible with `MerklePoseidon2StarkAir` where
-    /// parent = hash_4_to_1(children arranged by position). The resulting proof
+    /// This produces a witness compatible with the DSL `merkle_poseidon2_circuit()` where
+    /// parent = hash_fact(current, [sib0, sib1, sib2, position]). The resulting proof
     /// is collision-resistant (unlike the linear binding which has weaker security).
     ///
     /// If a federation tree is available, it uses real tree proofs with Poseidon2
@@ -2028,7 +2026,7 @@ impl BridgePresentationBuilder {
     /// Synthetic/deterministic Poseidon2 issuer membership proof (TESTING ONLY).
     ///
     /// Constructs a Merkle path using real Poseidon2 hashing at each level,
-    /// with BLAKE3-derived sibling values. Compatible with `MerklePoseidon2StarkAir`.
+    /// with BLAKE3-derived sibling values. Compatible with the DSL `merkle_poseidon2_circuit()`.
     #[cfg(any(test, feature = "test-utils"))]
     fn build_issuer_membership_poseidon2_synthetic(
         &self,
@@ -2497,8 +2495,8 @@ impl VerifierConfig {
     pub fn production() -> Self {
         Self {
             accepted_air_names: vec![
-                "BlindedMerklePoseidon2StarkAir".to_string(),
-                "MerklePoseidon2StarkAir".to_string(),
+                pyana_dsl_runtime::descriptors::BLINDED_MERKLE_AIR_NAME.to_string(),
+                pyana_dsl_runtime::descriptors::MERKLE_POSEIDON2_AIR_NAME.to_string(),
             ],
             max_proof_age_secs: 300,
             require_composition: true,
@@ -3886,8 +3884,6 @@ mod tests {
         );
 
         // The AIR name should indicate blinded mode.
-        use pyana_circuit::poseidon2_air::BlindedMerklePoseidon2StarkAir;
-        use pyana_circuit::stark::StarkAir;
         assert_eq!(
             proof1
                 .real_stark_proof
@@ -3895,7 +3891,7 @@ mod tests {
                 .unwrap()
                 .issuer_membership_stark_proof
                 .air_name,
-            BlindedMerklePoseidon2StarkAir.air_name(),
+            pyana_dsl_runtime::descriptors::BLINDED_MERKLE_AIR_NAME,
             "Proof should use blinded AIR"
         );
     }

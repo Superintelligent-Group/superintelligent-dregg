@@ -105,7 +105,7 @@ fn test_all_predicate_types_round_trip() {
 fn test_stark_proof_bytes_round_trip() {
     use pyana_circuit::merkle_air::{MerkleLevelWitness, MerkleWitness};
     use pyana_circuit::poseidon2;
-    use pyana_circuit::poseidon2_air::MerklePoseidon2StarkAir;
+    use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
     use pyana_circuit::presentation::generate_merkle_poseidon2_stark_proof;
     use pyana_circuit::stark::verify;
 
@@ -158,8 +158,8 @@ fn test_stark_proof_bytes_round_trip() {
 
     // Verify the recovered proof using the same public inputs.
     let public_inputs = vec![witness.leaf_hash, witness.expected_root];
-    let air = MerklePoseidon2StarkAir;
-    let result = verify(&air, &recovered, &public_inputs);
+    let circuit = merkle_poseidon2_circuit();
+    let result = verify(&circuit, &recovered, &public_inputs);
     assert!(
         result.is_ok(),
         "Deserialized STARK proof should verify: {:?}",

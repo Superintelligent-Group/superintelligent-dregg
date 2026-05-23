@@ -10,7 +10,7 @@ use crate::credential::{Credential, CredentialBuilder, CredentialSchema};
 use crate::{AttributeValue, CredentialId, HolderId, IssuerId};
 use pyana_circuit::field::BabyBear;
 use pyana_circuit::poseidon2;
-use pyana_dsl_tests::non_revocation_dsl::{DslRevocationTree, TREE_DEPTH as REVOCATION_TREE_DEPTH};
+use pyana_dsl_runtime::revocation::{DslRevocationTree, TREE_DEPTH as REVOCATION_TREE_DEPTH};
 use std::collections::BTreeMap;
 
 /// An issuer that can create and revoke credentials.

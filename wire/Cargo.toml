@@ -20,6 +20,7 @@ blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
 getrandom = { workspace = true }
 pyana-circuit = { path = "../circuit", optional = true }
+pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
 pyana-federation = { path = "../federation", optional = true }
 pyana-bridge = { path = "../bridge", optional = true, features = ["test-utils"] }
 token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }

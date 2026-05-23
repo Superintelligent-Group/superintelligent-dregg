@@ -13,7 +13,7 @@ use pyana_circuit::field::BabyBear;
 use pyana_circuit::predicate_types::{
     self as predicate_air, PredicateProof, PredicateType, PredicateWitness,
 };
-use pyana_dsl_tests::non_revocation_dsl::{
+use pyana_dsl_runtime::revocation::{
     DslRevocationTree, generate_non_revocation_trace, non_revocation_dsl_circuit,
 };
 use std::collections::BTreeMap;

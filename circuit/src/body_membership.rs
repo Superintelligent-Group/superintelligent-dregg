@@ -26,8 +26,8 @@ use crate::multi_step_air::{
     MultiStepWitness, prove_authorization_stark, verify_authorization_stark,
 };
 use crate::stark::{self, StarkProof};
-use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
-use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
+use crate::dsl::descriptors::merkle_poseidon2_circuit;
+use crate::dsl::membership::generate_merkle_poseidon2_trace;
 use serde::{Deserialize, Serialize};
 
 /// A Merkle proof for a single body fact: siblings + positions (leaf-to-root).

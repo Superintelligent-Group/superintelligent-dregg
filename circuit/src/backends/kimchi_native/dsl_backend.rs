@@ -1559,7 +1559,7 @@ pub fn prove_dsl(
             // with a DslCircuit. We return an error directing callers to use the
             // STARK API directly, since we can't import CircuitDescriptor here.
             Err(
-                "STARK backend must be invoked via pyana_dsl_runtime::circuit::CellProgram::prove_transition. \
+                "STARK backend must be invoked via pyana_circuit::dsl::CellProgram::prove_transition. \
                  Use prove_dsl_kimchi() for the Kimchi backend directly.".to_string()
             )
         }

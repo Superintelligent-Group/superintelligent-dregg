@@ -20,11 +20,11 @@
 //! binding is self-consistent because both trace generation and constraint evaluation
 //! use the same `hash_fact` function.
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_circuit::stark::{self, StarkProof};
+use crate::field::BabyBear;
+use crate::poseidon2::hash_fact;
+use crate::stark::{self, StarkProof};
 
-use crate::descriptors::{
+use crate::dsl::descriptors::{
     self, BLINDED_MERKLE_P2_WIDTH, MERKLE_P2_WIDTH, blinded_merkle_poseidon2_circuit, merkle_col,
     merkle_poseidon2_circuit,
 };
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn air_name_matches_descriptor() {
         let circuit = merkle_poseidon2_circuit();
-        use pyana_circuit::stark::StarkAir;
+        use crate::stark::StarkAir;
         assert_eq!(circuit.air_name(), MERKLE_POSEIDON2_AIR_NAME);
 
         let blinded_circuit = blinded_merkle_poseidon2_circuit();

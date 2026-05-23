@@ -453,7 +453,7 @@ impl PresentationAir {
         }
 
         // 2. Prove the derivation (DEPRECATED: uses old DerivationAir).
-        // Production STARK proofs use pyana_dsl_runtime::descriptors::derivation_circuit().
+        // Production STARK proofs use crate::dsl::descriptors::derivation_circuit().
         let derivation_air = DerivationAir::new(w.derivation.clone());
         let deriv_result = ConstraintProver::verify(&derivation_air);
         if !deriv_result.is_valid() {
@@ -537,7 +537,7 @@ impl PresentationAir {
         let ivc_proof = prove_ivc(initial_root, deltas)?;
 
         // 2. Prove the derivation (DEPRECATED: uses old DerivationAir).
-        // Production STARK proofs use pyana_dsl_runtime::descriptors::derivation_circuit().
+        // Production STARK proofs use crate::dsl::descriptors::derivation_circuit().
         let derivation_air = DerivationAir::new(w.derivation.clone());
         let deriv_result = ConstraintProver::verify(&derivation_air);
         if !deriv_result.is_valid() {
@@ -1256,7 +1256,7 @@ impl RealPresentationProof {
         // 5. Verify issuer membership with the appropriate DSL circuit based on proof type.
         // Blinded (ring membership) proofs use blinded_merkle_poseidon2_circuit();
         // standard proofs use merkle_poseidon2_circuit().
-        use pyana_dsl_runtime::descriptors::{
+        use crate::dsl::descriptors::{
             BLINDED_MERKLE_AIR_NAME, blinded_merkle_poseidon2_circuit, merkle_poseidon2_circuit,
         };
         let air_name = &self.issuer_membership_stark_proof.air_name;
@@ -1456,10 +1456,11 @@ pub fn create_stark_compatible_witness(leaf_hash: BabyBear, depth: usize) -> Mer
 
 /// Generate a real STARK proof for Merkle membership using Poseidon2 hashing.
 ///
-/// This uses `MerklePoseidon2StarkAir` with real Poseidon2 hash computations,
+/// This uses the DSL `merkle_poseidon2_circuit()` with hash_fact-based constraints,
 /// providing collision-resistant Merkle membership proofs.
 pub fn generate_merkle_poseidon2_stark_proof(witness: &MerkleWitness) -> Option<StarkProof> {
-    use crate::poseidon2_air::{self, MerklePoseidon2StarkAir};
+    use crate::dsl::descriptors::merkle_poseidon2_circuit;
+    use crate::dsl::membership::generate_merkle_poseidon2_trace;
 
     let depth = witness.levels.len();
     if depth < 2 {
@@ -1470,7 +1471,7 @@ pub fn generate_merkle_poseidon2_stark_proof(witness: &MerkleWitness) -> Option<
     let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
 
     let (trace, public_inputs) =
-        poseidon2_air::generate_merkle_poseidon2_trace(witness.leaf_hash, &siblings, &positions);
+        generate_merkle_poseidon2_trace(witness.leaf_hash, &siblings, &positions);
 
     // The trace's computed root must match the witness's expected_root
     if public_inputs.len() < 2 || public_inputs[1] != witness.expected_root {
@@ -1481,12 +1482,12 @@ pub fn generate_merkle_poseidon2_stark_proof(witness: &MerkleWitness) -> Option<
         return None;
     }
 
-    // Generate the STARK proof with Poseidon2 constraints
-    let air = MerklePoseidon2StarkAir;
-    let proof = stark::prove(&air, &trace, &public_inputs);
+    // Generate the STARK proof with DSL Poseidon2 constraints
+    let circuit = merkle_poseidon2_circuit();
+    let proof = stark::prove(&circuit, &trace, &public_inputs);
 
     // Sanity check: verify our own proof
-    match stark::verify(&air, &proof, &public_inputs) {
+    match stark::verify(&circuit, &proof, &public_inputs) {
         Ok(()) => Some(proof),
         Err(_) => None,
     }
@@ -1507,7 +1508,8 @@ pub fn generate_merkle_poseidon2_stark_proof_bound(
     composition_commitment: Option<crate::binding::WideHash>,
     revealed_facts_commitment: Option<crate::binding::WideHash>,
 ) -> Option<StarkProof> {
-    use crate::poseidon2_air::{self, MerklePoseidon2StarkAir};
+    use crate::dsl::descriptors::merkle_poseidon2_circuit;
+    use crate::dsl::membership::generate_merkle_poseidon2_trace;
 
     let depth = witness.levels.len();
     if depth < 2 {
@@ -1518,7 +1520,7 @@ pub fn generate_merkle_poseidon2_stark_proof_bound(
     let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
 
     let (trace, mut public_inputs) =
-        poseidon2_air::generate_merkle_poseidon2_trace(witness.leaf_hash, &siblings, &positions);
+        generate_merkle_poseidon2_trace(witness.leaf_hash, &siblings, &positions);
 
     // The trace's computed root must match the witness's expected_root
     if public_inputs.len() < 2 || public_inputs[1] != witness.expected_root {
@@ -1557,12 +1559,12 @@ pub fn generate_merkle_poseidon2_stark_proof_bound(
         }
     }
 
-    // Generate the STARK proof with Poseidon2 constraints
-    let air = MerklePoseidon2StarkAir;
-    let proof = stark::prove(&air, &trace, &public_inputs);
+    // Generate the STARK proof with DSL Poseidon2 constraints
+    let circuit = merkle_poseidon2_circuit();
+    let proof = stark::prove(&circuit, &trace, &public_inputs);
 
     // Sanity check: verify our own proof
-    match stark::verify(&air, &proof, &public_inputs) {
+    match stark::verify(&circuit, &proof, &public_inputs) {
         Ok(()) => Some(proof),
         Err(_) => None,
     }
@@ -1586,7 +1588,8 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
     composition_commitment: Option<crate::binding::WideHash>,
     revealed_facts_commitment: Option<crate::binding::WideHash>,
 ) -> Option<StarkProof> {
-    use crate::poseidon2_air::{self, BlindedMerklePoseidon2StarkAir};
+    use crate::dsl::descriptors::blinded_merkle_poseidon2_circuit;
+    use crate::dsl::membership::generate_blinded_merkle_poseidon2_trace;
 
     let depth = witness.levels.len();
     if depth < 2 {
@@ -1596,7 +1599,7 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
     let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
     let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
 
-    let (trace, mut public_inputs) = poseidon2_air::generate_blinded_merkle_poseidon2_trace(
+    let (trace, mut public_inputs) = generate_blinded_merkle_poseidon2_trace(
         witness.leaf_hash,
         &siblings,
         &positions,
@@ -1640,12 +1643,12 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
         }
     }
 
-    // Generate the STARK proof with blinded Poseidon2 constraints
-    let air = BlindedMerklePoseidon2StarkAir;
-    let proof = stark::prove(&air, &trace, &public_inputs);
+    // Generate the STARK proof with DSL blinded Poseidon2 constraints
+    let circuit = blinded_merkle_poseidon2_circuit();
+    let proof = stark::prove(&circuit, &trace, &public_inputs);
 
     // Sanity check: verify our own proof
-    match stark::verify(&air, &proof, &public_inputs) {
+    match stark::verify(&circuit, &proof, &public_inputs) {
         Ok(()) => Some(proof),
         Err(_) => None,
     }
@@ -1653,11 +1656,11 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
 
 /// Create a Merkle witness that uses Poseidon2 hashing (collision-resistant).
 ///
-/// This builds the witness using real Poseidon2 hash_4_to_1 at each level,
-/// making it compatible with `MerklePoseidon2StarkAir`.
+/// This builds the witness using `hash_fact(current, [sib0, sib1, sib2, position])` at each level,
+/// making it compatible with the DSL `merkle_poseidon2_circuit()`.
 /// Use this instead of `create_stark_compatible_witness` for production proofs.
 pub fn create_poseidon2_compatible_witness(leaf_hash: BabyBear, depth: usize) -> MerkleWitness {
-    use crate::poseidon2::hash_4_to_1;
+    use crate::poseidon2::hash_fact;
 
     let mut current = leaf_hash;
     let mut levels = Vec::with_capacity(depth);
@@ -1670,20 +1673,8 @@ pub fn create_poseidon2_compatible_witness(leaf_hash: BabyBear, depth: usize) ->
             BabyBear::new((i * 3 + 3) as u32),
         ];
 
-        // Arrange children according to position
-        let mut children = [BabyBear::ZERO; 4];
-        let mut sib_idx = 0;
-        for j in 0..4u8 {
-            if j == position {
-                children[j as usize] = current;
-            } else {
-                children[j as usize] = siblings[sib_idx];
-                sib_idx += 1;
-            }
-        }
-
-        // Use real Poseidon2 hash
-        let parent = hash_4_to_1(&children);
+        // Use DSL-compatible hash: hash_fact(current, [sib0, sib1, sib2, position])
+        let parent = hash_fact(current, &[siblings[0], siblings[1], siblings[2], BabyBear::new(position as u32)]);
         levels.push(MerkleLevelWitness { position, siblings });
         current = parent;
     }
@@ -1961,7 +1952,7 @@ mod tests {
         // Create a presentation with a Poseidon2-compatible issuer membership witness
         let mut witness = create_test_presentation();
         // Replace the issuer membership with one using Poseidon2 hashing
-        // (compatible with MerklePoseidon2StarkAir — the only accepted verifier)
+        // (compatible with DSL merkle_poseidon2_circuit — the only accepted verifier)
         let poseidon2_issuer = create_poseidon2_compatible_witness(BabyBear::new(42424242), 8);
         witness.issuer_membership = poseidon2_issuer;
         witness.federation_root = witness.issuer_membership.expected_root;
@@ -2153,14 +2144,14 @@ mod tests {
             proof_bytes.len() as f64 / 1024.0
         );
 
-        // Verify with real STARK verifier using MerklePoseidon2StarkAir
-        use crate::poseidon2_air::MerklePoseidon2StarkAir;
+        // Verify with real STARK verifier using DSL merkle_poseidon2_circuit
+        let circuit = crate::dsl::descriptors::merkle_poseidon2_circuit();
         let pi: Vec<BabyBear> = proof
             .public_inputs
             .iter()
             .map(|&v| BabyBear::new_canonical(v))
             .collect();
-        let result = crate::stark::verify(&MerklePoseidon2StarkAir, &proof, &pi);
+        let result = crate::stark::verify(&circuit, &proof, &pi);
         assert!(
             result.is_ok(),
             "Poseidon2 STARK proof should verify: {:?}",
@@ -2174,7 +2165,7 @@ mod tests {
         let proof = generate_merkle_poseidon2_stark_proof(&p2_issuer).unwrap();
 
         // Verify with wrong root
-        use crate::poseidon2_air::MerklePoseidon2StarkAir;
+        let circuit = crate::dsl::descriptors::merkle_poseidon2_circuit();
         let mut pi: Vec<BabyBear> = proof
             .public_inputs
             .iter()
@@ -2182,7 +2173,7 @@ mod tests {
             .collect();
         // Tamper: change the root
         pi[1] = BabyBear::new(999999);
-        let result = crate::stark::verify(&MerklePoseidon2StarkAir, &proof, &pi);
+        let result = crate::stark::verify(&circuit, &proof, &pi);
         assert!(result.is_err(), "Should reject wrong federation root");
     }
 

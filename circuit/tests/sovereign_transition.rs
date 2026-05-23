@@ -2,6 +2,11 @@
 //!
 //! Tests the STARK proof generation and verification for sovereign cell
 //! state transitions (balance transfers).
+//!
+//! NOTE: SovereignTransitionAir is deprecated in favor of EffectVmAir.
+//! These tests are retained for backward-compatibility verification.
+
+#![allow(deprecated)]
 
 use pyana_circuit::field::BabyBear;
 use pyana_circuit::sovereign_transition_air::{

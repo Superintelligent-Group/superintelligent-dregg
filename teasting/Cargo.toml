@@ -10,6 +10,7 @@ pyana-types = { path = "../types" }
 pyana-cell = { path = "../cell" }
 pyana-turn = { path = "../turn" }
 pyana-circuit = { path = "../circuit" }
+pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
 pyana-federation = { path = "../federation" }
 pyana-morpheus = { path = "../morpheus" }
 pyana-sdk = { path = "../sdk" }

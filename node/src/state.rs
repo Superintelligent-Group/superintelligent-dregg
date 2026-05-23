@@ -372,7 +372,28 @@ impl NodeState {
         // Issue 5: Load persisted proof hashes from the store.
         let used_proof_hashes = store.load_all_proof_hashes().unwrap_or_default();
 
-        let ledger = Ledger::new();
+        // Restore ledger from the latest checkpoint (if one exists).
+        let ledger = match store.load_latest_ledger_checkpoint() {
+            Ok(Some((height, restored_ledger))) => {
+                tracing::info!(
+                    checkpoint_height = height,
+                    cells = restored_ledger.len(),
+                    "restored ledger from checkpoint"
+                );
+                restored_ledger
+            }
+            Ok(None) => {
+                tracing::info!("no ledger checkpoint found, starting with empty ledger");
+                Ledger::new()
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "failed to load ledger checkpoint, starting with empty ledger"
+                );
+                Ledger::new()
+            }
+        };
         let (events_tx, _) = broadcast::channel(4096);
 
         // Derive the silo ID from the wallet's public key.
@@ -447,7 +468,13 @@ impl NodeState {
             PersistentStore::open(&db_path).map_err(|e| format!("failed to open store: {e}"))?;
 
         let wallet = AgentWallet::from_key_bytes(zeroize::Zeroizing::new(key_bytes));
-        let ledger = Ledger::new();
+
+        // Restore ledger from the latest checkpoint (if one exists).
+        let ledger = match store.load_latest_ledger_checkpoint() {
+            Ok(Some((_height, restored_ledger))) => restored_ledger,
+            _ => Ledger::new(),
+        };
+
         let (events_tx, _) = broadcast::channel(4096);
 
         // Derive the silo ID from the wallet's public key.
@@ -584,6 +611,27 @@ impl NodeState {
                 } else {
                     tracing::info!(entries = data.len() / 32, "persisted discharge replay set");
                 }
+            }
+        }
+
+        // Checkpoint the ledger on shutdown for fast restart.
+        let current_height = s
+            .store
+            .latest_attested_root()
+            .ok()
+            .flatten()
+            .map(|r| r.height)
+            .unwrap_or(0);
+        match s.store.checkpoint_ledger(&s.ledger, current_height) {
+            Ok(()) => {
+                tracing::info!(
+                    height = current_height,
+                    cells = s.ledger.len(),
+                    "ledger checkpoint persisted on shutdown"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to persist ledger checkpoint on shutdown");
             }
         }
     }

@@ -71,7 +71,7 @@ impl Credential {
     /// This is derived from the credential ID so that the issuer can add it
     /// to the revocation tree without knowing the credential's private attributes.
     pub fn compute_revocation_hash(id: &CredentialId) -> BabyBear {
-        pyana_circuit::non_revocation_air::revocation_hash_to_field(id)
+        pyana_dsl_runtime::revocation::revocation_hash_to_field(id)
     }
 
     /// Get a specific attribute value.

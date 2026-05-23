@@ -7126,6 +7126,8 @@ fn sovereign_cell_state_commitment_deterministic() {
 // =============================================================================
 
 /// Helper: set up a sovereign cell in the ledger and return (ledger, agent_id, sovereign_cell_id, old_commitment).
+///
+/// The stored commitment is a Poseidon2 CellState commitment encoded as [u8; 32].
 fn setup_sovereign_cell_for_proof_test() -> (Ledger, CellId, CellId, [u8; 32]) {
     let mut ledger = Ledger::new();
     let (agent, _) = make_open_cell(1, 10000);
@@ -7135,45 +7137,69 @@ fn setup_sovereign_cell_for_proof_test() -> (Ledger, CellId, CellId, [u8; 32]) {
     // Create a cell, then make it sovereign.
     let (sovereign_cell, _) = make_open_cell(10, 5000);
     let sovereign_id = sovereign_cell.id;
-    let commitment = sovereign_cell.state_commitment();
+    // Compute the Poseidon2 CellState commitment (matches what EffectVmAir uses).
+    let vm_state =
+        pyana_circuit::CellState::new(sovereign_cell.state.balance, sovereign_cell.state.nonce as u32);
+    let commitment = TurnExecutor::babybear_to_commitment(vm_state.state_commitment);
     ledger.insert_cell(sovereign_cell).unwrap();
+    // Override the stored commitment with the Poseidon2 value.
     let _ = ledger.make_sovereign(&sovereign_id).unwrap();
+    let _ = ledger.update_sovereign_commitment(&sovereign_id, commitment);
 
     (ledger, agent_id, sovereign_id, commitment)
 }
 
-/// Helper: generate a valid sovereign execution proof for a balance transfer.
+/// Helper: generate a valid sovereign execution proof for a balance transfer using EffectVmAir.
 ///
-/// Returns (proof_bytes, new_commitment, effects_hash) where the proof is valid
-/// against the SovereignTransitionAir.
+/// Takes an old_commitment [u8; 32] (encoding a Poseidon2 BabyBear value in first 4 bytes).
+/// Returns (proof_bytes, actual_new_commitment) where actual_new_commitment is the [u8; 32]
+/// encoding of PI[1] from the generated proof.
+///
+/// The `new_commitment` and `effects_hash` params are ignored (kept for API compat);
+/// the real new_commitment is determined by the Effect VM trace execution.
 fn generate_valid_sovereign_proof(
     old_commitment: &[u8; 32],
-    new_commitment: &[u8; 32],
-    cell_id: &CellId,
-    effects_hash: &[u8; 32],
+    _new_commitment: &[u8; 32],
+    _cell_id: &CellId,
+    _effects_hash: &[u8; 32],
 ) -> Vec<u8> {
-    use pyana_circuit::sovereign_transition_air::{
-        SovereignTransitionAir, generate_sovereign_transition_trace,
-    };
+    let (proof_bytes, _actual_new_commitment) =
+        generate_valid_sovereign_proof_with_new_commit(old_commitment);
+    proof_bytes
+}
+
+/// Generate a valid Effect VM proof and return (proof_bytes, new_commitment_bytes).
+fn generate_valid_sovereign_proof_with_new_commit(
+    old_commitment: &[u8; 32],
+) -> (Vec<u8>, [u8; 32]) {
+    use pyana_circuit::effect_vm::{CellState, Effect as VmEffect};
+    use pyana_circuit::field::BabyBear;
     use pyana_circuit::stark::{proof_to_bytes, prove};
+    use pyana_circuit::{EffectVmAir, generate_effect_vm_trace};
 
-    // Compute the cell_id hash the executor will use.
-    let cell_id_hash = *blake3::hash(cell_id.as_bytes()).as_bytes();
+    // Decode the old commitment to get the expected initial state commitment.
+    let old_commit_bb = TurnExecutor::commitment_to_babybear(old_commitment);
 
-    // Generate the trace and public inputs for a transfer of 100 outgoing.
-    let (trace, public_inputs) = generate_sovereign_transition_trace(
-        1000, // old_balance (arbitrary, just needs to satisfy the constraint)
-        100,  // transfer_amount
-        1,    // direction = outgoing
-        old_commitment,
-        new_commitment,
-        effects_hash,
-        &cell_id_hash,
-    );
+    // Create a CellState with balance=5000, nonce=0 (matches setup_sovereign_cell_for_proof_test).
+    let mut initial_state = CellState::new(5000, 0);
+    // Override the state_commitment to match what was stored (ensures PI[0] binding).
+    initial_state.state_commitment = old_commit_bb;
 
-    let air = SovereignTransitionAir;
+    // Generate a transfer of 100 outgoing.
+    let effects = vec![VmEffect::Transfer {
+        amount: 100,
+        direction: 1,
+    }];
+
+    let (trace, public_inputs) = generate_effect_vm_trace(&initial_state, &effects);
+
+    // Extract the new commitment from PI[1].
+    let new_commit_bb = public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT];
+    let new_commitment = TurnExecutor::babybear_to_commitment(new_commit_bb);
+
+    let air = EffectVmAir::new(trace.len());
     let proof = prove(&air, &trace, &public_inputs);
-    proof_to_bytes(&proof)
+    (proof_to_bytes(&proof), new_commitment)
 }
 
 #[test]
@@ -7182,36 +7208,23 @@ fn test_proof_carrying_turn_accepted() {
         setup_sovereign_cell_for_proof_test();
     let executor = zero_cost_executor();
 
-    // New commitment (what the sovereign claims as its post-state).
-    let new_commitment = [42u8; 32];
+    // Generate a valid STARK proof (new_commitment is determined by the trace execution).
+    // The proof covers a Transfer of 100 outgoing from sovereign_id.
+    let (proof_bytes, new_commitment) =
+        generate_valid_sovereign_proof_with_new_commit(&old_commitment);
 
-    // Build a minimal turn with an empty call forest (the effects are proven, not executed).
+    // Build a turn with a Transfer effect matching what the proof proves.
+    // The executor computes the Effect VM effects_hash from the turn's effects.
     let mut builder = TurnBuilder::new(agent_id, 0);
-    // Add a dummy action so the forest isn't empty (required by executor).
     {
-        let action = builder.action(agent_id, "noop");
-        let _ = action; // no effects
+        let mut action = builder.action(sovereign_id, "sovereign_execute_proven");
+        action.effect(Effect::Transfer {
+            from: sovereign_id,
+            to: agent_id,
+            amount: 100,
+        });
     }
     let mut turn = builder.fee(100).build();
-
-    // Compute effects hash the same way the executor will.
-    let effects_hash = {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-sovereign-effects-v1:");
-        // Hash effects from the turn's call forest (the noop has no effects so just the prefix).
-        for root in &turn.call_forest.roots {
-            hash_tree_effects_test(root, &mut hasher);
-        }
-        *hasher.finalize().as_bytes()
-    };
-
-    // Generate a valid STARK proof.
-    let proof_bytes = generate_valid_sovereign_proof(
-        &old_commitment,
-        &new_commitment,
-        &sovereign_id,
-        &effects_hash,
-    );
 
     // Attach the proof to the turn.
     turn.execution_proof = Some(proof_bytes);
@@ -7647,40 +7660,31 @@ fn test_custom_program_missing_from_registry_rejected() {
 }
 
 /// Test that a sovereign cell WITHOUT a VK hash still uses the default
-/// SovereignTransitionAir (backward compatibility).
+/// EffectVmAir (backward compatibility).
 #[test]
 fn test_default_air_still_works_without_vk_hash() {
-    // This is effectively the same as test_proof_carrying_turn_accepted but
-    // with the program_registry set (to confirm no regression).
+    // Same as test_proof_carrying_turn_accepted but with the program_registry set.
     let (mut ledger, agent_id, sovereign_id, old_commitment) =
         setup_sovereign_cell_for_proof_test();
 
     let mut executor = zero_cost_executor();
     executor.set_program_registry(pyana_dsl_runtime::ProgramRegistry::new());
 
-    let new_commitment = [42u8; 32];
+    // Generate a valid proof (determines new_commitment from trace execution).
+    let (proof_bytes, new_commitment) =
+        generate_valid_sovereign_proof_with_new_commit(&old_commitment);
 
+    // Build a turn with effects matching the proof.
     let mut builder = TurnBuilder::new(agent_id, 0);
     {
-        let _action = builder.action(agent_id, "noop");
+        let mut action = builder.action(sovereign_id, "sovereign_execute_proven");
+        action.effect(Effect::Transfer {
+            from: sovereign_id,
+            to: agent_id,
+            amount: 100,
+        });
     }
     let mut turn = builder.fee(100).build();
-
-    let effects_hash = {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"pyana-sovereign-effects-v1:");
-        for root in &turn.call_forest.roots {
-            hash_tree_effects_test(root, &mut hasher);
-        }
-        *hasher.finalize().as_bytes()
-    };
-
-    let proof_bytes = generate_valid_sovereign_proof(
-        &old_commitment,
-        &new_commitment,
-        &sovereign_id,
-        &effects_hash,
-    );
 
     turn.execution_proof = Some(proof_bytes);
     turn.execution_proof_cell = Some(sovereign_id);

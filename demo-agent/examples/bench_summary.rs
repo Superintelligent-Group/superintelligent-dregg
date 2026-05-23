@@ -444,15 +444,15 @@ fn main() {
     // ─── 7. Non-revocation (1, 4, 8 ancestors) ─────────────────────────────
 
     {
-        use pyana_circuit::non_revocation_air::{
-            REVOCATION_TREE_DEPTH, SortedRevocationTree, prove_non_revocation,
-            verify_non_revocation,
+        use pyana_dsl_runtime::revocation::{
+            DslRevocationTree, TREE_DEPTH as REVOCATION_TREE_DEPTH, prove_non_revocation_dsl,
+            verify_non_revocation_dsl,
         };
 
         let hashes: Vec<BabyBear> = (1..=20u32)
             .map(|i| hash_many(&[BabyBear::new(i * 100), BabyBear::new(0xDEAD)]))
             .collect();
-        let tree = SortedRevocationTree::new(hashes, REVOCATION_TREE_DEPTH);
+        let tree = DslRevocationTree::new(hashes, REVOCATION_TREE_DEPTH);
         let rev_root = tree.root();
 
         for &num_a in &[1usize, 4, 8] {
@@ -460,13 +460,15 @@ fn main() {
                 .map(|i| hash_many(&[BabyBear::new(0xBEEF_0000 + i as u32), BabyBear::new(0xCAFE)]))
                 .collect();
 
+            // DSL circuit proves one ancestor at a time; bench the first
+            let first_hash = ancestors[0];
             let d_prove = time_op(|| {
-                let _ = prove_non_revocation(&ancestors, &tree);
+                let _ = prove_non_revocation_dsl(&tree, first_hash);
             });
-            let proof = prove_non_revocation(&ancestors, &tree).unwrap();
+            let proof = prove_non_revocation_dsl(&tree, first_hash).unwrap();
             let d_verify = time_op_avg(
                 || {
-                    let _ = verify_non_revocation(rev_root, &proof);
+                    let _ = verify_non_revocation_dsl(&proof, rev_root, first_hash);
                 },
                 20,
             );

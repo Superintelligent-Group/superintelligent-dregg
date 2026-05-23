@@ -196,6 +196,7 @@ impl PredicateWitness {
 /// The predicate proof AIR.
 ///
 /// Proves a single predicate statement about a private value with a public threshold.
+#[deprecated(note = "Use crate::dsl::predicates::predicate_descriptor() + DslCircuit")]
 pub struct PredicateAir {
     pub witness: PredicateWitness,
 }
@@ -529,6 +530,7 @@ pub struct PredicateProof {
 ///
 /// Returns `None` if the predicate is not satisfiable (the statement is false)
 /// or if proof generation fails.
+#[deprecated(note = "Use crate::dsl::predicates::prove_predicate_dsl")]
 pub fn prove_predicate(witness: PredicateWitness) -> Option<PredicateProof> {
     if !witness.is_satisfiable() {
         return None;
@@ -560,6 +562,7 @@ pub fn prove_predicate(witness: PredicateWitness) -> Option<PredicateProof> {
 ///
 /// The verifier provides the threshold and fact_commitment they expect and
 /// checks the proof is consistent.
+#[deprecated(note = "Use crate::dsl::predicates::verify_predicate_dsl")]
 pub fn verify_predicate(
     proof: &PredicateProof,
     threshold: BabyBear,
@@ -632,6 +635,8 @@ pub fn compute_blinded_fact_commitment(
 /// upper bound (LTE). Both must verify for the range claim to hold.
 ///
 /// Returns `None` if either bound is not satisfiable.
+#[deprecated(note = "Use crate::dsl::predicates::generate_in_range_traces + prove_predicate_dsl")]
+#[allow(deprecated)]
 pub fn prove_in_range(
     private_value: BabyBear,
     low: BabyBear,
@@ -664,6 +669,8 @@ pub fn prove_in_range(
 }
 
 /// Verify an InRange proof (both bounds must pass).
+#[deprecated(note = "Use crate::dsl::predicates")]
+#[allow(deprecated)]
 pub fn verify_in_range(
     low_proof: &PredicateProof,
     high_proof: &PredicateProof,

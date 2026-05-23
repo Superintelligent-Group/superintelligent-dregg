@@ -38,6 +38,8 @@ p3-poseidon2-circuit-air = { workspace = true, optional = true }
 # within its own crate, so we expand it manually).
 pyana-dsl = { path = "../pyana-dsl" }
 
+postcard = { version = "1", features = ["alloc"] }
+
 blake3 = "1"
 getrandom = { workspace = true }
 serde = { version = "1", features = ["derive"] }

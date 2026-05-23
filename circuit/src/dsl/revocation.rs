@@ -9,11 +9,11 @@
 //! Supersedes the old `pyana_circuit::non_revocation_air` (4-ary, hand-written AIR)
 //! and the test-only `pyana_dsl_tests::non_revocation_dsl`.
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::{hash_fact, hash_many};
-use pyana_circuit::stark::{self, StarkProof};
+use crate::field::BabyBear;
+use crate::poseidon2::{hash_fact, hash_many};
+use crate::stark::{self, StarkProof};
 
-use crate::circuit::{
+use crate::dsl::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
     PolyTerm,
 };

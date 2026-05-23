@@ -107,6 +107,16 @@ pub mod col {
 ///
 /// Proves that a garbled circuit was correctly evaluated gate-by-gate using
 /// Poseidon2 as the garbling hash.
+///
+/// # Deprecation
+///
+/// Use `crate::dsl::garbled::prove_garbled_evaluation_dsl()` and
+/// `crate::dsl::garbled::verify_garbled_evaluation_dsl()` instead.
+/// The DSL version supports multi-gate chaining, gate type selectors, and
+/// padding — a strict superset of this 49-column AIR's capabilities.
+#[deprecated(
+    note = "Use crate::dsl::garbled::{prove,verify}_garbled_evaluation_dsl(). This AIR is superseded by the 56-column DSL garbled evaluation circuit."
+)]
 pub struct GarbledEvaluationAir {
     /// Gate evaluation records (the witness).
     gate_trace: Vec<GateEvalRecord>,

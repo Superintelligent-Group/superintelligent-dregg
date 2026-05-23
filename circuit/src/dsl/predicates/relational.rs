@@ -3,11 +3,11 @@
 //! Proves comparison relationships between two private committed values.
 //! Trace width: 45 columns. Public inputs: [commitment_a, commitment_b, result_bit].
 
-use pyana_circuit::field::{BABYBEAR_P, BabyBear};
-use pyana_circuit::poseidon2;
-use pyana_circuit::stark::{self, StarkProof};
+use crate::field::{BABYBEAR_P, BabyBear};
+use crate::poseidon2;
+use crate::stark::{self, StarkProof};
 
-use crate::circuit::{
+use crate::dsl::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
     PolyTerm,
 };

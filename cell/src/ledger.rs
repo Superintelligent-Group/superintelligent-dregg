@@ -1345,6 +1345,28 @@ impl Ledger {
         }
         path
     }
+
+    // =========================================================================
+    // Snapshot Accessors (for checkpoint persistence)
+    // =========================================================================
+
+    /// Iterate over all sovereign commitments (bare, legacy style).
+    ///
+    /// Used by the persistence layer to serialize sovereign cell state into
+    /// ledger checkpoints.
+    pub fn iter_sovereign_commitments(&self) -> impl Iterator<Item = (&CellId, &[u8; 32])> {
+        self.sovereign_commitments.iter()
+    }
+
+    /// Iterate over all ephemeral sovereign registrations.
+    ///
+    /// Used by the persistence layer to serialize sovereign registration state
+    /// into ledger checkpoints.
+    pub fn iter_sovereign_registrations(
+        &self,
+    ) -> impl Iterator<Item = (&CellId, &SovereignRegistration)> {
+        self.sovereign_registrations.iter()
+    }
 }
 
 impl Default for Ledger {

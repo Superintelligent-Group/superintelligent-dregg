@@ -1164,7 +1164,7 @@ impl AgentWallet {
 
         // Extend the IVC chain if enabled.
         if let Some(ref mut builder) = self.ivc_builder {
-            use pyana_circuit::fold_air::{FoldWitness, RemovedFact};
+            use pyana_circuit::fold_types::{FoldWitness, RemovedFact};
             use pyana_circuit::ivc::FoldDelta;
 
             // Encode the state transition as a fold step: the pre_state transitions
@@ -3285,7 +3285,7 @@ impl AgentWallet {
     /// 2. Computes the old commitment
     /// 3. Applies effects locally (balance transfer)
     /// 4. Computes the new commitment
-    /// 5. Generates the STARK proof (SovereignTransitionAir)
+    /// 5. Generates the STARK proof (EffectVmAir)
     /// 6. Builds a Turn with `execution_proof: Some(proof_bytes)`
     /// 7. `sovereign_witnesses` is EMPTY — the proof covers the transition
     ///

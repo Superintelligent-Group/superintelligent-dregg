@@ -201,7 +201,8 @@ fn test_fully_private_end_to_end() {
     //
     // We use the same issuer key (root_key) to generate a compact proof with
     // Poseidon2 hashing, bound to the specific turn action's signing message.
-    use pyana_circuit::poseidon2_air::{generate_merkle_poseidon2_trace, MerklePoseidon2StarkAir};
+    use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+    use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 
     let token_id = test_key("e2e-domain");
     let mut ledger = Ledger::new();
@@ -314,11 +315,11 @@ fn test_fully_private_end_to_end() {
     // Append action commitment as third public input (binds proof to this action)
     public_inputs.push(action_commitment_bb);
 
-    let air = MerklePoseidon2StarkAir;
-    let action_bound_proof = stark::prove(&air, &trace, &public_inputs);
+    let circuit = merkle_poseidon2_circuit();
+    let action_bound_proof = stark::prove(&circuit, &trace, &public_inputs);
     // Self-verify the generated proof
     assert!(
-        stark::verify(&air, &action_bound_proof, &public_inputs).is_ok(),
+        stark::verify(&circuit, &action_bound_proof, &public_inputs).is_ok(),
         "self-generated action-bound proof should verify"
     );
 

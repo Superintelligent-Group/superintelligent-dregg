@@ -62,11 +62,11 @@
 //! 14. C32: Boundary: threshold_k == pi[2]
 //! 15. C33-C40: Boundary: expected_commitment[i] == pi[3+i]
 
-use pyana_circuit::field::{BABYBEAR_P, BabyBear};
-use pyana_circuit::poseidon2::{hash_2_to_1, hash_fact};
-use pyana_circuit::stark::{self, StarkProof};
+use crate::field::{BABYBEAR_P, BabyBear};
+use crate::poseidon2::{hash_2_to_1, hash_fact};
+use crate::stark::{self, StarkProof};
 
-use crate::circuit::{
+use crate::dsl::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
     PolyTerm,
 };

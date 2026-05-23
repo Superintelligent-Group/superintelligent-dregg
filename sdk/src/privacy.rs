@@ -19,16 +19,14 @@
 use pyana_cell::note::{Note, NoteCommitment, Nullifier};
 use pyana_circuit::BabyBear;
 use pyana_circuit::field::BABYBEAR_P;
-use pyana_circuit::non_revocation_air::{SortedRevocationTree, revocation_hash_to_field};
-// DSL-based non-revocation proving (30-bit range, sound).
-use pyana_circuit::note_spending_air::{
-    NoteSpendingWitness, key_to_field_elements, prove_note_spend,
-};
+use pyana_circuit::note_spending_air::{NoteSpendingWitness, key_to_field_elements};
+use pyana_dsl_runtime::note_spending::prove_note_spend;
 use pyana_circuit::poseidon2;
 use pyana_circuit::stark::{self, StarkProof};
 use pyana_commit::accumulator::{AccumulatorWitness, BabyBear4, PolynomialAccumulator};
-use pyana_dsl_tests::non_revocation_dsl::{
+use pyana_dsl_runtime::revocation::{
     DslRevocationTree, generate_non_revocation_trace, non_revocation_dsl_circuit,
+    revocation_hash_to_field,
 };
 use pyana_token::AuthRequest;
 
@@ -717,7 +715,9 @@ pub fn verify_anonymous_presentation(
 ///
 /// Returns `Ok(())` if the proof is valid, `Err` with reason otherwise.
 pub fn verify_non_revocation_proof(proof: &NonRevocationProof) -> Result<(), String> {
-    pyana_circuit::non_revocation_air::verify_non_revocation(proof.revocation_root, &proof.proof)
+    let circuit = non_revocation_dsl_circuit();
+    let public_inputs = vec![proof.revocation_root];
+    pyana_circuit::stark::verify(&circuit, &proof.proof, &public_inputs)
 }
 
 /// Verify an accumulator-based non-membership proof.
@@ -765,7 +765,7 @@ pub fn verify_note_spending(
     asset_type: BabyBear,
     proof: &StarkProof,
 ) -> Result<(), String> {
-    pyana_circuit::note_spending_air::verify_note_spend(
+    pyana_dsl_runtime::note_spending::verify_note_spend(
         nullifier,
         merkle_root,
         value,

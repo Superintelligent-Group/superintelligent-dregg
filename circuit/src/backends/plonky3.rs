@@ -252,10 +252,11 @@ impl ProofBackend for Plonky3Backend {
 
         #[cfg(not(feature = "plonky3"))]
         {
-            // Fallback: use the custom STARK for membership when Plonky3 is not available.
-            use crate::poseidon2_air::MerklePoseidon2StarkAir;
+            // Fallback: use the DSL STARK for membership when Plonky3 is not available.
+            use crate::dsl::descriptors::merkle_poseidon2_circuit;
+            use crate::dsl::membership::generate_merkle_poseidon2_trace;
 
-            let (trace, pi) = crate::poseidon2_air::generate_merkle_poseidon2_trace(
+            let (trace, pi) = generate_merkle_poseidon2_trace(
                 leaf_hash,
                 &bb_siblings,
                 &positions,
@@ -270,8 +271,8 @@ impl ProofBackend for Plonky3Backend {
                 ));
             }
 
-            let air = MerklePoseidon2StarkAir;
-            let stark_proof = stark::prove(&air, &trace, &pi);
+            let circuit = merkle_poseidon2_circuit();
+            let stark_proof = stark::prove(&circuit, &trace, &pi);
             let proof_bytes = serialize_stark_proof(&stark_proof);
 
             let pub_inputs_bytes: Vec<[u8; 32]> =
@@ -324,9 +325,8 @@ impl ProofBackend for Plonky3Backend {
                 .map(bytes32_to_babybear)
                 .collect();
 
-            use crate::poseidon2_air::MerklePoseidon2StarkAir;
-            let air = MerklePoseidon2StarkAir;
-            stark::verify(&air, &stark_proof, &public_inputs)
+            let circuit = crate::dsl::descriptors::merkle_poseidon2_circuit();
+            stark::verify(&circuit, &stark_proof, &public_inputs)
                 .map(|()| true)
                 .map_err(|e| format!("STARK verification failed: {}", e))
         }

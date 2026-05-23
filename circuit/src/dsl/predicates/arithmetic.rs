@@ -37,10 +37,10 @@
 //!
 //! `[threshold, fact_commitment]`
 
-use pyana_circuit::field::{BABYBEAR_P, BabyBear};
-use pyana_circuit::stark::{self, StarkProof};
+use crate::field::{BABYBEAR_P, BabyBear};
+use crate::stark::{self, StarkProof};
 
-use crate::circuit::{
+use crate::dsl::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
     PolyTerm,
 };

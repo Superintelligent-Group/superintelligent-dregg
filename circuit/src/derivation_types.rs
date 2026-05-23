@@ -4,10 +4,9 @@
 //! separated from the constraint logic so the AIR can be swapped out
 //! without affecting downstream consumers.
 
-use crate::constraint_prover::Air;
 use crate::field::BabyBear;
 use crate::poseidon2::{hash_2_to_1, hash_fact, hash_many};
-use crate::stark::{self, StarkProof};
+use crate::stark::StarkProof;
 
 /// Trace width for the derivation AIR.
 pub const DERIVATION_AIR_WIDTH: usize = 371;
@@ -391,7 +390,7 @@ impl DerivationWitness {
 
 /// The derivation step AIR.
 #[deprecated(
-    note = "Use pyana_dsl_runtime::descriptors::derivation_circuit(). This AIR is superseded by the DSL derivation circuit (379 cols, max_degree 8)."
+    note = "Use crate::dsl::descriptors::derivation_circuit(). This AIR is superseded by the DSL derivation circuit (379 cols, max_degree 8)."
 )]
 pub struct DerivationAir {
     pub witness: DerivationWitness,
@@ -415,62 +414,22 @@ impl DerivationStarkAir {
 }
 
 /// Generate a real STARK proof for a derivation step.
+///
+/// This now uses the DSL-native derivation circuit (379 columns, 28 constraints)
+/// which is semantically equivalent to the old hand-written `DerivationStarkAir`
+/// but interpreted from a `CircuitDescriptor`.
 pub fn prove_derivation_stark(witness: &DerivationWitness) -> Option<StarkProof> {
-    use crate::derivation_air::DerivationStarkAir as AirImpl;
-
-    let air = AirImpl::new(witness.clone());
-    #[allow(deprecated)]
-    let derivation_air = DerivationAir::new(witness.clone());
-
-    // Generate trace and public inputs
-    let (trace, public_inputs) = derivation_air.generate_trace();
-
-    // Pad to power-of-two >= 2
-    let padded_len = trace.len().next_power_of_two().max(2);
-    let mut padded_trace = trace;
-    while padded_trace.len() < padded_len {
-        padded_trace.push(padded_trace.last().unwrap().clone());
-    }
-
-    Some(stark::prove(&air, &padded_trace, &public_inputs))
+    crate::dsl::derivation::prove_derivation_dsl(witness)
 }
 
 /// Verify a STARK proof for a derivation step.
+///
+/// This now uses the DSL-native derivation circuit for verification.
 pub fn verify_derivation_stark(
     proof: &StarkProof,
     public_inputs: &[BabyBear],
 ) -> Result<(), String> {
-    use crate::derivation_air::DerivationStarkAir as AirImpl;
-
-    let dummy_witness = DerivationWitness {
-        rule: CircuitRule {
-            id: 0,
-            num_body_atoms: 1,
-            num_variables: 0,
-            head_predicate: BabyBear::ZERO,
-            head_terms: [
-                (false, BabyBear::ZERO),
-                (false, BabyBear::ZERO),
-                (false, BabyBear::ZERO),
-                (false, BabyBear::ZERO),
-            ],
-            body_atoms: vec![],
-            equal_checks: vec![],
-            memberof_checks: vec![],
-            gte_check: None,
-            lt_check: None,
-        },
-        state_root: BabyBear::ZERO,
-        body_fact_hashes: vec![BabyBear::ONE],
-        substitution: vec![],
-        derived_predicate: BabyBear::ZERO,
-        derived_terms: [BabyBear::ZERO; 4],
-        not_after_height: BabyBear::ZERO,
-        org_id_hash: BabyBear::ZERO,
-        budget_remaining: BabyBear::ZERO,
-    };
-    let air = AirImpl::new(dummy_witness);
-    stark::verify(&air, proof, public_inputs)
+    crate::dsl::derivation::verify_derivation_dsl(proof, public_inputs)
 }
 
 /// Helper: Create a test derivation witness.

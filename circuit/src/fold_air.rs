@@ -2,6 +2,13 @@
 //!
 //! Types, witnesses, and helpers live in [`crate::fold_types`]. This module
 //! contains only the `StarkAir` implementation for `FoldStarkAir`.
+//!
+//! # DSL-native implementation
+//!
+//! The production prove/verify functions are now available via
+//! `pyana_dsl_runtime::fold::{prove_fold_dsl, verify_fold_dsl}`.
+//! The functions in this module (`prove_fold_stark`, `verify_fold_stark`) are
+//! deprecated but retained for backward compatibility.
 
 // Re-export everything from fold_types for backward compatibility.
 pub use crate::fold_types::*;

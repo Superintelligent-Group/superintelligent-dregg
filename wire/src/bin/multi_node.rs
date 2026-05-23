@@ -728,8 +728,9 @@ async fn main() {
 /// using collision-resistant Poseidon2 hash constraints.
 fn generate_real_stark_proof() -> Vec<u8> {
     use pyana_circuit::BabyBear;
-    use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
     use pyana_circuit::stark::{proof_to_bytes, prove};
+    use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+    use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 
     // Create a 4-level Merkle membership witness with Poseidon2 hashing
     let leaf_hash = BabyBear::new(42424242); // Represents the issuer's key hash
@@ -746,7 +747,7 @@ fn generate_real_stark_proof() -> Vec<u8> {
     let positions = [0u8, 1, 2, 3];
 
     let (trace, public_inputs) = generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
-    let air = MerklePoseidon2StarkAir;
-    let proof = prove(&air, &trace, &public_inputs);
+    let circuit = merkle_poseidon2_circuit();
+    let proof = prove(&circuit, &trace, &public_inputs);
     proof_to_bytes(&proof)
 }

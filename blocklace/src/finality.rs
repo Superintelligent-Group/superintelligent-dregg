@@ -57,10 +57,19 @@ pub enum Payload {
 }
 
 /// Membership actions for federation changes.
+///
+/// A `Propose` action initiates a membership change. An `Approve` action votes
+/// on an existing proposal (referencing the block that contains the proposal).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MembershipAction {
+    /// Propose adding a node to the federation.
     Join { node_id: [u8; 32] },
+    /// Propose removing a node from the federation.
     Leave { node_id: [u8; 32] },
+    /// Approve (vote yes on) an existing proposal contained in `proposal_block`.
+    Approve { proposal_block: BlockId },
+    /// Reject (vote no on) an existing proposal contained in `proposal_block`.
+    Reject { proposal_block: BlockId },
 }
 
 /// A block in the blocklace.
@@ -233,6 +242,14 @@ impl Block {
                     MembershipAction::Leave { node_id } => {
                         buf.push(0x02);
                         buf.extend_from_slice(node_id);
+                    }
+                    MembershipAction::Approve { proposal_block } => {
+                        buf.push(0x03);
+                        buf.extend_from_slice(&proposal_block.0);
+                    }
+                    MembershipAction::Reject { proposal_block } => {
+                        buf.push(0x04);
+                        buf.extend_from_slice(&proposal_block.0);
                     }
                 }
             }

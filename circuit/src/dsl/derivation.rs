@@ -16,26 +16,655 @@
 //!
 //! ```ignore
 //! use pyana_dsl_runtime::derivation::{prove_derivation_dsl, verify_derivation_dsl};
-//! use pyana_circuit::derivation_air::DerivationWitness;
+//! use crate::derivation_air::DerivationWitness;
 //!
 //! let proof = prove_derivation_dsl(&witness).unwrap();
 //! verify_derivation_dsl(&proof, &public_inputs).unwrap();
 //! ```
 
-use pyana_circuit::derivation_air::{
+use crate::derivation_air::{
     DERIVATION_AIR_WIDTH, DerivationWitness, GTE_DIFF_BITS, MAX_BODY_ATOMS, MAX_EQUAL_CHECKS,
     MAX_HEAD_TERMS, MAX_MEMBEROF_CHECKS, MAX_SUB_VARS, col,
 };
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::hash_fact;
-use pyana_circuit::stark::{self, StarkProof};
+use crate::field::{BABYBEAR_P, BabyBear};
+use crate::stark::{self, StarkProof};
 
-use crate::circuit::DslCircuit;
-
-// Re-export the descriptor builder from the tests module (now canonical).
-pub use crate::derivation_descriptor::{
-    BODY_HASH_INV_START, EXTENDED_TRACE_WIDTH, derivation_circuit_descriptor, derivation_dsl_circuit,
+use crate::dsl::circuit::{
+    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
+    PolyTerm,
 };
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Auxiliary column indices for C2 (ConditionalNonzero) inverse columns.
+/// These are appended after the standard DERIVATION_AIR_WIDTH (371) columns.
+/// One inverse column per body atom slot (8 total).
+pub const BODY_HASH_INV_START: usize = DERIVATION_AIR_WIDTH; // 371
+
+/// Extended trace width including auxiliary inverse columns for C2.
+pub const EXTENDED_TRACE_WIDTH: usize = DERIVATION_AIR_WIDTH + MAX_BODY_ATOMS; // 379
+
+// ============================================================================
+// Descriptor Construction
+// ============================================================================
+
+/// Negate a field element: returns BABYBEAR_P - 1 (the additive inverse of ONE).
+fn neg_one() -> BabyBear {
+    BabyBear::new(BABYBEAR_P - 1)
+}
+
+/// Build a polynomial term: `coeff * product(local[col] for col in cols)`.
+fn term(coeff: BabyBear, cols: &[usize]) -> PolyTerm {
+    PolyTerm {
+        coeff,
+        col_indices: cols.to_vec(),
+    }
+}
+
+/// Construct the derivation AIR as a CircuitDescriptor.
+///
+/// This encodes constraints C1-C28 including:
+/// - C2 (body_hash_nonzero_when_used): ConditionalNonzero
+/// - C3 (at_least_one_body): AtLeastOne
+/// - C4 (derived_hash_correct): Hash
+///
+/// The trace is extended by 8 auxiliary inverse columns (for C2) beyond the
+/// standard DERIVATION_AIR_WIDTH, giving EXTENDED_TRACE_WIDTH = 379.
+pub fn derivation_circuit_descriptor() -> CircuitDescriptor {
+    let mut constraints = Vec::new();
+
+    // ========================================================================
+    // C1: body_membership_binary — flag * (flag - 1) == 0 for each body slot
+    // ========================================================================
+    for i in 0..MAX_BODY_ATOMS {
+        let flag_col = col::BODY_MEMBERSHIP_START + i;
+        constraints.push(ConstraintExpr::Binary { col: flag_col });
+    }
+
+    // ========================================================================
+    // C2: body_hash_nonzero_when_used — when flag=1, hash must be nonzero
+    // Uses ConditionalNonzero: selector * (value * inverse - 1) == 0
+    // ========================================================================
+    for i in 0..MAX_BODY_ATOMS {
+        let flag_col = col::BODY_MEMBERSHIP_START + i;
+        let hash_col = col::BODY_HASH_START + i;
+        let inv_col = BODY_HASH_INV_START + i;
+        constraints.push(ConstraintExpr::ConditionalNonzero {
+            selector_col: flag_col,
+            value_col: hash_col,
+            inverse_col: inv_col,
+        });
+    }
+
+    // ========================================================================
+    // C3: at_least_one_body — at least one membership flag must be 1
+    // ========================================================================
+    {
+        let flag_cols: Vec<usize> = (0..MAX_BODY_ATOMS)
+            .map(|i| col::BODY_MEMBERSHIP_START + i)
+            .collect();
+        constraints.push(ConstraintExpr::AtLeastOne { flag_cols });
+    }
+
+    // ========================================================================
+    // C4: derived_hash_correct — DERIVED_HASH == hash_fact(HEAD_PRED, HEAD_TERM[0..3])
+    // ========================================================================
+    constraints.push(ConstraintExpr::Hash {
+        output_col: col::DERIVED_HASH,
+        input_cols: vec![
+            col::HEAD_PRED,
+            col::HEAD_TERM_START,
+            col::HEAD_TERM_START + 1,
+            col::HEAD_TERM_START + 2,
+            col::HEAD_TERM_START + 3,
+        ],
+    });
+
+    // ========================================================================
+    // C5: body_roots_match_state — flag * (root - state_root) == 0
+    // Uses Gated + PiBinding: flag * (root - pi[0]) == 0
+    // ========================================================================
+    for i in 0..MAX_BODY_ATOMS {
+        let flag_col = col::BODY_MEMBERSHIP_START + i;
+        let root_col = col::BODY_ROOT_START + i;
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: flag_col,
+            inner: Box::new(ConstraintExpr::PiBinding {
+                col: root_col,
+                pi_index: 0,
+            }),
+        });
+    }
+
+    // ========================================================================
+    // C6: derived_hash_public — derived_hash == public_inputs[1]
+    // ========================================================================
+    constraints.push(ConstraintExpr::PiBinding {
+        col: col::DERIVED_HASH,
+        pi_index: 1,
+    });
+
+    // ========================================================================
+    // C7: head_is_var_binary — flag * (flag - 1) == 0
+    // ========================================================================
+    for i in 0..MAX_HEAD_TERMS {
+        let flag_col = col::HEAD_IS_VAR_START + i;
+        constraints.push(ConstraintExpr::Binary { col: flag_col });
+    }
+
+    // ========================================================================
+    // C8: head_sel_var_binary — sel * (sel - 1) == 0 for all 4*8=32 selector cols
+    // ========================================================================
+    for term_i in 0..MAX_HEAD_TERMS {
+        for var_j in 0..MAX_SUB_VARS {
+            let sel_col = col::head_sel_var(term_i, var_j);
+            constraints.push(ConstraintExpr::Binary { col: sel_col });
+        }
+    }
+
+    // ========================================================================
+    // C9: head_sel_var_sum_equals_is_var — (sum(sel_j) - is_var)^2 == 0
+    // ========================================================================
+    for term_i in 0..MAX_HEAD_TERMS {
+        let is_var_col = col::HEAD_IS_VAR_START + term_i;
+        let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 1);
+        for var_j in 0..MAX_SUB_VARS {
+            terms_vec.push(term(BabyBear::ONE, &[col::head_sel_var(term_i, var_j)]));
+        }
+        terms_vec.push(term(neg_one(), &[is_var_col]));
+        constraints.push(ConstraintExpr::Squared {
+            inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+        });
+    }
+
+    // ========================================================================
+    // C10: substitution_application
+    // (derived_term[i] - expected)^2 == 0, where:
+    //   expected = is_var * sum(sel_j * sub_j) + (1 - is_var) * raw_value
+    // Expanded: derived_term - raw_value + is_var*raw_value - sum(sel_j*sub_j)
+    // ========================================================================
+    for term_i in 0..MAX_HEAD_TERMS {
+        let derived_col = col::HEAD_TERM_START + term_i;
+        let is_var_col = col::HEAD_IS_VAR_START + term_i;
+        let raw_col = col::HEAD_RAW_VALUE_START + term_i;
+
+        let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 3);
+        terms_vec.push(term(BabyBear::ONE, &[derived_col]));
+        terms_vec.push(term(neg_one(), &[raw_col]));
+        terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
+        for var_j in 0..MAX_SUB_VARS {
+            let sel_col = col::head_sel_var(term_i, var_j);
+            let sub_col = col::SUB_VALUE_START + var_j;
+            terms_vec.push(term(neg_one(), &[sel_col, sub_col]));
+        }
+        constraints.push(ConstraintExpr::Squared {
+            inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+        });
+    }
+
+    // ========================================================================
+    // C11: eq_check_active_binary
+    // ========================================================================
+    for i in 0..MAX_EQUAL_CHECKS {
+        constraints.push(ConstraintExpr::Binary {
+            col: col::eq_check_active(i),
+        });
+    }
+
+    // ========================================================================
+    // C12: eq_check_enforced — active * (term_a - term_b) == 0
+    // ========================================================================
+    for i in 0..MAX_EQUAL_CHECKS {
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: col::eq_check_active(i),
+            inner: Box::new(ConstraintExpr::Equality {
+                col_a: col::eq_check_term_a(i),
+                col_b: col::eq_check_term_b(i),
+            }),
+        });
+    }
+
+    // ========================================================================
+    // C13: memberof_check_active_binary
+    // ========================================================================
+    for i in 0..MAX_MEMBEROF_CHECKS {
+        constraints.push(ConstraintExpr::Binary {
+            col: col::memberof_check_active(i),
+        });
+    }
+
+    // ========================================================================
+    // C14: memberof_check_enforced — active * (term_a - term_b) == 0
+    // ========================================================================
+    for i in 0..MAX_MEMBEROF_CHECKS {
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: col::memberof_check_active(i),
+            inner: Box::new(ConstraintExpr::Equality {
+                col_a: col::memberof_check_term_a(i),
+                col_b: col::memberof_check_term_b(i),
+            }),
+        });
+    }
+
+    // ========================================================================
+    // C15: gte_check_active_binary
+    // ========================================================================
+    constraints.push(ConstraintExpr::Binary {
+        col: col::GTE_CHECK_ACTIVE,
+    });
+
+    // ========================================================================
+    // C16: gte_check_diff_correct — active * (diff - (term_a - term_b)) == 0
+    // ========================================================================
+    constraints.push(ConstraintExpr::Gated {
+        selector_col: col::GTE_CHECK_ACTIVE,
+        inner: Box::new(ConstraintExpr::Polynomial {
+            terms: vec![
+                term(BabyBear::ONE, &[col::GTE_CHECK_DIFF]),
+                term(neg_one(), &[col::GTE_CHECK_TERM_A]),
+                term(BabyBear::ONE, &[col::GTE_CHECK_TERM_B]),
+            ],
+        }),
+    });
+
+    // ========================================================================
+    // C17: gte_check_bit_decomposition — active * (sum(bit_i * 2^i) - diff) == 0
+    // ========================================================================
+    {
+        let mut bit_terms = Vec::with_capacity(GTE_DIFF_BITS + 1);
+        let mut power = BabyBear::ONE;
+        for i in 0..GTE_DIFF_BITS {
+            bit_terms.push(term(power, &[col::gte_diff_bit(i)]));
+            power = power + power;
+        }
+        bit_terms.push(term(neg_one(), &[col::GTE_CHECK_DIFF]));
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: col::GTE_CHECK_ACTIVE,
+            inner: Box::new(ConstraintExpr::Polynomial { terms: bit_terms }),
+        });
+    }
+
+    // ========================================================================
+    // C18: gte_check_bits_binary — active * bit_i * (bit_i - 1) == 0
+    // ========================================================================
+    for i in 0..GTE_DIFF_BITS {
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: col::GTE_CHECK_ACTIVE,
+            inner: Box::new(ConstraintExpr::Binary {
+                col: col::gte_diff_bit(i),
+            }),
+        });
+    }
+
+    // ========================================================================
+    // C19: gte_check_high_bit_zero — active * high_bit == 0
+    // ========================================================================
+    constraints.push(ConstraintExpr::Gated {
+        selector_col: col::GTE_CHECK_ACTIVE,
+        inner: Box::new(ConstraintExpr::Polynomial {
+            terms: vec![term(BabyBear::ONE, &[col::gte_diff_bit(GTE_DIFF_BITS - 1)])],
+        }),
+    });
+
+    // ========================================================================
+    // C20: lt_check_active_binary
+    // ========================================================================
+    constraints.push(ConstraintExpr::Binary {
+        col: col::LT_CHECK_ACTIVE,
+    });
+
+    // ========================================================================
+    // C21: lt_check_diff_correct — active * (diff - (term_b - term_a - 1)) == 0
+    // ========================================================================
+    constraints.push(ConstraintExpr::Gated {
+        selector_col: col::LT_CHECK_ACTIVE,
+        inner: Box::new(ConstraintExpr::Polynomial {
+            terms: vec![
+                term(BabyBear::ONE, &[col::LT_CHECK_DIFF]),
+                term(neg_one(), &[col::LT_CHECK_TERM_B]),
+                term(BabyBear::ONE, &[col::LT_CHECK_TERM_A]),
+                term(BabyBear::ONE, &[]), // constant +1
+            ],
+        }),
+    });
+
+    // ========================================================================
+    // C22: lt_check_bit_decomposition — active * (sum(bit_i * 2^i) - diff) == 0
+    // ========================================================================
+    {
+        let mut bit_terms = Vec::with_capacity(GTE_DIFF_BITS + 1);
+        let mut power = BabyBear::ONE;
+        for i in 0..GTE_DIFF_BITS {
+            bit_terms.push(term(power, &[col::lt_diff_bit(i)]));
+            power = power + power;
+        }
+        bit_terms.push(term(neg_one(), &[col::LT_CHECK_DIFF]));
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: col::LT_CHECK_ACTIVE,
+            inner: Box::new(ConstraintExpr::Polynomial { terms: bit_terms }),
+        });
+    }
+
+    // ========================================================================
+    // C23: lt_check_bits_binary — active * bit_i * (bit_i - 1) == 0
+    // ========================================================================
+    for i in 0..GTE_DIFF_BITS {
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: col::LT_CHECK_ACTIVE,
+            inner: Box::new(ConstraintExpr::Binary {
+                col: col::lt_diff_bit(i),
+            }),
+        });
+    }
+
+    // ========================================================================
+    // C24: lt_check_high_bit_zero — active * high_bit == 0
+    // ========================================================================
+    constraints.push(ConstraintExpr::Gated {
+        selector_col: col::LT_CHECK_ACTIVE,
+        inner: Box::new(ConstraintExpr::Polynomial {
+            terms: vec![term(BabyBear::ONE, &[col::lt_diff_bit(GTE_DIFF_BITS - 1)])],
+        }),
+    });
+
+    // ========================================================================
+    // C25: check_term_is_var_binary — for all 20 check term slots
+    // ========================================================================
+    for slot in 0..col::NUM_CHECK_TERMS {
+        constraints.push(ConstraintExpr::Binary {
+            col: col::check_term_is_var(slot),
+        });
+    }
+
+    // ========================================================================
+    // C26: check_term_sel_binary — for all 20*8=160 selector cols
+    // ========================================================================
+    for slot in 0..col::NUM_CHECK_TERMS {
+        for var_j in 0..MAX_SUB_VARS {
+            constraints.push(ConstraintExpr::Binary {
+                col: col::check_term_sel(slot, var_j),
+            });
+        }
+    }
+
+    // ========================================================================
+    // C27: check_term_sel_sum_equals_is_var — (sum(sel_j) - is_var)^2 == 0
+    // ========================================================================
+    for slot in 0..col::NUM_CHECK_TERMS {
+        let is_var_col = col::check_term_is_var(slot);
+        let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 1);
+        for var_j in 0..MAX_SUB_VARS {
+            terms_vec.push(term(BabyBear::ONE, &[col::check_term_sel(slot, var_j)]));
+        }
+        terms_vec.push(term(neg_one(), &[is_var_col]));
+        constraints.push(ConstraintExpr::Squared {
+            inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+        });
+    }
+
+    // ========================================================================
+    // C28: check_term_binding_correct
+    // For each active check, trace_term must equal resolved value from bindings.
+    // ========================================================================
+
+    // Equal check bindings
+    for i in 0..MAX_EQUAL_CHECKS {
+        let active_col = col::eq_check_active(i);
+
+        // term_a binding
+        {
+            let slot = col::eq_check_term_a_slot(i);
+            let trace_col = col::eq_check_term_a(i);
+            let is_var_col = col::check_term_is_var(slot);
+            let raw_col = col::check_term_raw_value(slot);
+
+            let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 3);
+            terms_vec.push(term(BabyBear::ONE, &[trace_col]));
+            terms_vec.push(term(neg_one(), &[raw_col]));
+            terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
+            for var_j in 0..MAX_SUB_VARS {
+                terms_vec.push(term(
+                    neg_one(),
+                    &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j],
+                ));
+            }
+            constraints.push(ConstraintExpr::Gated {
+                selector_col: active_col,
+                inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+            });
+        }
+
+        // term_b binding
+        {
+            let slot = col::eq_check_term_b_slot(i);
+            let trace_col = col::eq_check_term_b(i);
+            let is_var_col = col::check_term_is_var(slot);
+            let raw_col = col::check_term_raw_value(slot);
+
+            let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 3);
+            terms_vec.push(term(BabyBear::ONE, &[trace_col]));
+            terms_vec.push(term(neg_one(), &[raw_col]));
+            terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
+            for var_j in 0..MAX_SUB_VARS {
+                terms_vec.push(term(
+                    neg_one(),
+                    &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j],
+                ));
+            }
+            constraints.push(ConstraintExpr::Gated {
+                selector_col: active_col,
+                inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+            });
+        }
+    }
+
+    // MemberOf check bindings
+    for i in 0..MAX_MEMBEROF_CHECKS {
+        let active_col = col::memberof_check_active(i);
+
+        // term_a binding
+        {
+            let slot = col::memberof_check_term_a_slot(i);
+            let trace_col = col::memberof_check_term_a(i);
+            let is_var_col = col::check_term_is_var(slot);
+            let raw_col = col::check_term_raw_value(slot);
+
+            let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 3);
+            terms_vec.push(term(BabyBear::ONE, &[trace_col]));
+            terms_vec.push(term(neg_one(), &[raw_col]));
+            terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
+            for var_j in 0..MAX_SUB_VARS {
+                terms_vec.push(term(
+                    neg_one(),
+                    &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j],
+                ));
+            }
+            constraints.push(ConstraintExpr::Gated {
+                selector_col: active_col,
+                inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+            });
+        }
+
+        // term_b binding
+        {
+            let slot = col::memberof_check_term_b_slot(i);
+            let trace_col = col::memberof_check_term_b(i);
+            let is_var_col = col::check_term_is_var(slot);
+            let raw_col = col::check_term_raw_value(slot);
+
+            let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 3);
+            terms_vec.push(term(BabyBear::ONE, &[trace_col]));
+            terms_vec.push(term(neg_one(), &[raw_col]));
+            terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
+            for var_j in 0..MAX_SUB_VARS {
+                terms_vec.push(term(
+                    neg_one(),
+                    &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j],
+                ));
+            }
+            constraints.push(ConstraintExpr::Gated {
+                selector_col: active_col,
+                inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+            });
+        }
+    }
+
+    // GTE check bindings
+    {
+        let active_col = col::GTE_CHECK_ACTIVE;
+
+        // term_a binding
+        {
+            let slot = col::GTE_TERM_A_SLOT;
+            let trace_col = col::GTE_CHECK_TERM_A;
+            let is_var_col = col::check_term_is_var(slot);
+            let raw_col = col::check_term_raw_value(slot);
+
+            let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 3);
+            terms_vec.push(term(BabyBear::ONE, &[trace_col]));
+            terms_vec.push(term(neg_one(), &[raw_col]));
+            terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
+            for var_j in 0..MAX_SUB_VARS {
+                terms_vec.push(term(
+                    neg_one(),
+                    &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j],
+                ));
+            }
+            constraints.push(ConstraintExpr::Gated {
+                selector_col: active_col,
+                inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+            });
+        }
+
+        // term_b binding
+        {
+            let slot = col::GTE_TERM_B_SLOT;
+            let trace_col = col::GTE_CHECK_TERM_B;
+            let is_var_col = col::check_term_is_var(slot);
+            let raw_col = col::check_term_raw_value(slot);
+
+            let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 3);
+            terms_vec.push(term(BabyBear::ONE, &[trace_col]));
+            terms_vec.push(term(neg_one(), &[raw_col]));
+            terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
+            for var_j in 0..MAX_SUB_VARS {
+                terms_vec.push(term(
+                    neg_one(),
+                    &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j],
+                ));
+            }
+            constraints.push(ConstraintExpr::Gated {
+                selector_col: active_col,
+                inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+            });
+        }
+    }
+
+    // LT check bindings
+    {
+        let active_col = col::LT_CHECK_ACTIVE;
+
+        // term_a binding
+        {
+            let slot = col::LT_TERM_A_SLOT;
+            let trace_col = col::LT_CHECK_TERM_A;
+            let is_var_col = col::check_term_is_var(slot);
+            let raw_col = col::check_term_raw_value(slot);
+
+            let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 3);
+            terms_vec.push(term(BabyBear::ONE, &[trace_col]));
+            terms_vec.push(term(neg_one(), &[raw_col]));
+            terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
+            for var_j in 0..MAX_SUB_VARS {
+                terms_vec.push(term(
+                    neg_one(),
+                    &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j],
+                ));
+            }
+            constraints.push(ConstraintExpr::Gated {
+                selector_col: active_col,
+                inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+            });
+        }
+
+        // term_b binding
+        {
+            let slot = col::LT_TERM_B_SLOT;
+            let trace_col = col::LT_CHECK_TERM_B;
+            let is_var_col = col::check_term_is_var(slot);
+            let raw_col = col::check_term_raw_value(slot);
+
+            let mut terms_vec = Vec::with_capacity(MAX_SUB_VARS + 3);
+            terms_vec.push(term(BabyBear::ONE, &[trace_col]));
+            terms_vec.push(term(neg_one(), &[raw_col]));
+            terms_vec.push(term(BabyBear::ONE, &[is_var_col, raw_col]));
+            for var_j in 0..MAX_SUB_VARS {
+                terms_vec.push(term(
+                    neg_one(),
+                    &[col::check_term_sel(slot, var_j), col::SUB_VALUE_START + var_j],
+                ));
+            }
+            constraints.push(ConstraintExpr::Gated {
+                selector_col: active_col,
+                inner: Box::new(ConstraintExpr::Polynomial { terms: terms_vec }),
+            });
+        }
+    }
+
+    // ========================================================================
+    // Boundary constraints
+    // ========================================================================
+    let boundaries = vec![
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::First,
+            col: col::DERIVED_HASH,
+            pi_index: 1,
+        },
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::First,
+            col: col::BODY_ROOT_START,
+            pi_index: 0,
+        },
+    ];
+
+    // ========================================================================
+    // Column definitions (key columns for documentation)
+    // ========================================================================
+    let columns = vec![
+        ColumnDef {
+            name: "rule_id".into(),
+            index: col::RULE_ID,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "head_pred".into(),
+            index: col::HEAD_PRED,
+            kind: ColumnKind::Value,
+        },
+        ColumnDef {
+            name: "derived_hash".into(),
+            index: col::DERIVED_HASH,
+            kind: ColumnKind::Hash,
+        },
+    ];
+
+    CircuitDescriptor {
+        name: "pyana-derivation-v1".into(),
+        trace_width: EXTENDED_TRACE_WIDTH,
+        max_degree: 8,
+        columns,
+        constraints,
+        boundaries,
+        public_input_count: 5, // state_root, derived_hash, not_after, org_id, budget
+    }
+}
+
+/// Create a DslCircuit from the derivation descriptor.
+pub fn derivation_dsl_circuit() -> DslCircuit {
+    DslCircuit::new(derivation_circuit_descriptor())
+}
 
 // ============================================================================
 // Trace Generation
@@ -300,11 +929,8 @@ pub mod multi_col {
 /// The resulting trace can be proved with the multi-step STARK AIR which
 /// internally delegates per-row constraint checking to the DSL evaluator.
 pub fn generate_multi_step_trace_dsl(
-    witness: &pyana_circuit::multi_step_air::MultiStepWitness,
+    witness: &crate::multi_step_air::MultiStepWitness,
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
-    use pyana_circuit::multi_step_air::{ALLOW_PREDICATE, pi};
-    use pyana_circuit::poseidon2::hash_2_to_1;
-
     let num_active = witness.steps.len();
     let num_rows = num_active.next_power_of_two().max(2);
 
@@ -369,7 +995,7 @@ pub fn generate_multi_step_trace_dsl(
 /// This function wraps the existing `prove_authorization_stark` after ensuring
 /// the trace is generated with DSL-compatible column layout.
 pub fn prove_authorization_dsl(
-    witness: &pyana_circuit::multi_step_air::MultiStepWitness,
+    witness: &crate::multi_step_air::MultiStepWitness,
 ) -> StarkProof {
     // The existing prove_authorization_stark already uses the 376-column layout
     // from multi_step_air. The DSL derivation constraints are semantically
@@ -378,7 +1004,7 @@ pub fn prove_authorization_dsl(
     // For now, delegate to the existing implementation which uses the
     // MultiStepStarkAir. The DSL-native multi-step circuit will come when
     // we compose multiple DslCircuits.
-    pyana_circuit::multi_step_air::prove_authorization_stark(witness)
+    crate::multi_step_air::prove_authorization_stark(witness)
 }
 
 /// Verify a multi-step authorization STARK proof.
@@ -389,7 +1015,7 @@ pub fn verify_authorization_dsl(
     accumulated_hash: BabyBear,
     proof: &StarkProof,
 ) -> Result<(), String> {
-    pyana_circuit::multi_step_air::verify_authorization_stark(conclusion, accumulated_hash, proof)
+    crate::multi_step_air::verify_authorization_stark(conclusion, accumulated_hash, proof)
 }
 
 // ============================================================================
@@ -508,7 +1134,8 @@ fn fill_all_check_term_bindings(row: &mut [BabyBear], witness: &DerivationWitnes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::derivation_air::{BodyAtomPattern, CircuitRule, create_test_derivation};
+    use crate::derivation_air::{BodyAtomPattern, CircuitRule, create_test_derivation};
+    use crate::poseidon2::hash_fact;
 
     #[test]
     fn dsl_trace_has_correct_width() {
@@ -568,7 +1195,7 @@ mod tests {
 
     #[test]
     fn dsl_trace_with_gte_check() {
-        use pyana_circuit::derivation_air::CircuitGteCheck;
+        use crate::derivation_air::CircuitGteCheck;
 
         let access_pred = BabyBear::new(300);
         let owns_pred = BabyBear::new(100);
@@ -633,7 +1260,7 @@ mod tests {
 
     #[test]
     fn dsl_trace_with_lt_check() {
-        use pyana_circuit::derivation_air::CircuitLtCheck;
+        use crate::derivation_air::CircuitLtCheck;
 
         let access_pred = BabyBear::new(300);
         let owns_pred = BabyBear::new(100);
@@ -698,7 +1325,7 @@ mod tests {
 
     #[test]
     fn dsl_trace_with_eq_check() {
-        use pyana_circuit::derivation_air::CircuitEqualCheck;
+        use crate::derivation_air::CircuitEqualCheck;
 
         let access_pred = BabyBear::new(300);
         let owns_pred = BabyBear::new(100);
@@ -763,7 +1390,7 @@ mod tests {
 
     #[test]
     fn dsl_trace_with_memberof_check() {
-        use pyana_circuit::derivation_air::CircuitMemberOfCheck;
+        use crate::derivation_air::CircuitMemberOfCheck;
 
         let access_pred = BabyBear::new(300);
         let owns_pred = BabyBear::new(100);

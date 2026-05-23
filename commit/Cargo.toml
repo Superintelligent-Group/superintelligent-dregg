@@ -7,6 +7,7 @@ edition.workspace = true
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 pyana-circuit = { path = "../circuit" }
+pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
 
 [lints]
 workspace = true

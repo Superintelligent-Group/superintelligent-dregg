@@ -13,8 +13,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::stark::{self, BoundaryConstraint, StarkAir};
+use crate::field::BabyBear;
+use crate::stark::{self, BoundaryConstraint, StarkAir};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -210,7 +210,7 @@ impl ConstraintExpr {
                 // First input is the predicate, rest are terms.
                 let predicate = local[input_cols[0]];
                 let terms: Vec<BabyBear> = input_cols[1..].iter().map(|&c| local[c]).collect();
-                let expected = pyana_circuit::poseidon2::hash_fact(predicate, &terms);
+                let expected = crate::poseidon2::hash_fact(predicate, &terms);
                 expected - local[*output_col]
             }
             Self::ConditionalNonzero {
@@ -237,7 +237,7 @@ impl ConstraintExpr {
                 input_col_b,
             } => {
                 let expected =
-                    pyana_circuit::poseidon2::hash_2_to_1(local[*input_col_a], local[*input_col_b]);
+                    crate::poseidon2::hash_2_to_1(local[*input_col_a], local[*input_col_b]);
                 expected - local[*output_col]
             }
             Self::Hash4to1 {
@@ -250,7 +250,7 @@ impl ConstraintExpr {
                     local[input_cols[2]],
                     local[input_cols[3]],
                 ];
-                let expected = pyana_circuit::poseidon2::hash_4_to_1(&children);
+                let expected = crate::poseidon2::hash_4_to_1(&children);
                 expected - local[*output_col]
             }
         }
@@ -278,7 +278,7 @@ impl BoundaryDef {
 static AIR_NAME_CACHE: Mutex<Option<HashMap<String, &'static str>>> = Mutex::new(None);
 
 /// Intern a string as `&'static str`, reusing a previously leaked copy if available.
-pub(crate) fn intern_air_name(name: &str) -> &'static str {
+pub fn intern_air_name(name: &str) -> &'static str {
     let mut guard = AIR_NAME_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let cache = guard.get_or_insert_with(HashMap::new);
     if let Some(&existing) = cache.get(name) {
@@ -994,7 +994,7 @@ impl ProgramRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::stark::{prove, verify};
+    use crate::stark::{prove, verify};
 
     /// Build a CircuitDescriptor equivalent to SovereignTransitionAir.
     ///
@@ -1055,11 +1055,11 @@ mod tests {
                             col_indices: vec![2],
                         }, // +new_balance
                         PolyTerm {
-                            coeff: BabyBear::new(pyana_circuit::field::BABYBEAR_P - 1),
+                            coeff: BabyBear::new(crate::field::BABYBEAR_P - 1),
                             col_indices: vec![0],
                         }, // -old_balance
                         PolyTerm {
-                            coeff: BabyBear::new(pyana_circuit::field::BABYBEAR_P - 1),
+                            coeff: BabyBear::new(crate::field::BABYBEAR_P - 1),
                             col_indices: vec![1],
                         }, // -transfer_amount
                         PolyTerm {
@@ -1097,7 +1097,7 @@ mod tests {
         let alpha = BabyBear::new(7); // arbitrary nonzero
 
         // Evaluate using hand-written AIR
-        use pyana_circuit::sovereign_transition_air::SovereignTransitionAir;
+        use crate::sovereign_transition_air::SovereignTransitionAir;
         let hand = SovereignTransitionAir;
         let hand_result = hand.eval_constraints(&row, &dummy_next, &dummy_pi, alpha);
 
@@ -1139,7 +1139,7 @@ mod tests {
 
     #[test]
     fn dsl_circuit_prove_and_verify() {
-        use pyana_circuit::sovereign_transition_air::{
+        use crate::sovereign_transition_air::{
             SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
         };
 
@@ -1180,7 +1180,7 @@ mod tests {
 
     #[test]
     fn dsl_circuit_incoming_transfer() {
-        use pyana_circuit::sovereign_transition_air::{
+        use crate::sovereign_transition_air::{
             SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
         };
 
@@ -1244,7 +1244,7 @@ mod tests {
 
     #[test]
     fn prove_and_verify_via_registry() {
-        use pyana_circuit::sovereign_transition_air::{
+        use crate::sovereign_transition_air::{
             SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
         };
 
@@ -1379,7 +1379,7 @@ mod tests {
 
     #[test]
     fn wrong_vk_hash_verification_fails() {
-        use pyana_circuit::sovereign_transition_air::{
+        use crate::sovereign_transition_air::{
             SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
         };
 
@@ -1403,7 +1403,7 @@ mod tests {
 
     #[test]
     fn valid_proof_under_correct_program_passes() {
-        use pyana_circuit::sovereign_transition_air::{
+        use crate::sovereign_transition_air::{
             SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear,
         };
 

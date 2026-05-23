@@ -507,6 +507,9 @@ impl StarkAir for NoteSpendingAir {
 ///
 /// Returns a STARK proof that can be verified with only the nullifier and merkle_root.
 /// The spending key and note contents remain private.
+///
+/// DEPRECATED: Use `crate::dsl::note_spending::prove_note_spend_dsl` instead.
+#[deprecated(note = "Use crate::dsl::note_spending::prove_note_spend_dsl instead")]
 pub fn prove_note_spend(witness: &NoteSpendingWitness) -> StarkProof {
     let depth = witness.merkle_siblings.len();
     let air = NoteSpendingAir::new(depth);
@@ -528,6 +531,9 @@ pub fn prove_note_spend(witness: &NoteSpendingWitness) -> StarkProof {
 /// is actually committed in the note — the proof will fail verification.
 ///
 /// Returns Ok(()) if the proof is valid, Err with reason otherwise.
+///
+/// DEPRECATED: Use `crate::dsl::note_spending::verify_note_spend_dsl` instead.
+#[deprecated(note = "Use crate::dsl::note_spending::verify_note_spend_dsl instead")]
 pub fn verify_note_spend(
     nullifier: BabyBear,
     merkle_root: BabyBear,
@@ -535,22 +541,12 @@ pub fn verify_note_spend(
     asset_type: BabyBear,
     proof: &StarkProof,
 ) -> Result<(), String> {
-    // Reconstruct the depth from the trace length.
-    // trace rows = 1 (commitment row) + depth (Merkle levels), padded to power of 2.
-    // We need at least MIN_MERKLE_DEPTH.
     let trace_len = proof.trace_len;
     if trace_len < 4 {
         return Err("Proof trace too short for note spending circuit".to_string());
     }
-
-    // The depth is trace_len - 1 (minus padding), but for the AIR we use the padded trace_len - 1.
-    // Actually, we just need a NoteSpendingAir with the right depth to evaluate constraints.
-    // The depth = trace_len - 1 for the Merkle levels (including padding rows).
-    // For constraint evaluation, any depth >= MIN_MERKLE_DEPTH works since constraints
-    // are position validity checks (which hold on padding rows too).
     let depth = (trace_len - 1).max(MIN_MERKLE_DEPTH);
     let air = NoteSpendingAir::new(depth);
-
     let public_inputs = vec![nullifier, merkle_root, value, asset_type];
     stark::verify(&air, proof, &public_inputs)
 }

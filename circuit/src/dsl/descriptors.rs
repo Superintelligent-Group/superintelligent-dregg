@@ -10,9 +10,9 @@
 //! `BlindedMerklePoseidon2StarkAir`, `NonRevocationAir`, `DerivationAir`) which
 //! are now DEPRECATED.
 
-use pyana_circuit::field::{BABYBEAR_P, BabyBear};
+use crate::field::{BABYBEAR_P, BabyBear};
 
-use crate::circuit::{
+use crate::dsl::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
     PolyTerm,
 };
@@ -643,209 +643,36 @@ pub fn non_revocation_circuit() -> DslCircuit {
 // Derivation
 // ============================================================================
 
-use pyana_circuit::derivation_air::{
-    DERIVATION_AIR_WIDTH, MAX_BODY_ATOMS, MAX_EQUAL_CHECKS, MAX_HEAD_TERMS, MAX_MEMBEROF_CHECKS,
-    MAX_SUB_VARS, col as deriv_col,
-};
-
 /// Auxiliary column indices for C2 (ConditionalNonzero) inverse columns.
-pub const DERIVATION_BODY_HASH_INV_START: usize = DERIVATION_AIR_WIDTH; // 371
+pub use crate::dsl::derivation::BODY_HASH_INV_START as DERIVATION_BODY_HASH_INV_START;
 
 /// Extended trace width including auxiliary inverse columns for C2.
-pub const DERIVATION_EXTENDED_TRACE_WIDTH: usize = DERIVATION_AIR_WIDTH + MAX_BODY_ATOMS; // 379
+pub use crate::dsl::derivation::EXTENDED_TRACE_WIDTH as DERIVATION_EXTENDED_TRACE_WIDTH;
 
 /// Build the derivation AIR as a `CircuitDescriptor`.
 ///
 /// Encodes constraints C1-C28 with 379 columns (371 standard + 8 inverse auxiliary).
+/// This delegates to [`crate::dsl::derivation::derivation_circuit_descriptor()`] which
+/// contains the correct, fully-specified 28-constraint implementation.
 ///
 /// Public inputs: [state_root, derived_hash, not_after, org_id, budget]
 pub fn derivation_descriptor() -> CircuitDescriptor {
-    let mut constraints = Vec::new();
-
-    // C1: body_membership_binary
-    for i in 0..MAX_BODY_ATOMS {
-        let flag_col = deriv_col::BODY_MEMBERSHIP_START + i;
-        constraints.push(ConstraintExpr::Binary { col: flag_col });
-    }
-
-    // C2: body_hash_nonzero_when_used (ConditionalNonzero)
-    for i in 0..MAX_BODY_ATOMS {
-        let flag_col = deriv_col::BODY_MEMBERSHIP_START + i;
-        let hash_col = deriv_col::BODY_HASH_START + i;
-        let inv_col = DERIVATION_BODY_HASH_INV_START + i;
-        constraints.push(ConstraintExpr::ConditionalNonzero {
-            selector_col: flag_col,
-            value_col: hash_col,
-            inverse_col: inv_col,
-        });
-    }
-
-    // C3: at_least_one_body (AtLeastOne)
-    let body_flag_cols: Vec<usize> = (0..MAX_BODY_ATOMS)
-        .map(|i| deriv_col::BODY_MEMBERSHIP_START + i)
-        .collect();
-    constraints.push(ConstraintExpr::AtLeastOne {
-        flag_cols: body_flag_cols,
-    });
-
-    // C4: derived_hash_correct (Hash)
-    let mut hash_inputs = vec![deriv_col::PREDICATE_HASH];
-    for i in 0..MAX_HEAD_TERMS {
-        hash_inputs.push(deriv_col::HEAD_TERM_START + i);
-    }
-    constraints.push(ConstraintExpr::Hash {
-        output_col: deriv_col::DERIVED_HASH,
-        input_cols: hash_inputs,
-    });
-
-    // C5: state_root binding (Hash of all body hashes into state_root)
-    let body_hash_cols: Vec<usize> = (0..MAX_BODY_ATOMS)
-        .map(|i| deriv_col::BODY_HASH_START + i)
-        .collect();
-    constraints.push(ConstraintExpr::Hash {
-        output_col: deriv_col::STATE_ROOT,
-        input_cols: body_hash_cols,
-    });
-
-    // C6-C13: Equality checks (each pair of columns must be equal when flag is set)
-    for i in 0..MAX_EQUAL_CHECKS {
-        let flag_col = deriv_col::EQUAL_FLAG_START + i;
-        let left_col = deriv_col::EQUAL_LEFT_START + i;
-        let right_col = deriv_col::EQUAL_RIGHT_START + i;
-        constraints.push(ConstraintExpr::Gated {
-            selector_col: flag_col,
-            inner: Box::new(ConstraintExpr::Polynomial {
-                terms: vec![
-                    PolyTerm {
-                        coeff: BabyBear::ONE,
-                        col_indices: vec![left_col],
-                    },
-                    PolyTerm {
-                        coeff: -BabyBear::ONE,
-                        col_indices: vec![right_col],
-                    },
-                ],
-            }),
-        });
-        constraints.push(ConstraintExpr::Binary { col: flag_col });
-    }
-
-    // C14-C21: Substitution variable binding
-    for i in 0..MAX_SUB_VARS {
-        let var_col = deriv_col::SUB_VAR_START + i;
-        let val_col = deriv_col::SUB_VAL_START + i;
-        let flag_col = deriv_col::SUB_FLAG_START + i;
-        constraints.push(ConstraintExpr::Gated {
-            selector_col: flag_col,
-            inner: Box::new(ConstraintExpr::Polynomial {
-                terms: vec![
-                    PolyTerm {
-                        coeff: BabyBear::ONE,
-                        col_indices: vec![var_col],
-                    },
-                    PolyTerm {
-                        coeff: -BabyBear::ONE,
-                        col_indices: vec![val_col],
-                    },
-                ],
-            }),
-        });
-        constraints.push(ConstraintExpr::Binary { col: flag_col });
-    }
-
-    // C22-C25: MemberOf checks
-    for i in 0..MAX_MEMBEROF_CHECKS {
-        let flag_col = deriv_col::MEMBEROF_FLAG_START + i;
-        constraints.push(ConstraintExpr::Binary { col: flag_col });
-    }
-
-    // C26: not_after range check (budget >= 0 equivalent)
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![PolyTerm {
-            coeff: BabyBear::ONE,
-            col_indices: vec![deriv_col::NOT_AFTER],
-        }],
-    });
-
-    // C27: org_id nonzero
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![PolyTerm {
-            coeff: BabyBear::ONE,
-            col_indices: vec![deriv_col::ORG_ID],
-        }],
-    });
-
-    // C28: budget column binding
-    constraints.push(ConstraintExpr::Polynomial {
-        terms: vec![PolyTerm {
-            coeff: BabyBear::ONE,
-            col_indices: vec![deriv_col::BUDGET],
-        }],
-    });
-
-    // Boundaries: bind public inputs
-    let boundaries = vec![
-        BoundaryDef::PiBinding {
-            row: BoundaryRow::First,
-            col: deriv_col::STATE_ROOT,
-            pi_index: 0,
-        },
-        BoundaryDef::PiBinding {
-            row: BoundaryRow::First,
-            col: deriv_col::DERIVED_HASH,
-            pi_index: 1,
-        },
-        BoundaryDef::PiBinding {
-            row: BoundaryRow::First,
-            col: deriv_col::NOT_AFTER,
-            pi_index: 2,
-        },
-        BoundaryDef::PiBinding {
-            row: BoundaryRow::First,
-            col: deriv_col::ORG_ID,
-            pi_index: 3,
-        },
-        BoundaryDef::PiBinding {
-            row: BoundaryRow::First,
-            col: deriv_col::BUDGET,
-            pi_index: 4,
-        },
-    ];
-
-    // Column definitions (abbreviated -- only the semantically important ones)
-    let columns = vec![
-        ColumnDef {
-            name: "state_root".into(),
-            index: deriv_col::STATE_ROOT,
-            kind: ColumnKind::Hash,
-        },
-        ColumnDef {
-            name: "derived_hash".into(),
-            index: deriv_col::DERIVED_HASH,
-            kind: ColumnKind::Hash,
-        },
-        ColumnDef {
-            name: "predicate_hash".into(),
-            index: deriv_col::PREDICATE_HASH,
-            kind: ColumnKind::Hash,
-        },
-    ];
-
-    CircuitDescriptor {
-        name: DERIVATION_AIR_NAME.into(),
-        trace_width: DERIVATION_EXTENDED_TRACE_WIDTH,
-        max_degree: 8,
-        columns,
-        constraints,
-        boundaries,
-        public_input_count: 5,
-    }
+    crate::dsl::derivation::derivation_circuit_descriptor()
 }
 
 /// Create a `DslCircuit` for derivation proofs.
 pub fn derivation_circuit() -> DslCircuit {
-    DslCircuit::new(derivation_descriptor())
+    crate::dsl::derivation::derivation_dsl_circuit()
 }
+
+/// AIR name for DSL base predicate proofs.
+pub const PREDICATE_DSL_AIR_NAME: &str = "pyana-predicate-dsl-v2";
+
+/// AIR name for DSL relational predicate proofs.
+pub const RELATIONAL_PREDICATE_DSL_AIR_NAME: &str = "pyana-relational-predicate-dsl-v2";
+
+/// AIR name for DSL compound predicate proofs.
+pub const COMPOUND_PREDICATE_DSL_AIR_NAME: &str = "pyana-compound-predicate-dsl-v2";
 
 /// Returns `true` if the given AIR name matches any of the standard DSL circuits.
 ///
@@ -859,20 +686,32 @@ pub fn is_known_dsl_air(air_name: &str) -> bool {
             | BLINDED_MERKLE_AIR_NAME
             | NON_REVOCATION_AIR_NAME
             | DERIVATION_AIR_NAME
+            | PREDICATE_DSL_AIR_NAME
+            | RELATIONAL_PREDICATE_DSL_AIR_NAME
+            | COMPOUND_PREDICATE_DSL_AIR_NAME
     )
 }
 
 /// Get the appropriate `DslCircuit` for a given AIR name, or `None` if unrecognized.
 ///
 /// This is the single dispatch point for verifying standard proofs. All standard
-/// proof types (membership, blinded membership, non-revocation, derivation) are
-/// handled here. Effect VM uses its own `EffectVmAir` directly.
+/// proof types (membership, blinded membership, non-revocation, derivation, predicates)
+/// are handled here. Effect VM uses its own `EffectVmAir` directly.
 pub fn circuit_for_air_name(air_name: &str) -> Option<DslCircuit> {
     match air_name {
         MERKLE_POSEIDON2_AIR_NAME => Some(merkle_poseidon2_circuit()),
         BLINDED_MERKLE_AIR_NAME => Some(blinded_merkle_poseidon2_circuit()),
         NON_REVOCATION_AIR_NAME => Some(non_revocation_circuit()),
         DERIVATION_AIR_NAME => Some(derivation_circuit()),
+        PREDICATE_DSL_AIR_NAME => {
+            Some(DslCircuit::new(crate::dsl::predicates::predicate_descriptor()))
+        }
+        RELATIONAL_PREDICATE_DSL_AIR_NAME => {
+            Some(DslCircuit::new(crate::dsl::predicates::relational_predicate_descriptor()))
+        }
+        COMPOUND_PREDICATE_DSL_AIR_NAME => {
+            Some(crate::dsl::predicates::compound_predicate_dsl_circuit())
+        }
         _ => None,
     }
 }

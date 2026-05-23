@@ -817,6 +817,7 @@ pub fn router(
         .route("/api/events", get(get_events))
         .route("/checkpoint/latest", get(get_checkpoint_latest))
         .route("/checkpoint/{height}", get(get_checkpoint_at_height))
+        .route("/api/blocklace/checkpoint", get(get_blocklace_checkpoint))
         .route("/pir/info", get(get_pir_info))
         .route("/pir/query", post(post_pir_query))
         .route(
@@ -2815,6 +2816,40 @@ fn checkpoint_to_response(cp: &pyana_federation::Checkpoint) -> CheckpointRespon
         timestamp: cp.timestamp,
         federation_members: cp.federation_members.len(),
         qc_votes: cp.qc.votes.len(),
+    }
+}
+
+// =============================================================================
+// Blocklace Checkpoint Serving (for new node fast-sync)
+// =============================================================================
+
+/// GET /api/blocklace/checkpoint?height=N
+///
+/// Returns the full blocklace checkpoint at height N (or the latest if height is
+/// not specified). This includes the serialized blocklace DAG state and ledger
+/// snapshot, both hex-encoded with BLAKE3 hashes for integrity verification.
+///
+/// New nodes use this endpoint to fast-sync from a recent known-good state
+/// instead of replaying the entire block history.
+async fn get_blocklace_checkpoint(
+    Query(params): Query<crate::blocklace_sync::BlocklaceCheckpointQuery>,
+    State(state): State<NodeState>,
+) -> Result<Json<crate::blocklace_sync::BlocklaceCheckpointResponse>, StatusCode> {
+    let s = state.read().await;
+
+    // Determine which height to serve.
+    let height = match params.height {
+        Some(h) => h,
+        None => crate::blocklace_sync::latest_blocklace_checkpoint_height(&s.store),
+    };
+
+    if height == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    match crate::blocklace_sync::load_blocklace_checkpoint(&s.store, height) {
+        Some(checkpoint) => Ok(Json(checkpoint)),
+        None => Err(StatusCode::NOT_FOUND),
     }
 }
 

@@ -875,12 +875,12 @@ pub fn determine_vickrey_result(
 /// Generate a STARK proof of correct Vickrey circuit evaluation.
 ///
 /// Proves that the comparison results were computed honestly from the garbled tables.
+/// Uses the DSL-native garbled evaluation (56-column extended layout).
 pub fn prove_vickrey_evaluation(
     circuit: &VickreyCircuit,
     evaluation: &VickreyEvaluation,
 ) -> Vec<u8> {
-    use pyana_circuit::constraint_prover::Air;
-    use pyana_circuit::garbled_air::GarbledEvaluationAir;
+    use pyana_dsl_runtime::garbled::prove_garbled_evaluation_dsl;
 
     // Convert circuit commitment to WideHash for the AIR.
     let commitment_wide = WideHash::from_poseidon2(
@@ -893,27 +893,19 @@ pub fn prove_vickrey_evaluation(
     );
 
     // Compute output hash from comparison output labels.
-    // For Vickrey, we hash all comparison output labels together.
     let mut output_elements: Vec<BabyBear> = Vec::new();
     for &wire_idx in &evaluation.comparison_output_wires {
-        // We'd need the actual label here. For the proof, we use the gate trace's last outputs.
-        // Simplified: use the gate trace to reconstruct.
         output_elements.push(BabyBear::new(wire_idx as u32));
     }
     let output_hash = WideHash::from_poseidon2("pyana-vickrey-output-v1", &output_elements);
 
-    let air =
-        GarbledEvaluationAir::new(evaluation.gate_trace.clone(), commitment_wide, output_hash);
+    let dsl_proof = prove_garbled_evaluation_dsl(
+        &evaluation.gate_trace,
+        &commitment_wide,
+        &output_hash,
+    );
 
-    let (mut trace, public_inputs) = air.generate_trace();
-
-    // Pad to power of two.
-    while trace.len() < 2 || !trace.len().is_power_of_two() {
-        trace.push(trace.last().unwrap().clone());
-    }
-
-    let proof = pyana_circuit::stark::prove(&air, &trace, &public_inputs);
-    pyana_circuit::stark::proof_to_bytes(&proof)
+    pyana_circuit::stark::proof_to_bytes(&dsl_proof.stark_proof)
 }
 
 // ============================================================================
@@ -1750,8 +1742,7 @@ impl VickreySettlementCircuit {
     /// Uses the garbled AIR infrastructure to prove the sorted trace is valid.
     pub fn prove_settlement(&self) -> Vec<u8> {
         use pyana_circuit::binding::WideHash;
-        use pyana_circuit::constraint_prover::Air;
-        use pyana_circuit::garbled_air::GarbledEvaluationAir;
+        use pyana_dsl_runtime::garbled::prove_garbled_evaluation_dsl;
 
         // Build a synthetic gate trace that encodes the settlement verification.
         // Each "gate" represents a comparison between adjacent rows.
@@ -1801,15 +1792,13 @@ impl VickreySettlementCircuit {
         let output_hash =
             WideHash::from_poseidon2("pyana-vickrey-settlement-output-v1", &output_elems);
 
-        let air = GarbledEvaluationAir::new(gate_trace, commitment_wide, output_hash);
-        let (mut trace, public_inputs) = air.generate_trace();
+        let dsl_proof = prove_garbled_evaluation_dsl(
+            &gate_trace,
+            &commitment_wide,
+            &output_hash,
+        );
 
-        while trace.len() < 2 || !trace.len().is_power_of_two() {
-            trace.push(trace.last().unwrap().clone());
-        }
-
-        let proof = pyana_circuit::stark::prove(&air, &trace, &public_inputs);
-        pyana_circuit::stark::proof_to_bytes(&proof)
+        pyana_circuit::stark::proof_to_bytes(&dsl_proof.stark_proof)
     }
 }
 
@@ -2202,7 +2191,7 @@ use pyana_circuit::poseidon2::hash_fact;
 #[derive(Clone, Debug)]
 pub struct AnonymousVickreySettlement {
     /// Ring membership proof: "I am one of the N bidders."
-    /// Uses a STARK over the GarbledEvaluationAir encoding ring membership.
+    /// Uses a STARK over the DSL garbled evaluation circuit encoding ring membership.
     pub ring_proof: Vec<u8>,
 
     /// The committed payment (from Phase 3).
@@ -2428,7 +2417,7 @@ fn log4_ceil(n: usize) -> usize {
 /// Generate the STARK ring membership proof.
 ///
 /// Proves: "I know a leaf in this ring and can produce a blinded version of it."
-/// Uses GarbledEvaluationAir to encode the ring membership verification as a STARK.
+/// Uses the DSL garbled circuit to encode ring membership verification as a STARK.
 fn prove_ring_membership(
     leaf: BabyBear,
     siblings: &[[BabyBear; 3]],
@@ -2437,9 +2426,8 @@ fn prove_ring_membership(
     ring_root: BabyBear,
 ) -> Result<Vec<u8>, String> {
     use pyana_circuit::binding::WideHash;
-    use pyana_circuit::constraint_prover::Air;
-    use pyana_circuit::garbled_air::GarbledEvaluationAir;
     use pyana_circuit::stark;
+    use pyana_dsl_runtime::garbled::prove_garbled_evaluation_dsl;
 
     // Compute blinded leaf
     let blinded_leaf_val = hash_fact(leaf, &[blinding]);
@@ -2507,55 +2495,50 @@ fn prove_ring_membership(
 
     // Commitment encodes ring_root and blinded_leaf
     let commit_elems = vec![ring_root, blinded_leaf_val];
-    let commitment_wide = WideHash::from_poseidon2("pyana-vickrey-ring-proof-v1", &commit_elems);
+    let commitment_wide =
+        WideHash::from_poseidon2("pyana-vickrey-ring-proof-v1", &commit_elems);
 
     let output_elems = vec![blinded_leaf_val, ring_root];
-    let output_hash = WideHash::from_poseidon2("pyana-vickrey-ring-output-v1", &output_elems);
+    let output_hash =
+        WideHash::from_poseidon2("pyana-vickrey-ring-output-v1", &output_elems);
 
-    let air = GarbledEvaluationAir::new(gate_trace, commitment_wide, output_hash);
-    let (mut air_trace, public_inputs) = air.generate_trace();
+    let dsl_proof = prove_garbled_evaluation_dsl(
+        &gate_trace,
+        &commitment_wide,
+        &output_hash,
+    );
 
-    // Pad to power of two
-    while air_trace.len() < 2 || !air_trace.len().is_power_of_two() {
-        air_trace.push(air_trace.last().unwrap().clone());
-    }
-
-    let proof = stark::prove(&air, &air_trace, &public_inputs);
-    Ok(stark::proof_to_bytes(&proof))
+    Ok(stark::proof_to_bytes(&dsl_proof.stark_proof))
 }
 
 /// Verify a STARK ring membership proof.
 fn verify_ring_membership(proof_bytes: &[u8], blinded_leaf: BabyBear, ring_root: BabyBear) -> bool {
     use pyana_circuit::binding::WideHash;
-    use pyana_circuit::constraint_prover::Air;
-    use pyana_circuit::garbled_air::GarbledEvaluationAir;
     use pyana_circuit::stark;
+    use pyana_dsl_runtime::garbled::{garbled_dsl_circuit, verify_garbled_evaluation_dsl};
 
     // Reconstruct the commitment and output hashes
     let commit_elems = vec![ring_root, blinded_leaf];
-    let commitment_wide = WideHash::from_poseidon2("pyana-vickrey-ring-proof-v1", &commit_elems);
+    let commitment_wide =
+        WideHash::from_poseidon2("pyana-vickrey-ring-proof-v1", &commit_elems);
 
     let output_elems = vec![blinded_leaf, ring_root];
-    let output_hash = WideHash::from_poseidon2("pyana-vickrey-ring-output-v1", &output_elems);
+    let output_hash =
+        WideHash::from_poseidon2("pyana-vickrey-ring-output-v1", &output_elems);
 
-    // Construct a minimal AIR for verification (constraints are trace-independent)
-    let dummy_gate_trace = vec![
-        GateEvalRecord {
-            left_label: [BabyBear::ZERO; 8],
-            right_label: [BabyBear::ZERO; 8],
-            gate_index: 0,
-            hash_output: [BabyBear::ZERO; 8],
-            table_entry: [BabyBear::ZERO; 8],
-            output_label: [BabyBear::ZERO; 8],
-        };
-        2
-    ];
+    // Reconstruct public inputs for the DSL circuit
+    let mut public_inputs = Vec::with_capacity(8);
+    for &elem in commitment_wide.as_slice() {
+        public_inputs.push(elem);
+    }
+    for &elem in output_hash.as_slice() {
+        public_inputs.push(elem);
+    }
 
-    let air = GarbledEvaluationAir::new(dummy_gate_trace, commitment_wide, output_hash);
-    let (_, public_inputs) = air.generate_trace();
+    let dsl_circuit = garbled_dsl_circuit();
 
     match stark::proof_from_bytes(proof_bytes) {
-        Ok(proof) => stark::verify(&air, &proof, &public_inputs).is_ok(),
+        Ok(proof) => stark::verify(&dsl_circuit, &proof, &public_inputs).is_ok(),
         Err(_) => false,
     }
 }

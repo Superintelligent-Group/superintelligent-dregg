@@ -44,9 +44,11 @@
 //! Public keys are stored in plaintext.
 
 pub mod audit;
+pub mod blocklace_store;
 pub mod checkpoint;
 pub mod federation;
 pub mod keys;
+pub mod ledger_store;
 pub mod note_tree;
 pub mod poseidon2_note_tree;
 pub mod recovery;
@@ -61,7 +63,9 @@ use std::path::Path;
 use redb::{Database, ReadableTable};
 
 pub use audit::StoredAuditEvent;
+pub use blocklace_store::BlocklaceMeta;
 pub use federation::StoredAttestedRoot;
+pub use ledger_store::LedgerCheckpoint;
 pub use note_tree::{NoteTree, PersistentNullifierSet};
 pub use poseidon2_note_tree::Poseidon2NoteTree;
 pub use recovery::RecoveredState;
@@ -187,6 +191,11 @@ impl PersistentStore {
             let _ = write_txn.open_table(tables::NULLIFIERS)?;
             // Checkpoint tables.
             let _ = write_txn.open_table(tables::CHECKPOINTS)?;
+            // Ledger checkpoint table.
+            let _ = write_txn.open_table(tables::LEDGER_CHECKPOINTS)?;
+            // Blocklace tables.
+            let _ = write_txn.open_table(tables::BLOCKLACE_BLOCKS)?;
+            let _ = write_txn.open_table(tables::BLOCKLACE_META)?;
             // Metadata tables.
             let _ = write_txn.open_table(tables::METADATA)?;
             let _ = write_txn.open_table(tables::METADATA_BYTES)?;

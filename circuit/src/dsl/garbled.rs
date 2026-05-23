@@ -22,13 +22,13 @@
 //! For the basic comparison-circuit workflow, use `prove_comparison_circuit_dsl()`
 //! which handles the record conversion internally.
 
-use pyana_circuit::binding::WideHash;
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::garbled::{self, GateEvalRecord};
-use pyana_circuit::garbled_air::{col, GARBLED_EVAL_AIR_WIDTH};
-use pyana_circuit::stark::{self, StarkProof};
+use crate::binding::WideHash;
+use crate::field::BabyBear;
+use crate::garbled::{self, GateEvalRecord};
+use crate::garbled_air::{col, GARBLED_EVAL_AIR_WIDTH};
+use crate::stark::{self, StarkProof};
 
-use crate::circuit::{
+use crate::dsl::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr,
     DslCircuit, PolyTerm,
 };
@@ -115,7 +115,7 @@ pub struct GarbledDslProof {
 // ============================================================================
 
 fn neg_one() -> BabyBear {
-    BabyBear::new(pyana_circuit::field::BABYBEAR_P - 1)
+    BabyBear::new(crate::field::BABYBEAR_P - 1)
 }
 
 fn term(coeff: BabyBear, cols: &[usize]) -> PolyTerm {

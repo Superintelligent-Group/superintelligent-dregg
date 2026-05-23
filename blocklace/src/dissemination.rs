@@ -26,6 +26,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Block, BlockId, Blocklace, NodeKey};
 
+/// Maximum number of blocks to include in a single push message.
+/// Chunks are sent sequentially to avoid OOM on large syncs.
+pub const MAX_BLOCKS_PER_PUSH: usize = 100;
+
 // =============================================================================
 // Peer Knowledge Tracking
 // =============================================================================
@@ -381,6 +385,64 @@ impl Disseminator {
         DeltaGroup::from_blocks(sendable)
     }
 
+    /// Determine what blocks to send to a specific peer, split into chunks.
+    ///
+    /// Each chunk is a causally-closed delta group of at most `max_per_chunk`
+    /// blocks. Chunks are ordered so that predecessors appear in earlier chunks.
+    /// The receiver can process them sequentially without gaps.
+    pub fn blocks_to_send_chunked(&self, peer: &NodeKey, max_per_chunk: usize) -> Vec<DeltaGroup> {
+        let full_delta = self.blocks_to_send(peer);
+        if full_delta.is_empty() {
+            return vec![];
+        }
+        chunk_delta_group(full_delta, max_per_chunk)
+    }
+
+    /// Compute blocks created since a set of known tips.
+    ///
+    /// Returns all blocks in our blocklace whose IDs are NOT in the causal
+    /// past of `known_tips`, in topological order. This is used for
+    /// incremental updates after the initial frontier exchange.
+    pub fn blocks_since(&self, known_tips: &HashMap<NodeKey, BlockId>) -> Vec<Block> {
+        let mut their_known: HashSet<BlockId> = HashSet::new();
+        for tip_id in known_tips.values() {
+            if self.blocklace.contains(tip_id) {
+                let past = self.blocklace.causal_past(tip_id);
+                their_known.extend(past);
+                their_known.insert(*tip_id);
+            }
+        }
+
+        let local_ids = self.blocklace.block_ids();
+        let unknown_to_them: HashSet<BlockId> =
+            local_ids.difference(&their_known).copied().collect();
+
+        if unknown_to_them.is_empty() {
+            return vec![];
+        }
+
+        let ordered = self.blocklace.topological_subset(&unknown_to_them);
+
+        // Filter to causally-closed subset (predecessors first).
+        let mut result = Vec::new();
+        let mut they_will_know = their_known;
+
+        for block_id in &ordered {
+            if let Some(block) = self.blocklace.get(block_id) {
+                if block
+                    .predecessors
+                    .iter()
+                    .all(|p| they_will_know.contains(p))
+                {
+                    result.push(block.clone());
+                    they_will_know.insert(*block_id);
+                }
+            }
+        }
+
+        result
+    }
+
     /// Process a block received from a peer.
     ///
     /// Updates peer knowledge and inserts the block into the local blocklace.
@@ -576,6 +638,22 @@ impl Disseminator {
         DeltaGroup::from_blocks(sendable)
     }
 
+    /// Compute the delta to send based on frontier comparison, split into chunks.
+    ///
+    /// Like `compute_delta_from_frontier` but returns multiple causally-closed
+    /// delta groups each bounded by `max_per_chunk` blocks.
+    pub fn compute_delta_from_frontier_chunked(
+        &self,
+        their_frontier: &Frontier,
+        max_per_chunk: usize,
+    ) -> Vec<DeltaGroup> {
+        let full_delta = self.compute_delta_from_frontier(their_frontier);
+        if full_delta.is_empty() {
+            return vec![];
+        }
+        chunk_delta_group(full_delta, max_per_chunk)
+    }
+
     /// Get our current frontier as a message.
     pub fn frontier_message(&self) -> DisseminationMessage {
         DisseminationMessage::HaveFrontier(Frontier::from_blocklace(&self.blocklace))
@@ -616,6 +694,42 @@ impl Disseminator {
             }
         }
     }
+}
+
+// =============================================================================
+// Chunking Utilities
+// =============================================================================
+
+/// Split a causally-closed delta group into chunks of at most `max_per_chunk` blocks.
+///
+/// Each chunk is itself causally closed: within each chunk, blocks appear in
+/// topological order and any block's predecessors are either in a prior chunk
+/// (already sent) or earlier in the same chunk.
+///
+/// The input delta MUST already be in topological order (predecessors before
+/// dependents). This is guaranteed by `blocks_to_send` and
+/// `compute_delta_from_frontier`.
+pub fn chunk_delta_group(delta: DeltaGroup, max_per_chunk: usize) -> Vec<DeltaGroup> {
+    if delta.blocks.len() <= max_per_chunk {
+        return vec![delta];
+    }
+
+    let mut chunks = Vec::new();
+    let mut current_chunk = Vec::new();
+
+    for block in delta.blocks {
+        current_chunk.push(block);
+        if current_chunk.len() >= max_per_chunk {
+            chunks.push(DeltaGroup::from_blocks(std::mem::take(&mut current_chunk)));
+        }
+    }
+
+    // Don't forget the trailing partial chunk.
+    if !current_chunk.is_empty() {
+        chunks.push(DeltaGroup::from_blocks(current_chunk));
+    }
+
+    chunks
 }
 
 // =============================================================================
@@ -1119,5 +1233,119 @@ mod tests {
         let bytes = postcard::to_stdvec(&msg).unwrap();
         let decoded: DisseminationMessage = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(msg, decoded);
+    }
+
+    // ─── Chunking tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn chunk_delta_group_single_chunk_when_small() {
+        let key_a = make_key(1);
+        let mut node = Disseminator::new(key_a);
+
+        // Create 5 blocks (less than any reasonable chunk size).
+        for i in 0..5 {
+            node.create_block(format!("block-{i}").into_bytes());
+        }
+
+        let delta = node.blocks_to_send(&make_key(2));
+        assert_eq!(delta.len(), 5);
+
+        let chunks = chunk_delta_group(delta, 100);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), 5);
+    }
+
+    #[test]
+    fn chunk_delta_group_splits_into_multiple() {
+        let key_a = make_key(1);
+        let mut node = Disseminator::new(key_a);
+
+        // Create 10 blocks.
+        for i in 0..10 {
+            node.create_block(format!("block-{i}").into_bytes());
+        }
+
+        let delta = node.blocks_to_send(&make_key(2));
+        assert_eq!(delta.len(), 10);
+
+        // Chunk with max size 3.
+        let chunks = chunk_delta_group(delta, 3);
+        assert_eq!(chunks.len(), 4); // 3+3+3+1
+        assert_eq!(chunks[0].len(), 3);
+        assert_eq!(chunks[1].len(), 3);
+        assert_eq!(chunks[2].len(), 3);
+        assert_eq!(chunks[3].len(), 1);
+    }
+
+    #[test]
+    fn chunk_delta_group_each_chunk_causally_closed() {
+        let key_a = make_key(1);
+        let mut node = Disseminator::new(key_a);
+
+        // Create a chain of blocks.
+        for i in 0..9 {
+            node.create_block(format!("block-{i}").into_bytes());
+        }
+
+        let delta = node.blocks_to_send(&make_key(2));
+        let chunks = chunk_delta_group(delta, 3);
+
+        // Each chunk should be causally closed given all prior chunks.
+        let mut accumulated_known: HashSet<BlockId> = HashSet::new();
+        for chunk in &chunks {
+            assert!(chunk.is_valid(&accumulated_known));
+            accumulated_known.extend(chunk.block_ids());
+        }
+    }
+
+    #[test]
+    fn blocks_to_send_chunked_matches_full_delta() {
+        let key_a = make_key(1);
+        let key_b = make_key(2);
+        let mut node = Disseminator::new(key_a);
+
+        for i in 0..7 {
+            node.create_block(format!("block-{i}").into_bytes());
+        }
+
+        let full_delta = node.blocks_to_send(&key_b);
+        let chunks = node.blocks_to_send_chunked(&key_b, 3);
+
+        // Concatenated chunks should equal the full delta.
+        let mut all_blocks: Vec<Block> = Vec::new();
+        for chunk in &chunks {
+            all_blocks.extend(chunk.blocks.clone());
+        }
+        assert_eq!(all_blocks.len(), full_delta.len());
+        assert_eq!(
+            all_blocks.iter().map(|b| b.id()).collect::<Vec<_>>(),
+            full_delta.blocks.iter().map(|b| b.id()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn blocks_since_returns_new_blocks_only() {
+        let key_a = make_key(1);
+        let mut node = Disseminator::new(key_a);
+
+        // Create initial blocks.
+        node.create_block(b"first".to_vec());
+        node.create_block(b"second".to_vec());
+
+        // Record tips at this point.
+        let tips_snapshot: HashMap<NodeKey, BlockId> = node
+            .blocklace()
+            .tips()
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .collect();
+
+        // Create more blocks.
+        node.create_block(b"third".to_vec());
+        node.create_block(b"fourth".to_vec());
+
+        // blocks_since should only return the new blocks.
+        let new_blocks = node.blocks_since(&tips_snapshot);
+        assert_eq!(new_blocks.len(), 2);
     }
 }

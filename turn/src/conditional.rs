@@ -533,14 +533,15 @@ pub fn burn_conditional_deposit(_conditional: &ConditionalTurn) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
     use pyana_circuit::stark::{self as circuit_stark, proof_to_bytes};
+    use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+    use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 
     fn nullifiers() -> HashSet<[u8; 32]> {
         HashSet::new()
     }
 
-    /// Generate a valid STARK proof for MerklePoseidon2StarkAir with the given
+    /// Generate a valid STARK proof for the DSL Merkle Poseidon2 circuit with the given
     /// public outputs (as raw u32 values). Returns (proof_bytes, public_outputs).
     fn generate_valid_stark_proof(leaf_val: u32) -> (Vec<u8>, Vec<u32>) {
         let leaf_hash = BabyBear::new(leaf_val);
@@ -557,8 +558,8 @@ mod tests {
         let positions: [u8; 4] = [0, 1, 2, 3];
         let (trace, public_inputs) =
             generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
-        let air = MerklePoseidon2StarkAir;
-        let proof = circuit_stark::prove(&air, &trace, &public_inputs);
+        let circuit = merkle_poseidon2_circuit();
+        let proof = circuit_stark::prove(&circuit, &trace, &public_inputs);
         let proof_bytes = proof_to_bytes(&proof);
         let public_outputs: Vec<u32> = public_inputs.iter().map(|bb| bb.0).collect();
         (proof_bytes, public_outputs)

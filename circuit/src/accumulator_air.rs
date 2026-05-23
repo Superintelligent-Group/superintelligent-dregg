@@ -514,6 +514,9 @@ impl StarkAir for AccumulatorNonRevocationAir {
 /// and per-ancestor witnesses (quotient + remainder), produces a STARK proof.
 ///
 /// Returns None if any ancestor IS in the revocation set (witness generation would fail).
+///
+/// DEPRECATED: Use `crate::dsl::accumulator::prove_accumulator_non_revocation_dsl` instead.
+#[deprecated(note = "Use crate::dsl::accumulator::prove_accumulator_non_revocation_dsl instead")]
 pub fn prove_accumulator_non_revocation(
     ancestor_hashes: &[BabyBear],
     accumulator: ExtElem,
@@ -524,27 +527,22 @@ pub fn prove_accumulator_non_revocation(
         return None;
     }
 
-    // Generate witnesses for each ancestor.
     let mut ancestors = Vec::with_capacity(ancestor_hashes.len());
     for &h in ancestor_hashes {
-        // Check if h is in the revocation set.
         if revocation_set.contains(&h) {
-            return None; // Ancestor is revoked.
+            return None;
         }
 
-        // Compute remainder: v = product(h - h_j) for all h_j in revocation_set.
         let mut remainder_base = BabyBear::ONE;
         for &rev_h in revocation_set {
             remainder_base = remainder_base * (h - rev_h);
         }
 
         if remainder_base == BabyBear::ZERO {
-            return None; // Hash collision or element is in set.
+            return None;
         }
 
         let remainder = ExtElem::from_base(remainder_base);
-
-        // Compute quotient: w = (Acc - v) / (alpha - h)
         let h_ext = ExtElem::from_base(h);
         let diff = alpha.sub(h_ext);
         let numerator = accumulator.sub(remainder);
@@ -569,6 +567,9 @@ pub fn prove_accumulator_non_revocation(
 ///
 /// The verifier only needs the accumulator value, alpha challenge, and the STARK proof.
 /// The ancestor hashes remain private.
+///
+/// DEPRECATED: Use `crate::dsl::accumulator::verify_accumulator_non_revocation_dsl` instead.
+#[deprecated(note = "Use crate::dsl::accumulator::verify_accumulator_non_revocation_dsl instead")]
 pub fn verify_accumulator_non_revocation(
     accumulator: ExtElem,
     alpha: ExtElem,

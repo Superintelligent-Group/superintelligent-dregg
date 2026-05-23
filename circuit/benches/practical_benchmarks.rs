@@ -18,8 +18,9 @@ use pyana_circuit::multi_step_air::{
     ALLOW_PREDICATE, MultiStepWitness, build_multi_step_witness, prove_authorization_stark,
     verify_authorization_stark,
 };
-use pyana_circuit::non_revocation_air::{
-    REVOCATION_TREE_DEPTH, SortedRevocationTree, prove_non_revocation, verify_non_revocation,
+use pyana_dsl_runtime::revocation::{
+    DslRevocationTree, TREE_DEPTH as REVOCATION_TREE_DEPTH, prove_non_revocation_dsl,
+    verify_non_revocation_dsl,
 };
 use pyana_circuit::poseidon2;
 use pyana_circuit::stark::{proof_from_bytes, proof_to_bytes};
@@ -514,13 +515,13 @@ fn bench_federation_ops(c: &mut Criterion) {
         });
     }
 
-    // --- Revocation: prove non-revocation (ZK path) ---
+    // --- Revocation: prove non-revocation (DSL circuit, ZK path) ---
     {
         let tree = {
             let hashes: Vec<BabyBear> = (1..=20u32)
                 .map(|i| hash_many(&[BabyBear::new(i * 100), BabyBear::new(0xDEAD)]))
                 .collect();
-            SortedRevocationTree::new(hashes, REVOCATION_TREE_DEPTH)
+            DslRevocationTree::new(hashes, REVOCATION_TREE_DEPTH)
         };
         let revocation_root = tree.root();
 
@@ -529,17 +530,19 @@ fn bench_federation_ops(c: &mut Criterion) {
                 .map(|i| hash_many(&[BabyBear::new(0xBEEF_0000 + i as u32), BabyBear::new(0xCAFE)]))
                 .collect();
 
+            // DSL circuit proves one ancestor at a time; bench the first
+            let first_hash = ancestor_hashes[0];
             group.bench_with_input(
                 BenchmarkId::new("prove_non_revocation", format!("{num_ancestors}_ancestors")),
                 &num_ancestors,
                 |b, _| {
                     b.iter(|| {
-                        black_box(prove_non_revocation(&ancestor_hashes, &tree).unwrap());
+                        black_box(prove_non_revocation_dsl(&tree, first_hash).unwrap());
                     });
                 },
             );
 
-            let proof = prove_non_revocation(&ancestor_hashes, &tree).unwrap();
+            let proof = prove_non_revocation_dsl(&tree, first_hash).unwrap();
             group.bench_with_input(
                 BenchmarkId::new(
                     "verify_non_revocation",
@@ -548,7 +551,7 @@ fn bench_federation_ops(c: &mut Criterion) {
                 &num_ancestors,
                 |b, _| {
                     b.iter(|| {
-                        black_box(verify_non_revocation(revocation_root, &proof).unwrap());
+                        black_box(verify_non_revocation_dsl(&proof, revocation_root, first_hash).unwrap());
                     });
                 },
             );

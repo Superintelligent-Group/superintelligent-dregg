@@ -17,14 +17,21 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
-use pyana_blocklace::constitution::{Constitution, ConstitutionManager, MembershipVote};
-use pyana_blocklace::finality::{Block, BlockError, BlockId, Blocklace, FinalityLevel, Payload};
+use pyana_blocklace::constitution::{
+    Constitution, ConstitutionManager, LeaveReason, MembershipProposal, MembershipVote,
+};
+use pyana_blocklace::dissemination::MAX_BLOCKS_PER_PUSH;
+use pyana_blocklace::finality::{
+    Block, BlockError, BlockId, Blocklace, FinalityLevel, MembershipAction, Payload,
+};
 use pyana_blocklace::ordering::tau;
 use pyana_blocklace::pyana_bridge::PyanaBlocklaceBridge;
 use pyana_net::gossip::{GossipEvent, GossipNetwork, TopicHandle};
 use pyana_net::message::PeerMessage;
 use pyana_net::node::{NodeId, PeerNode, PeerNodeConfig};
+use pyana_store::BlocklaceMeta;
 use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{debug, error, info, warn};
 
@@ -34,6 +41,15 @@ use crate::state::{NodeEvent, NodeState};
 
 /// Gossip topic for blocklace dissemination messages.
 pub const TOPIC_BLOCKLACE: &str = "pyana/blocklace";
+
+/// Produce a blocklace checkpoint every N finalized blocks.
+/// Checkpoints enable new nodes to fast-sync from a recent known-good state
+/// instead of replaying the full block history.
+pub const CHECKPOINT_INTERVAL: u64 = 100;
+
+/// Maximum number of blocklace checkpoints to retain. Older checkpoints are pruned
+/// to bound storage growth.
+const MAX_RETAINED_CHECKPOINTS: usize = 5;
 
 /// Default COD budget for optimistic execution (number of outstanding turns).
 const DEFAULT_COD_BUDGET: usize = 8;
@@ -58,6 +74,13 @@ pub enum BlocklaceGossipMessage {
     PullResponse(Vec<Block>),
     /// Lightweight frontier for efficient sync: creator -> tip block ID.
     Frontier(HashMap<[u8; 32], BlockId>),
+    /// Announce that a checkpoint is available at the given height.
+    /// Peers can then request the full checkpoint data via the HTTP API.
+    /// Contains just the height and content hash (not the full checkpoint data).
+    CheckpointAvailable {
+        height: u64,
+        checkpoint_hash: [u8; 32],
+    },
 }
 
 // ─── Shared Blocklace State ─────────────────────────────────────────────────
@@ -84,6 +107,33 @@ pub struct BlocklaceHandle {
     /// Notify channel: signaled when new blocks arrive that may advance finality.
     /// This makes the executor truly quiescent -- no polling.
     pub finality_notify: Arc<Notify>,
+    /// If true, automatically vote to approve all join proposals (devnet mode).
+    /// In production, nodes should require governance or stake proofs before approving.
+    pub auto_approve_joins: bool,
+    /// Node state handle for persisting blocks to the store on mutations.
+    pub node_state: NodeState,
+}
+
+/// A finalized block's payload, ready for execution by the finality executor.
+///
+/// The executor dispatches on this enum to process turns (state transitions),
+/// membership votes (constitution amendments), and other payload types.
+#[derive(Clone, Debug)]
+pub enum FinalizedBlock {
+    /// A pyana turn ready for ledger execution.
+    Turn { block_id: BlockId, data: Vec<u8> },
+    /// A membership vote/proposal ready for constitution processing.
+    Membership {
+        block_id: BlockId,
+        creator: [u8; 32],
+        action: MembershipAction,
+    },
+    /// A checkpoint (no active processing needed at consensus level).
+    Checkpoint {
+        block_id: BlockId,
+        root: [u8; 32],
+        height: u64,
+    },
 }
 
 impl BlocklaceHandle {
@@ -100,6 +150,9 @@ impl BlocklaceHandle {
             lace.add_block(Payload::Turn(turn_data))
         };
         let block_id = block.id();
+
+        // Persist the newly created block to the store.
+        self.persist_block_to_store(&block).await;
 
         // Determine initial finality based on participant count.
         let constitution = self.constitution.read().await;
@@ -119,6 +172,15 @@ impl BlocklaceHandle {
         self.push_new_blocks().await;
 
         (block_id, initial_finality)
+    }
+
+    /// Persist a block to the store. Logs a warning on failure but does not
+    /// propagate the error (persistence failure should not block consensus progress).
+    async fn persist_block_to_store(&self, block: &Block) {
+        let s = self.node_state.read().await;
+        if let Err(e) = s.store.persist_block(block) {
+            warn!(error = %e, "failed to persist block to store");
+        }
     }
 
     /// Push new blocks to peers via the gossip topic.
@@ -164,12 +226,15 @@ impl BlocklaceHandle {
         }
     }
 
-    /// Run the tau ordering function and return newly finalized turn payloads.
+    /// Run the tau ordering function and return newly finalized blocks.
     ///
     /// This is the core consensus function: it computes the deterministic total
     /// order from the blocklace DAG using the Cordial Miners tau function,
-    /// then returns any turns that have been newly ordered since the last call.
-    pub async fn poll_finalized_turns(&self) -> Vec<(BlockId, Vec<u8>)> {
+    /// then returns any blocks that have been newly ordered since the last call.
+    ///
+    /// Returns all actionable finalized blocks (turns, membership votes, checkpoints).
+    /// Ack and Data payloads are skipped as they need no consensus-level processing.
+    pub async fn poll_finalized_blocks(&self) -> Vec<FinalizedBlock> {
         let lace = self.lace.read().await;
         let constitution = self.constitution.read().await;
         let participants = constitution.current.participants.clone();
@@ -177,20 +242,22 @@ impl BlocklaceHandle {
 
         let mut executed_up_to = self.executed_up_to.write().await;
 
-        // For solo mode (n=1): every block with a Turn payload is immediately
-        // finalized in topological order. tau() handles this correctly because
-        // with a single participant, every block trivially has supermajority.
+        // For solo mode (n=1): every block is immediately finalized in topological
+        // order. tau() handles this correctly because with a single participant,
+        // every block trivially has supermajority.
         let ordered = if participants.len() <= 1 {
-            // Solo: all blocks are ordered by sequence.
-            let mut all_turn_blocks: Vec<(u64, BlockId)> = lace
+            // Solo: all actionable blocks are ordered by sequence.
+            let mut all_blocks: Vec<(u64, BlockId)> = lace
                 .iter()
                 .filter_map(|(id, block)| match &block.payload {
-                    Payload::Turn(_) => Some((block.seq, *id)),
+                    Payload::Turn(_)
+                    | Payload::MembershipVote { .. }
+                    | Payload::Checkpoint { .. } => Some((block.seq, *id)),
                     _ => None,
                 })
                 .collect();
-            all_turn_blocks.sort_by_key(|(seq, _)| *seq);
-            all_turn_blocks
+            all_blocks.sort_by_key(|(seq, _)| *seq);
+            all_blocks
                 .into_iter()
                 .map(|(_, id)| id)
                 .collect::<Vec<_>>()
@@ -213,18 +280,97 @@ impl BlocklaceHandle {
         }
 
         let new_blocks = &ordered[*executed_up_to..];
-        let mut turns = Vec::new();
+        let mut finalized = Vec::new();
 
         for block_id in new_blocks {
             if let Some(block) = lace.get(block_id) {
-                if let Payload::Turn(ref data) = block.payload {
-                    turns.push((*block_id, data.clone()));
+                match &block.payload {
+                    Payload::Turn(data) => {
+                        finalized.push(FinalizedBlock::Turn {
+                            block_id: *block_id,
+                            data: data.clone(),
+                        });
+                    }
+                    Payload::MembershipVote { action } => {
+                        finalized.push(FinalizedBlock::Membership {
+                            block_id: *block_id,
+                            creator: block.creator,
+                            action: action.clone(),
+                        });
+                    }
+                    Payload::Checkpoint { root, height } => {
+                        finalized.push(FinalizedBlock::Checkpoint {
+                            block_id: *block_id,
+                            root: *root,
+                            height: *height,
+                        });
+                    }
+                    // Ack and Data payloads need no consensus-level processing.
+                    Payload::Ack | Payload::Data(_) => {}
                 }
             }
         }
 
         *executed_up_to = ordered.len();
-        turns
+        finalized
+    }
+
+    /// Propose joining the federation (called on first connect if not already a member).
+    ///
+    /// If this node's key is not in the current constitution, it creates a
+    /// `MembershipVote` block proposing its own Join and disseminates it.
+    /// Existing participants will vote on the proposal according to their policy
+    /// (auto-approve in devnet mode, governance-gated in production).
+    pub async fn propose_join_if_needed(&self) {
+        let constitution = self.constitution.read().await;
+        if constitution.current.is_participant(&self.self_key) {
+            return; // Already a member
+        }
+        drop(constitution);
+
+        let block = {
+            let mut lace = self.lace.write().await;
+            lace.add_block(Payload::MembershipVote {
+                action: MembershipAction::Join {
+                    node_id: self.self_key,
+                },
+            })
+        };
+
+        // Persist the membership vote block.
+        self.persist_block_to_store(&block).await;
+
+        info!(
+            block_id = %block.id(),
+            "proposed join to federation (awaiting threshold approvals)"
+        );
+
+        // Disseminate to peers via gossip.
+        self.push_new_blocks().await;
+    }
+
+    /// Cast an approval vote for a membership proposal.
+    ///
+    /// Creates a `MembershipVote` block with an `Approve` action referencing
+    /// the proposal block, and disseminates it to peers.
+    async fn cast_approval_vote(&self, proposal_block: BlockId) {
+        let block = {
+            let mut lace = self.lace.write().await;
+            lace.add_block(Payload::MembershipVote {
+                action: MembershipAction::Approve { proposal_block },
+            })
+        };
+
+        // Persist the approval vote block.
+        self.persist_block_to_store(&block).await;
+
+        debug!(
+            block_id = %block.id(),
+            proposal = %proposal_block,
+            "cast approval vote for membership proposal"
+        );
+
+        self.push_new_blocks().await;
     }
 }
 
@@ -338,8 +484,32 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
     let constitution = Constitution::new(participants.clone(), DEFAULT_CONSTITUTION_TIMEOUT_MS);
     let constitution_manager = ConstitutionManager::new(constitution);
 
-    // Initialize the blocklace with our signing key and quorum threshold.
-    let blocklace = Blocklace::new(signing_key.clone(), quorum_threshold);
+    // Attempt to restore blocklace from persistent storage.
+    let (blocklace, restored_executed_up_to) = {
+        let s = state.read().await;
+        match s.store.load_blocklace(signing_key.clone(), quorum_threshold) {
+            Ok(Some((restored_lace, executed_up_to))) => {
+                let block_count = restored_lace.len();
+                info!(
+                    blocks = block_count,
+                    executed_up_to = executed_up_to,
+                    "restored blocklace from persistent storage"
+                );
+                (restored_lace, executed_up_to)
+            }
+            Ok(None) => {
+                info!("no persisted blocklace found, starting fresh");
+                (Blocklace::new(signing_key.clone(), quorum_threshold), 0)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "failed to restore blocklace from storage, starting fresh"
+                );
+                (Blocklace::new(signing_key.clone(), quorum_threshold), 0)
+            }
+        }
+    };
     let bridge = PyanaBlocklaceBridge::new(DEFAULT_COD_BUDGET);
 
     // Create the PeerNode (QUIC endpoint) for gossip.
@@ -474,7 +644,7 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
     let lace = Arc::new(RwLock::new(blocklace));
     let bridge_handle = Arc::new(Mutex::new(bridge));
     let constitution_handle = Arc::new(RwLock::new(constitution_manager));
-    let executed_up_to = Arc::new(RwLock::new(0usize));
+    let executed_up_to = Arc::new(RwLock::new(restored_executed_up_to));
     let finality_notify = Arc::new(Notify::new());
 
     let handle = BlocklaceHandle {
@@ -486,6 +656,8 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
         self_key,
         executed_up_to,
         finality_notify: finality_notify.clone(),
+        auto_approve_joins: true, // TODO(production): gate on .devnet marker or CLI flag
+        node_state: state.clone(),
     };
 
     info!("blocklace gossip layer initialized, processing messages");
@@ -532,6 +704,16 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
 
     spawn_finality_executor(state.clone(), handle.clone());
 
+    // If we're not already a federation participant, propose joining.
+    // This enables new nodes to join at runtime via the constitutional amendment
+    // protocol. Existing participants will vote (auto-approve in devnet mode).
+    let join_handle = handle.clone();
+    tokio::spawn(async move {
+        // Brief delay to allow gossip connections to establish.
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        join_handle.propose_join_if_needed().await;
+    });
+
     Some(handle)
 }
 
@@ -540,7 +722,7 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
 /// Process an incoming blocklace gossip message.
 async fn handle_blocklace_message(
     handle: &BlocklaceHandle,
-    _state: &NodeState,
+    state: &NodeState,
     from: SocketAddr,
     message: PeerMessage,
 ) {
@@ -559,22 +741,37 @@ async fn handle_blocklace_message(
 
     match gossip_msg {
         BlocklaceGossipMessage::Push(blocks) => {
-            handle_push(handle, from, blocks).await;
+            handle_push(handle, state, from, blocks).await;
         }
         BlocklaceGossipMessage::Pull(missing_ids) => {
             handle_pull(handle, from, missing_ids).await;
         }
         BlocklaceGossipMessage::PullResponse(blocks) => {
-            handle_push(handle, from, blocks).await;
+            handle_push(handle, state, from, blocks).await;
         }
         BlocklaceGossipMessage::Frontier(their_tips) => {
             handle_frontier(handle, from, their_tips).await;
+        }
+        BlocklaceGossipMessage::CheckpointAvailable { height, checkpoint_hash } => {
+            debug!(
+                from = %from,
+                height = height,
+                "peer announced checkpoint available"
+            );
+            // Record that this peer has a checkpoint at the given height.
+            // The actual checkpoint data is fetched via HTTP when needed (during bootstrap).
+            let _ = (height, checkpoint_hash);
         }
     }
 }
 
 /// Handle a Push (or PullResponse) message: receive blocks into our blocklace.
-async fn handle_push(handle: &BlocklaceHandle, from: SocketAddr, blocks: Vec<Block>) {
+async fn handle_push(
+    handle: &BlocklaceHandle,
+    state: &NodeState,
+    from: SocketAddr,
+    blocks: Vec<Block>,
+) {
     if blocks.is_empty() {
         return;
     }
@@ -582,12 +779,15 @@ async fn handle_push(handle: &BlocklaceHandle, from: SocketAddr, blocks: Vec<Blo
     let block_count = blocks.len();
     let mut lace = handle.lace.write().await;
     let mut inserted = 0usize;
+    let mut inserted_blocks: Vec<Block> = Vec::new();
     let mut missing_deps: Vec<BlockId> = Vec::new();
 
     for block in blocks {
+        let block_clone = block.clone();
         match lace.receive_block(block) {
             Ok(()) => {
                 inserted += 1;
+                inserted_blocks.push(block_clone);
             }
             Err(BlockError::MissingPredecessor { missing, .. }) => {
                 missing_deps.push(missing);
@@ -611,6 +811,7 @@ async fn handle_push(handle: &BlocklaceHandle, from: SocketAddr, blocks: Vec<Blo
                 drop(constitution);
                 lace = handle.lace.write().await;
                 inserted += 1;
+                inserted_blocks.push(block_clone);
             }
             Err(BlockError::InvalidSignature { creator, seq }) => {
                 let creator_hex: String = creator[..4].iter().map(|b| format!("{b:02x}")).collect();
@@ -624,6 +825,15 @@ async fn handle_push(handle: &BlocklaceHandle, from: SocketAddr, blocks: Vec<Blo
         }
     }
     drop(lace);
+
+    // Persist newly inserted blocks to the store (batch write for efficiency).
+    if !inserted_blocks.is_empty() {
+        let s = state.read().await;
+        if let Err(e) = s.store.persist_blocks(&inserted_blocks) {
+            warn!(error = %e, "failed to persist received blocks to store");
+        }
+        drop(s);
+    }
 
     if inserted > 0 {
         info!(
@@ -645,6 +855,8 @@ async fn handle_push(handle: &BlocklaceHandle, from: SocketAddr, blocks: Vec<Blo
 }
 
 /// Handle a Pull request: respond with requested blocks.
+///
+/// Uses chunked responses for large pull requests to avoid single oversized messages.
 async fn handle_pull(handle: &BlocklaceHandle, from: SocketAddr, missing_ids: Vec<BlockId>) {
     if missing_ids.is_empty() {
         return;
@@ -678,46 +890,133 @@ async fn handle_pull(handle: &BlocklaceHandle, from: SocketAddr, missing_ids: Ve
     }
     drop(lace);
 
-    if !to_send.is_empty() {
+    if to_send.is_empty() {
+        return;
+    }
+
+    let total = to_send.len();
+
+    // Small response: send in one shot.
+    if total <= MAX_BLOCKS_PER_PUSH {
         let response = BlocklaceGossipMessage::PullResponse(to_send);
         handle.broadcast_gossip_message(&response).await;
-        debug!(from = %from, blocks = sent_ids.len(), "sent pull response");
+        debug!(from = %from, blocks = total, "sent pull response");
+        return;
     }
+
+    // Large response: chunk it.
+    debug!(from = %from, blocks = total, "sending chunked pull response");
+    let mut sent_so_far = 0usize;
+    for chunk in to_send.chunks(MAX_BLOCKS_PER_PUSH) {
+        let response = BlocklaceGossipMessage::PullResponse(chunk.to_vec());
+        handle.broadcast_gossip_message(&response).await;
+        sent_so_far += chunk.len();
+
+        if sent_so_far < total {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+    debug!(from = %from, blocks = total, "completed chunked pull response");
 }
 
 /// Handle a Frontier announcement: determine what the peer needs and push it.
+///
+/// Uses chunked sending to avoid creating a single massive message when the
+/// peer is far behind. Blocks are sent in causally-ordered chunks of at most
+/// `MAX_BLOCKS_PER_PUSH` blocks, with a small delay between chunks to avoid
+/// overwhelming the receiver.
 async fn handle_frontier(
     handle: &BlocklaceHandle,
     from: SocketAddr,
     their_tips: HashMap<[u8; 32], BlockId>,
 ) {
-    let lace = handle.lace.read().await;
+    let to_send = {
+        let lace = handle.lace.read().await;
 
-    // Determine which blocks we have that the peer doesn't.
-    // A peer with a given tip has all blocks in that tip's causal past.
-    let mut their_known: std::collections::HashSet<BlockId> = std::collections::HashSet::new();
-    for (_, tip_id) in &their_tips {
-        if lace.contains(tip_id) {
-            let past = lace.causal_past(tip_id);
-            their_known.extend(past);
-            their_known.insert(*tip_id);
+        // Determine which blocks we have that the peer doesn't.
+        // A peer with a given tip has all blocks in that tip's causal past.
+        let mut their_known: std::collections::HashSet<BlockId> = std::collections::HashSet::new();
+        for (_, tip_id) in &their_tips {
+            if lace.contains(tip_id) {
+                let past = lace.causal_past(tip_id);
+                their_known.extend(past);
+                their_known.insert(*tip_id);
+            }
         }
+
+        // Collect blocks they don't have, sorted in causal order.
+        let mut candidates: Vec<(&BlockId, &Block)> = lace
+            .iter()
+            .filter(|(id, _)| !their_known.contains(id))
+            .collect();
+        candidates
+            .sort_by(|(_, a), (_, b)| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
+
+        // Filter to causally-closed subset (predecessors before dependents).
+        let mut peer_will_know = their_known;
+        let mut result: Vec<Block> = Vec::new();
+        for (id, block) in &candidates {
+            if block
+                .predecessors
+                .iter()
+                .all(|p| peer_will_know.contains(p))
+            {
+                result.push((*block).clone());
+                peer_will_know.insert(**id);
+            }
+        }
+        result
+    };
+
+    if to_send.is_empty() {
+        return;
     }
 
-    // Collect blocks they don't have.
-    let mut to_send: Vec<Block> = Vec::new();
-    for (id, block) in lace.iter() {
-        if !their_known.contains(id) {
-            to_send.push(block.clone());
-        }
-    }
-    drop(lace);
+    let total_missing = to_send.len();
 
-    if !to_send.is_empty() {
-        let msg = BlocklaceGossipMessage::Push(to_send.clone());
+    // If the delta fits in one message, send it directly (common case for
+    // incremental updates after initial sync).
+    if total_missing <= MAX_BLOCKS_PER_PUSH {
+        let msg = BlocklaceGossipMessage::Push(to_send);
         handle.broadcast_gossip_message(&msg).await;
-        debug!(from = %from, blocks = to_send.len(), "pushed delta after frontier exchange");
+        debug!(from = %from, blocks = total_missing, "pushed delta after frontier exchange");
+        return;
     }
+
+    // Large delta: send in chunks to avoid OOM / timeout on either side.
+    let num_chunks = (total_missing + MAX_BLOCKS_PER_PUSH - 1) / MAX_BLOCKS_PER_PUSH;
+    info!(
+        from = %from,
+        total_blocks = total_missing,
+        chunk_size = MAX_BLOCKS_PER_PUSH,
+        chunks = num_chunks,
+        "syncing blocklace: sending chunked delta to peer"
+    );
+
+    let mut sent_so_far = 0usize;
+    for chunk in to_send.chunks(MAX_BLOCKS_PER_PUSH) {
+        let msg = BlocklaceGossipMessage::Push(chunk.to_vec());
+        handle.broadcast_gossip_message(&msg).await;
+
+        sent_so_far += chunk.len();
+        info!(
+            "syncing blocklace: sent {}/{} blocks to peer {}",
+            sent_so_far, total_missing, from
+        );
+
+        // Small delay between chunks to avoid overwhelming the receiver's
+        // inbound buffer. The receiver's `pending` mechanism handles any
+        // transient ordering issues between chunks.
+        if sent_so_far < total_missing {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    debug!(
+        from = %from,
+        blocks = total_missing,
+        "completed chunked frontier sync"
+    );
 }
 
 // ─── Finalized Turn Executor ────────────────────────────────────────────────
@@ -732,21 +1031,113 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
             // QUIESCENT: sleep until signaled that new blocks have arrived.
             handle.finality_notify.notified().await;
 
-            // Process all newly finalized turns.
-            let finalized_turns = handle.poll_finalized_turns().await;
+            // Process all newly finalized blocks (turns, membership, checkpoints).
+            let finalized_blocks = handle.poll_finalized_blocks().await;
 
-            if finalized_turns.is_empty() {
+            if finalized_blocks.is_empty() {
                 continue;
             }
 
-            info!(
-                turns = finalized_turns.len(),
-                "executing finalized blocklace turns"
-            );
+            let turn_count = finalized_blocks
+                .iter()
+                .filter(|b| matches!(b, FinalizedBlock::Turn { .. }))
+                .count();
+            let membership_count = finalized_blocks
+                .iter()
+                .filter(|b| matches!(b, FinalizedBlock::Membership { .. }))
+                .count();
 
-            for (block_id, turn_data) in &finalized_turns {
-                execute_finalized_turn(&state, &handle, *block_id, turn_data).await;
+            if turn_count > 0 || membership_count > 0 {
+                info!(
+                    turns = turn_count,
+                    membership_votes = membership_count,
+                    total = finalized_blocks.len(),
+                    "executing finalized blocklace blocks"
+                );
             }
+
+            for block in &finalized_blocks {
+                match block {
+                    FinalizedBlock::Turn { block_id, data } => {
+                        execute_finalized_turn(&state, &handle, *block_id, data).await;
+                    }
+                    FinalizedBlock::Membership {
+                        block_id,
+                        creator,
+                        action,
+                    } => {
+                        execute_finalized_membership(&state, &handle, *block_id, *creator, action)
+                            .await;
+                    }
+                    FinalizedBlock::Checkpoint {
+                        block_id,
+                        root,
+                        height,
+                    } => {
+                        debug!(
+                            block_id = %block_id,
+                            height = height,
+                            "finalized checkpoint block (stored)"
+                        );
+                        let _ = (root, height); // Checkpoint storage handled elsewhere
+                    }
+                }
+            }
+
+            // ── Record Participant Activity ──────────────────────────────────
+            // Track which participants produced blocks in this batch so that
+            // the timeout mechanism knows they are still alive.
+            {
+                // Collect all block creators from this batch.
+                let lace = handle.lace.read().await;
+                let mut active_creators: Vec<[u8; 32]> = Vec::new();
+                for block in &finalized_blocks {
+                    match block {
+                        FinalizedBlock::Membership { creator, .. } => {
+                            active_creators.push(*creator);
+                        }
+                        FinalizedBlock::Turn { block_id, .. } => {
+                            if let Some(b) = lace.get(block_id) {
+                                active_creators.push(b.creator);
+                            }
+                        }
+                        FinalizedBlock::Checkpoint { block_id, .. } => {
+                            if let Some(b) = lace.get(block_id) {
+                                active_creators.push(b.creator);
+                            }
+                        }
+                    }
+                }
+                drop(lace);
+
+                // Record activity for each creator.
+                let mut constitution = handle.constitution.write().await;
+                let wave = constitution.current_wave;
+                for creator in &active_creators {
+                    constitution.record_activity(creator, wave);
+                }
+            }
+
+            // ── Wave Advancement & Timeout Detection ───────────────────────
+            // Advance the constitution's wave counter. Any participants that
+            // have been silent for too long are proposed for auto-leave.
+            advance_constitution_wave(&handle).await;
+
+            // ── Periodic Checkpoint Production ──────────────────────────────
+            // After executing finalized turns, check if we've crossed a
+            // checkpoint interval boundary. If so, produce and store a
+            // checkpoint and announce it to the gossip network.
+            maybe_produce_checkpoint(&state, &handle).await;
+
+            // ── Periodic Ledger Checkpoint ───────────────────────────────────
+            // Every 100 finalized blocks, persist the ledger state so restarts
+            // don't require replaying the full blocklace history.
+            maybe_checkpoint_ledger(&state).await;
+
+            // ── Persist Blocklace Metadata ───────────────────────────────────
+            // Save the executed_up_to index and blocklace metadata (tips,
+            // equivocators, ordering state) so restarts don't re-execute turns.
+            persist_blocklace_state(&state, &handle).await;
         }
     });
 }
@@ -878,36 +1269,647 @@ async fn execute_finalized_turn(
     }
 }
 
+// ─── Periodic Ledger Checkpointing ─────────────────────────────────────────
+
+/// Checkpoint interval for ledger persistence (in finalized blocks).
+const LEDGER_CHECKPOINT_INTERVAL: u64 = 100;
+
+/// Periodically checkpoint the ledger to persistent storage.
+///
+/// Checks the current block height against the last checkpoint height. If the
+/// difference exceeds `LEDGER_CHECKPOINT_INTERVAL`, writes a new checkpoint.
+/// Also prunes old checkpoints to bound storage (keeps last 3).
+async fn maybe_checkpoint_ledger(state: &NodeState) {
+    let s = state.read().await;
+
+    let current_height = s
+        .store
+        .latest_attested_root()
+        .ok()
+        .flatten()
+        .map(|r| r.height)
+        .unwrap_or(0);
+
+    let last_checkpoint_height = s
+        .store
+        .latest_ledger_checkpoint_height()
+        .unwrap_or(0);
+
+    if current_height.saturating_sub(last_checkpoint_height) < LEDGER_CHECKPOINT_INTERVAL {
+        return;
+    }
+
+    match s.store.checkpoint_ledger(&s.ledger, current_height) {
+        Ok(()) => {
+            info!(
+                height = current_height,
+                cells = s.ledger.len(),
+                "periodic ledger checkpoint saved"
+            );
+            // Prune old checkpoints: keep only the last 3.
+            if let Err(e) = s.store.prune_ledger_checkpoints(3) {
+                warn!(error = %e, "failed to prune old ledger checkpoints");
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "failed to save periodic ledger checkpoint");
+        }
+    }
+}
+
+// ─── Blocklace State Persistence ────────────────────────────────────────────
+
+/// Persist the current blocklace metadata and executed_up_to index.
+///
+/// Called after each batch of finalized turns is executed. This ensures that on
+/// restart, the node resumes from the correct position without re-executing
+/// already-processed turns.
+async fn persist_blocklace_state(state: &NodeState, handle: &BlocklaceHandle) {
+    let executed_up_to = {
+        let idx = handle.executed_up_to.read().await;
+        *idx
+    };
+
+    // Gather metadata from the blocklace.
+    let meta = {
+        let lace = handle.lace.read().await;
+        BlocklaceMeta {
+            tips: lace.tips().clone(),
+            equivocators: lace.equivocators().iter().copied().collect(),
+            ordered_block_ids: lace.finality.ordering.ordered.clone(),
+            attested_block_ids: lace.finality.ordering.attested.iter().copied().collect(),
+        }
+    };
+
+    let s = state.read().await;
+    if let Err(e) = s.store.persist_executed_up_to(executed_up_to as u64) {
+        warn!(error = %e, "failed to persist executed_up_to index");
+    }
+    if let Err(e) = s.store.persist_blocklace_meta(&meta) {
+        warn!(error = %e, "failed to persist blocklace metadata");
+    }
+}
+
+// ─── Blocklace Checkpoint Production & Serving ──────────────────────────────
+
+/// Produce a full blocklace checkpoint (DAG state + ledger snapshot) at the
+/// current finalized height, store it locally, prune old ones, and announce
+/// availability via gossip.
+///
+/// Called from the finality executor after each batch of finalized turns.
+async fn maybe_produce_checkpoint(state: &NodeState, handle: &BlocklaceHandle) {
+    let executed_count = {
+        let e = handle.executed_up_to.read().await;
+        *e as u64
+    };
+
+    // Only produce checkpoints at interval boundaries.
+    if executed_count == 0 || executed_count % CHECKPOINT_INTERVAL != 0 {
+        return;
+    }
+
+    let finalized_height = executed_count;
+
+    info!(height = finalized_height, "producing blocklace checkpoint");
+
+    // Snapshot the blocklace DAG state.
+    let blocklace_checkpoint = {
+        let lace = handle.lace.read().await;
+        lace.checkpoint()
+    };
+
+    // Serialize the blocklace checkpoint (postcard format).
+    let blocklace_data = match postcard::to_stdvec(&blocklace_checkpoint) {
+        Ok(data) => data,
+        Err(e) => {
+            warn!(error = %e, "failed to serialize blocklace checkpoint");
+            return;
+        }
+    };
+
+    // Snapshot the ledger state (cell contents).
+    let ledger_data = {
+        let s = state.read().await;
+        let cells: Vec<(&pyana_cell::CellId, &pyana_cell::Cell)> = s.ledger.iter().collect();
+        match postcard::to_stdvec(&cells) {
+            Ok(data) => data,
+            Err(e) => {
+                warn!(error = %e, "failed to serialize ledger snapshot for checkpoint");
+                return;
+            }
+        }
+    };
+
+    // Compute content hashes before compression (used for verification).
+    let blocklace_hash = *blake3::hash(&blocklace_data).as_bytes();
+    let ledger_hash = *blake3::hash(&ledger_data).as_bytes();
+
+    // Apply compression wrapper (magic byte prefix for future zstd support).
+    let blocklace_stored = compress_checkpoint_data(&blocklace_data);
+    let ledger_stored = compress_checkpoint_data(&ledger_data);
+
+    // Store the checkpoint locally.
+    {
+        let s = state.read().await;
+        let checkpoint_key = format!("blocklace_checkpoint_{}", finalized_height);
+        let ledger_key = format!("blocklace_ledger_snapshot_{}", finalized_height);
+        if let Err(e) = s.store.set_config(&checkpoint_key, &blocklace_stored) {
+            warn!(error = %e, height = finalized_height, "failed to store blocklace checkpoint");
+            return;
+        }
+        if let Err(e) = s.store.set_config(&ledger_key, &ledger_stored) {
+            warn!(error = %e, height = finalized_height, "failed to store ledger snapshot");
+            return;
+        }
+        let height_bytes = finalized_height.to_le_bytes();
+        let _ = s.store.set_config("blocklace_checkpoint_latest_height", &height_bytes);
+
+        let list_key = "blocklace_checkpoint_heights";
+        let mut heights: Vec<u64> = s
+            .store
+            .get_config(list_key)
+            .ok()
+            .flatten()
+            .and_then(|data| postcard::from_bytes(&data).ok())
+            .unwrap_or_default();
+        heights.push(finalized_height);
+
+        while heights.len() > MAX_RETAINED_CHECKPOINTS {
+            let old_height = heights.remove(0);
+            let old_cp_key = format!("blocklace_checkpoint_{}", old_height);
+            let old_ledger_key = format!("blocklace_ledger_snapshot_{}", old_height);
+            let _ = s.store.set_config(&old_cp_key, &[]);
+            let _ = s.store.set_config(&old_ledger_key, &[]);
+            debug!(height = old_height, "pruned old blocklace checkpoint");
+        }
+
+        if let Ok(heights_data) = postcard::to_stdvec(&heights) {
+            let _ = s.store.set_config(list_key, &heights_data);
+        }
+    }
+
+    info!(
+        height = finalized_height,
+        blocklace_bytes = blocklace_stored.len(),
+        ledger_bytes = ledger_stored.len(),
+        "blocklace checkpoint stored"
+    );
+
+    let announcement = BlocklaceGossipMessage::CheckpointAvailable {
+        height: finalized_height,
+        checkpoint_hash: blocklace_hash,
+    };
+    handle.broadcast_gossip_message(&announcement).await;
+
+    debug!(
+        height = finalized_height,
+        blocklace_hash = %hex_encode(&blocklace_hash[..8]),
+        ledger_hash = %hex_encode(&ledger_hash[..8]),
+        "checkpoint announcement gossiped"
+    );
+}
+
+fn compress_checkpoint_data(data: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(1 + data.len());
+    result.push(0x00);
+    result.extend_from_slice(data);
+    result
+}
+
+pub fn decompress_checkpoint_data(data: &[u8]) -> Option<Vec<u8>> {
+    if data.is_empty() {
+        return None;
+    }
+    match data[0] {
+        0x00 => Some(data[1..].to_vec()),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct BlocklaceCheckpointResponse {
+    pub height: u64,
+    pub blocklace: String,
+    pub ledger: String,
+    pub blocklace_hash: String,
+    pub ledger_hash: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct BlocklaceCheckpointQuery {
+    pub height: Option<u64>,
+}
+
+pub fn load_blocklace_checkpoint(
+    store: &pyana_store::PersistentStore,
+    height: u64,
+) -> Option<BlocklaceCheckpointResponse> {
+    let checkpoint_key = format!("blocklace_checkpoint_{}", height);
+    let ledger_key = format!("blocklace_ledger_snapshot_{}", height);
+
+    let blocklace_data = store.get_config(&checkpoint_key).ok()??;
+    let ledger_data = store.get_config(&ledger_key).ok()??;
+
+    if blocklace_data.is_empty() || ledger_data.is_empty() {
+        return None;
+    }
+
+    let blocklace_raw = decompress_checkpoint_data(&blocklace_data)?;
+    let ledger_raw = decompress_checkpoint_data(&ledger_data)?;
+    let blocklace_hash = *blake3::hash(&blocklace_raw).as_bytes();
+    let ledger_hash = *blake3::hash(&ledger_raw).as_bytes();
+
+    Some(BlocklaceCheckpointResponse {
+        height,
+        blocklace: hex_encode(&blocklace_data),
+        ledger: hex_encode(&ledger_data),
+        blocklace_hash: hex_encode(&blocklace_hash),
+        ledger_hash: hex_encode(&ledger_hash),
+    })
+}
+
+pub fn latest_blocklace_checkpoint_height(store: &pyana_store::PersistentStore) -> u64 {
+    store
+        .get_config("blocklace_checkpoint_latest_height")
+        .ok()
+        .flatten()
+        .and_then(|data| {
+            if data.len() == 8 {
+                Some(u64::from_le_bytes(data.try_into().ok()?))
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
+}
+
+#[allow(dead_code)]
+pub async fn bootstrap_from_checkpoint(
+    peer_url: &str,
+    self_key: ed25519_dalek::SigningKey,
+    quorum_threshold: usize,
+) -> Option<(
+    pyana_blocklace::finality::Blocklace,
+    Vec<(pyana_cell::CellId, pyana_cell::Cell)>,
+)> {
+    use pyana_blocklace::finality::CheckpointData;
+
+    info!(peer = %peer_url, "attempting checkpoint-based bootstrap");
+
+    let url = format!("{}/api/blocklace/checkpoint", peer_url);
+    let resp_bytes = fetch_checkpoint_http(&url).await?;
+    let checkpoint_resp: BlocklaceCheckpointResponse =
+        serde_json::from_slice(&resp_bytes).ok()?;
+
+    let blocklace_compressed = hex_decode_var(&checkpoint_resp.blocklace)?;
+    let blocklace_bytes = decompress_checkpoint_data(&blocklace_compressed)?;
+
+    let actual_hash = *blake3::hash(&blocklace_bytes).as_bytes();
+    let expected_hash = hex_decode_var(&checkpoint_resp.blocklace_hash)?;
+    if actual_hash.as_slice() != expected_hash.as_slice() {
+        warn!(peer = %peer_url, "blocklace checkpoint hash mismatch");
+        return None;
+    }
+
+    let checkpoint_data: CheckpointData = match postcard::from_bytes(&blocklace_bytes) {
+        Ok(data) => data,
+        Err(e) => {
+            warn!(peer = %peer_url, error = %e, "failed to deserialize blocklace checkpoint");
+            return None;
+        }
+    };
+
+    let blocklace = match pyana_blocklace::finality::Blocklace::from_checkpoint(
+        &checkpoint_data, self_key, quorum_threshold,
+    ) {
+        Ok(lace) => lace,
+        Err(e) => {
+            warn!(peer = %peer_url, error = %e, "failed to restore blocklace from checkpoint");
+            return None;
+        }
+    };
+
+    let ledger_compressed = hex_decode_var(&checkpoint_resp.ledger)?;
+    let ledger_bytes = decompress_checkpoint_data(&ledger_compressed)?;
+
+    let actual_ledger_hash = *blake3::hash(&ledger_bytes).as_bytes();
+    let expected_ledger_hash = hex_decode_var(&checkpoint_resp.ledger_hash)?;
+    if actual_ledger_hash.as_slice() != expected_ledger_hash.as_slice() {
+        warn!(peer = %peer_url, "ledger snapshot hash mismatch");
+        return None;
+    }
+
+    let cells: Vec<(pyana_cell::CellId, pyana_cell::Cell)> =
+        match postcard::from_bytes(&ledger_bytes) {
+            Ok(cells) => cells,
+            Err(e) => {
+                warn!(peer = %peer_url, error = %e, "failed to deserialize ledger snapshot");
+                return None;
+            }
+        };
+
+    info!(
+        peer = %peer_url,
+        height = checkpoint_resp.height,
+        blocks = checkpoint_data.blocks.len(),
+        cells = cells.len(),
+        "checkpoint bootstrap complete"
+    );
+
+    Some((blocklace, cells))
+}
+
+async fn fetch_checkpoint_http(url: &str) -> Option<Vec<u8>> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    let rest = url.strip_prefix("http://")?;
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let path = format!("/{}", path);
+
+    let stream = TcpStream::connect(authority).await.ok()?;
+    let (mut reader, mut writer) = tokio::io::split(stream);
+
+    let host = authority.split(':').next().unwrap_or(authority);
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nAccept: application/json\r\n\r\n",
+        path, host
+    );
+    writer.write_all(request.as_bytes()).await.ok()?;
+
+    let mut response = Vec::new();
+    reader.read_to_end(&mut response).await.ok()?;
+
+    let header_end = response.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let body = &response[header_end + 4..];
+
+    let first_line_end = response.iter().position(|&b| b == b'\r')?;
+    let first_line = std::str::from_utf8(&response[..first_line_end]).ok()?;
+    if !first_line.contains("200") {
+        warn!(status_line = %first_line, "checkpoint fetch failed");
+        return None;
+    }
+
+    Some(body.to_vec())
+}
+
+fn hex_decode_var(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    for chunk in s.as_bytes().chunks(2) {
+        let high = hex_nibble(chunk[0])?;
+        let low = hex_nibble(chunk[1])?;
+        out.push((high << 4) | low);
+    }
+    Some(out)
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 // ─── Membership Vote Processing ─────────────────────────────────────────────
 
-/// Process a MembershipVote payload from a finalized block.
+/// Execute a finalized membership action (join proposal, leave proposal, or vote).
 ///
-/// When a block with a MembershipVote payload reaches finality (appears in tau
-/// output), we apply the vote to the ConstitutionManager. If the vote causes
-/// a proposal to pass, the constitution is amended.
-#[allow(dead_code)]
-async fn process_membership_vote(
+/// When a block with a `MembershipVote` payload reaches finality (appears in tau
+/// output), we process it against the ConstitutionManager:
+/// - Join/Leave proposals are registered as new proposals
+/// - Approve/Reject actions are recorded as votes
+/// - If a proposal reaches threshold, the constitution is amended
+///
+/// In devnet mode (`auto_approve_joins`), existing nodes automatically cast
+/// approval votes for incoming Join proposals.
+async fn execute_finalized_membership(
+    _state: &NodeState,
     handle: &BlocklaceHandle,
-    _block_id: BlockId,
-    voter: [u8; 32],
-    vote: &MembershipVote,
+    block_id: BlockId,
+    creator: [u8; 32],
+    action: &MembershipAction,
 ) {
-    let mut constitution = handle.constitution.write().await;
+    match action {
+        MembershipAction::Join { node_id } => {
+            // A node is proposing to join the federation.
+            let proposal = MembershipProposal::Join {
+                node_key: *node_id,
+                justification: vec![],
+            };
 
-    // Record the vote.
-    let passed = constitution.submit_vote(vote, voter);
+            let mut constitution = handle.constitution.write().await;
+            constitution.submit_proposal(block_id, proposal);
 
-    if let Some(proposal_block) = passed {
-        // The proposal has reached threshold -- apply it.
-        if constitution.apply_if_passed(&proposal_block) {
-            let new_count = constitution.current.participant_count();
-            let new_version = constitution.version();
+            // The proposer implicitly votes for their own join.
+            let self_vote = MembershipVote {
+                proposal_block: block_id,
+                approve: true,
+            };
+            let passed = constitution.submit_vote(&self_vote, creator);
+            drop(constitution);
+
+            let creator_hex: String = creator[..4].iter().map(|b| format!("{b:02x}")).collect();
             info!(
-                proposal_block = %proposal_block,
-                new_participant_count = new_count,
-                constitution_version = new_version,
-                "constitution amended via membership vote"
+                block_id = %block_id,
+                proposer = %creator_hex,
+                "membership join proposal registered"
             );
+
+            // In devnet mode, auto-approve join proposals from other nodes.
+            if handle.auto_approve_joins && *node_id != handle.self_key {
+                // Check that we are a current participant (only participants can vote).
+                let constitution = handle.constitution.read().await;
+                let we_are_participant = constitution.current.is_participant(&handle.self_key);
+                drop(constitution);
+
+                if we_are_participant {
+                    handle.cast_approval_vote(block_id).await;
+                    info!(
+                        proposal = %block_id,
+                        "auto-approved join proposal (devnet mode)"
+                    );
+                }
+            }
+
+            // Check if the proposal already passed (e.g., n=1 solo mode).
+            if let Some(proposal_block) = passed {
+                apply_passed_proposal(handle, &proposal_block).await;
+            }
+        }
+
+        MembershipAction::Leave { node_id } => {
+            // A proposal to remove a node from the federation.
+            let proposal = MembershipProposal::Leave {
+                node_key: *node_id,
+                reason: LeaveReason::Voluntary,
+            };
+
+            let mut constitution = handle.constitution.write().await;
+            constitution.submit_proposal(block_id, proposal);
+
+            // The proposer implicitly votes for the leave.
+            let self_vote = MembershipVote {
+                proposal_block: block_id,
+                approve: true,
+            };
+            let passed = constitution.submit_vote(&self_vote, creator);
+            drop(constitution);
+
+            let node_hex: String = node_id[..4].iter().map(|b| format!("{b:02x}")).collect();
+            info!(
+                block_id = %block_id,
+                leaving_node = %node_hex,
+                "membership leave proposal registered"
+            );
+
+            if let Some(proposal_block) = passed {
+                apply_passed_proposal(handle, &proposal_block).await;
+            }
+        }
+
+        MembershipAction::Approve { proposal_block } => {
+            // A participant is voting to approve an existing proposal.
+            let vote = MembershipVote {
+                proposal_block: *proposal_block,
+                approve: true,
+            };
+
+            let mut constitution = handle.constitution.write().await;
+            let passed = constitution.submit_vote(&vote, creator);
+            drop(constitution);
+
+            let creator_hex: String = creator[..4].iter().map(|b| format!("{b:02x}")).collect();
+            debug!(
+                block_id = %block_id,
+                voter = %creator_hex,
+                proposal = %proposal_block,
+                "membership approval vote recorded"
+            );
+
+            if let Some(proposal_block) = passed {
+                apply_passed_proposal(handle, &proposal_block).await;
+            }
+        }
+
+        MembershipAction::Reject { proposal_block } => {
+            // A participant is voting to reject an existing proposal.
+            let vote = MembershipVote {
+                proposal_block: *proposal_block,
+                approve: false,
+            };
+
+            let mut constitution = handle.constitution.write().await;
+            constitution.submit_vote(&vote, creator);
+            drop(constitution);
+
+            let creator_hex: String = creator[..4].iter().map(|b| format!("{b:02x}")).collect();
+            debug!(
+                block_id = %block_id,
+                voter = %creator_hex,
+                proposal = %proposal_block,
+                "membership rejection vote recorded"
+            );
+        }
+    }
+}
+
+/// Apply a membership proposal that has reached threshold.
+///
+/// Amends the constitution and logs the change. The new participant list takes
+/// effect at the NEXT wave boundary (the current wave's ordering uses the old set).
+async fn apply_passed_proposal(handle: &BlocklaceHandle, proposal_block: &BlockId) {
+    let mut constitution = handle.constitution.write().await;
+    if constitution.apply_if_passed(proposal_block) {
+        let new_count = constitution.current.participant_count();
+        let new_version = constitution.version();
+        let new_threshold = constitution.threshold();
+        info!(
+            proposal_block = %proposal_block,
+            new_participant_count = new_count,
+            new_threshold = new_threshold,
+            constitution_version = new_version,
+            "constitution amended: membership change applied"
+        );
+    }
+}
+
+/// Advance the constitution's wave counter and handle timeout-based auto-leave.
+///
+/// Called after each batch of finalized blocks is processed. Checks if any
+/// participants have been silent for too long and proposes their removal.
+///
+/// Timeout-based leave ensures the federation can continue making progress
+/// even if participants go offline permanently. The timed-out participant can
+/// rejoin later by submitting a new Join proposal.
+async fn advance_constitution_wave(handle: &BlocklaceHandle) {
+    let mut constitution = handle.constitution.write().await;
+    let current_wave = constitution.current_wave + 1;
+    let timeout_proposals = constitution.advance_wave(current_wave);
+    drop(constitution);
+
+    if timeout_proposals.is_empty() {
+        return;
+    }
+
+    // For each timed-out participant, create a Leave proposal block.
+    for proposal in &timeout_proposals {
+        if let MembershipProposal::Leave { node_key, reason } = proposal {
+            let node_hex: String = node_key[..4].iter().map(|b| format!("{b:02x}")).collect();
+            let (last_wave, detected_wave) = match reason {
+                LeaveReason::Timeout {
+                    last_active_wave,
+                    detected_at_wave,
+                } => (*last_active_wave, *detected_at_wave),
+                _ => (0, current_wave),
+            };
+
+            info!(
+                node = %node_hex,
+                last_active_wave = last_wave,
+                detected_at_wave = detected_wave,
+                "proposing auto-leave for timed-out participant"
+            );
+
+            // Create the leave proposal block.
+            let block = {
+                let mut lace = handle.lace.write().await;
+                lace.add_block(Payload::MembershipVote {
+                    action: MembershipAction::Leave {
+                        node_id: *node_key,
+                    },
+                })
+            };
+
+            // Persist the leave proposal block.
+            handle.persist_block_to_store(&block).await;
+
+            // Register the proposal in the constitution manager.
+            let mut constitution = handle.constitution.write().await;
+            constitution.submit_proposal(block.id(), proposal.clone());
+            // Self-vote for the timeout leave.
+            let vote = MembershipVote {
+                proposal_block: block.id(),
+                approve: true,
+            };
+            let passed = constitution.submit_vote(&vote, handle.self_key);
+            drop(constitution);
+
+            // Disseminate the proposal.
+            handle.push_new_blocks().await;
+
+            // If we're the only participant (solo mode), it passes immediately.
+            if let Some(proposal_block) = passed {
+                apply_passed_proposal(handle, &proposal_block).await;
+            }
         }
     }
 }

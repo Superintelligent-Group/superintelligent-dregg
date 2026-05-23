@@ -8,12 +8,12 @@
 
 use pyana_circuit::field::BabyBear;
 use pyana_circuit::stark::{self, StarkProof};
-use pyana_dsl_tests::non_revocation_dsl::{
+use pyana_dsl_runtime::revocation::{
     DslRevocationTree, generate_non_revocation_trace, non_revocation_dsl_circuit,
 };
 
 /// Re-export the tree depth constant.
-pub use pyana_dsl_tests::non_revocation_dsl::TREE_DEPTH as REVOCATION_TREE_DEPTH;
+pub use pyana_dsl_runtime::revocation::TREE_DEPTH as REVOCATION_TREE_DEPTH;
 
 /// A non-revocation proof: demonstrates that a credential has not been revoked.
 #[derive(Clone, Debug)]

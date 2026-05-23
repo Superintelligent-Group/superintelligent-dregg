@@ -42,7 +42,7 @@ pub trait ProofVerifier: Send + Sync + std::fmt::Debug {
 /// Deserializes the proof bytes and runs full STARK verification
 /// (Merkle commitments, FRI low-degree test, Fiat-Shamir checks).
 ///
-/// Tries `MerklePoseidon2StarkAir` first (production path, collision-resistant),
+/// Uses the DSL `merkle_poseidon2_circuit()` (production path, collision-resistant),
 /// then falls back to `MerkleStarkAir` (legacy linear binding) for backward
 /// compatibility with older proofs.
 #[derive(Clone, Debug)]
@@ -89,11 +89,10 @@ impl ProofVerifier for StarkVerifier {
             return Ok(false); // Zeroed composition = no authorization binding
         }
 
-        // Production verification only accepts the Poseidon2 AIR. The legacy
-        // linear AIR is a benchmark/test circuit and is intentionally not a
-        // compatibility fallback here.
-        let poseidon2_air = pyana_circuit::poseidon2_air::MerklePoseidon2StarkAir;
-        match pyana_circuit::stark::verify(&poseidon2_air, &proof, &public_inputs) {
+        // Production verification uses the DSL Merkle Poseidon2 circuit.
+        // The legacy hand-written AIR is deprecated.
+        let circuit = pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit();
+        match pyana_circuit::stark::verify(&circuit, &proof, &public_inputs) {
             Ok(()) => Ok(true),
             Err(_reason) => Ok(false),
         }

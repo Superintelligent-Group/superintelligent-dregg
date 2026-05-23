@@ -75,6 +75,7 @@ pub mod constraint_prover;
 pub mod cross_state_derivation;
 pub mod derivation_air;
 pub mod derivation_types;
+pub mod dsl;
 pub mod field;
 pub mod fold_air;
 pub mod fold_types;
@@ -207,9 +208,9 @@ pub use cross_state_derivation::{
     prove_cross_state_derivation, verify_cross_state_derivation,
 };
 pub use effect_vm::{
-    CellState, CustomProofEntry, CustomVerifyError, EFFECT_VM_WIDTH, Effect, EffectVmAir,
-    NUM_EFFECTS, compute_effects_hash, encode_net_delta, extract_custom_proof_commitments,
-    extract_net_delta, generate_custom_effect_row, generate_effect_vm_trace, verify_custom_proofs,
+    CellState, EFFECT_VM_WIDTH, Effect, EffectVmAir, NUM_EFFECTS, compute_effects_hash,
+    encode_net_delta, extract_custom_proof_commitments, extract_net_delta,
+    generate_effect_vm_trace,
 };
 pub use multi_step_types::{
     ALLOW_PREDICATE, MultiStepDerivationAir, MultiStepStarkAir, MultiStepWitness,

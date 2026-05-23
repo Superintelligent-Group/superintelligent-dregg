@@ -24,12 +24,11 @@
 //! - pi[4]: root_transition_hash
 //! - pi[5]: checks_commitment_narrow
 
-use pyana_circuit::binding::WideHash;
-use pyana_circuit::field::BabyBear;
-use pyana_circuit::poseidon2::{hash_fact, hash_many};
-use pyana_circuit::stark::{self, StarkProof};
+use crate::binding::WideHash;
+use crate::field::BabyBear;
+use crate::stark::{self, StarkProof};
 
-use crate::circuit::{
+use crate::dsl::circuit::{
     BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
 };
 
@@ -63,7 +62,7 @@ pub const FOLD_DSL_PI_COUNT: usize = 6;
 // Witness types (shared, moved from fold_types)
 // ============================================================================
 
-pub use pyana_circuit::fold_types::{
+pub use crate::fold_types::{
     FoldAir, FoldWitness, RemovedFact, build_membership_proof, build_shared_tree,
     compute_root_transition_hash, compute_test_checks_commitment, create_test_fold,
     verify_root_transition,

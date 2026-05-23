@@ -1565,7 +1565,8 @@ pub fn prove_validated_ivc(
     initial_root: BabyBear,
     fold_witnesses: &[FoldStepWitness],
 ) -> Result<ValidatedIvcProof, String> {
-    use crate::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
+    use crate::dsl::descriptors::merkle_poseidon2_circuit;
+    use crate::dsl::membership::generate_merkle_poseidon2_trace;
 
     if fold_witnesses.is_empty() {
         return Err("Cannot prove empty fold chain".to_string());
@@ -1640,8 +1641,8 @@ pub fn prove_validated_ivc(
         }
 
         // Generate the STARK proof.
-        let air = MerklePoseidon2StarkAir;
-        let proof = stark::prove(&air, &trace, &public_inputs);
+        let circuit = merkle_poseidon2_circuit();
+        let proof = stark::prove(&circuit, &trace, &public_inputs);
 
         fold_membership_proofs.push(FoldMembershipEntry {
             removed_fact_hash: witness.removed_fact_hash,
@@ -1736,8 +1737,8 @@ pub fn verify_validated_ivc(proof: &ValidatedIvcProof) -> ValidatedIvcVerificati
 
         // Verify the Merkle membership STARK.
         let membership_public_inputs = vec![entry.removed_fact_hash, entry.old_root];
-        let air = crate::poseidon2_air::MerklePoseidon2StarkAir;
-        if let Err(e) = stark::verify(&air, &entry.proof, &membership_public_inputs) {
+        let circuit = crate::dsl::descriptors::merkle_poseidon2_circuit();
+        if let Err(e) = stark::verify(&circuit, &entry.proof, &membership_public_inputs) {
             return ValidatedIvcVerification::MembershipProofInvalid { step: i, reason: e };
         }
     }

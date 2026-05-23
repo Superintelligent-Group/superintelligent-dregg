@@ -132,7 +132,7 @@ pub struct TurnExecutor {
     /// Program registry for custom cell programs (smart contract runtime).
     /// When a sovereign cell has a `verification_key_hash` set, the executor
     /// looks up the deployed program here and verifies proofs against it.
-    /// Falls back to `SovereignTransitionAir` if no program is found.
+    /// Falls back to `EffectVmAir` if no program is found.
     pub program_registry: ProgramRegistry,
     /// Current timestamp for precondition evaluation.
     pub current_timestamp: i64,
@@ -423,7 +423,7 @@ impl TurnExecutor {
     ///
     /// When a sovereign cell has a `verification_key_hash` in its registration,
     /// proof-carrying turns are verified against the deployed program instead of
-    /// the default `SovereignTransitionAir`.
+    /// the default `EffectVmAir`.
     pub fn set_program_registry(&mut self, registry: ProgramRegistry) {
         self.program_registry = registry;
     }
@@ -464,7 +464,6 @@ impl TurnExecutor {
     ) -> Result<(), TurnError> {
         use pyana_circuit::effect_vm;
         use pyana_circuit::field::BabyBear;
-        use pyana_circuit::poseidon2;
         use pyana_circuit::stark;
 
         // 1. Get stored commitment (check both legacy sovereign_commitments and registrations).
@@ -530,51 +529,58 @@ impl TurnExecutor {
             }
         }
 
-        // 9. Validate proof PI count.
+        // 9. Validate proof PI count and verify PI matching.
         let expected_pi_count = public_inputs.len();
         let vk_hash = self.get_cell_vk_hash(cell_id, ledger);
         let has_custom_program = vk_hash.is_some();
 
-        if proof.public_inputs.len() < expected_pi_count {
-            return Err(TurnError::InvalidExecutionProof(format!(
-                "proof has {} public inputs, expected at least {}",
-                proof.public_inputs.len(),
-                expected_pi_count
-            )));
-        }
+        // For the default EffectVmAir path, verify reconstructed PIs match the proof.
+        // Custom programs have their own PI layout — skip this check for them.
+        if !has_custom_program {
+            if proof.public_inputs.len() < expected_pi_count {
+                return Err(TurnError::InvalidExecutionProof(format!(
+                    "proof has {} public inputs, expected at least {}",
+                    proof.public_inputs.len(),
+                    expected_pi_count
+                )));
+            }
 
-        // 10. Verify reconstructed PIs match the proof's embedded PIs.
-        for (i, expected_bb) in public_inputs.iter().enumerate() {
-            let got = BabyBear::new_canonical(proof.public_inputs[i]);
-            if got != *expected_bb {
-                if i == effect_vm::pi::OLD_COMMIT {
-                    return Err(TurnError::SovereignCommitmentMismatch {
-                        cell: *cell_id,
-                        expected: old_commitment,
-                        got: new_commitment,
-                    });
-                } else if i == effect_vm::pi::NEW_COMMIT {
-                    return Err(TurnError::InvalidExecutionProof(
-                        "new_commitment in proof does not match claimed value".to_string(),
-                    ));
-                } else if i == effect_vm::pi::EFFECTS_HASH_LO || i == effect_vm::pi::EFFECTS_HASH_HI
-                {
-                    return Err(TurnError::EffectsHashMismatch {
-                        expected: Self::babybear_pair_to_bytes32(effects_hash_lo, effects_hash_hi),
-                        got: Self::babybear_pair_to_bytes32(
-                            BabyBear::new_canonical(
-                                proof.public_inputs[effect_vm::pi::EFFECTS_HASH_LO],
+            for (i, expected_bb) in public_inputs.iter().enumerate() {
+                let got = BabyBear::new_canonical(proof.public_inputs[i]);
+                if got != *expected_bb {
+                    if i == effect_vm::pi::OLD_COMMIT {
+                        return Err(TurnError::SovereignCommitmentMismatch {
+                            cell: *cell_id,
+                            expected: old_commitment,
+                            got: new_commitment,
+                        });
+                    } else if i == effect_vm::pi::NEW_COMMIT {
+                        return Err(TurnError::InvalidExecutionProof(
+                            "new_commitment in proof does not match claimed value".to_string(),
+                        ));
+                    } else if i == effect_vm::pi::EFFECTS_HASH_LO
+                        || i == effect_vm::pi::EFFECTS_HASH_HI
+                    {
+                        return Err(TurnError::EffectsHashMismatch {
+                            expected: Self::babybear_pair_to_bytes32(
+                                effects_hash_lo,
+                                effects_hash_hi,
                             ),
-                            BabyBear::new_canonical(
-                                proof.public_inputs[effect_vm::pi::EFFECTS_HASH_HI],
+                            got: Self::babybear_pair_to_bytes32(
+                                BabyBear::new_canonical(
+                                    proof.public_inputs[effect_vm::pi::EFFECTS_HASH_LO],
+                                ),
+                                BabyBear::new_canonical(
+                                    proof.public_inputs[effect_vm::pi::EFFECTS_HASH_HI],
+                                ),
                             ),
-                        ),
-                    });
-                } else {
-                    return Err(TurnError::InvalidExecutionProof(format!(
-                        "public input mismatch at index {} (expected {:?}, got {:?})",
-                        i, expected_bb, got
-                    )));
+                        });
+                    } else {
+                        return Err(TurnError::InvalidExecutionProof(format!(
+                            "public input mismatch at index {} (expected {:?}, got {:?})",
+                            i, expected_bb, got
+                        )));
+                    }
                 }
             }
         }
@@ -582,8 +588,15 @@ impl TurnExecutor {
         // 11. Verify the STARK proof.
         if let Some(vk) = vk_hash {
             if let Some(program) = self.program_registry.get(&vk) {
+                // Custom programs define their own PI layout. Extract PIs from
+                // the proof itself (the program's verifier will check them).
+                let custom_pis: Vec<BabyBear> = proof
+                    .public_inputs
+                    .iter()
+                    .map(|&v| BabyBear::new_canonical(v))
+                    .collect();
                 program
-                    .verify_transition(&public_inputs, proof_bytes)
+                    .verify_transition(&custom_pis, proof_bytes)
                     .map_err(|e| TurnError::ProofVerificationFailed(e.to_string()))?;
             } else {
                 return Err(TurnError::ProofVerificationFailed(format!(
@@ -733,6 +746,175 @@ impl TurnExecutor {
         let mut result = [0u8; 32];
         result[..16].copy_from_slice(short);
         result
+    }
+
+    /// Decode a stored [u8; 32] commitment to a single BabyBear field element.
+    ///
+    /// The stored commitment encodes a Poseidon2 CellState commitment: the BabyBear
+    /// value is in the first 4 bytes (u32 LE), remaining bytes are zero.
+    pub fn commitment_to_babybear(bytes: &[u8; 32]) -> pyana_circuit::field::BabyBear {
+        let val = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        pyana_circuit::field::BabyBear::new_canonical(val)
+    }
+
+    /// Encode a BabyBear field element as a [u8; 32] stored commitment.
+    ///
+    /// Packs the u32 value into the first 4 bytes (LE), zeroes the rest.
+    pub fn babybear_to_commitment(bb: pyana_circuit::field::BabyBear) -> [u8; 32] {
+        let mut result = [0u8; 32];
+        result[..4].copy_from_slice(&bb.0.to_le_bytes());
+        result
+    }
+
+    /// Encode two BabyBear elements as a [u8; 32] for error reporting.
+    fn babybear_pair_to_bytes32(
+        lo: pyana_circuit::field::BabyBear,
+        hi: pyana_circuit::field::BabyBear,
+    ) -> [u8; 32] {
+        let mut result = [0u8; 32];
+        result[..4].copy_from_slice(&lo.0.to_le_bytes());
+        result[4..8].copy_from_slice(&hi.0.to_le_bytes());
+        result
+    }
+
+    /// Convert turn-level effects from the call forest into circuit-level Effect VM effects.
+    ///
+    /// Walks the call forest DFS and converts each effect targeting `cell_id` into the
+    /// corresponding `effect_vm::Effect`. Effects not targeting this cell are skipped.
+    fn convert_turn_effects_to_vm(
+        cell_id: &CellId,
+        turn: &Turn,
+    ) -> Vec<pyana_circuit::effect_vm::Effect> {
+        use pyana_circuit::effect_vm::Effect as VmEffect;
+        use pyana_circuit::field::BabyBear;
+
+        fn collect_effects(
+            tree: &CallTree,
+            cell_id: &CellId,
+            vm_effects: &mut Vec<pyana_circuit::effect_vm::Effect>,
+        ) {
+            use pyana_circuit::effect_vm::Effect as VmEffect;
+            use pyana_circuit::field::BabyBear;
+
+            fn hash_to_bb(h: &[u8; 32]) -> BabyBear {
+                let val_u32 = u32::from_le_bytes([h[0], h[1], h[2], h[3]]);
+                BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)
+            }
+
+            fn field_element_to_bb(value: &[u8; 32]) -> BabyBear {
+                let val_u32 = u32::from_le_bytes([value[0], value[1], value[2], value[3]]);
+                BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)
+            }
+
+            for effect in &tree.action.effects {
+                match effect {
+                    Effect::Transfer { from, to, amount } => {
+                        if from == cell_id {
+                            vm_effects.push(VmEffect::Transfer {
+                                amount: *amount,
+                                direction: 1,
+                            });
+                        } else if to == cell_id {
+                            vm_effects.push(VmEffect::Transfer {
+                                amount: *amount,
+                                direction: 0,
+                            });
+                        }
+                    }
+                    Effect::SetField { cell, index, value } if cell == cell_id => {
+                        vm_effects.push(VmEffect::SetField {
+                            field_idx: *index as u32,
+                            value: field_element_to_bb(value),
+                        });
+                    }
+                    Effect::GrantCapability { to, cap, .. } if to == cell_id => {
+                        let cap_hash = blake3::hash(&cap.slot.to_le_bytes());
+                        vm_effects.push(VmEffect::GrantCapability {
+                            cap_entry: hash_to_bb(cap_hash.as_bytes()),
+                        });
+                    }
+                    Effect::NoteSpend {
+                        nullifier, value, ..
+                    } => {
+                        vm_effects.push(VmEffect::NoteSpend {
+                            nullifier: hash_to_bb(&nullifier.0),
+                            value: *value,
+                        });
+                    }
+                    Effect::NoteCreate {
+                        commitment, value, ..
+                    } => {
+                        vm_effects.push(VmEffect::NoteCreate {
+                            commitment: hash_to_bb(&commitment.0),
+                            value: *value,
+                        });
+                    }
+                    Effect::IncrementNonce { cell } if cell == cell_id => {
+                        // Nonce increment is implicit in the VM (row-to-row).
+                    }
+                    _ => {
+                        // Other effects map to NoOp.
+                        vm_effects.push(VmEffect::NoOp);
+                    }
+                }
+            }
+            for child in &tree.children {
+                collect_effects(child, cell_id, vm_effects);
+            }
+        }
+
+        let mut vm_effects = Vec::new();
+        for root in &turn.call_forest.roots {
+            collect_effects(root, cell_id, &mut vm_effects);
+        }
+
+        // Must have at least one effect for the VM.
+        if vm_effects.is_empty() {
+            vm_effects.push(pyana_circuit::effect_vm::Effect::NoOp);
+        }
+        vm_effects
+    }
+
+    /// Compute the balance delta (magnitude, sign) from the turn's effects for a cell.
+    ///
+    /// Returns (magnitude_u32, sign_u32) where sign=0 means positive/incoming,
+    /// sign=1 means negative/outgoing.
+    fn compute_balance_delta_from_effects(cell_id: &CellId, turn: &Turn) -> (u32, u32) {
+        fn walk_delta(tree: &CallTree, cell_id: &CellId, net: &mut i64) {
+            for effect in &tree.action.effects {
+                match effect {
+                    Effect::Transfer { from, to, amount } => {
+                        if from == cell_id {
+                            *net -= *amount as i64;
+                        }
+                        if to == cell_id {
+                            *net += *amount as i64;
+                        }
+                    }
+                    Effect::NoteSpend { value, .. } => {
+                        *net += *value as i64;
+                    }
+                    Effect::NoteCreate { value, .. } => {
+                        *net -= *value as i64;
+                    }
+                    _ => {}
+                }
+            }
+            for child in &tree.children {
+                walk_delta(child, cell_id, net);
+            }
+        }
+
+        let mut net_delta: i64 = 0;
+        for root in &turn.call_forest.roots {
+            walk_delta(root, cell_id, &mut net_delta);
+        }
+
+        if net_delta < 0 {
+            ((-net_delta) as u32, 1u32)
+        } else {
+            (net_delta as u32, 0u32)
+        }
     }
 
     /// Compute a BLAKE3 hash of the turn's effects for proof-carrying verification.
@@ -6423,11 +6605,7 @@ impl TurnExecutor {
         atomic_turn: &AtomicSovereignTurn,
         ledger: &mut Ledger,
     ) -> Result<Vec<[u8; 32]>, AtomicTurnError> {
-        use pyana_circuit::SovereignTransitionAir;
         use pyana_circuit::field::BabyBear;
-        use pyana_circuit::sovereign_transition_air::{
-            DELTA_PI_OFFSET, SOVEREIGN_PUBLIC_INPUTS, extract_balance_delta,
-        };
         use pyana_circuit::stark;
 
         // 0. Basic validation.
@@ -6461,7 +6639,6 @@ impl TurnExecutor {
         }
 
         // 2. Verify each proof entry and extract proven balance deltas.
-        let air = SovereignTransitionAir;
         let mut new_commitments: Vec<(CellId, [u8; 32])> =
             Vec::with_capacity(atomic_turn.proofs.len());
         let mut proven_deltas: Vec<i64> = Vec::with_capacity(atomic_turn.proofs.len());
@@ -6491,42 +6668,86 @@ impl TurnExecutor {
                 }
             })?;
 
-            let cell_id_hash = *blake3::hash(entry.cell_id.as_bytes()).as_bytes();
+            // Reconstruct Effect VM public inputs from the entry's data.
+            let old_commit_field = Self::commitment_to_babybear(&entry.old_commitment);
+            let new_commit_field = Self::commitment_to_babybear(&entry.new_commitment);
 
-            let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(SOVEREIGN_PUBLIC_INPUTS);
-            public_inputs.extend(Self::bytes32_to_babybear(&entry.old_commitment));
-            public_inputs.extend(Self::bytes32_to_babybear(&entry.new_commitment));
-            public_inputs.extend(Self::bytes32_to_babybear(&entry.effects_hash));
-            public_inputs.extend(Self::bytes32_to_babybear(&cell_id_hash));
-
-            if proof.public_inputs.len() < SOVEREIGN_PUBLIC_INPUTS {
+            // Extract proven delta from the proof's PIs (authoritative, not from entry.balance_delta).
+            let min_pi_count = pyana_circuit::effect_vm::pi::BASE_COUNT;
+            if proof.public_inputs.len() < min_pi_count {
                 return Err(AtomicTurnError::ProofFailed {
                     cell: entry.cell_id,
                     reason: format!(
                         "proof has {} public inputs, expected at least {}",
                         proof.public_inputs.len(),
-                        SOVEREIGN_PUBLIC_INPUTS
+                        min_pi_count
                     ),
                 });
             }
 
-            // Extract delta PI from the proof itself (proven, not declared).
-            let delta_magnitude = BabyBear(proof.public_inputs[DELTA_PI_OFFSET]);
-            let delta_sign = BabyBear(proof.public_inputs[DELTA_PI_OFFSET + 1]);
+            let delta_magnitude = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_MAG],
+            );
+            let delta_sign = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_SIGN],
+            );
+            let effects_hash_lo = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_LO],
+            );
+            let effects_hash_hi = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_HI],
+            );
+            let custom_count = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::CUSTOM_EFFECT_COUNT],
+            );
+
+            // Build public inputs in Effect VM layout.
+            let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(min_pi_count);
+            public_inputs.push(old_commit_field);
+            public_inputs.push(new_commit_field);
             public_inputs.push(delta_magnitude);
             public_inputs.push(delta_sign);
+            public_inputs.push(effects_hash_lo);
+            public_inputs.push(effects_hash_hi);
+            public_inputs.push(custom_count);
 
-            for (i, expected_bb) in public_inputs.iter().enumerate() {
-                let got = BabyBear(proof.public_inputs[i]);
-                if got != *expected_bb {
-                    return Err(AtomicTurnError::ProofFailed {
-                        cell: entry.cell_id,
-                        reason: format!("public input mismatch at index {}", i),
-                    });
+            // Append custom proof entries from the proof's PIs.
+            let custom_count_val = custom_count.0 as usize;
+            for i in 0..custom_count_val {
+                let base = pyana_circuit::effect_vm::pi::CUSTOM_PROOFS_BASE
+                    + i * pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE;
+                if base + pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE
+                    > proof.public_inputs.len()
+                {
+                    break;
+                }
+                for j in 0..pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE {
+                    public_inputs
+                        .push(BabyBear::new_canonical(proof.public_inputs[base + j]));
                 }
             }
 
-            // Verify against custom program or default AIR.
+            // Verify reconstructed commitment PIs match the proof's embedded PIs.
+            let proof_old = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::OLD_COMMIT],
+            );
+            let proof_new = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT],
+            );
+            if proof_old != old_commit_field {
+                return Err(AtomicTurnError::ProofFailed {
+                    cell: entry.cell_id,
+                    reason: "old_commitment in proof does not match stored value".to_string(),
+                });
+            }
+            if proof_new != new_commit_field {
+                return Err(AtomicTurnError::ProofFailed {
+                    cell: entry.cell_id,
+                    reason: "new_commitment in proof does not match claimed value".to_string(),
+                });
+            }
+
+            // Verify against custom program or default AIR (EffectVmAir).
             let vk_hash = self.get_cell_vk_hash(&entry.cell_id, ledger);
             if let Some(vk) = vk_hash {
                 if let Some(program) = self.program_registry.get(&vk) {
@@ -6546,6 +6767,7 @@ impl TurnExecutor {
                     });
                 }
             } else {
+                let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
                 stark::verify(&air, &proof, &public_inputs).map_err(|e| {
                     AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
@@ -6554,12 +6776,14 @@ impl TurnExecutor {
                 })?;
             }
 
-            let proven_delta = extract_balance_delta(&public_inputs).ok_or_else(|| {
-                AtomicTurnError::ProofFailed {
-                    cell: entry.cell_id,
-                    reason: "failed to extract balance_delta from proof PI".to_string(),
-                }
-            })?;
+            // Extract proven balance delta from PI.
+            let proven_delta =
+                pyana_circuit::extract_net_delta(&public_inputs).ok_or_else(|| {
+                    AtomicTurnError::ProofFailed {
+                        cell: entry.cell_id,
+                        reason: "failed to extract balance_delta from proof PI".to_string(),
+                    }
+                })?;
             proven_deltas.push(proven_delta);
             new_commitments.push((entry.cell_id, entry.new_commitment));
         }
@@ -6611,11 +6835,7 @@ impl TurnExecutor {
         mixed_turn: &MixedAtomicTurn,
         ledger: &mut Ledger,
     ) -> Result<MixedAtomicResult, AtomicTurnError> {
-        use pyana_circuit::SovereignTransitionAir;
         use pyana_circuit::field::BabyBear;
-        use pyana_circuit::sovereign_transition_air::{
-            DELTA_PI_OFFSET, SOVEREIGN_PUBLIC_INPUTS, extract_balance_delta,
-        };
         use pyana_circuit::stark;
 
         if mixed_turn.sovereign_entries.is_empty() && mixed_turn.hosted_effects.is_empty() {
@@ -6639,7 +6859,6 @@ impl TurnExecutor {
         }
 
         // Verify sovereign proofs and extract proven deltas.
-        let air = SovereignTransitionAir;
         let mut sovereign_deltas: Vec<i64> = Vec::new();
         let mut new_commitments: Vec<(CellId, [u8; 32])> = Vec::new();
 
@@ -6668,29 +6887,84 @@ impl TurnExecutor {
                 }
             })?;
 
-            let cell_id_hash = *blake3::hash(entry.cell_id.as_bytes()).as_bytes();
-            let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(SOVEREIGN_PUBLIC_INPUTS);
-            public_inputs.extend(Self::bytes32_to_babybear(&entry.old_commitment));
-            public_inputs.extend(Self::bytes32_to_babybear(&entry.new_commitment));
-            public_inputs.extend(Self::bytes32_to_babybear(&entry.effects_hash));
-            public_inputs.extend(Self::bytes32_to_babybear(&cell_id_hash));
+            // Reconstruct Effect VM public inputs.
+            let old_commit_field = Self::commitment_to_babybear(&entry.old_commitment);
+            let new_commit_field = Self::commitment_to_babybear(&entry.new_commitment);
 
-            if proof.public_inputs.len() < SOVEREIGN_PUBLIC_INPUTS {
+            let min_pi_count = pyana_circuit::effect_vm::pi::BASE_COUNT;
+            if proof.public_inputs.len() < min_pi_count {
                 return Err(AtomicTurnError::ProofFailed {
                     cell: entry.cell_id,
                     reason: format!(
                         "proof has {} public inputs, expected at least {}",
                         proof.public_inputs.len(),
-                        SOVEREIGN_PUBLIC_INPUTS
+                        min_pi_count
                     ),
                 });
             }
 
-            let delta_magnitude = BabyBear(proof.public_inputs[DELTA_PI_OFFSET]);
-            let delta_sign = BabyBear(proof.public_inputs[DELTA_PI_OFFSET + 1]);
+            let delta_magnitude = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_MAG],
+            );
+            let delta_sign = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::NET_DELTA_SIGN],
+            );
+            let effects_hash_lo = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_LO],
+            );
+            let effects_hash_hi = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::EFFECTS_HASH_HI],
+            );
+            let custom_count = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::CUSTOM_EFFECT_COUNT],
+            );
+
+            let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(min_pi_count);
+            public_inputs.push(old_commit_field);
+            public_inputs.push(new_commit_field);
             public_inputs.push(delta_magnitude);
             public_inputs.push(delta_sign);
+            public_inputs.push(effects_hash_lo);
+            public_inputs.push(effects_hash_hi);
+            public_inputs.push(custom_count);
 
+            // Append custom proof entries from the proof's PIs.
+            let custom_count_val = custom_count.0 as usize;
+            for i in 0..custom_count_val {
+                let base = pyana_circuit::effect_vm::pi::CUSTOM_PROOFS_BASE
+                    + i * pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE;
+                if base + pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE
+                    > proof.public_inputs.len()
+                {
+                    break;
+                }
+                for j in 0..pyana_circuit::effect_vm::pi::CUSTOM_ENTRY_SIZE {
+                    public_inputs
+                        .push(BabyBear::new_canonical(proof.public_inputs[base + j]));
+                }
+            }
+
+            // Verify commitment PIs match.
+            let proof_old = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::OLD_COMMIT],
+            );
+            let proof_new = BabyBear::new_canonical(
+                proof.public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT],
+            );
+            if proof_old != old_commit_field {
+                return Err(AtomicTurnError::ProofFailed {
+                    cell: entry.cell_id,
+                    reason: "old_commitment in proof does not match stored value".to_string(),
+                });
+            }
+            if proof_new != new_commit_field {
+                return Err(AtomicTurnError::ProofFailed {
+                    cell: entry.cell_id,
+                    reason: "new_commitment in proof does not match claimed value".to_string(),
+                });
+            }
+
+            // Verify against custom program or default EffectVmAir.
             let vk_hash = self.get_cell_vk_hash(&entry.cell_id, ledger);
             if let Some(vk) = vk_hash {
                 if let Some(program) = self.program_registry.get(&vk) {
@@ -6707,6 +6981,7 @@ impl TurnExecutor {
                     });
                 }
             } else {
+                let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
                 stark::verify(&air, &proof, &public_inputs).map_err(|e| {
                     AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
@@ -6715,12 +6990,13 @@ impl TurnExecutor {
                 })?;
             }
 
-            let proven_delta = extract_balance_delta(&public_inputs).ok_or_else(|| {
-                AtomicTurnError::ProofFailed {
-                    cell: entry.cell_id,
-                    reason: "failed to extract balance_delta from proof PI".to_string(),
-                }
-            })?;
+            let proven_delta =
+                pyana_circuit::extract_net_delta(&public_inputs).ok_or_else(|| {
+                    AtomicTurnError::ProofFailed {
+                        cell: entry.cell_id,
+                        reason: "failed to extract balance_delta from proof PI".to_string(),
+                    }
+                })?;
             sovereign_deltas.push(proven_delta);
             new_commitments.push((entry.cell_id, entry.new_commitment));
         }

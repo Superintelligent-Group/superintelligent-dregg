@@ -480,10 +480,9 @@ mod tests {
     #[test]
     fn test_obligation_with_remote_proof_condition() {
         use pyana_circuit::BabyBear;
-        use pyana_circuit::poseidon2_air::{
-            MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace,
-        };
         use pyana_circuit::stark::{self as circuit_stark, proof_to_bytes};
+        use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+        use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 
         // Generate a valid STARK proof.
         let leaf_hash = BabyBear::new(77777);
@@ -500,8 +499,8 @@ mod tests {
         let positions: [u8; 4] = [0, 1, 2, 3];
         let (trace, public_inputs) =
             generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
-        let air = MerklePoseidon2StarkAir;
-        let stark_proof = circuit_stark::prove(&air, &trace, &public_inputs);
+        let circuit = merkle_poseidon2_circuit();
+        let stark_proof = circuit_stark::prove(&circuit, &trace, &public_inputs);
         let proof_bytes = proof_to_bytes(&stark_proof);
         let public_outputs: Vec<u32> = public_inputs.iter().map(|bb| bb.0).collect();
 

@@ -41,7 +41,7 @@ use pyana_turn::ProofVerifier;
 /// 1. The proof bytes deserialize to a valid `StarkProof`.
 /// 2. The proof's public inputs include the expected federation root (passed as `vk`).
 /// 3. The action binding matches the requested action and resource.
-/// 4. The STARK proof verifies against the Poseidon2 `MerklePoseidon2StarkAir` constraint system.
+/// 4. The STARK proof verifies against the DSL `merkle_poseidon2_circuit()` constraint system.
 ///
 /// # Timestamp Freshness
 ///
@@ -206,7 +206,7 @@ const KNOWN_AIR_NAMES: &[&str] = &[
 /// This is the production verifier for sovereign cell proofs. It dispatches:
 ///
 /// - **Known AIR names** (poseidon2, merkle, blinded-merkle): verified via the
-///   existing `MerklePoseidon2StarkAir` / `BlindedMerklePoseidon2StarkAir` path,
+///   DSL `merkle_poseidon2_circuit()` / `blinded_merkle_poseidon2_circuit()` path,
 ///   including action binding and timestamp freshness checks.
 ///
 /// - **Custom programs** (unrecognized `air_name`): the VK bytes are interpreted
@@ -308,15 +308,16 @@ impl DslAwareProofVerifier {
             }
         }
 
-        // Dispatch to the correct AIR based on air_name.
-        use pyana_circuit::poseidon2_air::{
-            BlindedMerklePoseidon2StarkAir, MerklePoseidon2StarkAir,
+        // Dispatch to the correct DSL circuit based on air_name.
+        use pyana_dsl_runtime::descriptors::{
+            BLINDED_MERKLE_AIR_NAME, blinded_merkle_poseidon2_circuit, merkle_poseidon2_circuit,
         };
-        use pyana_circuit::stark::StarkAir;
-        if stark_proof.air_name == BlindedMerklePoseidon2StarkAir.air_name() {
-            stark::verify(&BlindedMerklePoseidon2StarkAir, stark_proof, &pi).is_ok()
+        if stark_proof.air_name == BLINDED_MERKLE_AIR_NAME {
+            let circuit = blinded_merkle_poseidon2_circuit();
+            stark::verify(&circuit, stark_proof, &pi).is_ok()
         } else {
-            stark::verify(&MerklePoseidon2StarkAir, stark_proof, &pi).is_ok()
+            let circuit = merkle_poseidon2_circuit();
+            stark::verify(&circuit, stark_proof, &pi).is_ok()
         }
     }
 
@@ -492,8 +493,9 @@ impl ProofVerifier for DslAwareProofVerifier {
 mod tests {
     use super::*;
     use pyana_circuit::binding::compute_action_binding;
-    use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
     use pyana_circuit::stark::{proof_to_bytes, prove};
+    use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+    use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 
     /// Encode a BabyBear value as a 32-byte verification key.
     ///
@@ -531,8 +533,8 @@ mod tests {
             public_inputs.push(elem);
         }
 
-        let air = MerklePoseidon2StarkAir;
-        let proof = prove(&air, &trace, &public_inputs);
+        let circuit = merkle_poseidon2_circuit();
+        let proof = prove(&circuit, &trace, &public_inputs);
         let proof_bytes = proof_to_bytes(&proof);
 
         // Encode the Merkle root (pi[1]) as the VK using the canonical encoding.
@@ -572,8 +574,8 @@ mod tests {
         // Append timestamp as 4th public input.
         public_inputs.push(BabyBear::new(timestamp));
 
-        let air = MerklePoseidon2StarkAir;
-        let proof = prove(&air, &trace, &public_inputs);
+        let circuit = merkle_poseidon2_circuit();
+        let proof = prove(&circuit, &trace, &public_inputs);
         let proof_bytes = proof_to_bytes(&proof);
 
         let vk = babybear_to_vk(public_inputs[1]);
