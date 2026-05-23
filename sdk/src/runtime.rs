@@ -283,6 +283,7 @@ impl AgentRuntime {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
 
         // Execute against the local ledger.
@@ -550,6 +551,7 @@ impl SubAgent {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
 
         let mut ledger = self.ledger.lock().unwrap();

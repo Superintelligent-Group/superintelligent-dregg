@@ -1,64 +1,121 @@
-# pyana-gallery
+# Pyana Gallery
 
-Federated art gallery with commit-reveal auctions on the pyana protocol.
+Privacy-preserving art auction platform with zero-knowledge proofs.
 
 ## Quick Start
 
 ```bash
-# Headless demo (no server needed)
+# Headless demo
 cargo run -p pyana-gallery --example demo
 
-# Full API demo (starts server, exercises HTTP endpoints)
+# Full API server
 cargo run -p pyana-gallery --example devnet_gallery
 
-# Or with curl (requires server running separately)
-cargo run -p pyana-gallery
-./demo.sh
+# Production
+cargo build --release -p pyana-gallery
+PYANA_ADMIN_TOKEN=secret ./target/release/pyana-gallery --listen 0.0.0.0:3000
 ```
+
+## Auction Modes
+
+| Mode | Privacy Level | Best For |
+|------|--------------|----------|
+| Sealed-bid (commit-reveal) | Bids hidden until reveal | Simple auctions |
+| Vickrey (second-price) | Incentive-compatible | High-value items |
+| Private Vickrey Phase 1-4 | Full (see below) | Maximum confidentiality |
+| Dutch (descending) | First buyer wins | Editions, drops |
+
+### Private Vickrey Auction
+
+A single protocol that achieves full auction privacy. Nobody learns anything except "an auction concluded correctly" — not the bids, not the payment amount, not who won.
+
+**What's hidden:**
+- All bid amounts (federation collectively garbles the comparison circuit; no single party sees any bid)
+- The payment amount (output is a Pedersen commitment, not a plaintext number)
+- The winner's identity (ring membership proof proves "a valid bidder settled" without revealing which one)
+- The delivery address (one-time stealth address, unlinkable across auctions)
+
+**How it works (one protocol, sequential steps):**
+1. Federation nodes collectively garble a second-price comparison circuit (distributed randomness, no single node sees the tables)
+2. Each bidder obtains their input labels via oblivious transfer with each federation node (no node learns which labels were selected)
+3. Anyone evaluates the garbled circuit → output is a Pedersen commitment to the second price (not plaintext)
+4. The winner (identified by threshold-decrypted index) decrypts the committed price and produces:
+   - A ring membership proof ("I am one of the N bidders")
+   - A committed payment matching the auction output (equality proof)
+   - A stealth address for artwork delivery
+5. Federation verifies all proofs without learning identity or amount
+
+**Publicly verifiable:** A STARK proof of correct circuit evaluation is produced. Anyone can verify the auction was conducted fairly.
+
+**Cryptographic guarantees:** Computational (STARK soundness, Pedersen binding, ring membership). Not trust-based.
 
 ## Architecture
 
 ```
-Federation nodes (3-node devnet)
-    | wire protocol
-Gallery Backend (axum API server using pyana-sdk)
-    | REST/WebSocket
-Browser Frontend (vanilla JS/HTML using WASM SDK + browser extension)
+Browser (frontend/)         Extension (window.pyana.signTurn)
+    |                           |
+    +------ REST + WebSocket ---+
+                |
+    Axum Server (server.rs)
+                |
+    PyanaEngine (turns, proofs)
+                |
+    Blocklace (consensus, finality)
 ```
 
-## API Endpoints
+## API
 
 ```
 GET  /artworks              List all artworks
-GET  /artworks/:id          Artwork details + provenance
-POST /artworks              Register new artwork
-GET  /auctions              List active auctions
-GET  /auctions/:id          Auction details + bid history
-POST /auctions              Create auction for artwork
-POST /auctions/:id/bid      Submit bid commitment
-POST /auctions/:id/reveal   Reveal bid
-GET  /auctions/:id/result   Settlement result
-WS   /ws                    Live updates
-POST /admin/height          Advance block height (devnet)
-POST /admin/settle/:id      Trigger settlement (devnet)
+GET  /artworks/:id          Details + provenance chain
+POST /artworks              Register (artist signs)
+GET  /auctions              Active auctions
+GET  /auctions/:id          State + bid history
+POST /auctions              Create (reserve, duration, mode)
+POST /auctions/:id/bid      Submit commitment
+POST /auctions/:id/reveal   Reveal (amount + nonce)
+WS   /ws                    Live events
+POST /admin/settle          Trigger settlement
+POST /admin/height          Advance height
 GET  /health                Health check
 ```
 
-## Auction Lifecycle
+## Settlement
 
-1. **Register** artwork (artist signs, creates cell)
-2. **Create** auction (artist specifies duration, reserve)
-3. **Bid** phase: bidders submit BLAKE3 commitments (amounts hidden)
-4. **Reveal** phase: bidders prove their commitments
-5. **Settle**: TurnComposer atomically transfers ownership + payment
-6. **Provenance** updated with new owner
+Atomic via TurnComposer:
+- Winner's escrow releases → payment to artist
+- Ownership capability → delegated to winner
+- Both happen or neither (journal rollback)
+- Losers auto-refunded (ConditionalTurn timeout)
 
-## Pyana Primitives Used
+## Provenance
 
-- **Cells**: Each artwork is a cell
-- **Capabilities**: Ownership as delegatable capability
-- **Commit-Reveal**: BLAKE3 bid commitments
-- **Escrow**: Bidder funds locked during auction
-- **TurnComposer**: Atomic multi-party settlement
-- **ConditionalTurn**: Auto-refund for losing bidders
-- **TemporalPredicate**: Block-height phase enforcement
+Verifiable ownership chain:
+- Each transfer = capability delegation
+- Integrity-checked (tamper-evident)
+- Factory provenance tracked (EROS)
+- Anyone can audit the full history
+
+## Configuration
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `PYANA_ADMIN_TOKEN` | Admin auth | (unset = open) |
+| `PYANA_STATE_FILE` | Persistence | `gallery_state.json` |
+| `PYANA_NODE_URL` | Node API | `http://localhost:8080` |
+
+## Cryptography
+
+BLAKE3 (commitments), Garbled Circuits (private comparison), Oblivious Transfer (label selection), Threshold Decryption (federation decode), Pedersen/Ristretto (committed values), Schnorr (equality proofs), Bulletproofs (range), Ring Membership/BlindedMerkle (anonymity), Stealth Addresses/X25519 (unlinkable delivery), STARK (verifiable evaluation), ChaCha20-Poly1305 (winner decryption).
+
+## Anti-Sniping
+
+Bids within the last 2 blocks of deadline extend it by 3 blocks. Configurable via `AntiSnipingConfig`.
+
+## Frontend
+
+`frontend/` — vanilla HTML/JS/CSS:
+- Dark theme, responsive
+- WebSocket live updates
+- Client-side commitment generation (amounts never leave browser)
+- Extension bridge for signing

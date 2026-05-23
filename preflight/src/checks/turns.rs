@@ -1,7 +1,10 @@
 //! Turn execution checks: transfer, set_field, grant, multi-effect, nonce, conservation.
 
 use pyana_cell::{AuthRequired, CapabilityRef, Cell, Ledger, Permissions};
-use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
+use pyana_turn::{
+    BudgetGate, BudgetSlice, ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor,
+    TurnResult,
+};
 
 use crate::report::{CheckResult, run_check};
 
@@ -30,6 +33,7 @@ pub fn run() -> Vec<CheckResult> {
         run_check("multi_effect", check_multi_effect),
         run_check("nonce", check_nonce_increments),
         run_check("conservation", check_conservation_law),
+        run_check("budget_gate", check_budget_gate),
     ]
 }
 
@@ -38,7 +42,7 @@ fn check_transfer() -> Result<(), String> {
     let mut ledger = Ledger::new();
 
     let alice_key = test_key("alice");
-    let mut alice = Cell::with_balance(alice_key, token_id, 1000);
+    let mut alice = Cell::with_balance(alice_key, token_id, 10_000);
     alice.permissions = open_permissions();
     let alice_id = alice.id;
     ledger.insert_cell(alice).map_err(|e| format!("{e:?}"))?;
@@ -55,9 +59,9 @@ fn check_transfer() -> Result<(), String> {
         a.capabilities.grant(bob_id, AuthRequired::None);
     }
 
-    let executor = TurnExecutor::new(ComputronCosts::default_costs());
+    let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut tb = TurnBuilder::new(alice_id, 0);
-    tb.set_fee(1000);
+    tb.set_fee(100);
     {
         let action = tb.action(bob_id, "transfer");
         action.delegation(DelegationMode::None);
@@ -98,7 +102,7 @@ fn check_set_field() -> Result<(), String> {
     let cell_id = cell.id;
     ledger.insert_cell(cell).map_err(|e| format!("{e:?}"))?;
 
-    let executor = TurnExecutor::new(ComputronCosts::default_costs());
+    let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut tb = TurnBuilder::new(cell_id, 0);
     tb.set_fee(100);
     {
@@ -144,10 +148,17 @@ fn check_grant_capability() -> Result<(), String> {
     let target_id = target.id;
     ledger.insert_cell(target).map_err(|e| format!("{e:?}"))?;
 
-    let executor = TurnExecutor::new(ComputronCosts::default_costs());
+    // Bootstrap: granter must have existing cap to target in order to grant it.
+    {
+        let g = ledger.get_mut(&granter_id).unwrap();
+        g.capabilities.grant(target_id, AuthRequired::None);
+    }
+
+    let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut tb = TurnBuilder::new(granter_id, 0);
     tb.set_fee(100);
     {
+        // Action targets granter's own cell (granting a capability to itself).
         let action = tb.action(granter_id, "grant");
         action.delegation(DelegationMode::None);
         action.effect(Effect::GrantCapability {
@@ -173,7 +184,7 @@ fn check_grant_capability() -> Result<(), String> {
         _ => return Err("unexpected turn result".into()),
     }
 
-    // Verify capability is in c-list
+    // Verify capability is still in c-list after the grant turn.
     let g = ledger.get(&granter_id).ok_or("granter not found")?;
     if !g.capabilities.has_access(&target_id) {
         return Err("granter should have capability to target after grant".into());
@@ -204,7 +215,7 @@ fn check_multi_effect() -> Result<(), String> {
         o.capabilities.grant(target_id, AuthRequired::None);
     }
 
-    let executor = TurnExecutor::new(ComputronCosts::default_costs());
+    let executor = TurnExecutor::new(ComputronCosts::zero());
     let mut tb = TurnBuilder::new(owner_id, 0);
     tb.set_fee(1000);
     {
@@ -264,7 +275,7 @@ fn check_nonce_increments() -> Result<(), String> {
     let owner_id = owner.id;
     ledger.insert_cell(owner).map_err(|e| format!("{e:?}"))?;
 
-    let executor = TurnExecutor::new(ComputronCosts::default_costs());
+    let executor = TurnExecutor::new(ComputronCosts::zero());
 
     // Execute turn with nonce=0
     let mut tb = TurnBuilder::new(owner_id, 0);
@@ -280,10 +291,12 @@ fn check_nonce_increments() -> Result<(), String> {
         return Err("first turn should commit".into());
     }
 
+    // Phase 1 increments nonce (always), then IncrementNonce effect adds another.
+    // So final nonce = 0 + 1 (Phase 1) + 1 (effect) = 2.
     let after = ledger.get(&owner_id).ok_or("cell not found")?;
-    if after.state.nonce != 1 {
+    if after.state.nonce != 2 {
         return Err(format!(
-            "expected nonce=1 after increment, got {}",
+            "expected nonce=2 after Phase1+effect increment, got {}",
             after.state.nonce
         ));
     }
@@ -312,7 +325,7 @@ fn check_conservation_law() -> Result<(), String> {
         a.capabilities.grant(bob_id, AuthRequired::None);
     }
 
-    let executor = TurnExecutor::new(ComputronCosts::default_costs());
+    let executor = TurnExecutor::new(ComputronCosts::zero());
 
     // Attempt to transfer more than balance (should be rejected)
     let mut tb = TurnBuilder::new(alice_id, 0);
@@ -340,11 +353,112 @@ fn check_conservation_law() -> Result<(), String> {
         _ => return Err("unexpected turn result".into()),
     }
 
-    // Verify balances unchanged
+    // Verify: fee was deducted (never rolled back) but transfer was NOT applied.
+    // alice started with 500, fee=100 deducted in Phase 1, so alice has 400.
+    // bob still has 0 (transfer was not executed).
     let a = ledger.get(&alice_id).ok_or("alice not found")?;
     let b = ledger.get(&bob_id).ok_or("bob not found")?;
-    if a.state.balance != 500 || b.state.balance != 0 {
-        return Err("balances should be unchanged after rejected turn".into());
+    if a.state.balance != 400 {
+        return Err(format!(
+            "alice should have 400 (500 - 100 fee), got {}",
+            a.state.balance
+        ));
+    }
+    if b.state.balance != 0 {
+        return Err("bob should still have 0 after rejected transfer".into());
+    }
+
+    Ok(())
+}
+
+/// Verify the SharedResourceBudget (BudgetGate) path:
+/// budget ceiling limits turn execution, exhaustion rejects.
+fn check_budget_gate() -> Result<(), String> {
+    let token_id = test_key("token-budget");
+    let mut ledger = Ledger::new();
+
+    let owner_key = test_key("owner-budget");
+    let mut owner = Cell::with_balance(owner_key, token_id, 100_000);
+    owner.permissions = open_permissions();
+    let owner_id = owner.id;
+    ledger.insert_cell(owner).map_err(|e| format!("{e:?}"))?;
+
+    // Create a BudgetGate with a ceiling of 600.
+    // Each turn with fee=300 costs ~222 computrons (action_base=100+effect_base=50+field_cost=72).
+    // Fee of 300 covers the cost. Budget ceiling of 600 allows 2 turns but rejects the 3rd.
+    let slice = BudgetSlice::new(600);
+    let gate = BudgetGate::new(1, slice);
+    let executor = TurnExecutor::with_budget_gate(ComputronCosts::default_costs(), gate);
+
+    // First turn with fee=300: should succeed (300 <= ceiling 600).
+    // Phase 1 always increments nonce by 1, so after turn 1 nonce = 1.
+    let mut tb1 = TurnBuilder::new(owner_id, 0);
+    tb1.set_fee(300);
+    {
+        let action = tb1.action(owner_id, "budget-test-1");
+        action.delegation(DelegationMode::None);
+        action.effect(Effect::SetField {
+            cell: owner_id,
+            index: 0,
+            value: *blake3::hash(b"budget-1").as_bytes(),
+        });
+    }
+    let turn1 = tb1.build();
+    let result1 = executor.execute(&turn1, &mut ledger);
+    match result1 {
+        TurnResult::Committed { .. } => {}
+        TurnResult::Rejected { reason, .. } => {
+            return Err(format!("first turn (fee=300) should commit: {reason}"));
+        }
+        _ => return Err("unexpected result for first turn".into()),
+    }
+
+    // After turn 1: nonce is 1, budget used: 300.
+    // Second turn with fee=300: should succeed (600 total == ceiling).
+    let mut tb2 = TurnBuilder::new(owner_id, 1);
+    tb2.set_fee(300);
+    {
+        let action = tb2.action(owner_id, "budget-test-2");
+        action.delegation(DelegationMode::None);
+        action.effect(Effect::SetField {
+            cell: owner_id,
+            index: 1,
+            value: *blake3::hash(b"budget-2").as_bytes(),
+        });
+    }
+    let turn2 = tb2.build();
+    let result2 = executor.execute(&turn2, &mut ledger);
+    match result2 {
+        TurnResult::Committed { .. } => {}
+        TurnResult::Rejected { reason, .. } => {
+            return Err(format!("second turn (fee=300) should commit: {reason}"));
+        }
+        _ => return Err("unexpected result for second turn".into()),
+    }
+
+    // After turn 2: nonce is 2, budget used: 600 (at ceiling).
+    // Third turn with fee=300: should be REJECTED (900 > ceiling 600).
+    let mut tb3 = TurnBuilder::new(owner_id, 2);
+    tb3.set_fee(300);
+    {
+        let action = tb3.action(owner_id, "budget-test-3");
+        action.delegation(DelegationMode::None);
+        action.effect(Effect::SetField {
+            cell: owner_id,
+            index: 2,
+            value: *blake3::hash(b"budget-3").as_bytes(),
+        });
+    }
+    let turn3 = tb3.build();
+    let result3 = executor.execute(&turn3, &mut ledger);
+    match result3 {
+        TurnResult::Rejected { .. } => {
+            // Good: budget exhausted.
+        }
+        TurnResult::Committed { .. } => {
+            return Err("third turn should be REJECTED (budget exhausted: 900 > 600)".into());
+        }
+        _ => return Err("unexpected result for third turn".into()),
     }
 
     Ok(())

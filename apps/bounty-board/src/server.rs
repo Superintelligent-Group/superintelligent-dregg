@@ -16,7 +16,7 @@ use axum::{
     routing::{get, post},
 };
 use serde_json::json;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
 
 use pyana_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
@@ -60,7 +60,7 @@ struct AppState {
     board: BoardState,
     root_history: Arc<RwLock<FederationRootHistory>>,
     root_last_updated: Arc<RwLock<Option<Instant>>>,
-    engine: Arc<RwLock<PyanaEngine>>,
+    engine: Arc<Mutex<PyanaEngine>>,
     node_url: Arc<String>,
     node_connected: Arc<RwLock<bool>>,
 }
@@ -87,7 +87,7 @@ pub async fn start_server(config: ServerConfig) -> SocketAddr {
             config.federation_root,
         ))),
         root_last_updated: Arc::new(RwLock::new(Some(Instant::now()))),
-        engine: Arc::new(RwLock::new(PyanaEngine::new(EngineConfig::new(now_ts)))),
+        engine: Arc::new(Mutex::new(PyanaEngine::new(EngineConfig::new(now_ts)))),
         node_url: Arc::new("none".to_string()),
         node_connected: Arc::new(RwLock::new(false)),
     };
@@ -226,7 +226,7 @@ async fn claim_bounty(
     }
 
     let proof_bytes = req.qualification_proof.as_deref().unwrap_or(&[]);
-    let engine = state.engine.read().await;
+    let engine = state.engine.lock().await;
     let root_history = state.root_history.read().await;
     match verify_qualification(&engine, &bounty.qualification, proof_bytes, &*root_history) {
         Ok(true) => {}

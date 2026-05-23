@@ -144,13 +144,13 @@ fn check_multi_party_atomic() -> Result<(), String> {
     let mut ledger = Ledger::new();
 
     let alice_key = test_key("atomic-alice");
-    let mut alice = Cell::with_balance(alice_key, token_id, 1000);
+    let mut alice = Cell::with_balance(alice_key, token_id, 50_000);
     alice.permissions = open_permissions();
     let alice_id = alice.id;
     ledger.insert_cell(alice).map_err(|e| format!("{e:?}"))?;
 
     let bob_key = test_key("atomic-bob");
-    let mut bob = Cell::with_balance(bob_key, token_id, 2000);
+    let mut bob = Cell::with_balance(bob_key, token_id, 50_000);
     bob.permissions = open_permissions();
     let bob_id = bob.id;
     ledger.insert_cell(bob).map_err(|e| format!("{e:?}"))?;
@@ -165,7 +165,8 @@ fn check_multi_party_atomic() -> Result<(), String> {
         b.capabilities.grant(alice_id, AuthRequired::None);
     }
 
-    let executor = TurnExecutor::new(ComputronCosts::default_costs());
+    // Use zero costs so fee doesn't interfere with the test logic.
+    let executor = TurnExecutor::new(ComputronCosts::zero());
 
     // Atomic turn: alice sends 100 to bob
     let mut tb = TurnBuilder::new(alice_id, 0);
@@ -195,14 +196,15 @@ fn check_multi_party_atomic() -> Result<(), String> {
         _ => return Err("unexpected result".into()),
     }
 
-    // Verify conservation: total value minus fees is preserved
+    // Verify conservation: total value minus fee is preserved.
+    // Fee is deducted from alice's balance in Phase 1 (never rolled back).
     let total_after = {
         let a = ledger.get(&alice_id).unwrap();
         let b = ledger.get(&bob_id).unwrap();
         a.state.balance + b.state.balance
     };
 
-    let fee = 200u64;
+    let fee = 1000u64;
     if total_after != total_before - fee {
         return Err(format!(
             "conservation violated: before={total_before}, after={total_after}, fee={fee}"

@@ -256,6 +256,7 @@ impl CommittedTurnBuilder {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
 
         let turn_hash = partial_turn.hash();
@@ -281,6 +282,7 @@ impl CommittedTurnBuilder {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
             ..partial_turn
         };
 

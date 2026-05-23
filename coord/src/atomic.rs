@@ -595,6 +595,7 @@ impl Coordinator {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
 
         // Execute the turn with proper metering.
@@ -995,6 +996,7 @@ impl Participant {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
 
         let executor = TurnExecutor::new(self.costs.clone());

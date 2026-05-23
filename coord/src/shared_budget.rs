@@ -420,6 +420,67 @@ impl SharedResourceBudget {
         }
     }
 
+    /// Derive budget state from a slice of raw blocklace blocks.
+    ///
+    /// This is the primary integration point: given newly-received blocks from the
+    /// blocklace (e.g., via dissemination or catch-up), scan each block for debits
+    /// against this resource and update the accounting. If the cumulative observed
+    /// debits now exceed the total balance, automatically escalate to Closing.
+    ///
+    /// Unlike `sync_from_blocklace()` which re-scans full virtual chains, this
+    /// method processes an incremental batch of blocks (the "on new blocks" path).
+    ///
+    /// # Parameters
+    /// - `blocks`: Newly received blocks (from dissemination or delta-merge).
+    /// - `resource_id`: The 32-byte resource identifier to filter debits for.
+    pub fn sync_from_blocklace_blocks(&mut self, blocks: &[BlocBlock], resource_id: &[u8; 32]) {
+        for block in blocks {
+            if let Some(amount) = extract_debit_for_resource(block, resource_id) {
+                let agent = CellId::from_bytes(block.creator);
+                self.record_observed_debit(agent, amount);
+            }
+        }
+        // Check if new observations trigger overspend -> escalate
+        if self.is_overspent() && self.state == ResourceState::Open {
+            self.state = ResourceState::Closing {
+                conflicting: Vec::new(),
+            };
+        }
+    }
+
+    /// Check if a debit would be accepted optimistically (Tier 2 fast path).
+    ///
+    /// Returns `true` if the debit was accepted within the agent's allowance
+    /// (consensus-free, no coordination needed). Returns `false` if the resource
+    /// is not in Open state or if the debit would exceed the agent's allowance,
+    /// triggering escalation to Tier 3 ordering.
+    ///
+    /// This is the method that `PyanaBlocklaceBridge` calls on the hot path:
+    /// - `true` → debit recorded, agent can proceed without waiting for ordering.
+    /// - `false` → the debit needs Tier 3 (tau ordering) to resolve.
+    ///
+    /// # Parameters
+    /// - `agent`: The agent attempting the debit.
+    /// - `amount`: The debit amount.
+    /// - `digest`: The debit transaction digest (for tracking).
+    pub fn try_optimistic_debit(
+        &mut self,
+        agent: ParticipantId,
+        amount: ResourceAmount,
+        digest: DebitDigest,
+    ) -> bool {
+        if self.state != ResourceState::Open {
+            return false; // Currently closing/resolving, all debits go to Tier 3
+        }
+        match self.try_debit(agent, amount, digest) {
+            Ok(()) => true, // Accepted within allowance (consensus-free!)
+            Err(_) => {
+                self.escalate(Vec::new());
+                false // Needs ordering
+            }
+        }
+    }
+
     /// Update the spent amount for a participant from blocklace-observed data.
     pub fn update_spent(&mut self, agent: ParticipantId, total_spent: ResourceAmount) {
         if let Some(allowance) = self.allowances.get_mut(&agent) {
@@ -1417,5 +1478,420 @@ mod tests {
         // Solo agent spent exactly the balance: no overspend.
         assert_eq!(budget.total_spent(), 5000);
         assert!(!budget.is_overspent());
+    }
+
+    // ── Tier 2 → Tier 3 Escalation Tests ───────────────────────────────
+
+    #[test]
+    fn test_three_agents_pool_1000_escalation() {
+        // 3 agents, pool of 1000, f=1.
+        // ceiling = 1000 * 2/3 = 666
+        let agents = test_agents(3);
+        let agent_a = agents[0];
+        let agent_b = agents[1];
+        let agent_c = agents[2];
+
+        let mut budget = SharedResourceBudget::new(pool_resource(), 1000, agents, 1).unwrap();
+        assert_eq!(budget.compute_allowance_ceiling(), 666);
+
+        // Agent A debits 400 (OK: within ceiling of 666).
+        assert!(budget.try_debit(agent_a, 400, test_digest(10)).is_ok());
+        assert_eq!(budget.state, ResourceState::Open);
+
+        // Agent B debits 400 (OK: within ceiling of 666).
+        assert!(budget.try_debit(agent_b, 400, test_digest(11)).is_ok());
+        assert_eq!(budget.state, ResourceState::Open);
+
+        // Agent C debits 400 (OK per allowance since 400 < 666, but total = 1200 > 1000).
+        assert!(budget.try_debit(agent_c, 400, test_digest(12)).is_ok());
+
+        // Overspend detected: 1200 > 1000.
+        assert!(budget.is_overspent());
+        assert_eq!(budget.total_spent(), 1200);
+    }
+
+    #[test]
+    fn test_resolve_with_ordering_accepts_rejects() {
+        // 3 agents, pool of 1000. After overspend, resolve via tau ordering.
+        let agents = test_agents(3);
+        let agent_a = agents[0];
+        let agent_b = agents[1];
+        let agent_c = agents[2];
+
+        let mut budget = SharedResourceBudget::new(pool_resource(), 1000, agents, 1).unwrap();
+
+        // Set up the blocks in a blocklace for resolution.
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x42; 32]);
+        let mut blocklace = Blocklace::new_simple(sk);
+
+        let resource_id = [0xBB; 32];
+
+        // Create blocks with debit payloads for each agent.
+        // Agent A = 400
+        let payload_a = encode_debit_payload(&resource_id, 400);
+        let sk_a = ed25519_dalek::SigningKey::from_bytes(&agent_a.as_bytes().clone());
+        let block_a = BlocBlock::new(&sk_a, 1, Payload::Turn(payload_a), vec![]);
+        let block_a_id = block_a.id();
+        blocklace.receive_block(block_a).unwrap();
+
+        // Agent B = 400
+        let payload_b = encode_debit_payload(&resource_id, 400);
+        let sk_b = ed25519_dalek::SigningKey::from_bytes(&agent_b.as_bytes().clone());
+        let block_b = BlocBlock::new(&sk_b, 1, Payload::Turn(payload_b), vec![]);
+        let block_b_id = block_b.id();
+        blocklace.receive_block(block_b).unwrap();
+
+        // Agent C = 400
+        let payload_c = encode_debit_payload(&resource_id, 400);
+        let sk_c = ed25519_dalek::SigningKey::from_bytes(&agent_c.as_bytes().clone());
+        let block_c = BlocBlock::new(&sk_c, 1, Payload::Turn(payload_c), vec![]);
+        let block_c_id = block_c.id();
+        blocklace.receive_block(block_c).unwrap();
+
+        // Escalate.
+        budget.escalate(vec![block_a_id, block_b_id, block_c_id]);
+        assert!(matches!(budget.state, ResourceState::Closing { .. }));
+
+        // Resolve: tau orders them as [A, B, C].
+        // A=400 accepted (1000-400=600 remaining), B=400 accepted (600-400=200),
+        // C=400 rejected (200 < 400).
+        let ordered = vec![block_a_id, block_b_id, block_c_id];
+        budget.resolve_with_ordering(&ordered, &blocklace, &resource_id);
+
+        // Verify resolution outcomes.
+        assert_eq!(budget.is_accepted(&block_a_id), Some(true));
+        assert_eq!(budget.is_accepted(&block_b_id), Some(true));
+        assert_eq!(budget.is_accepted(&block_c_id), Some(false)); // Rejected!
+
+        // Balance should be 200 (1000 - 400 - 400).
+        assert_eq!(budget.total_balance, 200);
+
+        // Back to Open after resolution.
+        assert_eq!(budget.state, ResourceState::Open);
+
+        // Version incremented.
+        assert_eq!(budget.version, 1);
+
+        // New allowances from remaining 200: ceiling = 200 * 2/3 = 133.
+        assert_eq!(budget.compute_allowance_ceiling(), 133);
+    }
+
+    #[test]
+    fn test_state_machine_open_closing_resolving_open() {
+        // Verify the full state machine: Open → Closing → Rebalancing → Open.
+        let agents = test_agents(3);
+
+        let mut budget = SharedResourceBudget::new(pool_resource(), 9000, agents, 1).unwrap();
+
+        // Start: Open.
+        assert_eq!(budget.state, ResourceState::Open);
+
+        // Escalate → Closing.
+        let fake_blocks = vec![BlocBlockId([0x11; 32]), BlocBlockId([0x22; 32])];
+        budget.escalate(fake_blocks.clone());
+        assert_eq!(
+            budget.state,
+            ResourceState::Closing {
+                conflicting: fake_blocks
+            }
+        );
+
+        // Resolve (with empty ordering to just observe the state transition).
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x99; 32]);
+        let blocklace = Blocklace::new_simple(sk);
+        budget.resolve_with_ordering(&[], &blocklace, &[0xBB; 32]);
+
+        // Back to Open.
+        assert_eq!(budget.state, ResourceState::Open);
+        assert_eq!(budget.version, 1);
+    }
+
+    /// Helper: create signing keys and derive participant IDs from public keys.
+    /// This ensures the ParticipantId matches the block creator field (which is
+    /// the verifying/public key, not the signing key bytes).
+    fn signing_key_and_participant(seed: u8) -> (ed25519_dalek::SigningKey, ParticipantId) {
+        let mut key_bytes = [0u8; 32];
+        key_bytes[0] = seed;
+        key_bytes[31] = 0xDD;
+        let sk = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+        let pk = sk.verifying_key().to_bytes();
+        (sk, CellId::from_bytes(pk))
+    }
+
+    #[test]
+    fn test_sync_from_blocklace_blocks_derives_state() {
+        // Construct mock blocks with debit payloads, verify totals correct.
+        let (sk_a, agent_a) = signing_key_and_participant(1);
+        let (sk_b, agent_b) = signing_key_and_participant(2);
+        let (_sk_c, agent_c) = signing_key_and_participant(3);
+
+        let agents = vec![agent_a, agent_b, agent_c];
+        let mut budget = SharedResourceBudget::new(pool_resource(), 5000, agents, 1).unwrap();
+        let ceiling = budget.compute_allowance_ceiling(); // 5000 * 2/3 = 3333
+
+        let resource_id = [0xBB; 32];
+
+        let block_a1 = BlocBlock::new(
+            &sk_a,
+            1,
+            Payload::Turn(encode_debit_payload(&resource_id, 300)),
+            vec![],
+        );
+        let block_a2 = BlocBlock::new(
+            &sk_a,
+            2,
+            Payload::Turn(encode_debit_payload(&resource_id, 200)),
+            vec![],
+        );
+        let block_b1 = BlocBlock::new(
+            &sk_b,
+            1,
+            Payload::Turn(encode_debit_payload(&resource_id, 500)),
+            vec![],
+        );
+
+        // Feed blocks through sync_from_blocklace_blocks.
+        budget.sync_from_blocklace_blocks(&[block_a1, block_a2, block_b1], &resource_id);
+
+        // Agent A: 300 + 200 = 500 spent.
+        assert_eq!(budget.remaining(&agent_a), Some(ceiling - 500));
+        // Agent B: 500 spent.
+        assert_eq!(budget.remaining(&agent_b), Some(ceiling - 500));
+        // Total: 1000 out of 5000. Not overspent.
+        assert_eq!(budget.total_spent(), 1000);
+        assert!(!budget.is_overspent());
+        assert_eq!(budget.state, ResourceState::Open);
+    }
+
+    #[test]
+    fn test_sync_from_blocklace_blocks_triggers_escalation() {
+        // Verify that sync_from_blocklace_blocks auto-escalates on overspend.
+        let (sk_a, agent_a) = signing_key_and_participant(1);
+        let (sk_b, agent_b) = signing_key_and_participant(2);
+        let (sk_c, agent_c) = signing_key_and_participant(3);
+
+        let agents = vec![agent_a, agent_b, agent_c];
+        // Small pool of 500 so we can easily trigger overspend.
+        let mut budget = SharedResourceBudget::new(pool_resource(), 500, agents, 1).unwrap();
+        // ceiling = 500 * 2/3 = 333
+
+        let resource_id = [0xBB; 32];
+
+        let block_a = BlocBlock::new(
+            &sk_a,
+            1,
+            Payload::Turn(encode_debit_payload(&resource_id, 200)),
+            vec![],
+        );
+        let block_b = BlocBlock::new(
+            &sk_b,
+            1,
+            Payload::Turn(encode_debit_payload(&resource_id, 200)),
+            vec![],
+        );
+        let block_c = BlocBlock::new(
+            &sk_c,
+            1,
+            Payload::Turn(encode_debit_payload(&resource_id, 200)),
+            vec![],
+        );
+
+        // Feed all blocks. Total = 600 > 500 → should escalate.
+        budget.sync_from_blocklace_blocks(&[block_a, block_b, block_c], &resource_id);
+
+        assert_eq!(budget.total_spent(), 600);
+        assert!(budget.is_overspent());
+        assert!(matches!(budget.state, ResourceState::Closing { .. }));
+    }
+
+    #[test]
+    fn test_sync_from_blocklace_blocks_ignores_wrong_resource() {
+        // Blocks with debits for a different resource should be ignored.
+        let (sk_a, agent_a) = signing_key_and_participant(1);
+        let (_sk_b, agent_b) = signing_key_and_participant(2);
+        let (_sk_c, agent_c) = signing_key_and_participant(3);
+
+        let agents = vec![agent_a, agent_b, agent_c];
+        let mut budget = SharedResourceBudget::new(pool_resource(), 5000, agents, 1).unwrap();
+
+        let our_resource = [0xBB; 32];
+        let other_resource = [0xCC; 32];
+
+        // Block debits a DIFFERENT resource.
+        let block = BlocBlock::new(
+            &sk_a,
+            1,
+            Payload::Turn(encode_debit_payload(&other_resource, 1000)),
+            vec![],
+        );
+
+        budget.sync_from_blocklace_blocks(&[block], &our_resource);
+
+        // No spending recorded.
+        assert_eq!(budget.total_spent(), 0);
+        assert_eq!(budget.state, ResourceState::Open);
+    }
+
+    // ── try_optimistic_debit Tests ─────────────────────────────────────
+
+    #[test]
+    fn test_try_optimistic_debit_accepts_within_allowance() {
+        let agents = test_agents(3);
+        let agent_a = agents[0];
+
+        let mut budget = SharedResourceBudget::new(pool_resource(), 3000, agents, 1).unwrap();
+        // ceiling = 2000
+
+        // Within allowance → accepted optimistically.
+        assert!(budget.try_optimistic_debit(agent_a, 1000, test_digest(1)));
+        assert_eq!(budget.remaining(&agent_a), Some(1000));
+        assert_eq!(budget.state, ResourceState::Open);
+    }
+
+    #[test]
+    fn test_try_optimistic_debit_escalates_on_exceed() {
+        let agents = test_agents(3);
+        let agent_a = agents[0];
+
+        let mut budget = SharedResourceBudget::new(pool_resource(), 3000, agents, 1).unwrap();
+        // ceiling = 2000
+
+        // Exhaust the allowance first.
+        assert!(budget.try_optimistic_debit(agent_a, 2000, test_digest(1)));
+
+        // Next debit exceeds allowance → escalate.
+        assert!(!budget.try_optimistic_debit(agent_a, 1, test_digest(2)));
+        assert!(matches!(budget.state, ResourceState::Closing { .. }));
+    }
+
+    #[test]
+    fn test_try_optimistic_debit_rejects_when_closing() {
+        let agents = test_agents(3);
+        let agent_a = agents[0];
+        let agent_b = agents[1];
+
+        let mut budget = SharedResourceBudget::new(pool_resource(), 3000, agents, 1).unwrap();
+
+        // Put into Closing state.
+        budget.escalate(vec![BlocBlockId([0xAA; 32])]);
+
+        // All debits rejected while closing.
+        assert!(!budget.try_optimistic_debit(agent_a, 100, test_digest(1)));
+        assert!(!budget.try_optimistic_debit(agent_b, 50, test_digest(2)));
+    }
+
+    #[test]
+    fn test_try_optimistic_debit_resumes_after_resolution() {
+        let agents = test_agents(3);
+        let agent_a = agents[0];
+
+        let mut budget = SharedResourceBudget::new(pool_resource(), 3000, agents, 1).unwrap();
+
+        // Escalate.
+        budget.escalate(Vec::new());
+        assert!(!budget.try_optimistic_debit(agent_a, 100, test_digest(1)));
+
+        // Resolve (empty ordering → balance unchanged).
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x42; 32]);
+        let blocklace = Blocklace::new_simple(sk);
+        budget.resolve_with_ordering(&[], &blocklace, &[0xBB; 32]);
+
+        // Now debits work again.
+        assert!(budget.try_optimistic_debit(agent_a, 100, test_digest(2)));
+        assert_eq!(budget.state, ResourceState::Open);
+    }
+
+    // ── Full Escalation Round-Trip ─────────────────────────────────────
+
+    #[test]
+    fn test_full_escalation_round_trip() {
+        // End-to-end: 3 agents, pool 1000, concurrent debits → overspend →
+        // escalate → resolve with tau ordering → resume with reduced balance.
+        let agents = test_agents(3);
+        let agent_a = agents[0];
+        let agent_b = agents[1];
+        let agent_c = agents[2];
+
+        let mut budget =
+            SharedResourceBudget::new(pool_resource(), 1000, agents.clone(), 1).unwrap();
+        // ceiling = 666
+
+        let resource_id = [0xBB; 32];
+
+        // Phase 1: Optimistic debits (Tier 2 fast path).
+        assert!(budget.try_optimistic_debit(agent_a, 400, test_digest(100)));
+        assert!(budget.try_optimistic_debit(agent_b, 400, test_digest(101)));
+        assert!(budget.try_optimistic_debit(agent_c, 400, test_digest(102)));
+
+        // Phase 2: Detect overspend.
+        assert!(budget.is_overspent()); // 1200 > 1000
+
+        // Phase 3: Escalate (system detects overspend, blocks new debits).
+        budget.escalate(Vec::new());
+        assert!(matches!(budget.state, ResourceState::Closing { .. }));
+
+        // Verify all new debits are blocked during escalation.
+        assert!(!budget.try_optimistic_debit(agent_a, 10, test_digest(200)));
+
+        // Phase 4: Tau provides ordering. Build a blocklace with the debit blocks.
+        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x77; 32]);
+        let mut blocklace = Blocklace::new_simple(sk);
+
+        let sk_a = ed25519_dalek::SigningKey::from_bytes(agent_a.as_bytes());
+        let sk_b = ed25519_dalek::SigningKey::from_bytes(agent_b.as_bytes());
+        let sk_c = ed25519_dalek::SigningKey::from_bytes(agent_c.as_bytes());
+
+        let block_a = BlocBlock::new(
+            &sk_a,
+            1,
+            Payload::Turn(encode_debit_payload(&resource_id, 400)),
+            vec![],
+        );
+        let block_b = BlocBlock::new(
+            &sk_b,
+            1,
+            Payload::Turn(encode_debit_payload(&resource_id, 400)),
+            vec![],
+        );
+        let block_c = BlocBlock::new(
+            &sk_c,
+            1,
+            Payload::Turn(encode_debit_payload(&resource_id, 400)),
+            vec![],
+        );
+
+        let id_a = block_a.id();
+        let id_b = block_b.id();
+        let id_c = block_c.id();
+
+        blocklace.receive_block(block_a).unwrap();
+        blocklace.receive_block(block_b).unwrap();
+        blocklace.receive_block(block_c).unwrap();
+
+        // Phase 5: Resolve. Tau ordered: A first, then B, then C.
+        // A=400 accepted (1000-400=600), B=400 accepted (600-400=200), C=400 rejected (200<400).
+        budget.resolve_with_ordering(&[id_a, id_b, id_c], &blocklace, &resource_id);
+
+        // Phase 6: Verify outcomes.
+        assert_eq!(budget.is_accepted(&id_a), Some(true));
+        assert_eq!(budget.is_accepted(&id_b), Some(true));
+        assert_eq!(budget.is_accepted(&id_c), Some(false));
+
+        assert_eq!(budget.total_balance, 200);
+        assert_eq!(budget.state, ResourceState::Open);
+        assert_eq!(budget.version, 1);
+
+        // Phase 7: After resolution, rebalanced with remaining 200.
+        // New ceiling = 200 * 2/3 = 133.
+        assert_eq!(budget.compute_allowance_ceiling(), 133);
+
+        // Fresh allowances for all agents.
+        for &agent in &agents {
+            assert_eq!(budget.remaining(&agent), Some(133));
+        }
+
+        // Phase 8: New debits accepted within the reduced allowance.
+        assert!(budget.try_optimistic_debit(agent_a, 100, test_digest(300)));
+        assert_eq!(budget.remaining(&agent_a), Some(33));
     }
 }

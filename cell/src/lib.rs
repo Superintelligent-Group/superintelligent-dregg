@@ -76,9 +76,9 @@ pub use ledger::{
 pub use note::{Note, NoteCommitment, NoteError, Nullifier, PositionedNote};
 #[cfg(feature = "crypto")]
 pub use note_bridge::{
-    BridgeError, BridgeReceipt, BridgeState, BridgedNullifierSet, PendingBridge, PendingBridgeSet,
-    PortableNoteProof, cancel_bridge, create_portable_note, finalize_bridge, initiate_bridge,
-    verify_bridge_receipt, verify_portable_note,
+    BridgeDestination, BridgeError, BridgeReceipt, BridgeState, BridgedNullifierSet, PendingBridge,
+    PendingBridgeSet, PortableNoteProof, cancel_bridge, create_portable_note, finalize_bridge,
+    initiate_bridge, verify_bridge_receipt, verify_portable_note,
 };
 pub use nullifier_set::{MerkleMembershipProof, NonMembershipProof, NullifierSet};
 #[cfg(feature = "crypto")]

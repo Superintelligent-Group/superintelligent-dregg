@@ -18,6 +18,9 @@
 pub mod circuit;
 pub mod composition;
 pub mod descriptors;
+pub mod membership;
+pub mod predicates;
+pub mod revocation;
 
 #[cfg(feature = "plonky3")]
 pub mod dsl_plonky3;

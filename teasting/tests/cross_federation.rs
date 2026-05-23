@@ -58,6 +58,12 @@ fn build_transfer_turn(agent: CellId, nonce: u64, from: CellId, to: CellId, amou
         previous_receipt_hash: None,
         depends_on: vec![],
         call_forest: forest,
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     }
 }
 

@@ -558,7 +558,6 @@ impl NodeState {
         let _ = self.events_tx.send(event);
     }
 
-    /// Set the gossip handle (called by federation_sync once initialized).
     pub async fn set_gossip(&self, handle: GossipHandle) {
         let mut g = self.gossip.write().await;
         *g = Some(handle);

@@ -1,9 +1,11 @@
 pub mod apps;
 pub mod backends;
+pub mod blocklace;
 pub mod boot;
 pub mod caps;
 pub mod cells;
 pub mod composition;
+pub mod effect_vm;
 pub mod federation;
 pub mod intents;
 pub mod privacy;

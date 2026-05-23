@@ -20,7 +20,7 @@ use axum::{
 };
 use clap::Parser;
 use serde_json::json;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
 
 use pyana_app_framework::hex::{bytes32_to_hex, hex_to_bytes32};
@@ -80,7 +80,7 @@ struct AppState {
     /// When the federation root was last updated.
     root_last_updated: Arc<RwLock<Option<Instant>>>,
     /// The pyana engine for cryptographic proof verification.
-    engine: Arc<RwLock<PyanaEngine>>,
+    engine: Arc<Mutex<PyanaEngine>>,
     /// The node URL used for root syncing.
     node_url: Arc<String>,
     /// Whether the node is currently reachable.
@@ -300,7 +300,7 @@ async fn main() {
             federation_root,
         ))),
         root_last_updated: Arc::new(RwLock::new(root_updated)),
-        engine: Arc::new(RwLock::new(PyanaEngine::new(EngineConfig::new(
+        engine: Arc::new(Mutex::new(PyanaEngine::new(EngineConfig::new(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
@@ -381,7 +381,7 @@ async fn create_bounty(
         verification_key: bounty_id,
     };
 
-    let mut engine = state.engine.write().await;
+    let mut engine = state.engine.lock().await;
     let escrow_result = payment::create_escrow(
         &mut engine,
         issuer_cell,
@@ -501,7 +501,7 @@ async fn claim_bounty(
     // Uses the root history window for multi-validator coherence: accepts proofs
     // generated against any recent federation root, not just the current one.
     let proof_bytes = req.qualification_proof.as_deref().unwrap_or(&[]);
-    let engine = state.engine.read().await;
+    let engine = state.engine.lock().await;
     let root_history = state.root_history.read().await;
     match verify_qualification(&engine, &bounty.qualification, proof_bytes, &*root_history) {
         Ok(true) => {}
@@ -676,7 +676,7 @@ async fn approve_bounty(
     let escrow = state.escrows.read().await.get(&bounty_id).cloned();
     let receipt_hash = match escrow {
         Some(ref esc) => {
-            let mut engine = state.engine.write().await;
+            let mut engine = state.engine.lock().await;
             match payment::release_reward(&mut engine, esc, &completion_proof_hash) {
                 Ok(escrow_id) => {
                     info!(bounty_id = %id, escrow_id = %bounty_id_hex(&escrow_id), "escrow released");
@@ -867,7 +867,7 @@ async fn expire_bounties(headers: HeaderMap, State(state): State<AppState>) -> i
 
     // Refund escrows for expired bounties.
     if count > 0 {
-        let mut engine = state.engine.write().await;
+        let mut engine = state.engine.lock().await;
         let mut escrows = state.escrows.write().await;
         let expired_ids: Vec<[u8; 32]> = escrows
             .iter()

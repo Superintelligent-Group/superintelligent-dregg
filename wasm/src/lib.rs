@@ -355,7 +355,7 @@ pub fn generate_predicate_proof(
 ) -> Result<JsValue, JsError> {
     use pyana_circuit::field::BabyBear;
     use pyana_circuit::poseidon2;
-    use pyana_circuit::predicate_air::{PredicateType, PredicateWitness, prove_predicate};
+    use pyana_circuit::predicate_types::{PredicateType, PredicateWitness, prove_predicate};
 
     let start = perf_now();
 
@@ -379,7 +379,7 @@ pub fn generate_predicate_proof(
     // BabyBear::new already reduces mod p, so just use the raw u32.
     let blinding = BabyBear::new(u32::from_le_bytes(blinding_bytes));
 
-    let fact_commitment = pyana_circuit::predicate_air::compute_blinded_fact_commitment(
+    let fact_commitment = pyana_circuit::predicate_types::compute_blinded_fact_commitment(
         fact_hash,
         state_root_bb,
         blinding,
@@ -419,7 +419,7 @@ pub fn generate_predicate_proof(
     }
 
     // Self-verify.
-    let verified = pyana_circuit::predicate_air::verify_predicate(
+    let verified = pyana_circuit::predicate_types::verify_predicate(
         &proof,
         BabyBear::new(threshold),
         fact_commitment,
@@ -451,7 +451,7 @@ pub fn verify_predicate_proof(
     fact_commitment: u32,
 ) -> Result<JsValue, JsError> {
     use pyana_circuit::field::BabyBear;
-    use pyana_circuit::predicate_air::{PredicateProof, verify_predicate};
+    use pyana_circuit::predicate_types::{PredicateProof, verify_predicate};
 
     let proof: PredicateProof =
         serde_json::from_str(proof_json).map_err(|e| JsError::new(&e.to_string()))?;

@@ -571,6 +571,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         }
     }
 
@@ -619,6 +620,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         }
     }
 
@@ -775,6 +777,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
         let turn_hash = turn.hash();
 
@@ -867,6 +870,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         }
     }
 

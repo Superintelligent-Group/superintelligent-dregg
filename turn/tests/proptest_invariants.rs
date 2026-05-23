@@ -363,6 +363,7 @@ proptest! {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
                     };
 
                     let result = executor.execute(&turn, &mut ledger);
@@ -439,6 +440,7 @@ fn build_receipt_chain(
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
 
         let result = executor.execute(&turn, ledger);
@@ -598,6 +600,7 @@ proptest! {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
             };
 
             let result = executor.execute(&turn, &mut ledger);
@@ -664,6 +667,7 @@ proptest! {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
             };
 
             let result = executor.execute(&turn, &mut ledger);
@@ -719,6 +723,7 @@ proptest! {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
             };
 
             let result = executor.execute(&turn, &mut ledger);

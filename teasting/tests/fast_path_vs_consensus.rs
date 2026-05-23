@@ -92,6 +92,12 @@ fn make_own_cell_turn(agent_id: CellId) -> Turn {
         valid_until: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     }
 }
 
@@ -131,6 +137,12 @@ fn make_self_write_turn(agent_id: CellId) -> Turn {
         valid_until: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     }
 }
 
@@ -170,6 +182,12 @@ fn make_cross_cell_turn(agent_id: CellId, target_id: CellId) -> Turn {
         valid_until: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
+        sovereign_witnesses: std::collections::HashMap::new(),
+        execution_proof: None,
+        execution_proof_cell: None,
+        execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     }
 }
 

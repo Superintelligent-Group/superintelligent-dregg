@@ -24,12 +24,14 @@ fn run_all_subsystems() -> Vec<SubsystemResult> {
         run_subsystem("Cell lifecycle", checks::cells::run()),
         run_subsystem("Turn execution", checks::turns::run()),
         run_subsystem("Proofs", checks::proofs::run()),
+        run_subsystem("Effect VM", checks::effect_vm::run()),
         run_subsystem("Privacy", checks::privacy::run()),
         run_subsystem("Capabilities", checks::caps::run()),
         run_subsystem("Intents", checks::intents::run()),
         run_subsystem("Apps", checks::apps::run()),
         run_subsystem("Composition", checks::composition::run()),
         run_subsystem("Federation", checks::federation::run()),
+        run_subsystem("Blocklace", checks::blocklace::run()),
         run_subsystem("Factory & Sovereign", checks::sovereign::run()),
         run_subsystem("Cross-backend", checks::backends::run()),
     ]
@@ -145,6 +147,22 @@ mod tests {
         let results = checks::sovereign::run();
         for r in &results {
             assert!(r.passed, "sovereign::{} failed: {:?}", r.name, r.error);
+        }
+    }
+
+    #[test]
+    fn preflight_effect_vm() {
+        let results = checks::effect_vm::run();
+        for r in &results {
+            assert!(r.passed, "effect_vm::{} failed: {:?}", r.name, r.error);
+        }
+    }
+
+    #[test]
+    fn preflight_blocklace() {
+        let results = checks::blocklace::run();
+        for r in &results {
+            assert!(r.passed, "blocklace::{} failed: {:?}", r.name, r.error);
         }
     }
 

@@ -71,10 +71,10 @@ fn main() {
     );
 
     let result = engine.submit_order(market_buy).unwrap();
-    println!("Fully filled: {}", result.fully_filled);
-    println!("Total filled: {}", result.total_filled);
+    println!("Fully filled: {}", result.result.fully_filled);
+    println!("Total filled: {}", result.result.total_filled);
     println!("Fills:");
-    for fill in &result.fills {
+    for fill in &result.result.fills {
         println!(
             "  {} @ {} (maker: {:02x}{:02x}...)",
             fill.amount,
@@ -118,7 +118,7 @@ fn main() {
         match engine.cancel_order(&id, &bob) {
             Ok(cancelled) => println!(
                 "  Cancelled order (remaining: {})",
-                cancelled.remaining_amount
+                cancelled.0.remaining_amount
             ),
             Err(e) => println!("  Cancel failed: {}", e),
         }

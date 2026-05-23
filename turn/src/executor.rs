@@ -451,9 +451,10 @@ impl TurnExecutor {
     /// 2. Verifies the STARK proof (public inputs bind old -> new commitment + effects hash)
     /// 3. Updates the 32-byte commitment
     ///
-    /// Public inputs layout (8 BabyBear elements, lo/hi per SovereignTransitionAir):
-    ///   [old_commitment_lo, old_commitment_hi, new_commitment_lo, new_commitment_hi,
-    ///    effects_hash_lo, effects_hash_hi, cell_id_hash_lo, cell_id_hash_hi]
+    /// Public inputs layout (Effect VM, 7+ BabyBear elements):
+    ///   [old_commit(1), new_commit(1), net_delta_mag(1), net_delta_sign(1),
+    ///    effects_hash_lo(1), effects_hash_hi(1), custom_count(1),
+    ///    ...custom_entries(8 per custom effect)]
     fn verify_and_commit_proof(
         &self,
         cell_id: &CellId,
@@ -461,7 +462,9 @@ impl TurnExecutor {
         turn: &Turn,
         ledger: &mut Ledger,
     ) -> Result<(), TurnError> {
+        use pyana_circuit::effect_vm;
         use pyana_circuit::field::BabyBear;
+        use pyana_circuit::poseidon2;
         use pyana_circuit::stark;
 
         // 1. Get stored commitment (check both legacy sovereign_commitments and registrations).
@@ -484,101 +487,117 @@ impl TurnExecutor {
             )
         })?;
 
-        // 4. Compute the effects hash from the turn's call forest.
-        let computed_effects_hash = self.compute_turn_effects_hash(turn);
+        // 4. Reconstruct Effect VM public inputs.
+        // The stored commitment is a Poseidon2 CellState commitment encoded as [u8; 32]
+        // (first 4 bytes = u32 LE value, rest zero).
+        let old_commit_field = Self::commitment_to_babybear(&old_commitment);
+        let new_commit_field = Self::commitment_to_babybear(&new_commitment);
 
-        // 5. Compute cell_id hash for binding.
-        let cell_id_hash = {
-            let h = blake3::hash(cell_id.as_bytes());
-            *h.as_bytes()
-        };
+        // 5. Compute effects hash using the circuit's Poseidon2-based hash.
+        let vm_effects = Self::convert_turn_effects_to_vm(cell_id, turn);
+        let (effects_hash_lo, effects_hash_hi) = effect_vm::compute_effects_hash(&vm_effects);
 
-        // 6. Reconstruct public inputs: encode each 32-byte hash as 8 BabyBear elements,
-        //    plus the balance delta at PI[32..34].
-        let sovereign_pi_count = pyana_circuit::SOVEREIGN_PUBLIC_INPUTS;
-        let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(sovereign_pi_count);
-        public_inputs.extend(Self::bytes32_to_babybear(&old_commitment));
-        public_inputs.extend(Self::bytes32_to_babybear(&new_commitment));
-        public_inputs.extend(Self::bytes32_to_babybear(&computed_effects_hash));
-        public_inputs.extend(Self::bytes32_to_babybear(&cell_id_hash));
+        // 6. Compute balance delta from effects.
+        let (delta_mag, delta_sign) = Self::compute_balance_delta_from_effects(cell_id, turn);
 
-        // 7. Verify the proof's embedded public inputs match what we expect.
-        //    For the default SovereignTransitionAir, we expect 34 PIs (32 hashes + 2 delta).
-        //    For custom programs, we accept 32+ PIs (delta encoding is program-specific).
+        // 7. Count custom effects.
+        let custom_count = vm_effects
+            .iter()
+            .filter(|e| matches!(e, effect_vm::Effect::Custom { .. }))
+            .count();
+
+        // 8. Build the public inputs vector (Effect VM layout).
+        let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(
+            effect_vm::pi::BASE_COUNT + custom_count * effect_vm::pi::CUSTOM_ENTRY_SIZE,
+        );
+        public_inputs.push(old_commit_field);
+        public_inputs.push(new_commit_field);
+        public_inputs.push(BabyBear::new(delta_mag));
+        public_inputs.push(BabyBear::new(delta_sign));
+        public_inputs.push(effects_hash_lo);
+        public_inputs.push(effects_hash_hi);
+        public_inputs.push(BabyBear::new(custom_count as u32));
+
+        // Append custom proof entries (vk_hash + proof_commitment per custom effect).
+        for effect in &vm_effects {
+            if let effect_vm::Effect::Custom {
+                program_vk_hash,
+                proof_commitment,
+            } = effect
+            {
+                public_inputs.extend_from_slice(program_vk_hash);
+                public_inputs.extend_from_slice(proof_commitment);
+            }
+        }
+
+        // 9. Validate proof PI count.
+        let expected_pi_count = public_inputs.len();
         let vk_hash = self.get_cell_vk_hash(cell_id, ledger);
         let has_custom_program = vk_hash.is_some();
-        let min_pi_count = if has_custom_program {
-            32
-        } else {
-            sovereign_pi_count
-        };
-        if proof.public_inputs.len() < min_pi_count {
+
+        if proof.public_inputs.len() < expected_pi_count {
             return Err(TurnError::InvalidExecutionProof(format!(
                 "proof has {} public inputs, expected at least {}",
                 proof.public_inputs.len(),
-                min_pi_count
+                expected_pi_count
             )));
         }
-        // For the default AIR, append the balance delta PIs from the proof (proven values).
-        if !has_custom_program && proof.public_inputs.len() >= sovereign_pi_count {
-            let delta_offset = pyana_circuit::DELTA_PI_OFFSET;
-            public_inputs.push(BabyBear(proof.public_inputs[delta_offset]));
-            public_inputs.push(BabyBear(proof.public_inputs[delta_offset + 1]));
-        }
+
+        // 10. Verify reconstructed PIs match the proof's embedded PIs.
         for (i, expected_bb) in public_inputs.iter().enumerate() {
-            let got = BabyBear(proof.public_inputs[i]);
+            let got = BabyBear::new_canonical(proof.public_inputs[i]);
             if got != *expected_bb {
-                // Determine which field mismatched for a better error message.
-                if i < 8 {
+                if i == effect_vm::pi::OLD_COMMIT {
                     return Err(TurnError::SovereignCommitmentMismatch {
                         cell: *cell_id,
                         expected: old_commitment,
-                        got: new_commitment, // best-effort context
+                        got: new_commitment,
                     });
-                } else if i < 16 {
+                } else if i == effect_vm::pi::NEW_COMMIT {
                     return Err(TurnError::InvalidExecutionProof(
                         "new_commitment in proof does not match claimed value".to_string(),
                     ));
-                } else if i < 24 {
+                } else if i == effect_vm::pi::EFFECTS_HASH_LO || i == effect_vm::pi::EFFECTS_HASH_HI
+                {
                     return Err(TurnError::EffectsHashMismatch {
-                        expected: computed_effects_hash,
-                        got: Self::babybear_slice_to_bytes32(&proof.public_inputs[16..24]),
+                        expected: Self::babybear_pair_to_bytes32(effects_hash_lo, effects_hash_hi),
+                        got: Self::babybear_pair_to_bytes32(
+                            BabyBear::new_canonical(
+                                proof.public_inputs[effect_vm::pi::EFFECTS_HASH_LO],
+                            ),
+                            BabyBear::new_canonical(
+                                proof.public_inputs[effect_vm::pi::EFFECTS_HASH_HI],
+                            ),
+                        ),
                     });
                 } else {
-                    return Err(TurnError::InvalidExecutionProof(
-                        "cell_id_hash in proof does not match target cell".to_string(),
-                    ));
+                    return Err(TurnError::InvalidExecutionProof(format!(
+                        "public input mismatch at index {} (expected {:?}, got {:?})",
+                        i, expected_bb, got
+                    )));
                 }
             }
         }
 
-        // 8. Verify the STARK proof.
-        // If the cell has a verification_key_hash binding it to a custom program,
-        // look up that program in the registry and verify against it. Otherwise
-        // fall back to the default SovereignTransitionAir.
+        // 11. Verify the STARK proof.
         if let Some(vk) = vk_hash {
             if let Some(program) = self.program_registry.get(&vk) {
-                // Custom program verification via the DSL circuit runtime.
                 program
                     .verify_transition(&public_inputs, proof_bytes)
                     .map_err(|e| TurnError::ProofVerificationFailed(e.to_string()))?;
             } else {
-                // VK hash is set but program not found in registry -- reject.
                 return Err(TurnError::ProofVerificationFailed(format!(
                     "cell has verification_key_hash {:02x}{:02x}... but no matching program is deployed",
                     vk[0], vk[1]
                 )));
             }
         } else {
-            // Default path: verify using the EffectVmAir (DSL cutover).
             let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
             stark::verify(&air, &proof, &public_inputs)
                 .map_err(|e| TurnError::ProofVerificationFailed(e))?;
         }
 
-        // 9. Verify custom program proofs (CellProgram dispatch).
-        //    If the Effect VM proof contains Custom effect rows, verify each
-        //    external custom proof and check that its hash matches the commitment.
+        // 12. Verify custom program proofs (CellProgram dispatch).
         if let Some(custom_proofs) = turn.custom_program_proofs.as_ref() {
             let custom_commitments =
                 pyana_circuit::extract_custom_proof_commitments(&public_inputs);
@@ -594,10 +613,7 @@ impl TurnExecutor {
                 .zip(custom_proofs.iter())
                 .enumerate()
             {
-                // Reconstruct the VK hash bytes from the 4 BabyBear elements.
                 let vk_hash_bytes = Self::babybear4_to_bytes16(vk_hash_elems);
-
-                // Verify the custom proof commitment: hash(custom_proof) must match proof_commit.
                 let actual_proof_hash = Self::hash_custom_proof(&custom_proof.proof_bytes);
                 let expected_commit = Self::babybear4_to_bytes16(proof_commit_elems);
                 if actual_proof_hash != expected_commit {
@@ -607,8 +623,6 @@ impl TurnExecutor {
                         got: actual_proof_hash,
                     });
                 }
-
-                // Look up the custom program by VK hash and verify.
                 let full_vk_hash = Self::expand_vk_hash_16_to_32(&vk_hash_bytes);
                 if let Some(program) = self.program_registry.get(&full_vk_hash) {
                     program
@@ -629,7 +643,6 @@ impl TurnExecutor {
                 }
             }
         } else {
-            // No custom proofs provided — verify that the Effect VM PI declares zero.
             let custom_commitments =
                 pyana_circuit::extract_custom_proof_commitments(&public_inputs);
             if !custom_commitments.is_empty() {
@@ -640,11 +653,10 @@ impl TurnExecutor {
             }
         }
 
-        // 10. Update commitment (no re-execution!). Try the legacy map first, then registrations.
+        // 13. Update commitment. Try the legacy map first, then registrations.
         if ledger.is_sovereign(cell_id) {
             let _ = ledger.update_sovereign_commitment(cell_id, new_commitment);
         } else {
-            // For registered sovereign cells, update via the registration path.
             let _ = ledger.update_sovereign_registration_commitment(
                 cell_id,
                 old_commitment,

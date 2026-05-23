@@ -527,6 +527,7 @@ fn test_real_signature_verification() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -658,6 +659,7 @@ fn test_wrong_key_signature_rejected() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -1233,6 +1235,7 @@ fn test_empty_forest_rejected() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -4721,6 +4724,7 @@ fn test_budget_gate_refund_on_turn_failure() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -4854,6 +4858,7 @@ fn test_spawn_with_delegation_child_gets_parent_caps() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -4933,6 +4938,7 @@ fn test_child_acts_via_delegated_caps() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
     let result = executor.execute(&turn1, &mut ledger);
     assert!(result.is_committed());
@@ -4975,6 +4981,7 @@ fn test_child_acts_via_delegated_caps() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(
@@ -5043,6 +5050,7 @@ fn test_refresh_delegation_updates_snapshot() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5100,6 +5108,7 @@ fn test_refresh_delegation_updates_snapshot() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(result.is_committed(), "refresh should work: {:?}", result);
@@ -5168,6 +5177,7 @@ fn test_revoke_delegation_bumps_epoch_and_clears_child() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5213,6 +5223,7 @@ fn test_revoke_delegation_bumps_epoch_and_clears_child() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(result.is_committed(), "revoke should work: {:?}", result);
@@ -5278,6 +5289,7 @@ fn test_parent_new_cap_invisible_until_refresh() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5324,6 +5336,7 @@ fn test_parent_new_cap_invisible_until_refresh() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(
@@ -5390,6 +5403,7 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5438,6 +5452,7 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(
@@ -6800,6 +6815,7 @@ fn sovereign_cell_execute_turn_with_valid_witness() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     let executor = zero_cost_executor();
@@ -6891,6 +6907,7 @@ fn sovereign_cell_rejected_without_witness() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     let executor = zero_cost_executor();
@@ -6982,6 +6999,7 @@ fn sovereign_cell_rejected_with_wrong_commitment() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     let executor = zero_cost_executor();
@@ -7050,6 +7068,7 @@ fn sovereign_cell_make_sovereign_effect() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     };
 
     let executor = zero_cost_executor();
@@ -7758,6 +7777,7 @@ fn test_faceted_capability_permits_allowed_effects() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
         previous_receipt_hash: None,
     };
 
@@ -7846,6 +7866,7 @@ fn test_faceted_capability_blocks_disallowed_effects() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
         previous_receipt_hash: None,
     };
 
@@ -7939,6 +7960,7 @@ fn test_unfaceted_capability_allows_all_effects() {
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
         previous_receipt_hash: None,
     };
 
@@ -8062,6 +8084,7 @@ fn make_bearer_turn(
         execution_proof: None,
         execution_proof_cell: None,
         execution_proof_new_commitment: None,
+        custom_program_proofs: None,
     }
 }
 

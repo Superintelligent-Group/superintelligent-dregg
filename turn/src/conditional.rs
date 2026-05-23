@@ -533,7 +533,7 @@ pub fn burn_conditional_deposit(_conditional: &ConditionalTurn) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_circuit::poseidon2_air::generate_merkle_poseidon2_trace;
+    use pyana_circuit::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
     use pyana_circuit::stark::{self as circuit_stark, proof_to_bytes};
 
     fn nullifiers() -> HashSet<[u8; 32]> {
@@ -930,6 +930,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1072,6 +1073,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1100,6 +1102,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1130,6 +1133,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1562,6 +1566,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1592,6 +1597,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1631,6 +1637,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1660,6 +1667,7 @@ mod tests {
             execution_proof: None,
             execution_proof_cell: None,
             execution_proof_new_commitment: None,
+            custom_program_proofs: None,
         };
         let ct = ConditionalTurn {
             turn,

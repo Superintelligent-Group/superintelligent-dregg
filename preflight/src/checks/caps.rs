@@ -32,8 +32,10 @@ pub fn run() -> Vec<CheckResult> {
     vec![
         run_check("clist", check_clist_grant_exercise),
         run_check("bearer", check_bearer_cap),
+        run_check("bearer_exercise", check_bearer_cap_through_executor),
         run_check("facet", check_faceted_cap),
         run_check("revocation", check_revocation),
+        run_check("unauthorized", check_unauthorized_rejected),
     ]
 }
 
@@ -198,6 +200,118 @@ fn check_revocation() -> Result<(), String> {
     let g = ledger.get(&granter_id).ok_or("granter not found")?;
     if g.capabilities.has_access(&target_id) {
         return Err("should NOT have access after revocation".into());
+    }
+
+    Ok(())
+}
+
+/// Exercise a bearer capability through the ACTUAL executor (not just CapabilitySet API).
+fn check_bearer_cap_through_executor() -> Result<(), String> {
+    let token_id = test_key("token-bearer-exec");
+    let mut ledger = Ledger::new();
+
+    let sender_key = test_key("sender-bearer");
+    let mut sender = Cell::with_balance(sender_key, token_id, 50000);
+    sender.permissions = open_permissions();
+    let sender_id = sender.id;
+    ledger.insert_cell(sender).map_err(|e| format!("{e:?}"))?;
+
+    let target_key = test_key("target-bearer");
+    let mut target = Cell::with_balance(target_key, token_id, 0);
+    target.permissions = open_permissions();
+    let target_id = target.id;
+    ledger.insert_cell(target).map_err(|e| format!("{e:?}"))?;
+
+    // Grant sender bearer-style capability to target with specific permissions.
+    {
+        let s = ledger.get_mut(&sender_id).unwrap();
+        s.capabilities.grant(target_id, AuthRequired::None);
+    }
+
+    // Exercise the bearer cap: transfer through the executor.
+    let executor = TurnExecutor::new(ComputronCosts::default_costs());
+    let mut tb = TurnBuilder::new(sender_id, 0);
+    tb.set_fee(1000);
+    {
+        let action = tb.action(target_id, "bearer-transfer");
+        action.delegation(DelegationMode::None);
+        action.effect(Effect::Transfer {
+            from: sender_id,
+            to: target_id,
+            amount: 500,
+        });
+    }
+    let turn = tb.build();
+    let result = executor.execute(&turn, &mut ledger);
+    match result {
+        TurnResult::Committed { .. } => {}
+        TurnResult::Rejected { reason, .. } => {
+            return Err(format!("bearer cap exercise rejected: {reason}"));
+        }
+        _ => return Err("unexpected result".into()),
+    }
+
+    let t = ledger.get(&target_id).ok_or("target not found")?;
+    if t.state.balance != 500 {
+        return Err(format!(
+            "target should have 500 after bearer transfer, got {}",
+            t.state.balance
+        ));
+    }
+
+    Ok(())
+}
+
+/// Adversarial: a cell WITHOUT capability should be REJECTED when trying to act on another cell.
+fn check_unauthorized_rejected() -> Result<(), String> {
+    let token_id = test_key("token-unauth");
+    let mut ledger = Ledger::new();
+
+    let attacker_key = test_key("attacker");
+    let mut attacker = Cell::with_balance(attacker_key, token_id, 50000);
+    attacker.permissions = open_permissions();
+    let attacker_id = attacker.id;
+    ledger.insert_cell(attacker).map_err(|e| format!("{e:?}"))?;
+
+    let victim_key = test_key("victim");
+    let mut victim = Cell::with_balance(victim_key, token_id, 10000);
+    victim.permissions = open_permissions();
+    let victim_id = victim.id;
+    ledger.insert_cell(victim).map_err(|e| format!("{e:?}"))?;
+
+    // Attacker does NOT have a capability to victim.
+    // Attempt to set field on victim should be REJECTED.
+    let executor = TurnExecutor::new(ComputronCosts::default_costs());
+    let mut tb = TurnBuilder::new(attacker_id, 0);
+    tb.set_fee(1000);
+    {
+        let action = tb.action(victim_id, "steal");
+        action.delegation(DelegationMode::None);
+        action.effect(Effect::SetField {
+            cell: victim_id,
+            index: 0,
+            value: *blake3::hash(b"hacked").as_bytes(),
+        });
+    }
+    let turn = tb.build();
+    let result = executor.execute(&turn, &mut ledger);
+    match result {
+        TurnResult::Rejected { .. } => {
+            // Good: unauthorized access rejected.
+        }
+        TurnResult::Committed { .. } => {
+            return Err(
+                "SECURITY: attacker without capability should be REJECTED, but was committed"
+                    .into(),
+            );
+        }
+        _ => return Err("unexpected result".into()),
+    }
+
+    // Verify victim's state is unchanged.
+    let v = ledger.get(&victim_id).ok_or("victim not found")?;
+    if v.state.fields[0] != [0u8; 32] {
+        return Err("victim field should be unchanged after rejected attack".into());
     }
 
     Ok(())

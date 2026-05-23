@@ -9,7 +9,7 @@
 mod api;
 mod blocklace_sync;
 mod bridge;
-mod federation_sync;
+pub mod federation_sync;
 mod genesis;
 mod mcp;
 pub mod metrics;
@@ -62,16 +62,9 @@ enum Command {
         #[arg(long, default_value = "9420")]
         gossip_port: u16,
 
-        /// Use the full Morpheus DAG-based BFT consensus instead of simplified consensus.
-        /// Requires the `morpheus` feature on pyana-federation.
-        #[arg(long)]
-        morpheus: bool,
-
-        /// This node's index in the federation (0-based). Required when --morpheus is set.
         #[arg(long, default_value = "0")]
         node_index: usize,
 
-        /// Total number of federation nodes. Required when --morpheus is set.
         #[arg(long, default_value = "4")]
         federation_size: usize,
 
@@ -99,11 +92,9 @@ enum Command {
         #[arg(long, default_value = "solo")]
         federation_mode: String,
 
-        /// Consensus engine: "blocklace" (default) or "morpheus" (legacy).
         ///
         /// "blocklace" uses the Cordial Miners blocklace for quiescent, leaderless
         /// DAG-based BFT consensus with the tau total ordering function.
-        /// "morpheus" uses the legacy Morpheus DAG-BFT with timer-driven blocks.
         #[arg(long, default_value = "blocklace")]
         consensus: String,
     },
@@ -232,7 +223,6 @@ async fn main() {
             data_dir,
             key_file,
             gossip_port,
-            morpheus,
             node_index,
             federation_size,
             enable_pruning,
@@ -248,7 +238,6 @@ async fn main() {
                 &data_dir,
                 &key_file,
                 gossip_port,
-                morpheus,
                 node_index,
                 federation_size,
                 enable_pruning,
@@ -307,7 +296,6 @@ async fn run_node(
     data_dir: &str,
     key_file: &str,
     gossip_port: u16,
-    morpheus: bool,
     node_index: usize,
     federation_size: usize,
     enable_pruning: bool,
@@ -445,36 +433,10 @@ async fn run_node(
                 info!("solo mode with no peers configured — blocklace sync skipped");
             }
         }
-        "morpheus" => {
-            // Legacy Morpheus consensus: timer-driven DAG-BFT.
-            info!(consensus = "morpheus", "using legacy Morpheus consensus");
-            if federation_mode == FederationMode::Full || has_peers {
-                let sync_state = node_state.clone();
-                let morpheus_config = if morpheus {
-                    Some(federation_sync::MorpheusConfig {
-                        node_index,
-                        federation_size,
-                    })
-                } else {
-                    None
-                };
-                let gossip_port_copy = gossip_port;
-                tokio::spawn(async move {
-                    federation_sync::run_federation_sync(
-                        sync_state,
-                        morpheus_config,
-                        gossip_port_copy,
-                    )
-                    .await;
-                });
-            } else {
-                info!("solo mode with no peers configured — gossip sync skipped");
-            }
-        }
         _ => {
             error!(
                 consensus = %consensus_engine,
-                "unknown consensus engine, expected 'blocklace' or 'morpheus'"
+                "unknown consensus engine"
             );
             std::process::exit(1);
         }
@@ -655,7 +617,6 @@ async fn run_bridge(
         let sync_state = node_state.clone();
         tokio::spawn(async move {
             // Bridge mode uses default gossip port.
-            federation_sync::run_federation_sync(sync_state, None, 9420).await;
         });
     }
 

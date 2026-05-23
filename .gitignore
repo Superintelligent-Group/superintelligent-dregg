@@ -5,3 +5,4 @@ hints/benches/committee.json
 hints/benches/committee_128.json
 paper/*.pdf
 pdfs/
+ts-sdk/node_modules

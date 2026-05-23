@@ -27,6 +27,35 @@ use serde::{Deserialize, Serialize};
 use crate::note::{NoteCommitment, Nullifier};
 use pyana_types::AttestedRoot;
 
+// ============================================================================
+// Bridge Destination (multi-chain routing)
+// ============================================================================
+
+/// The target chain for a cross-chain bridge operation.
+///
+/// Used when initiating a bridge to specify where the value should be delivered.
+/// Each variant carries chain-specific addressing information.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BridgeDestination {
+    /// Bridge to an EVM-compatible chain (Ethereum, Polygon, Arbitrum, etc.).
+    Evm {
+        /// EIP-155 chain ID (1 = mainnet, 137 = Polygon, etc.).
+        chain_id: u64,
+        /// The bridge contract address on the EVM chain (20 bytes).
+        contract: [u8; 20],
+    },
+    /// Bridge to Mina Protocol (via Pickles/Kimchi proof composition).
+    Mina {
+        /// Mina network identifier ("mainnet", "devnet", "berkeley", etc.).
+        network: String,
+    },
+    /// Bridge to Midnight Network (via observation-based federation attestation).
+    Midnight {
+        /// The Midnight bridge contract address (Substrate account ID, variable length).
+        contract_address: Vec<u8>,
+    },
+}
+
 /// Serde helper for `[u8; 64]` (Ed25519 signatures).
 mod signature_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};

@@ -8,6 +8,7 @@ pub mod compound_predicate_dsl;
 pub mod derivation_dsl;
 pub mod factory_dsl;
 pub mod fold_dsl;
+pub mod fri_verifier_dsl;
 pub mod garbled_dsl;
 pub mod gpu_worker;
 pub mod merkle_dsl;

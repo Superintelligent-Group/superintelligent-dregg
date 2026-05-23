@@ -53,7 +53,7 @@ function addListener(event, callback) {
     throw new TypeError('pyana.on: callback must be a function');
   }
   // Only expose non-sensitive event types to pages.
-  const validEvents = ['ready', 'authorization', 'revoked', 'stealthNoteReceived', 'privateTransfer', 'intentFulfilled'];
+  const validEvents = ['ready', 'authorization', 'revoked', 'stealthNoteReceived', 'privateTransfer', 'intentFulfilled', 'privacyModeChanged'];
   if (!validEvents.includes(event)) {
     throw new Error(`pyana.on: unknown event "${event}". Valid: ${validEvents.join(', ')}`);
   }
@@ -308,9 +308,30 @@ const pyana = {
   },
 
   /**
+   * Read the current node URL configuration.
+   * Returns { nodeUrl, wssUrl, wsUrl } (devnetKey is redacted).
+   *
+   * @returns {Promise<{nodeUrl: string, wssUrl: string, wsUrl: string, devnetKey: string}>}
+   */
+  getNodeConfig() {
+    return sendMessage('pyana:getNodeConfig', {});
+  },
+
+  /**
+   * Update the node URL configuration.
+   * Only available from extension popup context; page-context calls will be rejected.
+   *
+   * @param {{nodeUrl?: string, wssUrl?: string, wsUrl?: string, devnetKey?: string}} config
+   * @returns {Promise<{success: boolean, nodeUrl: string}>}
+   */
+  setNodeConfig(config) {
+    return sendMessage('pyana:setNodeConfig', { config });
+  },
+
+  /**
    * Register an event listener for non-sensitive wallet events.
    *
-   * @param {'ready'|'authorization'|'revoked'|'stealthNoteReceived'|'privateTransfer'} event
+   * @param {'ready'|'authorization'|'revoked'|'stealthNoteReceived'|'privateTransfer'|'intentFulfilled'} event
    * @param {function} callback
    */
   on(event, callback) {

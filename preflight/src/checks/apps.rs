@@ -6,29 +6,67 @@
 //! - Core domain invariants hold end-to-end
 //! - Circuit integration (prove + verify) works for apps that have it
 //!
-//! Gallery and Identity checks that require a running PyanaEngine or HTTP server
-//! are marked `#[ignore]`-equivalent (return Ok with a note) when they cannot run
-//! without an engine instance.
+//! Gallery, stablecoin, AMM, and orderbook depend on pyana-app-framework (which
+//! depends on pyana-sdk). When pyana-sdk is broken, those checks are gated behind
+//! the `apps-sdk` feature and reported as ignored when disabled.
+//!
+//! Lending and Identity compile independently and always run.
 
 use crate::report::{CheckResult, run_check};
 
 pub fn run() -> Vec<CheckResult> {
-    vec![
-        run_check("gallery", check_gallery_logic),
-        run_check("stablecoin", check_stablecoin_logic),
-        run_check("stablecoin_circuit", check_stablecoin_circuit),
-        run_check("amm", check_amm_logic),
-        run_check("amm_circuit", check_amm_circuit),
-        run_check("orderbook", check_orderbook_logic),
-        run_check("lending", check_lending_logic),
-        run_check("identity", check_identity_logic),
-    ]
+    let mut checks = Vec::new();
+
+    // SDK-dependent app checks (gallery, stablecoin, amm, orderbook).
+    #[cfg(feature = "apps-sdk")]
+    {
+        checks.push(run_check("gallery", check_gallery_logic));
+        checks.push(run_check("stablecoin", check_stablecoin_logic));
+        checks.push(run_check("stablecoin_circuit", check_stablecoin_circuit));
+        checks.push(run_check("amm", check_amm_logic));
+        checks.push(run_check("amm_circuit", check_amm_circuit));
+        checks.push(run_check("orderbook", check_orderbook_logic));
+        checks.push(run_check("orderbook_circuit", check_orderbook_circuit));
+    }
+    #[cfg(not(feature = "apps-sdk"))]
+    {
+        // IGNORED: pyana-sdk is broken (missing `custom_program_proofs` field in Turn).
+        // These checks require pyana-app-framework -> pyana-sdk to compile.
+        checks.push(run_check("gallery", || {
+            Err("IGNORED: pyana-sdk broken (custom_program_proofs missing)".into())
+        }));
+        checks.push(run_check("stablecoin", || {
+            Err("IGNORED: pyana-sdk broken (custom_program_proofs missing)".into())
+        }));
+        checks.push(run_check("stablecoin_circuit", || {
+            Err("IGNORED: pyana-sdk broken (custom_program_proofs missing)".into())
+        }));
+        checks.push(run_check("amm", || {
+            Err("IGNORED: pyana-sdk broken (custom_program_proofs missing)".into())
+        }));
+        checks.push(run_check("amm_circuit", || {
+            Err("IGNORED: pyana-sdk broken (custom_program_proofs missing)".into())
+        }));
+        checks.push(run_check("orderbook", || {
+            Err("IGNORED: pyana-sdk broken (custom_program_proofs missing)".into())
+        }));
+        checks.push(run_check("orderbook_circuit", || {
+            Err("IGNORED: pyana-sdk broken (custom_program_proofs missing)".into())
+        }));
+    }
+
+    // Independent app checks (always compile).
+    checks.push(run_check("lending", check_lending_logic));
+    checks.push(run_check("identity", check_identity_logic));
+
+    checks
 }
 
 // =============================================================================
 // Gallery
 // =============================================================================
 
+#[cfg(feature = "apps-sdk")]
 fn check_gallery_logic() -> Result<(), String> {
     // Gallery's ArtworkRegistry.register() is async and requires a PyanaEngine,
     // so we test the domain primitives that work without an engine:
@@ -93,6 +131,7 @@ fn check_gallery_logic() -> Result<(), String> {
 // Stablecoin
 // =============================================================================
 
+#[cfg(feature = "apps-sdk")]
 fn check_stablecoin_logic() -> Result<(), String> {
     use pyana_stablecoin::{
         CdpError, CollateralPosition, ETH_ASSET_TYPE, MIN_RATIO_BPS, PositionStatus,
@@ -201,6 +240,7 @@ fn check_stablecoin_logic() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "apps-sdk")]
 fn check_stablecoin_circuit() -> Result<(), String> {
     use pyana_circuit::field::BabyBear;
     use pyana_stablecoin::{CdpWitness, MIN_RATIO_BPS, prove_cdp_ratio, verify_cdp_ratio};
@@ -248,6 +288,7 @@ fn check_stablecoin_circuit() -> Result<(), String> {
 // AMM
 // =============================================================================
 
+#[cfg(feature = "apps-sdk")]
 fn check_amm_logic() -> Result<(), String> {
     use pyana_amm::AmmRegistry;
     use pyana_amm::pool::LiquidityPool;
@@ -299,11 +340,11 @@ fn check_amm_logic() -> Result<(), String> {
     }
 
     // 4. Add liquidity (proportional).
-    let ratio_a = pool.reserve_a;
-    let ratio_b = pool.reserve_b;
-    // Add proportional amounts.
-    let add_a = ratio_a / 10; // 10% of reserve
-    let add_b = ratio_b / 10;
+    // After swaps, reserves may not be round numbers. To satisfy the strict
+    // proportionality check (amount_a * reserve_b == amount_b * reserve_a),
+    // we use the reserves themselves as the deposit amounts (1:1 ratio guaranteed).
+    let add_a = pool.reserve_a;
+    let add_b = pool.reserve_b;
     let add_result = pool
         .add_liquidity(add_a, add_b)
         .map_err(|e| format!("add_liquidity failed: {e}"))?;
@@ -343,6 +384,7 @@ fn check_amm_logic() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "apps-sdk")]
 fn check_amm_circuit() -> Result<(), String> {
     use pyana_amm::circuit::amm_swap_descriptor;
 
@@ -368,11 +410,9 @@ fn check_amm_circuit() -> Result<(), String> {
 // Orderbook
 // =============================================================================
 
+#[cfg(feature = "apps-sdk")]
 fn check_orderbook_logic() -> Result<(), String> {
-    use pyana_orderbook::{
-        Fill, MatchingEngine, Order, OrderBook, OrderType, OrderbookEngine, Side, TimeInForce,
-        TradingPair,
-    };
+    use pyana_orderbook::{Order, OrderType, OrderbookEngine, Side, TimeInForce, TradingPair};
 
     let pair = TradingPair {
         base: "ETH".into(),
@@ -483,6 +523,88 @@ fn check_orderbook_logic() -> Result<(), String> {
 }
 
 // =============================================================================
+// Orderbook Circuit
+// =============================================================================
+
+#[cfg(feature = "apps-sdk")]
+fn check_orderbook_circuit() -> Result<(), String> {
+    use pyana_orderbook::circuit::{MatchProofDescriptor, MatchProofWitness};
+    use pyana_orderbook::{Fill, Side};
+
+    let taker_cell = pyana_types::CellId([0xAA; 32]);
+    let maker_cell = pyana_types::CellId([0xBB; 32]);
+
+    // Simulate a fill: sell@100, 30 units, taker is buying.
+    let fill = Fill {
+        taker_order_id: [0x01; 32],
+        maker_order_id: [0x02; 32],
+        price: 100,
+        amount: 30,
+        taker: taker_cell,
+        maker: maker_cell,
+        taker_side: Side::Buy,
+    };
+
+    let pre_root = *blake3::hash(b"pre-state").as_bytes();
+    let post_root = *blake3::hash(b"post-state").as_bytes();
+
+    // Build descriptor with witness.
+    let descriptor = MatchProofDescriptor::from_fill(&fill, pre_root, post_root).with_witness(
+        MatchProofWitness {
+            maker_limit_price: 100,
+            maker_remaining_before: 50,
+            maker_queue_position: 0,
+            orders_ahead: vec![],
+            taker_cell_bytes: taker_cell.0,
+            maker_cell_bytes: maker_cell.0,
+        },
+    );
+
+    // 1. All logical constraints should pass.
+    descriptor
+        .verify_all_constraints()
+        .map_err(|e| format!("constraint verification failed: {e}"))?;
+
+    // 2. Generate a real STARK proof.
+    let proof_bytes = descriptor
+        .generate_stark_proof()
+        .map_err(|e| format!("STARK proof generation failed: {e}"))?;
+
+    if proof_bytes.is_empty() {
+        return Err("proof should not be empty".into());
+    }
+
+    // 3. Verify the STARK proof.
+    MatchProofDescriptor::verify_stark_proof(&descriptor.public_inputs, &proof_bytes)
+        .map_err(|e| format!("STARK proof verification failed: {e}"))?;
+
+    // 4. Tampered proof should fail verification.
+    let mut bad_inputs = descriptor.public_inputs.clone();
+    bad_inputs.fill_price = 999; // tampered price
+    let tampered_result = MatchProofDescriptor::verify_stark_proof(&bad_inputs, &proof_bytes);
+    if tampered_result.is_ok() {
+        return Err("tampered public inputs should fail verification".into());
+    }
+
+    // 5. Self-trade detection: same cell on both sides should fail.
+    let self_trade_descriptor = MatchProofDescriptor::from_fill(&fill, pre_root, post_root)
+        .with_witness(MatchProofWitness {
+            maker_limit_price: 100,
+            maker_remaining_before: 50,
+            maker_queue_position: 0,
+            orders_ahead: vec![],
+            taker_cell_bytes: taker_cell.0,
+            maker_cell_bytes: taker_cell.0, // same as taker => self-trade
+        });
+
+    if self_trade_descriptor.check_no_self_trade() {
+        return Err("self-trade should be detected".into());
+    }
+
+    Ok(())
+}
+
+// =============================================================================
 // Lending
 // =============================================================================
 
@@ -504,10 +626,10 @@ fn check_lending_logic() -> Result<(), String> {
         .map_err(|e| format!("supply failed: {e}"))?;
 
     // Verify supply receipt.
-    if receipt.amount != 10_000 {
+    if receipt.principal != 10_000 {
         return Err(format!(
-            "receipt amount should be 10000, got {}",
-            receipt.amount
+            "receipt principal should be 10000, got {}",
+            receipt.principal
         ));
     }
 
@@ -540,8 +662,10 @@ fn check_lending_logic() -> Result<(), String> {
         ));
     }
 
-    // 4. Accrue interest by advancing blocks.
-    pool.advance_to_block(100);
+    // 4. Accrue interest by advancing many blocks.
+    // Interest = principal * rate_bps * blocks / (BPS_SCALE * BLOCKS_PER_YEAR).
+    // With principal=5000, rate~450bps, need blocks >= 11680 for non-zero interest.
+    pool.advance_to_block(100_000);
 
     // After interest accrual, total_borrows should increase.
     let m = pool.get_market(1).ok_or("market not found after accrual")?;
@@ -596,7 +720,7 @@ fn check_identity_logic() -> Result<(), String> {
     use pyana_identity::issuer::IssuerRegistry;
     use pyana_identity::presentation::PresentationBuilder;
     use pyana_identity::revocation::NonRevocationProof;
-    use pyana_identity::verifier::{VerificationPolicy, VerificationResult};
+    use pyana_identity::verifier::VerificationPolicy;
     use std::collections::BTreeMap;
 
     let issuer_id = [0x11u8; 32];

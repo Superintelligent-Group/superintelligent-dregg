@@ -88,7 +88,9 @@ fn check_match_intent() -> Result<(), String> {
     let intent = make_test_intent();
 
     // Use receive_local_intent (doesn't require stake)
-    let matched = pool.receive_local_intent(intent.clone(), 100);
+    let matched = pool
+        .receive_local_intent(intent.clone(), 100)
+        .map_err(|e| format!("receive_local_intent failed: {e}"))?;
     // Either we got a match, or the intent is in the pool
     if matched.is_none() {
         // Verify intent is at least stored

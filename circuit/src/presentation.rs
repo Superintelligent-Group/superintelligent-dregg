@@ -1253,20 +1253,24 @@ impl RealPresentationProof {
             }
         }
 
-        // 5. Verify issuer membership with the appropriate AIR based on proof type.
-        // Blinded (ring membership) proofs use BlindedMerklePoseidon2StarkAir;
-        // legacy proofs use MerklePoseidon2StarkAir.
-        use crate::poseidon2_air::{BlindedMerklePoseidon2StarkAir, MerklePoseidon2StarkAir};
+        // 5. Verify issuer membership with the appropriate DSL circuit based on proof type.
+        // Blinded (ring membership) proofs use blinded_merkle_poseidon2_circuit();
+        // standard proofs use merkle_poseidon2_circuit().
+        use pyana_dsl_runtime::descriptors::{
+            BLINDED_MERKLE_AIR_NAME, blinded_merkle_poseidon2_circuit, merkle_poseidon2_circuit,
+        };
         let air_name = &self.issuer_membership_stark_proof.air_name;
-        let verify_result = if air_name == BlindedMerklePoseidon2StarkAir.air_name() {
+        let verify_result = if air_name == BLINDED_MERKLE_AIR_NAME {
+            let circuit = blinded_merkle_poseidon2_circuit();
             stark::verify(
-                &BlindedMerklePoseidon2StarkAir,
+                &circuit,
                 &self.issuer_membership_stark_proof,
                 &issuer_public_inputs,
             )
         } else {
+            let circuit = merkle_poseidon2_circuit();
             stark::verify(
-                &MerklePoseidon2StarkAir,
+                &circuit,
                 &self.issuer_membership_stark_proof,
                 &issuer_public_inputs,
             )

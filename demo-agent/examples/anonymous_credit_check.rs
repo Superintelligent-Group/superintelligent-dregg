@@ -30,7 +30,7 @@ use pyana_circuit::{
         prove_committed_threshold, verify_committed_threshold,
     },
     poseidon2,
-    predicate_air::compute_fact_commitment,
+    predicate_types::compute_fact_commitment,
     stark::proof_to_bytes,
 };
 

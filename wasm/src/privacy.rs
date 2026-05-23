@@ -454,20 +454,18 @@ pub fn seal_intent_body(
     struct SealResult {
         ciphertext: Vec<u8>,
         ephemeral_pubkey: Vec<u8>,
-        nonce: Vec<u8>,
     }
 
     let result = SealResult {
         ciphertext: sealed.ciphertext,
-        ephemeral_pubkey: sealed.ephemeral_pubkey.to_vec(),
-        nonce: sealed.nonce.to_vec(),
+        ephemeral_pubkey: sealed.sender_public.to_vec(),
     };
     Ok(serde_wasm_bindgen::to_value(&result)?)
 }
 
 /// Unseal (decrypt) an encrypted intent body.
 ///
-/// `ciphertext`, `ephemeral_pubkey`, `nonce` are byte arrays.
+/// `ciphertext` and `ephemeral_pubkey` are byte arrays.
 /// `privkey` is the 32-byte secret key.
 ///
 /// Returns the plaintext JSON string.
@@ -475,27 +473,20 @@ pub fn seal_intent_body(
 pub fn unseal_intent_body(
     ciphertext: &[u8],
     ephemeral_pubkey: &[u8],
-    nonce: &[u8],
     privkey: &[u8],
 ) -> Result<String, JsError> {
     if ephemeral_pubkey.len() != 32 || privkey.len() != 32 {
         return Err(JsError::new("keys must be 32 bytes"));
     }
-    if nonce.len() != 24 {
-        return Err(JsError::new("nonce must be 24 bytes"));
-    }
 
     let mut eph = [0u8; 32];
-    let mut n = [0u8; 24];
     let mut sk = [0u8; 32];
     eph.copy_from_slice(ephemeral_pubkey);
-    n.copy_from_slice(nonce);
     sk.copy_from_slice(privkey);
 
     let sealed = SealedBox {
         ciphertext: ciphertext.to_vec(),
-        ephemeral_pubkey: eph,
-        nonce: n,
+        sender_public: eph,
     };
 
     let plaintext = seal_decrypt(&sealed, &sk);
@@ -870,7 +861,7 @@ pub fn build_facet_mask(allowed_effects_json: &str) -> Result<JsValue, JsError> 
     }
 
     let result = FacetResult {
-        mask: mask.0,
+        mask,
         description: description.iter().map(|s| s.to_string()).collect(),
     };
     Ok(serde_wasm_bindgen::to_value(&result)?)

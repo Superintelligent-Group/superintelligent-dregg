@@ -888,7 +888,7 @@ mod tests {
                 revocation_hash_to_field(&h)
             })
             .collect();
-        let tree = SortedRevocationTree::new(revoked_hashes, 4);
+        let tree = DslRevocationTree::new(revoked_hashes, 4);
 
         // Our token is not in the revocation set.
         let proof = wallet.prove_not_revoked(&token, &tree);

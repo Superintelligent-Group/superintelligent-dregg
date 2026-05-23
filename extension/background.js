@@ -2584,6 +2584,7 @@ const PAGE_ALLOWED_METHODS = new Set([
   'pyana:composeProofs',
   'pyana:signTurn',
   'pyana:queryBalance',
+  'pyana:getNodeConfig',
   // Note: pyana:offerCapability, pyana:getCapabilities, pyana:listIntents are
   // NOT accessible from page context — popup-only.
 ]);

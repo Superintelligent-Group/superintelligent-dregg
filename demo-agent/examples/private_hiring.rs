@@ -35,7 +35,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use pyana_circuit::compound_predicate_air::{
+use pyana_circuit::predicate_types::{
     BooleanFormula, CompoundPredicateProof, prove_compound_predicate, verify_compound_predicate,
 };
 use pyana_circuit::{

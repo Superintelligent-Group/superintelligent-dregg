@@ -532,6 +532,52 @@ pub fn is_cordial(blocklace: &Blocklace, block_id: &BlockId, participants: &[[u8
     acknowledged.len() > participants.len() * 2 / 3
 }
 
+// ─── Constitution-Aware Ordering ─────────────────────────────────────────────
+
+/// Extract the total order from the blocklace using the constitution's participant set.
+///
+/// This is the constitution-integrated version of `tau`: it uses the constitution's
+/// participant list for wave leader election and the constitution's threshold for
+/// supermajority checks.
+///
+/// After ordering completes, the caller should:
+/// 1. Scan the newly-ordered blocks for membership proposals that have passed.
+/// 2. Apply those proposals to the constitution (via `ConstitutionManager::apply_if_passed`).
+/// 3. Use the updated participant list for subsequent calls.
+///
+/// This ensures that membership changes take effect at well-defined wave boundaries.
+pub fn tau_with_constitution(
+    blocklace: &Blocklace,
+    constitution: &crate::constitution::Constitution,
+) -> Vec<BlockId> {
+    tau_with_config(
+        blocklace,
+        &constitution.participants,
+        &OrderingConfig::default(),
+    )
+}
+
+/// Like `tau_with_constitution`, but with explicit ordering config.
+pub fn tau_with_constitution_and_config(
+    blocklace: &Blocklace,
+    constitution: &crate::constitution::Constitution,
+    config: &OrderingConfig,
+) -> Vec<BlockId> {
+    tau_with_config(blocklace, &constitution.participants, config)
+}
+
+/// Check cordiality using the constitution's participant set and threshold.
+///
+/// A block is cordial if it acknowledges blocks from `> constitution.threshold - 1`
+/// distinct participants at the previous round.
+pub fn is_cordial_with_constitution(
+    blocklace: &Blocklace,
+    block_id: &BlockId,
+    constitution: &crate::constitution::Constitution,
+) -> bool {
+    is_cordial(blocklace, block_id, &constitution.participants)
+}
+
 // ─── Integration helpers ─────────────────────────────────────────────────────
 
 /// Get the finalized total order of blocks with their payloads.

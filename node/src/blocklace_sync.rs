@@ -4,27 +4,28 @@
 //! Cordial Miners paper. The blocklace provides:
 //! - Quiescent operation (no messages when idle)
 //! - Efficient cordial dissemination (send peers blocks you think they need)
-//! - Leaderless total ordering via finality tracking
+//! - Leaderless total ordering via the tau function
 //! - Equivocation detection built into the data structure
+//! - Constitutional membership amendments via voting
 //!
 //! The node participates in consensus by:
 //! 1. Creating blocks when turns are submitted
 //! 2. Disseminating blocks to peers via the existing QUIC gossip transport
-//! 3. Processing finalized blocks in order via the TurnExecutor
+//! 3. Running tau() ordering to produce the finalized total order
+//! 4. Processing finalized turns through the TurnExecutor
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use ed25519_dalek::SigningKey;
-use pyana_blocklace::finality::{
-    Block, BlockError, BlockId, Blocklace, FinalityLevel, FinalityTracker, Payload,
-};
+use pyana_blocklace::constitution::{Constitution, ConstitutionManager, MembershipVote};
+use pyana_blocklace::finality::{Block, BlockError, BlockId, Blocklace, FinalityLevel, Payload};
+use pyana_blocklace::ordering::tau;
 use pyana_blocklace::pyana_bridge::PyanaBlocklaceBridge;
 use pyana_net::gossip::{GossipEvent, GossipNetwork, TopicHandle};
 use pyana_net::message::PeerMessage;
 use pyana_net::node::{NodeId, PeerNode, PeerNodeConfig};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 use tracing::{debug, error, info, warn};
 
 use crate::state::{NodeEvent, NodeState};
@@ -36,6 +37,9 @@ pub const TOPIC_BLOCKLACE: &str = "pyana/blocklace";
 
 /// Default COD budget for optimistic execution (number of outstanding turns).
 const DEFAULT_COD_BUDGET: usize = 8;
+
+/// Default timeout for constitutional waves (milliseconds).
+const DEFAULT_CONSTITUTION_TIMEOUT_MS: u64 = 10_000;
 
 // ─── Gossip Message Types ───────────────────────────────────────────────────
 
@@ -67,8 +71,8 @@ pub struct BlocklaceHandle {
     pub lace: Arc<RwLock<Blocklace>>,
     /// The bridge for classifying turns and producing receipts.
     pub bridge: Arc<Mutex<PyanaBlocklaceBridge>>,
-    /// Participants in the consensus (public keys of all federation members).
-    pub participants: Arc<RwLock<Vec<[u8; 32]>>>,
+    /// Constitution manager tracking participants and membership amendments.
+    pub constitution: Arc<RwLock<ConstitutionManager>>,
     /// The gossip network for broadcasting messages.
     pub gossip: Arc<GossipNetwork>,
     /// The blocklace gossip topic handle.
@@ -77,6 +81,9 @@ pub struct BlocklaceHandle {
     pub self_key: [u8; 32],
     /// Index tracking which ordered blocks have already been executed.
     pub executed_up_to: Arc<RwLock<usize>>,
+    /// Notify channel: signaled when new blocks arrive that may advance finality.
+    /// This makes the executor truly quiescent -- no polling.
+    pub finality_notify: Arc<Notify>,
 }
 
 impl BlocklaceHandle {
@@ -95,15 +102,18 @@ impl BlocklaceHandle {
         let block_id = block.id();
 
         // Determine initial finality based on participant count.
-        let participants = self.participants.read().await;
-        let initial_finality = if participants.len() <= 1 {
+        let constitution = self.constitution.read().await;
+        let initial_finality = if constitution.current.participant_count() <= 1 {
             // Solo mode: immediately ordered (we're the only participant).
-            let mut lace = self.lace.write().await;
-            lace.finality.mark_ordered(block_id);
+            // tau() with n=1 trivially finalizes every block.
             FinalityLevel::Ordered
         } else {
             FinalityLevel::Local
         };
+        drop(constitution);
+
+        // Notify the finality executor that new blocks are available.
+        self.finality_notify.notify_one();
 
         // Disseminate to all peers via gossip.
         self.push_new_blocks().await;
@@ -154,15 +164,48 @@ impl BlocklaceHandle {
         }
     }
 
-    /// Check for newly ordered blocks and return their turn payloads in order.
+    /// Run the tau ordering function and return newly finalized turn payloads.
     ///
-    /// Returns turn payloads for blocks that have reached `Ordered` finality
-    /// and have not been executed yet.
+    /// This is the core consensus function: it computes the deterministic total
+    /// order from the blocklace DAG using the Cordial Miners tau function,
+    /// then returns any turns that have been newly ordered since the last call.
     pub async fn poll_finalized_turns(&self) -> Vec<(BlockId, Vec<u8>)> {
         let lace = self.lace.read().await;
+        let constitution = self.constitution.read().await;
+        let participants = constitution.current.participants.clone();
+        drop(constitution);
+
         let mut executed_up_to = self.executed_up_to.write().await;
 
-        let ordered = lace.finality.ordered_sequence();
+        // For solo mode (n=1): every block with a Turn payload is immediately
+        // finalized in topological order. tau() handles this correctly because
+        // with a single participant, every block trivially has supermajority.
+        let ordered = if participants.len() <= 1 {
+            // Solo: all blocks are ordered by sequence.
+            let mut all_turn_blocks: Vec<(u64, BlockId)> = lace
+                .iter()
+                .filter_map(|(id, block)| match &block.payload {
+                    Payload::Turn(_) => Some((block.seq, *id)),
+                    _ => None,
+                })
+                .collect();
+            all_turn_blocks.sort_by_key(|(seq, _)| *seq);
+            all_turn_blocks
+                .into_iter()
+                .map(|(_, id)| id)
+                .collect::<Vec<_>>()
+        } else {
+            // Multi-party: run the full Cordial Miners tau ordering.
+            // We build an ordering-compatible blocklace and maintain a mapping
+            // between the two BlockId types (they use different hash schemes).
+            let (ordering_lace, id_map) = build_ordering_blocklace(&lace);
+            let raw_order = tau(&ordering_lace, &participants);
+            // Map ordering BlockIds back to finality BlockIds.
+            raw_order
+                .into_iter()
+                .filter_map(|ordering_id| id_map.get(&ordering_id).copied())
+                .collect::<Vec<_>>()
+        };
 
         // Skip already-executed blocks.
         if ordered.len() <= *executed_up_to {
@@ -185,6 +228,59 @@ impl BlocklaceHandle {
     }
 }
 
+/// Build a `pyana_blocklace::Blocklace` (the ordering-compatible type) from
+/// the finality-layer blocklace. The ordering module's `tau()` function
+/// operates on the simpler `Blocklace` from `lib.rs`.
+///
+/// Returns the ordering blocklace and a mapping from ordering BlockIds to
+/// finality BlockIds (needed because the two types use different hash schemes).
+fn build_ordering_blocklace(
+    finality_lace: &Blocklace,
+) -> (
+    pyana_blocklace::Blocklace,
+    HashMap<pyana_blocklace::BlockId, BlockId>,
+) {
+    let mut ordering_lace = pyana_blocklace::Blocklace::new();
+    // Mapping from finality block ID -> ordering block ID (for predecessor translation)
+    let mut finality_to_ordering: HashMap<BlockId, pyana_blocklace::BlockId> = HashMap::new();
+    // Reverse mapping: ordering block ID -> finality block ID (for result translation)
+    let mut ordering_to_finality: HashMap<pyana_blocklace::BlockId, BlockId> = HashMap::new();
+
+    // Insert blocks in topological order (by sequence, then by creator for ties).
+    let mut blocks: Vec<(&BlockId, &Block)> = finality_lace.iter().collect();
+    blocks.sort_by(|(_, a), (_, b)| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
+
+    for (finality_id, block) in blocks {
+        // Translate predecessors from finality IDs to ordering IDs.
+        let predecessors: Vec<pyana_blocklace::BlockId> = block
+            .predecessors
+            .iter()
+            .filter_map(|p| finality_to_ordering.get(p).copied())
+            .collect();
+        let payload = match &block.payload {
+            Payload::Turn(data) => data.clone(),
+            Payload::Ack => vec![],
+            Payload::Checkpoint { root, height } => {
+                let mut buf = Vec::with_capacity(40);
+                buf.extend_from_slice(root);
+                buf.extend_from_slice(&height.to_le_bytes());
+                buf
+            }
+            Payload::MembershipVote { .. } => vec![0x04],
+            Payload::Data(data) => data.clone(),
+        };
+        let ordering_block =
+            pyana_blocklace::Block::new(block.creator, block.seq, predecessors, payload);
+        let ordering_id = ordering_block.id();
+        let _ = ordering_lace.insert(ordering_block);
+
+        // Record the bidirectional mapping.
+        finality_to_ordering.insert(*finality_id, ordering_id);
+        ordering_to_finality.insert(ordering_id, *finality_id);
+    }
+    (ordering_lace, ordering_to_finality)
+}
+
 // ─── Main Entry Point ───────────────────────────────────────────────────────
 
 /// Run the blocklace-based federation sync as a background task.
@@ -201,14 +297,15 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
     };
 
     // Get our signing key and derive the blocklace identity.
-    let (signing_key_bytes, our_public_key) = {
+    let (gossip_signing_key, signing_key_bytes, our_public_key) = {
         let s = state.read().await;
         let sk = s.wallet.gossip_signing_key();
         let pk = s.wallet.public_key();
-        (sk.to_bytes(), pk)
+        (sk.clone(), sk.to_bytes(), pk)
     };
 
-    let signing_key = SigningKey::from_bytes(&signing_key_bytes);
+    // The finality::Blocklace uses ed25519_dalek::SigningKey directly.
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&signing_key_bytes);
     let self_key: [u8; 32] = signing_key.verifying_key().to_bytes();
 
     // Determine participants: in solo mode, just ourselves.
@@ -236,6 +333,10 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
         solo = (participants.len() <= 1),
         "initializing blocklace consensus"
     );
+
+    // Initialize the constitution with our participant set.
+    let constitution = Constitution::new(participants.clone(), DEFAULT_CONSTITUTION_TIMEOUT_MS);
+    let constitution_manager = ConstitutionManager::new(constitution);
 
     // Initialize the blocklace with our signing key and quorum threshold.
     let blocklace = Blocklace::new(signing_key.clone(), quorum_threshold);
@@ -282,7 +383,7 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
     let gossip = Arc::new(GossipNetwork::new(
         endpoint,
         node_id,
-        signing_key.clone(),
+        gossip_signing_key,
         peer_keys_map,
     ));
 
@@ -372,17 +473,19 @@ pub async fn run_blocklace_sync(state: NodeState, gossip_port: u16) -> Option<Bl
     // Build the shared handle.
     let lace = Arc::new(RwLock::new(blocklace));
     let bridge_handle = Arc::new(Mutex::new(bridge));
-    let participants_handle = Arc::new(RwLock::new(participants));
+    let constitution_handle = Arc::new(RwLock::new(constitution_manager));
     let executed_up_to = Arc::new(RwLock::new(0usize));
+    let finality_notify = Arc::new(Notify::new());
 
     let handle = BlocklaceHandle {
         lace: lace.clone(),
         bridge: bridge_handle,
-        participants: participants_handle.clone(),
+        constitution: constitution_handle.clone(),
         gossip: gossip.clone(),
         topic: topic.clone(),
         self_key,
         executed_up_to,
+        finality_notify: finality_notify.clone(),
     };
 
     info!("blocklace gossip layer initialized, processing messages");
@@ -489,7 +592,11 @@ async fn handle_push(handle: &BlocklaceHandle, from: SocketAddr, blocks: Vec<Blo
             Err(BlockError::MissingPredecessor { missing, .. }) => {
                 missing_deps.push(missing);
             }
-            Err(BlockError::Equivocation { creator, seq, .. }) => {
+            Err(BlockError::Equivocation {
+                creator,
+                seq,
+                proof,
+            }) => {
                 let creator_hex: String = creator[..4].iter().map(|b| format!("{b:02x}")).collect();
                 warn!(
                     from = %from,
@@ -497,7 +604,12 @@ async fn handle_push(handle: &BlocklaceHandle, from: SocketAddr, blocks: Vec<Blo
                     seq = seq,
                     "equivocation detected from peer"
                 );
-                // Block is still stored (for evidence), count as inserted.
+                // Auto-evict equivocator from the constitution.
+                drop(lace);
+                let mut constitution = handle.constitution.write().await;
+                constitution.auto_evict(&proof);
+                drop(constitution);
+                lace = handle.lace.write().await;
                 inserted += 1;
             }
             Err(BlockError::InvalidSignature { creator, seq }) => {
@@ -511,27 +623,6 @@ async fn handle_push(handle: &BlocklaceHandle, from: SocketAddr, blocks: Vec<Blo
             }
         }
     }
-
-    // In solo mode, immediately mark newly received Turn blocks as ordered.
-    let participants = handle.participants.read().await;
-    if participants.len() <= 1 {
-        // Solo: every block is immediately ordered.
-        let ordered_seq = lace.finality.ordered_sequence().to_vec();
-        let all_ids: Vec<BlockId> = lace.iter().map(|(id, _)| *id).collect();
-        for id in all_ids {
-            if !ordered_seq.contains(&id) {
-                lace.finality.mark_ordered(id);
-            }
-        }
-    } else {
-        // Multi-participant: blocks progress through finality via acks.
-        // When we receive a block, its predecessors are implicitly acknowledged
-        // by the block's creator. Record these acks for finality tracking.
-        // (The finality::Blocklace already handles this in receive_block for
-        // Ack-payload blocks. For Turn payloads, the predecessors still serve
-        // as implicit acknowledgment of those blocks.)
-    }
-    drop(participants);
     drop(lace);
 
     if inserted > 0 {
@@ -541,6 +632,8 @@ async fn handle_push(handle: &BlocklaceHandle, from: SocketAddr, blocks: Vec<Blo
             total_received = block_count,
             "received blocks from peer"
         );
+        // Signal the finality executor that new blocks may advance ordering.
+        handle.finality_notify.notify_one();
     }
 
     // If we have missing dependencies, request them.
@@ -629,18 +722,17 @@ async fn handle_frontier(
 
 // ─── Finalized Turn Executor ────────────────────────────────────────────────
 
-/// Spawn a background task that polls for finalized blocks and executes their turns.
+/// Spawn a background task that waits for finalized blocks and executes their turns.
 ///
-/// This task is QUIESCENT-aware: it only wakes when there are new blocks to process.
-/// In practice it polls on a short interval, but does no work when idle.
+/// This task is QUIESCENT: it uses `Notify` to sleep until new blocks arrive.
+/// No polling interval. Zero CPU when idle.
 fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
     tokio::spawn(async move {
-        let mut poll_interval = tokio::time::interval(std::time::Duration::from_millis(100));
-
         loop {
-            poll_interval.tick().await;
+            // QUIESCENT: sleep until signaled that new blocks have arrived.
+            handle.finality_notify.notified().await;
 
-            // Check for newly finalized turns.
+            // Process all newly finalized turns.
             let finalized_turns = handle.poll_finalized_turns().await;
 
             if finalized_turns.is_empty() {
@@ -653,7 +745,7 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
             );
 
             for (block_id, turn_data) in &finalized_turns {
-                execute_finalized_turn(&state, *block_id, turn_data).await;
+                execute_finalized_turn(&state, &handle, *block_id, turn_data).await;
             }
         }
     });
@@ -661,9 +753,14 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
 
 /// Execute a single finalized turn against the node's ledger.
 ///
-/// The turn has been totally ordered by the blocklace consensus and is ready for
-/// deterministic execution.
-async fn execute_finalized_turn(state: &NodeState, block_id: BlockId, turn_data: &[u8]) {
+/// The turn has been totally ordered by the blocklace consensus (tau function)
+/// and is ready for deterministic execution.
+async fn execute_finalized_turn(
+    state: &NodeState,
+    _handle: &BlocklaceHandle,
+    block_id: BlockId,
+    turn_data: &[u8],
+) {
     // Deserialize the signed turn.
     let signed_turn: pyana_sdk::SignedTurn = match postcard::from_bytes(turn_data) {
         Ok(st) => st,
@@ -776,6 +873,40 @@ async fn execute_finalized_turn(state: &NodeState, block_id: BlockId, turn_data:
                 turn_hash = %turn_hash_hex,
                 block_id = %block_id,
                 "finalized turn pending"
+            );
+        }
+    }
+}
+
+// ─── Membership Vote Processing ─────────────────────────────────────────────
+
+/// Process a MembershipVote payload from a finalized block.
+///
+/// When a block with a MembershipVote payload reaches finality (appears in tau
+/// output), we apply the vote to the ConstitutionManager. If the vote causes
+/// a proposal to pass, the constitution is amended.
+#[allow(dead_code)]
+async fn process_membership_vote(
+    handle: &BlocklaceHandle,
+    _block_id: BlockId,
+    voter: [u8; 32],
+    vote: &MembershipVote,
+) {
+    let mut constitution = handle.constitution.write().await;
+
+    // Record the vote.
+    let passed = constitution.submit_vote(vote, voter);
+
+    if let Some(proposal_block) = passed {
+        // The proposal has reached threshold -- apply it.
+        if constitution.apply_if_passed(&proposal_block) {
+            let new_count = constitution.current.participant_count();
+            let new_version = constitution.version();
+            info!(
+                proposal_block = %proposal_block,
+                new_participant_count = new_count,
+                constitution_version = new_version,
+                "constitution amended via membership vote"
             );
         }
     }

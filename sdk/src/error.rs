@@ -77,4 +77,12 @@ pub enum SdkError {
     /// A cell program operation failed (deployment, proof generation, or verification).
     #[error("program error: {0}")]
     Program(#[from] ProgramError),
+
+    /// The cell is not in sovereign mode (required for IVC compression).
+    #[error("cell is not sovereign: {0}")]
+    NotSovereign(String),
+
+    /// An IVC proof operation failed.
+    #[error("IVC proof error: {0}")]
+    IvcError(String),
 }

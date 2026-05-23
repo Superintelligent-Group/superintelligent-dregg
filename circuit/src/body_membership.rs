@@ -25,8 +25,9 @@ use crate::field::BabyBear;
 use crate::multi_step_air::{
     MultiStepWitness, prove_authorization_stark, verify_authorization_stark,
 };
-use crate::poseidon2_air::{MerklePoseidon2StarkAir, generate_merkle_poseidon2_trace};
 use crate::stark::{self, StarkProof};
+use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit;
+use pyana_dsl_runtime::membership::generate_merkle_poseidon2_trace;
 use serde::{Deserialize, Serialize};
 
 /// A Merkle proof for a single body fact: siblings + positions (leaf-to-root).
@@ -140,8 +141,8 @@ pub fn prove_authorization_with_membership(
             fact_hash.0, computed_root.0, witness.initial_state_root.0
         );
 
-        let air = MerklePoseidon2StarkAir;
-        let proof = stark::prove(&air, &trace, &public_inputs);
+        let circuit = merkle_poseidon2_circuit();
+        let proof = stark::prove(&circuit, &trace, &public_inputs);
 
         membership_proofs.push(MembershipEntry { fact_hash, proof });
     }
@@ -193,8 +194,8 @@ pub fn verify_authorization_with_membership(
     // Step 3: Verify each membership STARK
     for entry in &proof.membership_proofs {
         let public_inputs = vec![entry.fact_hash, proof.state_root];
-        let air = MerklePoseidon2StarkAir;
-        stark::verify(&air, &entry.proof, &public_inputs).map_err(|e| {
+        let circuit = merkle_poseidon2_circuit();
+        stark::verify(&circuit, &entry.proof, &public_inputs).map_err(|e| {
             format!(
                 "Merkle membership proof for fact hash {} failed: {}",
                 entry.fact_hash.0, e
