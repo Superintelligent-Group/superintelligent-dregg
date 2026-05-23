@@ -423,7 +423,8 @@ pub fn generate_predicate_proof(
         &proof,
         BabyBear::new(threshold),
         fact_commitment,
-    );
+    )
+    .is_ok();
 
     let result = PredicateProofResult {
         proof_json: serde_json::to_string(&proof).unwrap_or_default(),
@@ -456,7 +457,8 @@ pub fn verify_predicate_proof(
     let proof: PredicateProof =
         serde_json::from_str(proof_json).map_err(|e| JsError::new(&e.to_string()))?;
 
-    let valid = verify_predicate(&proof, BabyBear::new(threshold), BabyBear(fact_commitment));
+    let valid =
+        verify_predicate(&proof, BabyBear::new(threshold), BabyBear(fact_commitment)).is_ok();
 
     #[derive(Serialize)]
     struct VerifyResult {

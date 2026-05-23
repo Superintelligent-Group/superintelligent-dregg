@@ -2185,6 +2185,7 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
         },
         expires_at,
         revocation_channel: None,
+        allowed_effects: None,
     };
 
     let action = pyana_turn::Action {

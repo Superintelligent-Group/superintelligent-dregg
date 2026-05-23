@@ -7,10 +7,10 @@
 #[cfg(test)]
 mod poseidon2_soundness {
     use crate::field::BabyBear;
-    use crate::poseidon2::{hash_4_to_1, poseidon2_trace, TOTAL_ROUNDS};
+    use crate::poseidon2::{TOTAL_ROUNDS, hash_4_to_1, poseidon2_trace};
     use crate::poseidon2_air::{
-        generate_merkle_poseidon2_trace, create_poseidon2_test_witness,
-        MerklePoseidon2StarkAir, Poseidon2Air,
+        MerklePoseidon2StarkAir, Poseidon2Air, create_poseidon2_test_witness,
+        generate_merkle_poseidon2_trace,
     };
     use crate::stark::{self, StarkAir};
 
@@ -22,8 +22,22 @@ mod poseidon2_soundness {
     fn poseidon2_air_wrong_output_bit_flip_rejected() {
         // Generate a valid trace
         let input = [
-            BabyBear::new(10), BabyBear::new(20), BabyBear::new(30), BabyBear::new(40),
-            BabyBear::new(4), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+            BabyBear::new(10),
+            BabyBear::new(20),
+            BabyBear::new(30),
+            BabyBear::new(40),
+            BabyBear::new(4),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
         ];
         let (trace, public_inputs) = Poseidon2Air::generate_trace(&input);
         let air = Poseidon2Air;
@@ -52,7 +66,8 @@ mod poseidon2_soundness {
             result.is_err(),
             "SOUNDNESS BUG: Proof with wrong output (bit-flipped) MUST be rejected. \
              Original output[0] = {}, tampered = {}",
-            original_output, flipped
+            original_output,
+            flipped
         );
     }
 
@@ -70,8 +85,22 @@ mod poseidon2_soundness {
         // skipping one internal round. This tests that the constraint detects
         // a partial computation.
         let input = [
-            BabyBear::new(100), BabyBear::new(200), BabyBear::new(300), BabyBear::new(400),
-            BabyBear::new(4), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO,
+            BabyBear::new(100),
+            BabyBear::new(200),
+            BabyBear::new(300),
+            BabyBear::new(400),
+            BabyBear::new(4),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
         ];
 
         // Compute a "wrong" output by only running TOTAL_ROUNDS - 1 rounds
@@ -97,7 +126,8 @@ mod poseidon2_soundness {
         let alpha = BabyBear::new(13);
         let c = air.eval_constraints(&bad_row, &bad_row, &bad_pi, alpha);
         assert_ne!(
-            c, BabyBear::ZERO,
+            c,
+            BabyBear::ZERO,
             "SOUNDNESS BUG: Constraint must be non-zero when output is from an incomplete permutation"
         );
 
@@ -183,7 +213,10 @@ mod poseidon2_soundness {
 
         // The forged root is different from the real root
         let forged_root = bad_trace[3][5];
-        assert_ne!(forged_root, public_inputs[1], "Forged root must differ from real root");
+        assert_ne!(
+            forged_root, public_inputs[1],
+            "Forged root must differ from real root"
+        );
 
         // Now try to prove with the real public inputs (real leaf, real root)
         // but using the forged trace. The constraint at row 0 should be non-zero
@@ -192,7 +225,8 @@ mod poseidon2_soundness {
         let alpha = BabyBear::new(7);
         let c = air.eval_constraints(&bad_trace[0], &bad_trace[1], &public_inputs, alpha);
         assert_ne!(
-            c, BabyBear::ZERO,
+            c,
+            BabyBear::ZERO,
             "SOUNDNESS BUG: Constraint MUST be non-zero when parent is forged"
         );
 
@@ -245,7 +279,8 @@ mod poseidon2_soundness {
         let next_row = &trace_correct[1];
         let c = air.eval_constraints(&forged_row, next_row, &pi_correct, alpha);
         assert_ne!(
-            c, BabyBear::ZERO,
+            c,
+            BabyBear::ZERO,
             "SOUNDNESS BUG: Changing position without fixing hash must yield non-zero constraint"
         );
 
@@ -263,8 +298,7 @@ mod poseidon2_soundness {
 
         // Also verify: different positions produce different roots (collision resistance)
         let positions_alt = [2u8, 1];
-        let (_, pi_alt) =
-            generate_merkle_poseidon2_trace(leaf, &siblings, &positions_alt);
+        let (_, pi_alt) = generate_merkle_poseidon2_trace(leaf, &siblings, &positions_alt);
         assert_ne!(
             pi_correct[1], pi_alt[1],
             "Different positions must produce different Merkle roots"
@@ -276,8 +310,8 @@ mod poseidon2_soundness {
 mod note_spending_soundness {
     use crate::field::BabyBear;
     use crate::note_spending_air::{
-        col, create_test_witness, merkle_col, prove_note_spend, test_spending_key,
-        verify_note_spend, NoteSpendingAir,
+        NoteSpendingAir, col, create_test_witness, merkle_col, prove_note_spend, test_spending_key,
+        verify_note_spend,
     };
     use crate::poseidon2_air::MerklePoseidon2StarkAir;
     use crate::stark::{self, StarkAir};
@@ -291,11 +325,11 @@ mod note_spending_soundness {
         // Create a valid witness
         let correct_key = test_spending_key(0xDEAD_BEEF);
         let witness_correct = create_test_witness(
-            BabyBear::new(1000),  // owner
-            BabyBear::new(500),   // value
-            BabyBear::new(1),     // asset_type
-            correct_key,          // correct spending key (8 limbs)
-            4,                    // depth
+            BabyBear::new(1000), // owner
+            BabyBear::new(500),  // value
+            BabyBear::new(1),    // asset_type
+            correct_key,         // correct spending key (8 limbs)
+            4,                   // depth
         );
 
         let correct_nullifier = witness_correct.nullifier();
@@ -304,7 +338,14 @@ mod note_spending_soundness {
         // Verify valid proof works
         let valid_proof = prove_note_spend(&witness_correct);
         assert!(
-            verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &valid_proof).is_ok(),
+            verify_note_spend(
+                correct_nullifier,
+                correct_root,
+                witness_correct.value,
+                witness_correct.asset_type,
+                &valid_proof
+            )
+            .is_ok(),
             "Baseline: valid spending proof must verify"
         );
 
@@ -321,7 +362,13 @@ mod note_spending_soundness {
 
         // A proof generated with the wrong key CANNOT verify against the correct nullifier
         let wrong_proof = prove_note_spend(&witness_wrong);
-        let result = verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &wrong_proof);
+        let result = verify_note_spend(
+            correct_nullifier,
+            correct_root,
+            witness_correct.value,
+            witness_correct.asset_type,
+            &wrong_proof,
+        );
         assert!(
             result.is_err(),
             "SOUNDNESS BUG: Proof with wrong spending key MUST fail against correct nullifier"
@@ -340,7 +387,8 @@ mod note_spending_soundness {
         let pi = vec![correct_nullifier, correct_root];
         let c = air.eval_constraints(&trace[0], &trace[1], &pi, alpha);
         assert_ne!(
-            c, BabyBear::ZERO,
+            c,
+            BabyBear::ZERO,
             "SOUNDNESS BUG: Constraint must detect spending key / nullifier mismatch"
         );
     }
@@ -366,7 +414,14 @@ mod note_spending_soundness {
         // Verify the valid proof first
         let valid_proof = prove_note_spend(&witness_correct);
         assert!(
-            verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &valid_proof).is_ok(),
+            verify_note_spend(
+                correct_nullifier,
+                correct_root,
+                witness_correct.value,
+                witness_correct.asset_type,
+                &valid_proof
+            )
+            .is_ok(),
             "Baseline: valid proof must verify"
         );
 
@@ -378,19 +433,27 @@ mod note_spending_soundness {
 
         // The commitment changes
         assert_ne!(
-            witness_correct.commitment(), witness_wrong.commitment(),
+            witness_correct.commitment(),
+            witness_wrong.commitment(),
             "Different preimage must produce different commitment"
         );
 
         // The Merkle root changes because the commitment is different
         assert_ne!(
-            witness_correct.merkle_root(), witness_wrong.merkle_root(),
+            witness_correct.merkle_root(),
+            witness_wrong.merkle_root(),
             "Different commitment must produce different Merkle root"
         );
 
         // Proof with wrong preimage cannot verify against correct root
         let wrong_proof = prove_note_spend(&witness_wrong);
-        let result = verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &wrong_proof);
+        let result = verify_note_spend(
+            correct_nullifier,
+            correct_root,
+            witness_correct.value,
+            witness_correct.asset_type,
+            &wrong_proof,
+        );
         assert!(
             result.is_err(),
             "SOUNDNESS BUG: Proof with wrong value/asset_type MUST be rejected"
@@ -407,7 +470,8 @@ mod note_spending_soundness {
         let pi = vec![correct_nullifier, correct_root];
         let c = air.eval_constraints(&trace[0], &trace[1], &pi, alpha);
         assert_ne!(
-            c, BabyBear::ZERO,
+            c,
+            BabyBear::ZERO,
             "SOUNDNESS BUG: Constraint must detect value / commitment mismatch"
         );
     }
@@ -432,7 +496,14 @@ mod note_spending_soundness {
         // Verify the valid proof first
         let valid_proof = prove_note_spend(&witness);
         assert!(
-            verify_note_spend(correct_nullifier, correct_root, witness.value, witness.asset_type, &valid_proof).is_ok(),
+            verify_note_spend(
+                correct_nullifier,
+                correct_root,
+                witness.value,
+                witness.asset_type,
+                &valid_proof
+            )
+            .is_ok(),
             "Baseline: valid proof must verify"
         );
 
@@ -450,7 +521,8 @@ mod note_spending_soundness {
         let pi = vec![tampered_nullifier, correct_root]; // PI matches tampered nullifier
         let c = air.eval_constraints(&trace[0], &trace[1], &pi, alpha);
         assert_ne!(
-            c, BabyBear::ZERO,
+            c,
+            BabyBear::ZERO,
             "SOUNDNESS BUG: Constraint must detect nullifier tampering"
         );
 
@@ -487,7 +559,14 @@ mod note_spending_soundness {
         // Verify the valid proof first
         let valid_proof = prove_note_spend(&witness_correct);
         assert!(
-            verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &valid_proof).is_ok(),
+            verify_note_spend(
+                correct_nullifier,
+                correct_root,
+                witness_correct.value,
+                witness_correct.asset_type,
+                &valid_proof
+            )
+            .is_ok(),
             "Baseline: valid proof must verify"
         );
 
@@ -508,7 +587,13 @@ mod note_spending_soundness {
 
         // Proof with wrong Merkle path cannot verify against correct root
         let wrong_proof = prove_note_spend(&witness_wrong);
-        let result = verify_note_spend(correct_nullifier, correct_root, witness_correct.value, witness_correct.asset_type, &wrong_proof);
+        let result = verify_note_spend(
+            correct_nullifier,
+            correct_root,
+            witness_correct.value,
+            witness_correct.asset_type,
+            &wrong_proof,
+        );
         assert!(
             result.is_err(),
             "SOUNDNESS BUG: Proof with wrong Merkle siblings MUST be rejected"
@@ -527,7 +612,8 @@ mod note_spending_soundness {
         let pi = vec![correct_nullifier, correct_root];
         let c = air.eval_constraints(&trace[2], &trace[3], &pi, alpha);
         assert_ne!(
-            c, BabyBear::ZERO,
+            c,
+            BabyBear::ZERO,
             "SOUNDNESS BUG: Constraint must detect sibling/parent inconsistency"
         );
 
@@ -552,9 +638,8 @@ mod note_spending_soundness {
         let alpha = BabyBear::new(13);
 
         // A completely random row (not satisfying any constraint)
-        let random_row: Vec<BabyBear> = (0..12)
-            .map(|i| BabyBear::new((i * 7 + 3) as u32))
-            .collect();
+        let random_row: Vec<BabyBear> =
+            (0..12).map(|i| BabyBear::new((i * 7 + 3) as u32)).collect();
         let random_next: Vec<BabyBear> = (0..12)
             .map(|i| BabyBear::new((i * 11 + 5) as u32))
             .collect();
@@ -562,7 +647,8 @@ mod note_spending_soundness {
 
         let c = air.eval_constraints(&random_row, &random_next, &random_pi, alpha);
         assert_ne!(
-            c, BabyBear::ZERO,
+            c,
+            BabyBear::ZERO,
             "SOUNDNESS BUG: Random trace row should NOT satisfy constraints (constraints are vacuous)"
         );
     }
@@ -580,7 +666,8 @@ mod note_spending_soundness {
 
         let c = air.eval_constraints(&random_row, &random_row, &random_pi, alpha);
         assert_ne!(
-            c, BabyBear::ZERO,
+            c,
+            BabyBear::ZERO,
             "SOUNDNESS BUG: Random data should NOT satisfy Poseidon2 constraints (constraints are vacuous)"
         );
     }
@@ -594,14 +681,14 @@ mod note_spending_soundness {
         let random_row: Vec<BabyBear> = (0..6)
             .map(|i| BabyBear::new((i * 17 + 11) as u32))
             .collect();
-        let random_next: Vec<BabyBear> = (0..6)
-            .map(|i| BabyBear::new((i * 19 + 3) as u32))
-            .collect();
+        let random_next: Vec<BabyBear> =
+            (0..6).map(|i| BabyBear::new((i * 19 + 3) as u32)).collect();
         let random_pi = vec![BabyBear::new(111), BabyBear::new(222)];
 
         let c = air.eval_constraints(&random_row, &random_next, &random_pi, alpha);
         assert_ne!(
-            c, BabyBear::ZERO,
+            c,
+            BabyBear::ZERO,
             "SOUNDNESS BUG: Random data should NOT satisfy Merkle Poseidon2 constraints"
         );
     }

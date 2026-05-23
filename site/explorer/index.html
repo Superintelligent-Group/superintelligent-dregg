@@ -74,6 +74,10 @@
           <span class="ex-nav__icon">&#9632;</span>
           <span class="ex-nav__label">Blocks</span>
         </button>
+        <button class="ex-nav__item" data-page="blocklace">
+          <span class="ex-nav__icon">&#9783;</span>
+          <span class="ex-nav__label">Blocklace</span>
+        </button>
         <button class="ex-nav__item" data-page="cells">
           <span class="ex-nav__icon">&#9673;</span>
           <span class="ex-nav__label">Cells</span>
@@ -93,6 +97,10 @@
         <button class="ex-nav__item" data-page="proofs">
           <span class="ex-nav__icon">&#9651;</span>
           <span class="ex-nav__label">Proofs</span>
+        </button>
+        <button class="ex-nav__item" data-page="effects">
+          <span class="ex-nav__icon">&#9656;</span>
+          <span class="ex-nav__label">Effects</span>
         </button>
         <button class="ex-nav__item" data-page="intents">
           <span class="ex-nav__icon">&#9733;</span>
@@ -192,6 +200,15 @@
         </div>
       </section>
 
+      <!-- Blocklace page -->
+      <section class="ex-page" id="page-blocklace">
+        <div class="ex-page__header">
+          <h2>Blocklace</h2>
+          <p>Interactive DAG visualization of the Cordial Miners consensus protocol. Blocks as nodes, predecessor pointers as edges. Click any block to inspect.</p>
+        </div>
+        <div class="blocklace-content"></div>
+      </section>
+
       <!-- Cells page -->
       <section class="ex-page" id="page-cells">
         <div class="ex-page__header">
@@ -253,6 +270,15 @@
         <div class="ex-proofs-list" id="proofs-list">
           <div class="loading-placeholder">Loading proofs...</div>
         </div>
+      </section>
+
+      <!-- Effects page -->
+      <section class="ex-page" id="page-effects">
+        <div class="ex-page__header">
+          <h2>Effect VM</h2>
+          <p>Visualize the Effect VM execution trace. Build effect sequences, watch state columns change, and tweak values to test constraint satisfaction.</p>
+        </div>
+        <div class="effects-content"></div>
       </section>
 
       <!-- Intents page -->
@@ -423,6 +449,10 @@
     </main>
   </div>
 
-  <script type="module" src="explorer.js"></script>
+  <script type="module">
+    // Boot the modular explorer app
+    import { boot } from './app.js';
+    document.addEventListener('DOMContentLoaded', boot);
+  </script>
 </body>
 </html>

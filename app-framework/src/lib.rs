@@ -1,9 +1,16 @@
 //! # pyana-app-framework
 //!
-//! Reusable patterns extracted from pyana application implementations
-//! (bounty-board, compute-exchange). Provides:
+//! Production-grade application framework for pyana apps. Extracts and unifies
+//! the shared patterns that every pyana HTTP service needs:
 //!
-//! - **Proof verification middleware** (`middleware`): Axum extractor for verifying
+//! - **Server infrastructure** (`server`): [`AppConfig`](server::AppConfig) for
+//!   env-based configuration, [`AppServer`](server::AppServer) builder with health,
+//!   CORS, and admin auth pre-wired.
+//! - **Admin authentication** (`auth`): [`AdminAuth`](auth::AdminAuth) extractor
+//!   for bearer-token-protected admin endpoints, with constant-time comparison.
+//! - **Persistence** (`persistence`): [`JsonPersistence`](persistence::JsonPersistence)
+//!   for atomic write-then-rename state snapshots.
+//! - **Proof verification middleware** (`middleware`): Axum extractors for verifying
 //!   pyana presentation proofs from HTTP headers.
 //! - **Generic content store** (`store`): Thread-safe async CRUD store keyed by
 //!   32-byte identifiers.
@@ -11,15 +18,38 @@
 //!   releasing, and refunding escrows via `PyanaEngine`.
 //! - **Hex utilities** (`hex`): Encode/decode 32-byte arrays to/from hex strings.
 //!
+//! # Quick Start
+//!
+//! ```ignore
+//! use pyana_app_framework::server::{AppConfig, AppServer};
+//! use pyana_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
+//! use pyana_app_framework::persistence::JsonPersistence;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let config = AppConfig::from_env();
+//!     AppServer::new(config)
+//!         .service_name("my-app")
+//!         .with_health()
+//!         .with_cors()
+//!         .routes(my_routes(state))
+//!         .serve()
+//!         .await
+//!         .unwrap();
+//! }
+//! ```
+//!
 //! # Re-exports
 //!
 //! Commonly needed types from sub-crates are re-exported so apps can import from
 //! a single dependency instead of reaching into `pyana-intent`, `pyana-turn`, etc.
 
+pub mod auth;
 pub mod escrow;
 pub mod hex;
-#[cfg(feature = "middleware")]
 pub mod middleware;
+pub mod persistence;
+pub mod server;
 pub mod store;
 
 // =============================================================================
@@ -46,3 +76,8 @@ pub use pyana_sdk::embed::{EngineConfig, PyanaEngine};
 
 // Re-export CellId since nearly all app code uses it.
 pub use pyana_types::CellId;
+
+// Re-export server and auth types at crate root for ergonomics.
+pub use auth::{AdminAuth, AdminMode, AdminToken, HasAdminToken};
+pub use persistence::JsonPersistence;
+pub use server::{AppConfig, AppServer, ErrorResponse, api_error};

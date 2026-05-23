@@ -1,4 +1,7 @@
-//! Minimal HTTP API server for the stablecoin CDP system.
+//! HTTP API server for the stablecoin CDP system.
+//!
+//! Uses `pyana-app-framework` for shared infrastructure (error responses, admin auth,
+//! persistence pattern). App-specific routes and state live here.
 
 use std::sync::Arc;
 
@@ -10,6 +13,9 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+
+use pyana_app_framework::auth::{AdminAuth, AdminToken, HasAdminToken};
+use pyana_app_framework::server::ErrorResponse;
 
 use crate::cdp::{CollateralPosition, ETH_ASSET_TYPE, PositionStatus, StablecoinRegistry};
 use crate::circuit::MIN_RATIO_BPS;
@@ -26,6 +32,13 @@ pub struct AppState {
     pub oracle: Arc<RwLock<PriceOracle>>,
     pub liquidation_engine: Arc<LiquidationEngine>,
     pub current_height: Arc<RwLock<u64>>,
+    pub admin_token: AdminToken,
+}
+
+impl HasAdminToken for AppState {
+    fn admin_token(&self) -> &AdminToken {
+        &self.admin_token
+    }
 }
 
 impl AppState {
@@ -39,6 +52,7 @@ impl AppState {
             oracle: Arc::new(RwLock::new(PriceOracle::new(vec![oracle_pubkey], 1000))),
             liquidation_engine: Arc::new(LiquidationEngine::default_config()),
             current_height: Arc::new(RwLock::new(1)),
+            admin_token: AdminToken::from_env(),
         }
     }
 }
@@ -95,10 +109,7 @@ pub struct OraclePriceResponse {
     pub timestamp: u64,
 }
 
-#[derive(Serialize)]
-pub struct ErrorResponse {
-    pub error: String,
-}
+// ErrorResponse is imported from pyana_app_framework::server::ErrorResponse
 
 // =============================================================================
 // Router
@@ -113,7 +124,7 @@ pub fn router() -> Router<AppState> {
         .route("/cdp/{id}/liquidate", post(liquidate_cdp))
         .route("/oracle/update", post(oracle_update))
         .route("/oracle/price", get(oracle_price))
-        .route("/health", get(health_check))
+        .route("/admin/height", post(admin_advance_height))
 }
 
 // =============================================================================
@@ -121,18 +132,11 @@ pub fn router() -> Router<AppState> {
 // =============================================================================
 
 fn hex_id(id: &[u8; 32]) -> String {
-    id.iter().map(|b| format!("{b:02x}")).collect()
+    pyana_app_framework::hex::bytes32_to_hex(id)
 }
 
 fn parse_hex_id(s: &str) -> Option<[u8; 32]> {
-    if s.len() != 64 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    for i in 0..32 {
-        out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
-    }
-    Some(out)
+    pyana_app_framework::hex::hex_to_bytes32(s).ok()
 }
 
 fn position_to_response(pos: &CollateralPosition, price: Option<u64>) -> CdpResponse {
@@ -399,6 +403,22 @@ async fn oracle_price(
     }))
 }
 
-async fn health_check() -> &'static str {
-    "ok"
+// =============================================================================
+// Admin Handlers (protected by AdminAuth extractor)
+// =============================================================================
+
+#[derive(Deserialize)]
+pub struct AdvanceHeightRequest {
+    pub delta: Option<u64>,
+}
+
+async fn admin_advance_height(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Json(req): Json<AdvanceHeightRequest>,
+) -> Json<serde_json::Value> {
+    let delta = req.delta.unwrap_or(1);
+    let mut height = state.current_height.write().await;
+    *height += delta;
+    Json(serde_json::json!({"height": *height}))
 }

@@ -136,6 +136,14 @@ pub struct BearerCapProof {
     /// Optional revocation channel binding. If set, the channel must be active
     /// for the bearer cap to be exercisable.
     pub revocation_channel: Option<[u8; 32]>,
+    /// Optional facet restriction on this bearer capability.
+    ///
+    /// When set, the bearer can only exercise effects whose kind bits are within
+    /// this mask. This must be a subset of the delegator's `allowed_effects` (if any).
+    /// Enforces E-language facet attenuation: a delegated bearer can only restrict,
+    /// never amplify, the delegator's facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_effects: Option<pyana_cell::EffectMask>,
 }
 
 /// How the delegation chain is proven for a bearer capability.

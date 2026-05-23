@@ -996,6 +996,17 @@ mod tests {
     use super::*;
     use crate::stark::{prove, verify};
 
+    const SOVEREIGN_PUBLIC_INPUTS: usize = 32;
+
+    fn bytes32_to_babybear(bytes: &[u8; 32]) -> Vec<BabyBear> {
+        let mut result = Vec::with_capacity(8);
+        for chunk in bytes.chunks(4) {
+            let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            result.push(BabyBear(val % crate::field::BABYBEAR_P));
+        }
+        result
+    }
+
     /// Build a CircuitDescriptor equivalent to SovereignTransitionAir.
     ///
     /// Constraints:
@@ -1075,43 +1086,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "sovereign_transition_air module was removed"]
     fn dsl_circuit_matches_handwritten_air() {
-        // Use the same test vectors as sovereign_transition_air tests.
-        let old_balance = 1000u64;
-        let transfer_amount = 100u64;
-        let direction = 1u32; // outgoing => new = 900
-
-        let new_balance = old_balance - transfer_amount;
-
-        let row = vec![
-            BabyBear::from_u64(old_balance),
-            BabyBear::from_u64(transfer_amount),
-            BabyBear::from_u64(new_balance),
-            BabyBear::new(direction),
-            BabyBear::ZERO,
-            BabyBear::ZERO,
-        ];
-
-        let dummy_next = vec![BabyBear::ZERO; 6];
-        let dummy_pi = vec![BabyBear::ZERO; 32];
-        let alpha = BabyBear::new(7); // arbitrary nonzero
-
-        // Evaluate using hand-written AIR
-        use crate::sovereign_transition_air::SovereignTransitionAir;
-        let hand = SovereignTransitionAir;
-        let hand_result = hand.eval_constraints(&row, &dummy_next, &dummy_pi, alpha);
-
-        // Evaluate using DslCircuit
-        let dsl = DslCircuit::new(sovereign_transfer_descriptor());
-        let dsl_result = dsl.eval_constraints(&row, &dummy_next, &dummy_pi, alpha);
-
-        assert_eq!(
-            hand_result, dsl_result,
-            "DslCircuit and hand-written AIR must produce identical constraint evaluations"
-        );
-
-        // Both should be zero on a valid trace row.
-        assert_eq!(hand_result, BabyBear::ZERO);
+        // sovereign_transition_air module has been removed from pyana-circuit
     }
 
     #[test]
@@ -1139,7 +1116,7 @@ mod tests {
 
     #[test]
     fn dsl_circuit_prove_and_verify() {
-        use crate::sovereign_transition_air::{SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear};
+        // Uses local SOVEREIGN_PUBLIC_INPUTS and bytes32_to_babybear defined above.
 
         let old_balance = 1000u64;
         let transfer_amount = 100u64;
@@ -1178,7 +1155,7 @@ mod tests {
 
     #[test]
     fn dsl_circuit_incoming_transfer() {
-        use crate::sovereign_transition_air::{SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear};
+        // Uses local SOVEREIGN_PUBLIC_INPUTS and bytes32_to_babybear defined above.
 
         let old_balance = 500u64;
         let transfer_amount = 200u64;
@@ -1240,7 +1217,7 @@ mod tests {
 
     #[test]
     fn prove_and_verify_via_registry() {
-        use crate::sovereign_transition_air::{SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear};
+        // Uses local SOVEREIGN_PUBLIC_INPUTS and bytes32_to_babybear defined above.
 
         let descriptor = sovereign_transfer_descriptor();
         let program = CellProgram::new(descriptor, 1);
@@ -1373,7 +1350,7 @@ mod tests {
 
     #[test]
     fn wrong_vk_hash_verification_fails() {
-        use crate::sovereign_transition_air::{SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear};
+        // Uses local SOVEREIGN_PUBLIC_INPUTS and bytes32_to_babybear defined above.
 
         let descriptor = sovereign_transfer_descriptor();
         let program = CellProgram::new(descriptor, 1);
@@ -1395,7 +1372,7 @@ mod tests {
 
     #[test]
     fn valid_proof_under_correct_program_passes() {
-        use crate::sovereign_transition_air::{SOVEREIGN_PUBLIC_INPUTS, bytes32_to_babybear};
+        // Uses local SOVEREIGN_PUBLIC_INPUTS and bytes32_to_babybear defined above.
 
         let descriptor = sovereign_transfer_descriptor();
         let program = CellProgram::new(descriptor, 1);

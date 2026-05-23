@@ -4,6 +4,6 @@
 
 pub use crate::dsl::predicates::{
     PREDICATE_DIFF_BITS, PredicateAir, PredicateProof, PredicateType, PredicateWitness,
-    compute_fact_commitment, prove_predicate, prove_predicate_dsl, verify_predicate,
-    verify_predicate_dsl,
+    compute_fact_commitment, prove_in_range, prove_predicate, prove_predicate_dsl, verify_in_range,
+    verify_predicate, verify_predicate_dsl,
 };

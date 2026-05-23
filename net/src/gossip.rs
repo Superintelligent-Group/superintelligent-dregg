@@ -87,13 +87,34 @@ const MAX_STREAMS_PER_PEER: usize = 64;
 
 // ─── Dandelion++ constants ─────────────────────────────────────────────────
 
-/// Probability of continuing stem phase at each hop.
+/// Base probability of continuing stem phase at each hop.
 /// Expected stem length: 1/(1-p) = 10 hops.
+/// NOTE: The actual probability used is adaptive based on peer count.
+/// See [`effective_stem_probability`].
 const STEM_PROBABILITY: f64 = 0.9;
 
 /// Maximum time a message may remain in stem phase before being fluffed.
 /// Prevents message loss if the stem path hits a dead or unresponsive node.
 const STEM_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Compute the effective stem probability based on the current peer count.
+///
+/// In very small networks (< 5 peers), Dandelion++ stem phase provides no
+/// meaningful anonymity (the stem path will cycle back to the originator or
+/// visit all peers). In these cases, we disable or reduce the stem phase.
+///
+/// - peer_count < 5: stem disabled (immediate fluff) — no anonymity possible
+/// - peer_count 5..10: reduced stem (0.5) — partial anonymity, ~2 hops
+/// - peer_count >= 10: full Dandelion++ (0.9) — ~10 expected hops
+fn effective_stem_probability(peer_count: usize) -> f64 {
+    if peer_count < 5 {
+        0.0 // Disable stem entirely — useless in tiny networks
+    } else if peer_count < 10 {
+        0.5 // Reduced stem — provides some privacy without excessive hops
+    } else {
+        STEM_PROBABILITY // Full Dandelion++ (0.9)
+    }
+}
 
 /// A handle to a joined gossip topic.
 #[derive(Clone, Debug)]
@@ -799,7 +820,9 @@ impl GossipNetwork {
         let encoded = message.encode_raw();
         let msg_hash = *blake3::hash(&encoded).as_bytes();
 
-        // Pick a random peer for the stem relay
+        // Pick a random peer for the stem relay.
+        // Use adaptive stem probability: in small networks (< 5 peers), skip
+        // stem entirely and go straight to fluff (no anonymity benefit from stem).
         let stem_target = {
             let mut state = self.state.write().await;
             state.seen.insert(msg_hash);
@@ -812,28 +835,36 @@ impl GossipNetwork {
                 },
             );
 
-            // Track this message in the stem set for timeout failsafe
-            state.stem_messages.insert(
-                msg_hash,
-                StemEntry {
-                    topic_id: topic.topic_id,
-                    msg_hash,
-                    payload: encoded.clone(),
-                    entered_stem_at: Instant::now(),
-                },
-            );
+            let peer_count = state.peers.len();
+            let stem_prob = effective_stem_probability(peer_count);
 
-            // Select one random peer from all peers in this topic
-            if let Some(topic_state) = state.topics.get(&topic.topic_id) {
-                let all_peers = topic_state.all_peers();
-                if all_peers.is_empty() {
-                    None
-                } else {
-                    let mut rng = rand::rng();
-                    Some(*all_peers.choose(&mut rng).unwrap())
-                }
-            } else {
+            // If stem is disabled for this network size, skip directly to fluff.
+            if stem_prob == 0.0 {
                 None
+            } else {
+                // Track this message in the stem set for timeout failsafe
+                state.stem_messages.insert(
+                    msg_hash,
+                    StemEntry {
+                        topic_id: topic.topic_id,
+                        msg_hash,
+                        payload: encoded.clone(),
+                        entered_stem_at: Instant::now(),
+                    },
+                );
+
+                // Select one random peer from all peers in this topic
+                if let Some(topic_state) = state.topics.get(&topic.topic_id) {
+                    let all_peers = topic_state.all_peers();
+                    if all_peers.is_empty() {
+                        None
+                    } else {
+                        let mut rng = rand::rng();
+                        Some(*all_peers.choose(&mut rng).unwrap())
+                    }
+                } else {
+                    None
+                }
             }
         };
 
@@ -1531,7 +1562,14 @@ impl GossipNetwork {
                 }
 
                 // Decide: continue stem or transition to fluff?
-                let continue_stem = rand::random::<f64>() < STEM_PROBABILITY;
+                // Use adaptive stem probability based on peer count to avoid
+                // useless stem hops in small networks (< 5 peers).
+                let peer_count = {
+                    let s = state.read().await;
+                    s.peers.len()
+                };
+                let stem_prob = effective_stem_probability(peer_count);
+                let continue_stem = stem_prob > 0.0 && rand::random::<f64>() < stem_prob;
 
                 if continue_stem {
                     // Pick one random peer (excluding sender) and forward in stem phase
@@ -2532,5 +2570,33 @@ mod tests {
         assert_ne!(stem, fluff);
         assert_eq!(stem, MessagePhase::Stem);
         assert_eq!(fluff, MessagePhase::Fluff);
+    }
+
+    // ─── Adaptive stem probability tests ──────────────────────────────────
+
+    #[test]
+    fn adaptive_stem_probability_tiny_network() {
+        // Networks with < 5 peers get no stem (useless, just adds latency)
+        assert_eq!(effective_stem_probability(0), 0.0);
+        assert_eq!(effective_stem_probability(1), 0.0);
+        assert_eq!(effective_stem_probability(2), 0.0);
+        assert_eq!(effective_stem_probability(3), 0.0);
+        assert_eq!(effective_stem_probability(4), 0.0);
+    }
+
+    #[test]
+    fn adaptive_stem_probability_small_network() {
+        // Networks with 5-9 peers get reduced stem (0.5)
+        assert_eq!(effective_stem_probability(5), 0.5);
+        assert_eq!(effective_stem_probability(7), 0.5);
+        assert_eq!(effective_stem_probability(9), 0.5);
+    }
+
+    #[test]
+    fn adaptive_stem_probability_large_network() {
+        // Networks with >= 10 peers get full Dandelion++ (0.9)
+        assert_eq!(effective_stem_probability(10), STEM_PROBABILITY);
+        assert_eq!(effective_stem_probability(50), STEM_PROBABILITY);
+        assert_eq!(effective_stem_probability(256), STEM_PROBABILITY);
     }
 }

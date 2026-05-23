@@ -18,6 +18,11 @@ import { initGallery } from './sections/gallery.js';
 import { initFederation } from './sections/federation.js';
 import { initMarketplace } from './sections/marketplace.js';
 import { initSandbox } from './sections/sandbox.js';
+import { initEffectVm } from './sections/effect-vm.js';
+import { initBlocklaceSim } from './sections/blocklace-sim.js';
+import { initFullTurnProof } from './sections/full-turn-proof.js';
+import { initTieredRevocation } from './sections/tiered-revocation.js';
+import { initCircuitPlayground } from './sections/circuit-playground.js';
 
 // ============================================================================
 // Global Shared State
@@ -338,6 +343,11 @@ async function main() {
   initFederation(wasmExports);
   initMarketplace(wasmExports);
   initSandbox(wasmExports);
+  initEffectVm(wasmExports);
+  initBlocklaceSim(wasmExports);
+  initFullTurnProof(wasmExports);
+  initTieredRevocation(wasmExports);
+  initCircuitPlayground(wasmExports);
 
   // Initial state render
   notifyStateChange();

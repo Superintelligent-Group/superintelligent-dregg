@@ -41,6 +41,7 @@ pub mod builder;
 pub mod composer;
 pub mod conditional;
 pub mod conflict;
+pub mod economics;
 pub mod encrypted;
 pub mod error;
 pub mod escrow;
@@ -75,6 +76,7 @@ pub use conditional::{
     refund_conditional_deposit, resolve_condition, validate_conditional_submission,
 };
 pub use conflict::{ConflictSet, build_conflict_set, extract_access_sets};
+pub use economics::{EpochMinter, MintResult, MintingPolicy};
 pub use encrypted::{
     ConflictBucket, EncryptedTurn, EncryptedTurnError, TurnOrdering, TurnValidityProof,
     TurnValidityPublicInputs, order_encrypted_turns,

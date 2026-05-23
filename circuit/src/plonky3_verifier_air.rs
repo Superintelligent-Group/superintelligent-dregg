@@ -7,6 +7,7 @@ use crate::field::BabyBear;
 use crate::plonky3_prover::PyanaProof;
 
 /// Recursion strategy selection.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RecursionMode {
     /// Use hash-chain accumulation (existing behavior, fast but weaker).
     HashChain,

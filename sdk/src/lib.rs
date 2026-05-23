@@ -47,6 +47,7 @@ pub mod discharge;
 pub mod discovery;
 pub mod embed;
 pub mod error;
+pub mod full_turn_proof;
 pub mod mnemonic;
 pub mod privacy;
 pub mod runtime;
@@ -104,6 +105,12 @@ pub use privacy::{
     AccumulatorNonMembershipProof, AnonymousPresentation, NonRevocationProof, NoteSecret,
     NoteTransferProof, UnlinkablePredicateProof, verify_accumulator_non_membership,
     verify_anonymous_presentation, verify_non_revocation_proof, verify_note_spending,
+};
+
+// Re-export full turn proof composition API.
+pub use full_turn_proof::{
+    FullTurnProof, FullTurnVerifyError, FullTurnWitness, TurnProofComponents, prove_full_turn,
+    prove_turn_self_sovereign, prove_turn_with_auth, verify_full_turn,
 };
 
 // Re-export discharge gateway client functions.

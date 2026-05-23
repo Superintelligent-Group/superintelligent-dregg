@@ -3097,7 +3097,8 @@ pub fn prove_predicate_for_fact(
                 BabyBear::new(*low),
                 BabyBear::new(*high),
                 fact_commitment,
-            )?;
+            )
+            .ok()?;
             Some(BridgePredicateProof {
                 predicate: predicate.clone(),
                 proof: BridgePredicateProofInner::Range(low_proof, high_proof),
@@ -3160,7 +3161,7 @@ pub fn verify_predicate_proof(
                 | Predicate::Neq(t) => BabyBear::new(*t),
                 Predicate::InRange(..) => return false,
             };
-            pyana_circuit::verify_predicate(inner, threshold, expected_fact_commitment)
+            pyana_circuit::verify_predicate(inner, threshold, expected_fact_commitment).is_ok()
         }
         BridgePredicateProofInner::Range(low_proof, high_proof) => {
             let (low, high) = match &proof.predicate {

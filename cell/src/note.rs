@@ -427,4 +427,132 @@ mod tests {
         // But commitments differ (different owner and randomness).
         assert_ne!(nft_note_a.commitment(), nft_note_b.commitment());
     }
+
+    // ─── NoteBatcher tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_note_batcher_add_and_should_flush() {
+        let mut batcher = super::NoteBatcher::new(5, 16);
+        let commitment = NoteCommitment([0xAA; 32]);
+
+        assert!(!batcher.should_flush(0));
+
+        batcher.add(commitment);
+        assert_eq!(batcher.pending_count(), 1);
+        // Not at interval yet
+        assert!(!batcher.should_flush(3));
+        // At interval boundary
+        assert!(batcher.should_flush(5));
+    }
+
+    #[test]
+    fn test_note_batcher_max_batch_size() {
+        let mut batcher = super::NoteBatcher::new(100, 4);
+        for i in 0..4 {
+            batcher.add(NoteCommitment([i as u8; 32]));
+        }
+        // Should flush at max batch size regardless of height
+        assert!(batcher.should_flush(1));
+    }
+
+    #[test]
+    fn test_note_batcher_flush() {
+        let mut batcher = super::NoteBatcher::new(5, 16);
+        for i in 0..3 {
+            batcher.add(NoteCommitment([i as u8; 32]));
+        }
+        let flushed = batcher.flush(5);
+        assert_eq!(flushed.len(), 3);
+        assert_eq!(batcher.pending_count(), 0);
+        assert_eq!(batcher.last_batch_height, 5);
+    }
+}
+
+// ─── Note Batcher (timing correlation mitigation) ─────────────────────────────
+
+/// Batch note commitments to reduce timing correlation attacks.
+///
+/// Without batching, an observer can correlate when a note commitment appears in
+/// the tree with when a specific user was online or submitted a turn. By accumulating
+/// notes and committing them in fixed-interval batches, all notes in a batch appear
+/// at the same height, making it impossible to correlate individual note creation
+/// times with user activity.
+///
+/// # Usage
+///
+/// The executor (or federation sync layer) calls [`add`](NoteBatcher::add) when a
+/// turn creates a note. At each block, it calls [`should_flush`](NoteBatcher::should_flush)
+/// and if true, commits all pending notes to the tree in a single batch.
+///
+/// # Privacy Properties
+///
+/// - All notes in a batch share the same tree insertion height.
+/// - An observer cannot determine which block (within the batch interval) created
+///   a specific note.
+/// - The batch size is bounded to prevent a single batch from becoming too distinctive.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NoteBatcher {
+    /// Pending note commitments waiting to be committed to the tree.
+    pending: Vec<NoteCommitment>,
+    /// Minimum interval (in blocks) between batch flushes.
+    batch_interval_blocks: u64,
+    /// The block height at which the last batch was flushed.
+    pub last_batch_height: u64,
+    /// Maximum number of notes per batch. When reached, flush even if the
+    /// interval hasn't elapsed. Prevents unbounded memory growth.
+    max_batch_size: usize,
+}
+
+impl NoteBatcher {
+    /// Create a new note batcher.
+    ///
+    /// # Arguments
+    ///
+    /// * `batch_interval_blocks` - Minimum blocks between flushes (e.g., 10).
+    /// * `max_batch_size` - Maximum notes per batch before forced flush (e.g., 16).
+    pub fn new(batch_interval_blocks: u64, max_batch_size: usize) -> Self {
+        Self {
+            pending: Vec::new(),
+            batch_interval_blocks,
+            last_batch_height: 0,
+            max_batch_size,
+        }
+    }
+
+    /// Add a note commitment to the pending batch.
+    pub fn add(&mut self, commitment: NoteCommitment) {
+        self.pending.push(commitment);
+    }
+
+    /// Check whether the batch should be flushed at the given block height.
+    ///
+    /// Returns true if:
+    /// - The batch interval has elapsed since the last flush, OR
+    /// - The pending batch has reached `max_batch_size`.
+    pub fn should_flush(&self, current_height: u64) -> bool {
+        if self.pending.is_empty() {
+            return false;
+        }
+        current_height.saturating_sub(self.last_batch_height) >= self.batch_interval_blocks
+            || self.pending.len() >= self.max_batch_size
+    }
+
+    /// Flush all pending notes, returning them for insertion into the note tree.
+    ///
+    /// All returned notes should be committed to the tree at the same height,
+    /// preventing timing correlation of individual note creation.
+    pub fn flush(&mut self, current_height: u64) -> Vec<NoteCommitment> {
+        self.last_batch_height = current_height;
+        std::mem::take(&mut self.pending)
+    }
+
+    /// Get the number of pending notes.
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Check if there are any pending notes.
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
 }

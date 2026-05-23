@@ -109,15 +109,33 @@ pub fn prove_chunked_authorization(
 }
 
 /// Like `prove_chunked_authorization` but with a configurable tree depth.
+///
+/// # Panics
+///
+/// Panics if:
+/// - `chunk_size` is 0
+/// - The witness has no steps
+/// - The total delegation chain depth exceeds [`MAX_DELEGATION_DEPTH`](crate::multi_step_air::MAX_DELEGATION_DEPTH)
 pub fn prove_chunked_authorization_with_depth(
     witness: &MultiStepWitness,
     chunk_size: usize,
     tree_depth: usize,
 ) -> ChunkedAuthorizationProof {
+    use crate::multi_step_air::MAX_DELEGATION_DEPTH;
+
     assert!(chunk_size >= 1, "chunk_size must be at least 1");
     assert!(
         !witness.steps.is_empty(),
         "witness must have at least 1 step"
+    );
+    assert!(
+        witness.steps.len() <= MAX_DELEGATION_DEPTH,
+        "Delegation chain too deep: {} steps exceeds MAX_DELEGATION_DEPTH ({}). \
+         Approximate proving time would be {}s. Consider revoking intermediate \
+         delegates or flattening the authorization chain.",
+        witness.steps.len(),
+        MAX_DELEGATION_DEPTH,
+        witness.steps.len() as f64 * 0.5,
     );
 
     let total_steps = witness.steps.len();

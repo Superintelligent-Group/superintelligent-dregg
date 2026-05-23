@@ -1155,6 +1155,7 @@ mod tests {
     use super::*;
     use crate::derivation_air::{BodyAtomPattern, CircuitRule, create_test_derivation};
     use crate::poseidon2::hash_fact;
+    use crate::stark::StarkAir;
 
     #[test]
     fn dsl_trace_has_correct_width() {

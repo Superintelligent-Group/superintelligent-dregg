@@ -509,10 +509,7 @@ fn compile_expr(expr: &PredicateExpr) -> Result<CompiledPredicate, CompileError>
                 witness_spec: WitnessSpec::Arithmetic {
                     inputs: vec![attribute.clone()],
                     expression: ArithExpr::Var(0),
-                    predicate: ArithPredicate::ExprNeq(
-                        ArithExpr::Var(0),
-                        BabyBear::new(*value as u32),
-                    ),
+                    predicate: ArithPredicate::ExprNeq(ArithExpr::Var(0), *value as u32),
                 },
             })
         }
@@ -752,7 +749,7 @@ fn flip_predicate(pred: &PredicateExpr) -> PredicateExpr {
                         expression: crate::arithmetic_predicate_air::ArithExpr::Var(0),
                         predicate: crate::arithmetic_predicate_air::ArithPredicate::ExprEq(
                             crate::arithmetic_predicate_air::ArithExpr::Var(0),
-                            BabyBear::new(*threshold as u32),
+                            *threshold as u32,
                         ),
                     };
                 }
@@ -777,7 +774,7 @@ fn flip_predicate(pred: &PredicateExpr) -> PredicateExpr {
                 expression: crate::arithmetic_predicate_air::ArithExpr::Var(0),
                 predicate: crate::arithmetic_predicate_air::ArithPredicate::ExprEq(
                     crate::arithmetic_predicate_air::ArithExpr::Var(0),
-                    BabyBear::new(*value as u32),
+                    *value as u32,
                 ),
             }
         }
@@ -1055,13 +1052,17 @@ fn prove_single(
             // Use Plonky3-based prover when available (correct transition constraints).
             #[cfg(feature = "plonky3")]
             {
-                let proof =
-                    prove_temporal_predicate_p3(&values_bb, roots, *predicate_type, threshold_bb)
-                        .ok_or_else(|| {
-                        ProveError::NotSatisfiable(format!(
-                            "{attribute}: temporal predicate not satisfied across all steps"
-                        ))
-                    })?;
+                let proof = prove_temporal_predicate_p3(
+                    &values_bb,
+                    roots,
+                    *predicate_type,
+                    *threshold as u32,
+                )
+                .map_err(|e| {
+                    ProveError::NotSatisfiable(format!(
+                        "{attribute}: temporal predicate not satisfied across all steps: {e}"
+                    ))
+                })?;
 
                 Ok(ProgramProof {
                     sub_proofs: vec![SubProof::TemporalP3(proof)],
@@ -1133,17 +1134,18 @@ fn prove_single(
             }
 
             let witness = RelationalPredicateWitness {
-                value_a: my_value_bb,
-                blinding_a: ctx.my_blinding,
-                value_b: their_value_bb,
-                blinding_b: ctx.their_blinding,
-                relation: *relation,
+                value_a: my_value_bb.0,
+                blinding_a: ctx.my_blinding.0,
+                value_b: their_value_bb.0,
+                blinding_b: ctx.their_blinding.0,
+                op: *relation,
+                verify_commitments: true,
             };
 
-            let proof = prove_relational_air(witness).ok_or_else(|| {
+            let proof = prove_relational_air(&witness).map_err(|e| {
                 ProveError::NotSatisfiable(format!(
-                    "{}: relational predicate {:?} not satisfiable (my_value={}, their_value={})",
-                    my_attribute, relation, my_value, ctx.their_value
+                    "{}: relational predicate {:?} not satisfiable (my_value={}, their_value={}): {}",
+                    my_attribute, relation, my_value, ctx.their_value, e
                 ))
             })?;
 
@@ -1221,18 +1223,17 @@ fn prove_single(
             predicate,
         } => {
             use crate::arithmetic_predicate_air::{
-                ArithmeticPredicateWitness, compute_arithmetic_fact_commitment,
-                prove_arithmetic_predicate,
+                compute_arithmetic_fact_commitment, prove_arithmetic_dsl,
             };
 
-            let input_values: Vec<BabyBear> = inputs
+            let input_values: Vec<u32> = inputs
                 .iter()
                 .map(|attr| {
                     let value = private_state
                         .values
                         .get(attr)
                         .ok_or_else(|| ProveError::MissingAttribute(attr.clone()))?;
-                    Ok(BabyBear::new(*value as u32))
+                    Ok(*value as u32)
                 })
                 .collect::<Result<Vec<_>, ProveError>>()?;
 
@@ -1256,18 +1257,13 @@ fn prove_single(
                 .collect();
             let aggregate_commitment = poseidon2::hash_many(&fact_commitments);
 
-            let witness = ArithmeticPredicateWitness {
-                inputs: input_values,
-                predicate: predicate.clone(),
-                fact_commitment: aggregate_commitment,
-            };
-
-            let proof = prove_arithmetic_predicate(witness).ok_or_else(|| {
-                ProveError::NotSatisfiable(format!(
-                    "arithmetic predicate over {:?} is not satisfiable",
-                    inputs
-                ))
-            })?;
+            let proof = prove_arithmetic_dsl(&input_values, &predicate, aggregate_commitment)
+                .map_err(|e| {
+                    ProveError::NotSatisfiable(format!(
+                        "arithmetic predicate over {:?} is not satisfiable: {}",
+                        inputs, e
+                    ))
+                })?;
 
             Ok(ProgramProof {
                 sub_proofs: vec![SubProof::Arithmetic(proof)],
@@ -1368,11 +1364,24 @@ fn prove_compound_range(
         }
     }
 
+    // Evaluate each sub-predicate to a boolean result.
+    let sub_results: Vec<bool> = predicates
+        .iter()
+        .map(|(value, pred_type, threshold)| match pred_type {
+            PredicateType::Gte | PredicateType::InRangeLow => value >= threshold,
+            PredicateType::Lte | PredicateType::InRangeHigh => value <= threshold,
+            PredicateType::Gt => value > threshold,
+            PredicateType::Lt => value < threshold,
+            PredicateType::Neq => value != threshold,
+        })
+        .collect();
+
     let proof =
-        prove_compound_predicate(&predicates, formula.clone(), &commitments).ok_or_else(|| {
-            ProveError::NotSatisfiable(
-                "compound predicate not satisfiable with given values".to_string(),
-            )
+        prove_compound_predicate(&sub_results, formula, Some(&commitments)).map_err(|e| {
+            ProveError::NotSatisfiable(format!(
+                "compound predicate not satisfiable with given values: {}",
+                e
+            ))
         })?;
 
     Ok(ProgramProof {
@@ -1562,7 +1571,7 @@ fn verify_single_proof(
                 // If no explicit commitment provided, we cannot verify.
                 BabyBear::ZERO
             });
-            verify_predicate(proof, BabyBear::new(*threshold as u32), expected_commitment)
+            verify_predicate(proof, BabyBear::new(*threshold as u32), expected_commitment).is_ok()
         }
 
         (
@@ -1603,14 +1612,7 @@ fn verify_single_proof(
             // enforces transition constraints (accumulator increment) making it
             // impossible for a malicious prover to skip or duplicate steps.
             proof.num_steps as u64 >= *min_blocks
-                && proof.threshold == BabyBear::new(*threshold as u32)
-                && verify_temporal_predicate_p3(
-                    proof,
-                    BabyBear::new(*threshold as u32),
-                    proof.num_steps,
-                    proof.initial_state_root,
-                    proof.final_state_root,
-                )
+                && verify_temporal_predicate_p3(proof, proof.num_steps).is_ok()
         }
 
         (SubProof::Arithmetic(proof), WitnessSpec::Arithmetic { inputs, .. }) => {
@@ -1628,7 +1630,7 @@ fn verify_single_proof(
                 .collect();
             let aggregate_commitment = poseidon2::hash_many(&fact_commitments);
 
-            verify_arithmetic_predicate(proof, proof.threshold, aggregate_commitment)
+            verify_arithmetic_predicate(proof, proof.threshold, aggregate_commitment).is_ok()
         }
 
         (
@@ -1646,7 +1648,7 @@ fn verify_single_proof(
                 .get(my_attribute)
                 .copied()
                 .unwrap_or(BabyBear::ZERO);
-            verify_relational_air(proof, my_commitment, *their_commitment)
+            verify_relational_air(proof, my_commitment, *their_commitment, BabyBear::ONE).is_ok()
         }
 
         (
@@ -1714,7 +1716,7 @@ fn verify_compound_range_proof(
         }
     }
 
-    verify_compound_predicate(compound_proof, &expected, formula)
+    verify_compound_predicate(compound_proof, &expected).is_ok()
 }
 
 /// Verify a composite proof.

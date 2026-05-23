@@ -80,9 +80,9 @@ pub fn verify_relational(
     proof: &RelationalProof,
     commitment_a: BabyBear,
     commitment_b: BabyBear,
-    result_bit: BabyBear,
+    _result_bit: BabyBear,
 ) -> Result<(), String> {
-    verify_relational_dsl(proof, commitment_a, commitment_b, result_bit)
+    verify_relational_dsl(proof, commitment_a, commitment_b)
 }
 
 // ============================================================================

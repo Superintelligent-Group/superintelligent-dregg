@@ -18,8 +18,8 @@ pub use base::{
     PREDICATE_DIFF_BITS, PredicateAir, PredicateOp, PredicateProof, PredicateType,
     PredicateWitness, compute_blinded_fact_commitment, compute_fact_commitment,
     generate_in_range_traces, generate_predicate_trace, generate_predicate_trace_full,
-    predicate_descriptor, prove_predicate, prove_predicate_dsl, verify_predicate,
-    verify_predicate_dsl,
+    predicate_descriptor, prove_in_range, prove_predicate, prove_predicate_dsl, verify_in_range,
+    verify_predicate, verify_predicate_dsl,
 };
 
 pub use relational::{

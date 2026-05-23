@@ -1,12 +1,23 @@
 //! Standalone pyana-stablecoin server binary.
+//!
+//! Uses the shared app-framework infrastructure for health, CORS, and configuration.
 
+use pyana_app_framework::server::{AppConfig, AppServer};
 use pyana_stablecoin::server::{AppState, router};
-use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() {
-    let app = router().with_state(AppState::new());
-    let listener = TcpListener::bind("0.0.0.0:3050").await.unwrap();
-    eprintln!("pyana-stablecoin listening on http://0.0.0.0:3050");
-    axum::serve(listener, app).await.unwrap();
+    let config = AppConfig::from_env().with_listen("0.0.0.0:3050");
+
+    let app_state = AppState::new();
+    let app_routes = router().with_state(app_state);
+
+    AppServer::new(config)
+        .service_name("pyana-stablecoin")
+        .with_health()
+        .with_cors()
+        .routes(app_routes)
+        .serve()
+        .await
+        .unwrap();
 }

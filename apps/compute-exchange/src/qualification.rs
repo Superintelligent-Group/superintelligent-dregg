@@ -132,7 +132,7 @@ fn verify_gpu_count_proof(
     })?;
 
     // GPU count proofs must use GTE (>=) predicate.
-    if predicate_proof.predicate_type != pyana_circuit::PredicateType::Gte {
+    if predicate_proof.op != pyana_circuit::PredicateType::Gte {
         return Err(QualificationError::ProofRejected(
             "GPU count proof must use >= predicate".to_string(),
         ));
@@ -150,7 +150,7 @@ fn verify_gpu_count_proof(
     let fact_commitment = predicate_proof.fact_commitment;
 
     // Verify the STARK proof cryptographically.
-    if verify_predicate(&predicate_proof, expected_threshold, fact_commitment) {
+    if verify_predicate(&predicate_proof, expected_threshold, fact_commitment).is_ok() {
         Ok(true)
     } else {
         Err(QualificationError::ProofRejected(
@@ -214,7 +214,7 @@ fn verify_predicate_proof(
 
     // Verify the predicate type matches.
     let expected_type = to_circuit_predicate_type(predicate_type);
-    if predicate_proof.predicate_type != expected_type {
+    if predicate_proof.op != expected_type {
         return Err(QualificationError::ProofRejected(
             "proof is for a different predicate type".to_string(),
         ));
@@ -232,7 +232,7 @@ fn verify_predicate_proof(
     let fact_commitment = predicate_proof.fact_commitment;
 
     // Verify the STARK proof cryptographically.
-    if verify_predicate(&predicate_proof, expected_threshold, fact_commitment) {
+    if verify_predicate(&predicate_proof, expected_threshold, fact_commitment).is_ok() {
         Ok(true)
     } else {
         Err(QualificationError::ProofRejected(

@@ -10,7 +10,7 @@ rust-version = "1.94.0"
 authors = ["Pyana Contributors"]
 license = "MIT OR Apache-2.0"
 homepage = "https://pyana.dev"
-repository = "https://github.com/pyana-dev/breadstuffs"
+repository = "https://github.com/emberian/pyana"
 
 [patch.crates-io]
 ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }

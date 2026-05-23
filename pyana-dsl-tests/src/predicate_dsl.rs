@@ -8,6 +8,7 @@ pub use pyana_dsl_runtime::predicates::base::*;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyana_circuit::field::BabyBear;
     use pyana_circuit::poseidon2::hash_fact;
     use pyana_circuit::stark::{self, StarkAir};
     use pyana_dsl_runtime::circuit::DslCircuit;
@@ -78,9 +79,9 @@ mod tests {
         let commitment = compute_fact_commitment(fh, sr);
 
         let witness = PredicateWitness {
-            private_value: 1000,
-            threshold: 500,
-            op: PredicateOp::Gte,
+            private_value: BabyBear::new(1000),
+            threshold: BabyBear::new(500),
+            predicate_type: PredicateOp::Gte,
             fact_commitment: commitment,
             fact_hash: Some(fh),
             state_root: Some(sr),

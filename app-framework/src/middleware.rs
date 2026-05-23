@@ -260,7 +260,7 @@ impl FromRequestParts<EngineState> for OptionalPresentation {
 // Shared types and helpers
 // =============================================================================
 
-/// Shared engine state that the extractors read from.
+/// Shared engine state that the extractors read from (RwLock variant).
 ///
 /// Wrap your `PyanaEngine` in this type and pass it as axum state:
 ///
@@ -268,8 +268,23 @@ impl FromRequestParts<EngineState> for OptionalPresentation {
 /// let state = EngineState(Arc::new(RwLock::new(engine)));
 /// Router::new().with_state(state);
 /// ```
+///
+/// Note: `PyanaEngine` is `Send` but not `Sync`. `tokio::sync::RwLock<T>` only
+/// requires `T: Send`, so this compiles correctly. If you need `std::sync::RwLock`
+/// semantics (blocking reads), use [`MutexEngineState`] instead.
 #[derive(Clone)]
 pub struct EngineState(pub Arc<RwLock<PyanaEngine>>);
+
+/// Shared engine state using `tokio::sync::Mutex` (single-accessor variant).
+///
+/// Use this when your app also needs mutable access to the engine (e.g., executing
+/// turns). The bounty-board pattern uses this variant.
+///
+/// ```ignore
+/// let state = MutexEngineState(Arc::new(Mutex::new(engine)));
+/// ```
+#[derive(Clone)]
+pub struct MutexEngineState(pub Arc<tokio::sync::Mutex<PyanaEngine>>);
 
 /// Header name for the base64-encoded presentation proof.
 pub const PROOF_HEADER: &str = "x-pyana-proof";
@@ -286,6 +301,163 @@ fn extract_str_header(headers: &axum::http::HeaderMap, name: &str) -> Option<Str
         .get(name)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string())
+}
+
+// =============================================================================
+// MutexEngineState impls (for apps that need mutable engine access)
+// =============================================================================
+
+impl FromRequestParts<MutexEngineState> for StrictPresentation {
+    type Rejection = (StatusCode, &'static str);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &MutexEngineState,
+    ) -> Result<Self, Self::Rejection> {
+        let proof_header = parts
+            .headers
+            .get(PROOF_HEADER)
+            .ok_or((StatusCode::UNAUTHORIZED, "missing X-Pyana-Proof header"))?;
+
+        let proof_b64 = proof_header.to_str().map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "X-Pyana-Proof header is not valid UTF-8",
+            )
+        })?;
+
+        use base64::Engine as _;
+        let proof_bytes = base64::engine::general_purpose::STANDARD
+            .decode(proof_b64)
+            .map_err(|_| (StatusCode::BAD_REQUEST, "X-Pyana-Proof is not valid base64"))?;
+
+        let action = extract_str_header(&parts.headers, ACTION_HEADER)
+            .ok_or((StatusCode::BAD_REQUEST, "missing X-Pyana-Action header"))?;
+        let resource = extract_str_header(&parts.headers, RESOURCE_HEADER)
+            .ok_or((StatusCode::BAD_REQUEST, "missing X-Pyana-Resource header"))?;
+
+        let engine = state.0.lock().await;
+        let federation_root = engine.federation_root();
+        let verified = engine
+            .verify_presentation_bytes(&proof_bytes, &action, &resource)
+            .map_err(|_| (StatusCode::BAD_REQUEST, "proof decode failed"))?;
+
+        if !verified {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "presentation proof verification failed",
+            ));
+        }
+
+        let verified_proof = pyana_circuit::VerifiedProof::with_federation_root(
+            pyana_circuit::proof_tier::stark_tier(),
+            pyana_circuit::proof_tier::STARK_BACKEND,
+            federation_root,
+        );
+
+        Ok(StrictPresentation {
+            action,
+            resource,
+            federation_root,
+            verified_proof,
+        })
+    }
+}
+
+impl FromRequestParts<MutexEngineState> for OptionalPresentation {
+    type Rejection = (StatusCode, &'static str);
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &MutexEngineState,
+    ) -> Result<Self, Self::Rejection> {
+        let proof_header = match parts.headers.get(PROOF_HEADER) {
+            Some(h) => h,
+            None => {
+                return Ok(OptionalPresentation {
+                    verified: false,
+                    action: None,
+                    resource: None,
+                    federation_root: None,
+                    error: Some("missing X-Pyana-Proof header".into()),
+                });
+            }
+        };
+
+        let proof_b64 = match proof_header.to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                return Ok(OptionalPresentation {
+                    verified: false,
+                    action: None,
+                    resource: None,
+                    federation_root: None,
+                    error: Some("X-Pyana-Proof header is not valid UTF-8".into()),
+                });
+            }
+        };
+
+        use base64::Engine as _;
+        let proof_bytes = match base64::engine::general_purpose::STANDARD.decode(proof_b64) {
+            Ok(b) => b,
+            Err(e) => {
+                return Ok(OptionalPresentation {
+                    verified: false,
+                    action: None,
+                    resource: None,
+                    federation_root: None,
+                    error: Some(format!("X-Pyana-Proof is not valid base64: {e}")),
+                });
+            }
+        };
+
+        let action = extract_str_header(&parts.headers, ACTION_HEADER);
+        let resource = extract_str_header(&parts.headers, RESOURCE_HEADER);
+
+        let (action_str, resource_str) = match (action.as_deref(), resource.as_deref()) {
+            (Some(a), Some(r)) => (a, r),
+            _ => {
+                return Ok(OptionalPresentation {
+                    verified: false,
+                    action,
+                    resource,
+                    federation_root: None,
+                    error: Some(
+                        "missing X-Pyana-Action or X-Pyana-Resource header for binding check"
+                            .into(),
+                    ),
+                });
+            }
+        };
+
+        let engine = state.0.lock().await;
+        let federation_root = engine.federation_root();
+        let result = engine.verify_presentation_bytes(&proof_bytes, action_str, resource_str);
+
+        match result {
+            Ok(true) => Ok(OptionalPresentation {
+                verified: true,
+                action,
+                resource,
+                federation_root: Some(federation_root),
+                error: None,
+            }),
+            Ok(false) => Ok(OptionalPresentation {
+                verified: false,
+                action,
+                resource,
+                federation_root: Some(federation_root),
+                error: Some("presentation proof verification failed".into()),
+            }),
+            Err(e) => Ok(OptionalPresentation {
+                verified: false,
+                action,
+                resource,
+                federation_root: Some(federation_root),
+                error: Some(format!("proof decode error: {e}")),
+            }),
+        }
+    }
 }
 
 // =============================================================================

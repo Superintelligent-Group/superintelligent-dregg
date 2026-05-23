@@ -1750,6 +1750,116 @@ impl AgentWallet {
         Signature(sig.to_bytes())
     }
 
+    /// Build a complete turn authorized by a held token.
+    ///
+    /// This is the high-level convenience method that wires together token authorization
+    /// and turn construction. It:
+    /// 1. Generates a STARK authorization proof from the held token.
+    /// 2. Constructs a turn with the given effects targeting the specified cell.
+    /// 3. Signs the turn with this wallet's identity.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The held authorization token granting access.
+    /// * `target` - The cell to apply effects to.
+    /// * `effects` - The effects to include in the turn's action.
+    /// * `action_name` - The action being authorized (e.g., "write", "transfer").
+    /// * `resource_name` - The resource being accessed (e.g., "balance", "state").
+    /// * `fee` - The computron fee for this turn.
+    ///
+    /// # Returns
+    ///
+    /// A [`SignedTurn`] ready for submission, or an error if authorization proof
+    /// generation fails.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use pyana_sdk::AgentWallet;
+    /// # use pyana_cell::CellId;
+    /// # use pyana_turn::Effect;
+    /// # let wallet = AgentWallet::new();
+    /// # let token = todo!();
+    /// # let target = CellId::derive_raw(&[0; 32], &[0; 32]);
+    /// let signed_turn = wallet.build_authorized_turn(
+    ///     &token,
+    ///     target,
+    ///     vec![Effect::Transfer { target, amount: 100 }],
+    ///     "transfer",
+    ///     "balance",
+    ///     100, // fee
+    /// ).unwrap();
+    /// ```
+    pub fn build_authorized_turn(
+        &self,
+        token: &HeldToken,
+        target: CellId,
+        effects: Vec<Effect>,
+        action_name: &str,
+        resource_name: &str,
+        fee: u64,
+    ) -> Result<SignedTurn, SdkError> {
+        use pyana_token::AuthRequest;
+        use pyana_turn::action::{Action, Authorization, DelegationMode};
+        use pyana_turn::forest::{CallForest, CallTree};
+
+        // 1. Generate authorization STARK proof.
+        let request = AuthRequest {
+            service: Some(resource_name.to_string()),
+            action: Some(action_name.to_string()),
+            ..Default::default()
+        };
+
+        let presentation = self.authorize(token, &request, VerificationMode::FullyPrivate)?;
+        let proof_bytes = match &presentation {
+            AuthorizationPresentation::Private { proof, .. } => proof.clone(),
+            AuthorizationPresentation::Selective { proof, .. } => proof.clone(),
+            AuthorizationPresentation::Trusted { .. } => {
+                // Trusted mode doesn't produce proof bytes for wire transmission.
+                // Use an empty vec; the executor will accept signature-based auth.
+                Vec::new()
+            }
+        };
+
+        // 2. Build the turn with proof authorization.
+        let action = Action {
+            target,
+            label: action_name.to_string(),
+            authorization: Authorization::Proof {
+                proof: proof_bytes,
+                action: action_name.to_string(),
+                resource: resource_name.to_string(),
+            },
+            effects,
+            delegation: DelegationMode::None,
+        };
+
+        let tree = CallTree {
+            action,
+            children: vec![],
+        };
+
+        let turn = Turn {
+            agent: self.cell_id("default"),
+            nonce: 0, // Caller should set appropriately or use a TurnBuilder
+            fee,
+            call_forest: CallForest { roots: vec![tree] },
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: Vec::new(),
+            conservation_proof: None,
+            sovereign_witnesses: Default::default(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+        };
+
+        // 3. Sign the turn.
+        Ok(self.sign_turn(&turn))
+    }
+
     /// Compute and sign the delegation envelope binding.
     ///
     /// The signing message is:
@@ -2270,10 +2380,7 @@ impl AgentWallet {
         let state_root = Self::bytes_to_babybear(&proof_key);
 
         // Convert inputs to BabyBear values and compute per-attribute fact hashes.
-        let input_values: Vec<BabyBear> = inputs
-            .iter()
-            .map(|(_, v)| BabyBear::new(*v as u32))
-            .collect();
+        let input_values: Vec<u32> = inputs.iter().map(|(_, v)| *v as u32).collect();
 
         let fact_commitments: Vec<BabyBear> = inputs
             .iter()
@@ -2656,7 +2763,7 @@ impl AgentWallet {
                     // Convert to PredicateProof with Gte semantics (committed threshold
                     // proves value >= threshold).
                     pyana_circuit::PredicateProof {
-                        predicate_type: pyana_circuit::PredicateType::Gte,
+                        op: pyana_circuit::PredicateType::Gte,
                         threshold: p.threshold_commitment,
                         fact_commitment: p.fact_commitment,
                         stark_proof: p.stark_proof,

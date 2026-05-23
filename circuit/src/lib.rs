@@ -80,6 +80,7 @@ pub mod ivc;
 // Backward-compatible shim modules (type definitions + re-exports from DSL).
 pub mod accumulator_air;
 pub mod arithmetic_predicate_air;
+pub mod block_transition_air;
 pub mod compound_predicate_air;
 pub mod derivation_air;
 pub mod fold_air;
@@ -88,10 +89,12 @@ pub mod garbled_air;
 pub mod merkle_air;
 pub mod merkle_types;
 pub mod multi_step_air;
+pub mod native_signature_air;
 pub mod note_spending_air;
 pub mod poseidon2_air;
 pub mod predicate_air;
 pub mod relational_predicate_air;
+pub mod schnorr_air;
 #[cfg(feature = "plonky3")]
 pub mod temporal_predicate_air;
 
@@ -104,6 +107,7 @@ pub mod poseidon2;
 pub mod presentation;
 
 pub mod committed_threshold;
+pub mod effect_interp;
 pub mod effect_vm;
 pub mod garbled;
 pub mod native_signature;
@@ -197,6 +201,40 @@ pub use presentation::{
     AuthorizationProof, PresentationAir, PresentationProof, PresentationVerification,
     PresentationWitness, RealPresentationProof, prove_authorization,
 };
+// Re-export predicate types at crate root for backward compatibility.
+pub use predicate_air::{
+    PredicateAir, PredicateProof, PredicateType, PredicateWitness, compute_fact_commitment,
+    prove_in_range, prove_predicate, verify_in_range, verify_predicate,
+};
+
+// Re-export arithmetic predicate types at crate root.
+pub use arithmetic_predicate_air::{
+    ArithExpr, ArithPredicate, ArithmeticPredicateProof, ArithmeticPredicateWitness, CompareOp,
+    compute_arithmetic_fact_commitment, prove_arithmetic_dsl, prove_arithmetic_predicate,
+    verify_arithmetic_dsl, verify_arithmetic_predicate,
+};
+
+// Re-export relational predicate types at crate root.
+pub use relational_predicate_air::{
+    RelationType, RelationalPredicateProof, RelationalPredicateWitness, RelationalProof,
+    RelationalWitness, compute_value_commitment, prove_relational, prove_value_comparison,
+    verify_relational,
+};
+
+// Re-export multi-step authorization proving functions.
+pub use multi_step_air::{
+    MAX_DELEGATION_DEPTH, prove_authorization_stark, try_prove_authorization_stark,
+    verify_authorization_stark,
+};
+
+/// Backward-compatible module alias for predicate types.
+pub mod predicate_types {
+    pub use crate::arithmetic_predicate_air::*;
+    pub use crate::dsl::predicates::compute_blinded_fact_commitment;
+    pub use crate::predicate_air::*;
+    pub use crate::relational_predicate_air::*;
+}
+
 // Schnorr signature scheme over BabyBear^8 elliptic curve.
 pub use babybear8::BabyBear8;
 pub use schnorr_curve::{CurvePoint, GENERATOR as SCHNORR_GENERATOR};

@@ -200,6 +200,16 @@ pub struct TurnExecutor {
     /// Uses `RefCell` for interior mutability: `apply_effect` takes `&self` but
     /// factory validation needs `&mut` for recording budget usage.
     pub factory_registry: std::cell::RefCell<pyana_cell::FactoryRegistry>,
+    /// Optional epoch minter for computron supply management.
+    ///
+    /// When configured, the executor calls `maybe_mint()` at each block to
+    /// check for epoch boundaries and credit the treasury with newly minted
+    /// computrons. This prevents the deflationary death spiral where all
+    /// computrons are eventually burned.
+    ///
+    /// Uses `RefCell` for interior mutability since minting is called from
+    /// within the execute path which takes `&self`.
+    pub epoch_minter: Option<std::cell::RefCell<crate::economics::EpochMinter>>,
 }
 
 impl TurnExecutor {
@@ -226,6 +236,7 @@ impl TurnExecutor {
             committed_escrows: Mutex::new(HashMap::new()),
             committed_escrow_amounts: Mutex::new(HashMap::new()),
             factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
+            epoch_minter: None,
         }
     }
 
@@ -256,6 +267,7 @@ impl TurnExecutor {
             committed_escrows: Mutex::new(HashMap::new()),
             committed_escrow_amounts: Mutex::new(HashMap::new()),
             factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
+            epoch_minter: None,
         }
     }
 
@@ -282,6 +294,7 @@ impl TurnExecutor {
             committed_escrows: Mutex::new(HashMap::new()),
             committed_escrow_amounts: Mutex::new(HashMap::new()),
             factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
+            epoch_minter: None,
         }
     }
 
@@ -321,6 +334,37 @@ impl TurnExecutor {
     /// execution time, the treasury share is burned instead.
     pub fn set_treasury_cell(&mut self, cell_id: CellId) {
         self.treasury_cell = Some(cell_id);
+    }
+
+    /// Configure epoch-based computron minting to prevent deflationary deadlock.
+    ///
+    /// When set, the executor will mint new computrons to the treasury cell at
+    /// epoch boundaries. Call [`apply_epoch_minting`](Self::apply_epoch_minting)
+    /// at each block to trigger minting when appropriate.
+    ///
+    /// # Arguments
+    ///
+    /// * `minter` - The configured epoch minter with policy parameters.
+    pub fn set_epoch_minter(&mut self, minter: crate::economics::EpochMinter) {
+        self.epoch_minter = Some(std::cell::RefCell::new(minter));
+    }
+
+    /// Apply epoch-based minting if the current block height crosses an epoch boundary.
+    ///
+    /// Call this once per block (typically at block start, before processing turns).
+    /// Returns `Some(MintResult)` if computrons were minted, `None` otherwise.
+    ///
+    /// This prevents the deflationary death spiral: since 20% of every fee is
+    /// burned and no new supply is created, the system would eventually run out
+    /// of computrons. Epoch minting provides controlled issuance to the treasury,
+    /// which distributes via governance (staking rewards, grants, fee subsidies).
+    pub fn apply_epoch_minting(
+        &self,
+        ledger: &mut pyana_cell::Ledger,
+    ) -> Option<crate::economics::MintResult> {
+        let minter_cell = self.epoch_minter.as_ref()?;
+        let mut minter = minter_cell.borrow_mut();
+        minter.maybe_mint(ledger, self.block_height)
     }
 
     /// Execute a conditional turn by first resolving its condition.
@@ -1968,7 +2012,54 @@ impl TurnExecutor {
         // Bearer caps carry their own delegation proof and MUST always be verified,
         // regardless of target cell permission level.
         if let Authorization::Bearer(bearer_proof) = &action.authorization {
-            return self.verify_bearer_cap(bearer_proof, ledger, path);
+            self.verify_bearer_cap(bearer_proof, ledger, path)?;
+
+            // Enforce bearer facet: if the bearer proof has an allowed_effects mask,
+            // verify that all effects in the action are within it.
+            // If the bearer proof has no explicit mask, check whether the delegator's
+            // capability has a facet constraint (inherited facet).
+            let effective_mask = bearer_proof.allowed_effects.or_else(|| {
+                // Look up the delegator's capability to see if it has a facet.
+                // For SignedDelegation, we can find the delegator by pk.
+                match &bearer_proof.delegation_proof {
+                    crate::action::DelegationProofData::SignedDelegation {
+                        delegator_pk, ..
+                    } => ledger
+                        .iter()
+                        .find(|(_, cell)| cell.public_key == *delegator_pk)
+                        .and_then(|(_, cell)| {
+                            cell.capabilities
+                                .capabilities_for(&bearer_proof.target)
+                                .into_iter()
+                                .find(|cap| cap.permissions != AuthRequired::Impossible)
+                                .and_then(|cap| cap.allowed_effects)
+                        }),
+                    // For STARK delegations, the delegator is anonymous — facet must be
+                    // explicitly specified in the bearer proof if needed.
+                    crate::action::DelegationProofData::StarkDelegation { .. } => None,
+                }
+            });
+
+            if let Some(mask) = effective_mask {
+                if mask != 0 {
+                    let effects_mask = action
+                        .effects
+                        .iter()
+                        .fold(0u32, |acc, e| acc | e.effect_kind_mask());
+                    if effects_mask != 0 && effects_mask & mask != effects_mask {
+                        return Err((
+                            TurnError::BearerCapFacetViolation {
+                                target: bearer_proof.target,
+                                attempted_effects_mask: effects_mask,
+                                allowed_mask: mask,
+                            },
+                            path.to_vec(),
+                        ));
+                    }
+                }
+            }
+
+            return Ok(());
         }
 
         // Determine ALL required permissions for this action's effects.
@@ -2068,15 +2159,22 @@ impl TurnExecutor {
                 Authorization::Signature(r, s) => {
                     self.verify_ed25519_signature(action, target_cell, r, s, path, turn_nonce)
                 }
-                Authorization::Breadstuff(token) => self.check_breadstuff(
-                    ledger,
-                    actor_cell_id,
-                    token,
-                    action_name,
-                    auth_required,
-                    path,
-                    action.target,
-                ),
+                Authorization::Breadstuff(token) => {
+                    let effects_mask = action
+                        .effects
+                        .iter()
+                        .fold(0u32, |acc, e| acc | e.effect_kind_mask());
+                    self.check_breadstuff(
+                        ledger,
+                        actor_cell_id,
+                        token,
+                        action_name,
+                        auth_required,
+                        path,
+                        action.target,
+                        effects_mask,
+                    )
+                }
                 _ => Err((
                     TurnError::PermissionDenied {
                         cell: action.target,
@@ -2086,6 +2184,13 @@ impl TurnExecutor {
                     path.to_vec(),
                 )),
             },
+            // NOTE on revocation checking for Proof auth:
+            // ZK proofs are anonymous — the verifier cannot determine WHICH capability
+            // the prover used, so per-capability revocation cannot be enforced at
+            // verification time. Revocation for ZK-authorized actions must be proven
+            // at proof-generation time (the circuit must include a non-revocation check
+            // as part of its public inputs). This is an inherent limitation of the
+            // ZK auth model and is by design.
             AuthRequired::Proof => match &action.authorization {
                 Authorization::Proof {
                     proof_bytes,
@@ -2122,15 +2227,22 @@ impl TurnExecutor {
                     bound_resource,
                     path,
                 ),
-                Authorization::Breadstuff(token) => self.check_breadstuff(
-                    ledger,
-                    actor_cell_id,
-                    token,
-                    action_name,
-                    auth_required,
-                    path,
-                    action.target,
-                ),
+                Authorization::Breadstuff(token) => {
+                    let effects_mask = action
+                        .effects
+                        .iter()
+                        .fold(0u32, |acc, e| acc | e.effect_kind_mask());
+                    self.check_breadstuff(
+                        ledger,
+                        actor_cell_id,
+                        token,
+                        action_name,
+                        auth_required,
+                        path,
+                        action.target,
+                        effects_mask,
+                    )
+                }
                 Authorization::Bearer(proof) => self.verify_bearer_cap(proof, ledger, path),
                 Authorization::Unchecked => Err((
                     TurnError::PermissionDenied {
@@ -2272,6 +2384,13 @@ impl TurnExecutor {
     /// list, not the target's. The actor presents a breadstuff token they hold as
     /// proof of their authority to act on the target cell. The matching capability
     /// must also reference the action's target cell (target-scoped).
+    ///
+    /// Beyond existence, this now enforces:
+    /// - Expiry: the capability's `expires_at` must not have passed.
+    /// - Revocation: if the capability's breadstuff matches a revocation channel, it
+    ///   must not be tripped.
+    /// - Facets: if the capability has `allowed_effects`, the action's effects must
+    ///   be within the mask.
     fn check_breadstuff(
         &self,
         ledger: &Ledger,
@@ -2281,6 +2400,7 @@ impl TurnExecutor {
         auth_required: &AuthRequired,
         path: &[usize],
         target_id: CellId,
+        effects_mask: pyana_cell::EffectMask,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         let actor_cell = ledger.get(actor_cell_id).ok_or_else(|| {
             (
@@ -2288,22 +2408,82 @@ impl TurnExecutor {
                 path.to_vec(),
             )
         })?;
-        let has_matching = actor_cell
+
+        // Find the SPECIFIC matching capability (not just any-match).
+        let matching_cap = actor_cell
             .capabilities
             .iter()
-            .any(|cap| cap.breadstuff.as_ref() == Some(token) && cap.target == target_id);
-        if has_matching {
-            Ok(())
-        } else {
-            Err((
+            .find(|cap| cap.breadstuff.as_ref() == Some(token) && cap.target == target_id);
+
+        let cap = matching_cap.ok_or_else(|| {
+            (
                 TurnError::PermissionDenied {
                     cell: target_id,
                     action: action_name.to_string(),
                     required: auth_required.clone(),
                 },
                 path.to_vec(),
-            ))
+            )
+        })?;
+
+        // Check expiry: if the capability has an expires_at, it must not have passed.
+        if let Some(expires_at) = cap.expires_at {
+            if self.block_height > expires_at {
+                return Err((
+                    TurnError::BreadstuffExpired {
+                        actor: *actor_cell_id,
+                        target: target_id,
+                        expires_at,
+                        current_height: self.block_height,
+                    },
+                    path.to_vec(),
+                ));
+            }
         }
+
+        // Check facet (allowed_effects): if the capability restricts effects, the
+        // action's combined effects mask must be within the allowed set.
+        if let Some(mask) = cap.allowed_effects {
+            if mask != 0 && effects_mask != 0 {
+                // Any bit in effects_mask that is NOT in the cap's mask is a violation.
+                if effects_mask & mask != effects_mask {
+                    return Err((
+                        TurnError::BreadstuffFacetViolation {
+                            actor: *actor_cell_id,
+                            target: target_id,
+                            attempted_effects_mask: effects_mask,
+                            allowed_mask: mask,
+                        },
+                        path.to_vec(),
+                    ));
+                }
+            }
+        }
+
+        // Check revocation channel: if the breadstuff matches a registered revocation
+        // channel, verify the channel hasn't been tripped.
+        if let Some(ref channels) = self.revocation_channels {
+            if let Err(_) = channels.check_exercise_permitted(
+                token,
+                self.block_height,
+                self.block_height,
+                self.max_introduction_lifetime,
+            ) {
+                // Only reject if this is actually a registered channel (not just any breadstuff).
+                if channels.get(token).is_some() {
+                    return Err((
+                        TurnError::BreadstuffRevoked {
+                            actor: *actor_cell_id,
+                            target: target_id,
+                            channel_id: *token,
+                        },
+                        path.to_vec(),
+                    ));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Verify a bearer capability proof: the parallel authorization path for capabilities
@@ -2427,6 +2607,32 @@ impl TurnExecutor {
                             },
                             path.to_vec(),
                         ));
+                    }
+
+                    // Facet attenuation check: if the delegator's capability has a facet
+                    // restriction, the bearer's facet (if any) must be a subset.
+                    // If the bearer doesn't specify a facet, it inherits the delegator's.
+                    // If the delegator has no facet, the bearer can specify any facet.
+                    if let Some(delegator_mask) = cap.allowed_effects {
+                        if delegator_mask != 0 {
+                            if let Some(bearer_mask) = proof.allowed_effects {
+                                // Bearer specifies a facet — it must be a subset of delegator's.
+                                if !pyana_cell::is_facet_attenuation(delegator_mask, bearer_mask) {
+                                    return Err((
+                                        TurnError::BearerCapFacetAmplification {
+                                            target: proof.target,
+                                            delegator_mask,
+                                            bearer_mask,
+                                        },
+                                        path.to_vec(),
+                                    ));
+                                }
+                            }
+                            // If bearer doesn't specify a facet (None), it inherits the
+                            // delegator's mask. The effective facet is enforced at execution
+                            // time via the returned Ok + caller checking proof.allowed_effects
+                            // OR delegator_cap.allowed_effects.
+                        }
                     }
                 }
                 Ok(())

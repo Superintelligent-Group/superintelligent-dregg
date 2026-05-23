@@ -329,7 +329,7 @@ fn verify_predicate_proof(
 
     // Verify the predicate type matches what is required.
     let expected_type = to_circuit_predicate_type(predicate_type);
-    if predicate_proof.predicate_type != expected_type {
+    if predicate_proof.op != expected_type {
         return Err(QualificationError::ProofRejected(
             "proof is for a different predicate type".to_string(),
         ));
@@ -349,7 +349,7 @@ fn verify_predicate_proof(
     let fact_commitment = predicate_proof.fact_commitment;
 
     // Verify the STARK proof cryptographically.
-    if verify_predicate(&predicate_proof, expected_threshold, fact_commitment) {
+    if verify_predicate(&predicate_proof, expected_threshold, fact_commitment).is_ok() {
         Ok(true)
     } else {
         Err(QualificationError::ProofRejected(

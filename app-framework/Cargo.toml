@@ -7,7 +7,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Reusable application framework for pyana apps — proof middleware, content stores, escrow lifecycle"
+description = "Production application framework for pyana apps — server infra, admin auth, persistence, proof middleware, content stores, escrow lifecycle"
 
 [dependencies]
 pyana-sdk = { path = "../sdk" }
@@ -19,6 +19,7 @@ pyana-types = { path = "../types" }
 
 axum = "0.8"
 http = "1"
+tower-http = { version = "0.6", features = ["cors"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["full"] }
@@ -29,7 +30,6 @@ blake3 = "1"
 [features]
 default = []
 dev = ["pyana-sdk/dev"]
-middleware = []
 
 [lints]
 workspace = true

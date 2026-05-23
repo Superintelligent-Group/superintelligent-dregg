@@ -37,6 +37,18 @@ pub struct Constitution {
     pub timeout_waves: u64,
     /// Constitution version (incremented on each amendment).
     pub version: u64,
+    /// Grace period (in waves) before a recently-rejoined node can be evicted again.
+    /// Prevents oscillation in small federations where timeout-eviction + rejoin
+    /// creates a livelock cycle. Default: 2 * timeout_waves.
+    pub rejoin_grace_waves: u64,
+    /// Minimum duration (in waves) a node must be a member before it can be
+    /// evicted via timeout. Prevents rapid eviction of newly joined nodes that
+    /// haven't had time to produce blocks yet. Default: timeout_waves / 2.
+    pub min_membership_duration: u64,
+    /// When true, if more than 50% of participants timeout simultaneously,
+    /// membership changes are frozen (no evictions). This assumes a network
+    /// partition rather than mass node failure. Default: true.
+    pub partition_detection: bool,
 }
 
 impl Constitution {
@@ -54,6 +66,9 @@ impl Constitution {
             threshold,
             timeout_waves,
             version: 0,
+            rejoin_grace_waves: timeout_waves.saturating_mul(2),
+            min_membership_duration: timeout_waves / 2,
+            partition_detection: true,
         }
     }
 
@@ -359,6 +374,13 @@ pub struct ConstitutionManager {
     /// Pending timeout-leave proposals (participants for whom we've already
     /// proposed auto-leave, to avoid duplicate proposals).
     pending_timeout_leaves: std::collections::HashSet<[u8; 32]>,
+    /// Wave at which each participant joined (or rejoined) the federation.
+    /// Used for `min_membership_duration` enforcement and `rejoin_grace_waves`.
+    joined_at_wave: std::collections::HashMap<[u8; 32], u64>,
+    /// Whether membership changes are currently frozen due to partition detection.
+    /// Set to true when >50% of participants timeout simultaneously.
+    /// Cleared when activity resumes from a majority of participants.
+    pub membership_frozen: bool,
 }
 
 impl ConstitutionManager {
@@ -371,6 +393,12 @@ impl ConstitutionManager {
             .iter()
             .map(|k| (*k, 0u64))
             .collect();
+        // All initial participants are considered "joined at wave 0".
+        let joined_at_wave = constitution
+            .participants
+            .iter()
+            .map(|k| (*k, 0u64))
+            .collect();
         ConstitutionManager {
             current: constitution,
             votes: VoteTracker::new(),
@@ -378,6 +406,8 @@ impl ConstitutionManager {
             last_active_wave,
             current_wave: 0,
             pending_timeout_leaves: std::collections::HashSet::new(),
+            joined_at_wave,
+            membership_frozen: false,
         }
     }
 
@@ -427,9 +457,25 @@ impl ConstitutionManager {
             None => return false,
         };
 
+        // Track the joining node for grace period enforcement.
+        let joining_node = match &proposal {
+            MembershipProposal::Join { node_key, .. } => Some(*node_key),
+            _ => None,
+        };
+
         if self.current.apply_proposal(&proposal) {
             self.votes.mark_applied(proposal_block);
             self.history.push(self.current.clone());
+
+            // Record join time for newly added members (for min_membership_duration
+            // and rejoin_grace_waves enforcement).
+            if let Some(node_key) = joining_node {
+                self.joined_at_wave.insert(node_key, self.current_wave);
+                // Initialize their last_active_wave so they get a full timeout
+                // window from their join time, not from wave 0.
+                self.last_active_wave.insert(node_key, self.current_wave);
+            }
+
             true
         } else {
             false
@@ -443,6 +489,7 @@ impl ConstitutionManager {
         if self.current.auto_evict_equivocator(proof) {
             self.last_active_wave.remove(&proof.creator);
             self.pending_timeout_leaves.remove(&proof.creator);
+            self.joined_at_wave.remove(&proof.creator);
             self.history.push(self.current.clone());
             true
         } else {
@@ -456,6 +503,9 @@ impl ConstitutionManager {
     ///
     /// This resets their timeout counter. If they were pending a timeout-leave
     /// proposal, that pending state is cleared.
+    ///
+    /// If membership is currently frozen (partition detection), checks whether
+    /// enough participants are now active to unfreeze.
     pub fn record_activity(&mut self, participant: &[u8; 32], wave: u64) {
         let entry = self.last_active_wave.entry(*participant).or_insert(0);
         if wave > *entry {
@@ -463,6 +513,23 @@ impl ConstitutionManager {
         }
         // If they were pending a timeout leave, they're back - clear it.
         self.pending_timeout_leaves.remove(participant);
+
+        // Auto-unfreeze: if membership is frozen and a majority of participants
+        // are now active (activity within timeout_waves), unfreeze.
+        if self.membership_frozen && self.current.timeout_waves > 0 {
+            let active_count = self
+                .current
+                .participants
+                .iter()
+                .filter(|p| {
+                    let last = self.last_active_wave.get(*p).copied().unwrap_or(0);
+                    wave.saturating_sub(last) <= self.current.timeout_waves
+                })
+                .count();
+            if active_count * 2 > self.current.participants.len() {
+                self.membership_frozen = false;
+            }
+        }
     }
 
     /// Advance the current wave and check for timeouts.
@@ -483,6 +550,11 @@ impl ConstitutionManager {
     ///
     /// Returns proposals for auto-leave due to timeout. Each participant
     /// is proposed at most once (tracked in `pending_timeout_leaves`).
+    ///
+    /// Anti-oscillation protections:
+    /// - `min_membership_duration`: newly joined nodes get a grace period before eviction.
+    /// - `rejoin_grace_waves`: recently rejoined nodes get extra timeout tolerance.
+    /// - `partition_detection`: if >50% timeout simultaneously, freezes membership changes.
     fn check_timeouts(&mut self) -> Vec<MembershipProposal> {
         let timeout_waves = self.current.timeout_waves;
         // If timeout is 0, auto-leave is disabled.
@@ -490,17 +562,54 @@ impl ConstitutionManager {
             return vec![];
         }
 
-        let mut proposals = Vec::new();
+        // If membership is frozen (partition detected), don't propose any evictions.
+        if self.membership_frozen {
+            return vec![];
+        }
 
+        let mut proposals = Vec::new();
+        let mut timed_out_count = 0usize;
+        let participant_count = self.current.participants.len();
+
+        // First pass: count how many participants would time out.
+        for participant in &self.current.participants {
+            let last_active = self.last_active_wave.get(participant).copied().unwrap_or(0);
+            let effective_timeout = self.effective_timeout_for(participant, timeout_waves);
+            if self.current_wave.saturating_sub(last_active) > effective_timeout {
+                timed_out_count += 1;
+            }
+        }
+
+        // Partition detection: if >50% of participants timeout simultaneously,
+        // this is likely a network partition, not mass node failure. Freeze
+        // membership changes to prevent cascading evictions.
+        if self.current.partition_detection
+            && participant_count > 1
+            && timed_out_count * 2 > participant_count
+        {
+            self.membership_frozen = true;
+            return vec![];
+        }
+
+        // Second pass: generate proposals for timed-out participants.
         for participant in &self.current.participants {
             // Skip if we've already proposed this participant for timeout-leave.
             if self.pending_timeout_leaves.contains(participant) {
                 continue;
             }
 
-            let last_active = self.last_active_wave.get(participant).copied().unwrap_or(0);
+            // min_membership_duration: don't evict nodes that haven't been members
+            // long enough to reasonably produce blocks.
+            let joined_at = self.joined_at_wave.get(participant).copied().unwrap_or(0);
+            let membership_duration = self.current_wave.saturating_sub(joined_at);
+            if membership_duration < self.current.min_membership_duration {
+                continue;
+            }
 
-            if self.current_wave.saturating_sub(last_active) > timeout_waves {
+            let last_active = self.last_active_wave.get(participant).copied().unwrap_or(0);
+            let effective_timeout = self.effective_timeout_for(participant, timeout_waves);
+
+            if self.current_wave.saturating_sub(last_active) > effective_timeout {
                 proposals.push(MembershipProposal::Leave {
                     node_key: *participant,
                     reason: LeaveReason::Timeout {
@@ -513,6 +622,29 @@ impl ConstitutionManager {
         }
 
         proposals
+    }
+
+    /// Compute the effective timeout for a participant, accounting for
+    /// `rejoin_grace_waves` (recently rejoined nodes get extra time).
+    fn effective_timeout_for(&self, participant: &[u8; 32], base_timeout: u64) -> u64 {
+        let joined_at = self.joined_at_wave.get(participant).copied().unwrap_or(0);
+        let membership_duration = self.current_wave.saturating_sub(joined_at);
+
+        // If the node joined recently (within rejoin_grace_waves), give it
+        // extra timeout tolerance to avoid evict-rejoin-evict oscillation.
+        if membership_duration < self.current.rejoin_grace_waves {
+            base_timeout.saturating_add(self.current.rejoin_grace_waves)
+        } else {
+            base_timeout
+        }
+    }
+
+    /// Unfreeze membership changes (call when activity resumes after a partition).
+    ///
+    /// Should be called when a majority of participants become active again,
+    /// indicating the partition has healed.
+    pub fn unfreeze_membership(&mut self) {
+        self.membership_frozen = false;
     }
 
     /// Get the last wave in which a participant was active.

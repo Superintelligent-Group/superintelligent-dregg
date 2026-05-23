@@ -60,9 +60,9 @@ pub use facet::{
     EFFECT_ESCROW_OPS, EFFECT_GRANT_CAPABILITY, EFFECT_INCREMENT_NONCE, EFFECT_INTRODUCE,
     EFFECT_NOTE_CREATE, EFFECT_NOTE_SPEND, EFFECT_OBLIGATION_OPS, EFFECT_REVOKE_CAPABILITY,
     EFFECT_SEAL_OPS, EFFECT_SET_FIELD, EFFECT_SET_PERMISSIONS, EFFECT_SET_VERIFICATION_KEY,
-    EFFECT_SOVEREIGN_OPS, EFFECT_TRANSFER, EffectMask, FACET_ADMIN, FACET_DELEGATOR,
-    FACET_READ_ONLY, FACET_STATE_WRITER, FACET_TRANSFER_ONLY, FacetBuilder, is_effect_permitted,
-    is_facet_attenuation,
+    EFFECT_SOVEREIGN_OPS, EFFECT_TRANSFER, EffectContext, EffectMask, ExtendedFacet, FACET_ADMIN,
+    FACET_DELEGATOR, FACET_READ_ONLY, FACET_STATE_WRITER, FACET_TRANSFER_ONLY, FacetBuilder,
+    FacetConstraint, FacetViolation, is_effect_permitted, is_facet_attenuation,
 };
 pub use factory::{
     CapGrant, CapTarget, CapTemplate, ChildVkStrategy, FactoryCreationParams, FactoryDescriptor,
@@ -73,7 +73,7 @@ pub use ledger::{
     CellStateDelta, DEFAULT_SOVEREIGN_TTL, Ledger, LedgerDelta, LedgerError, MembershipProof, Side,
     SovereignHistory, SovereignRegistration, WitnessDiff,
 };
-pub use note::{Note, NoteCommitment, NoteError, Nullifier, PositionedNote};
+pub use note::{Note, NoteBatcher, NoteCommitment, NoteError, Nullifier, PositionedNote};
 #[cfg(feature = "crypto")]
 pub use note_bridge::{
     BridgeDestination, BridgeError, BridgeReceipt, BridgeState, BridgedNullifierSet, PendingBridge,

@@ -337,9 +337,9 @@ pub fn generate_predicate_trace(
     op: PredicateOp,
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     generate_predicate_trace_full(PredicateWitness {
-        private_value,
-        threshold,
-        op,
+        private_value: BabyBear::new(private_value),
+        threshold: BabyBear::new(threshold),
+        predicate_type: op,
         fact_commitment,
         fact_hash: None,
         state_root: None,
@@ -353,27 +353,19 @@ pub fn generate_predicate_trace_full(
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     let mut row = vec![BabyBear::ZERO; TRACE_WIDTH];
 
-    row[PRIVATE_VALUE] = BabyBear::new(witness.private_value);
-    row[THRESHOLD] = BabyBear::new(witness.threshold);
+    row[PRIVATE_VALUE] = witness.private_value;
+    row[THRESHOLD] = witness.threshold;
     row[FACT_COMMITMENT] = witness.fact_commitment;
 
-    // Compute diff based on operation.
+    // Compute diff based on operation (using inner u32 for wrapping arithmetic).
+    let pv = witness.private_value.0;
+    let th = witness.threshold.0;
     let diff = match witness.predicate_type {
-        PredicateOp::Gte | PredicateOp::InRangeLow => {
-            witness.private_value.wrapping_sub(witness.threshold)
-        }
-        PredicateOp::Lte | PredicateOp::InRangeHigh => {
-            witness.threshold.wrapping_sub(witness.private_value)
-        }
-        PredicateOp::Gt => witness
-            .private_value
-            .wrapping_sub(witness.threshold)
-            .wrapping_sub(1),
-        PredicateOp::Lt => witness
-            .threshold
-            .wrapping_sub(witness.private_value)
-            .wrapping_sub(1),
-        PredicateOp::Neq => witness.private_value.wrapping_sub(witness.threshold),
+        PredicateOp::Gte | PredicateOp::InRangeLow => pv.wrapping_sub(th),
+        PredicateOp::Lte | PredicateOp::InRangeHigh => th.wrapping_sub(pv),
+        PredicateOp::Gt => pv.wrapping_sub(th).wrapping_sub(1),
+        PredicateOp::Lt => th.wrapping_sub(pv).wrapping_sub(1),
+        PredicateOp::Neq => pv.wrapping_sub(th),
     };
     row[DIFF] = BabyBear::new(diff);
 
@@ -420,7 +412,7 @@ pub fn generate_predicate_trace_full(
 
     row[ZERO_PAD] = BabyBear::ZERO;
 
-    let public_inputs = vec![BabyBear::new(witness.threshold), witness.fact_commitment];
+    let public_inputs = vec![witness.threshold, witness.fact_commitment];
 
     // Pad to 2 rows (minimum for STARK).
     let trace = vec![row.clone(), row];
@@ -510,7 +502,7 @@ pub fn prove_predicate_dsl(witness: &PredicateWitness) -> Result<PredicateProof,
 
     Ok(PredicateProof {
         op: witness.predicate_type,
-        threshold: BabyBear::new(witness.threshold),
+        threshold: witness.threshold,
         fact_commitment: witness.fact_commitment,
         stark_proof,
     })
@@ -529,4 +521,48 @@ pub fn verify_predicate_dsl(
     let circuit = DslCircuit::new(descriptor);
     let pi = vec![threshold, fact_commitment];
     stark::verify(&circuit, &proof.stark_proof, &pi)
+}
+
+/// Prove an in-range predicate: value >= low AND value <= high.
+///
+/// Returns a pair of proofs (low_bound, high_bound) or an error.
+pub fn prove_in_range(
+    value: BabyBear,
+    low: BabyBear,
+    high: BabyBear,
+    fact_commitment: BabyBear,
+) -> Result<(PredicateProof, PredicateProof), String> {
+    let low_witness = PredicateWitness {
+        private_value: value,
+        threshold: low,
+        predicate_type: PredicateOp::InRangeLow,
+        fact_commitment,
+        fact_hash: None,
+        state_root: None,
+        blinding: None,
+    };
+    let high_witness = PredicateWitness {
+        private_value: value,
+        threshold: high,
+        predicate_type: PredicateOp::InRangeHigh,
+        fact_commitment,
+        fact_hash: None,
+        state_root: None,
+        blinding: None,
+    };
+    let low_proof = prove_predicate_dsl(&low_witness)?;
+    let high_proof = prove_predicate_dsl(&high_witness)?;
+    Ok((low_proof, high_proof))
+}
+
+/// Verify an in-range proof pair: value >= low AND value <= high.
+pub fn verify_in_range(
+    low_proof: &PredicateProof,
+    high_proof: &PredicateProof,
+    low: BabyBear,
+    high: BabyBear,
+    fact_commitment: BabyBear,
+) -> bool {
+    verify_predicate_dsl(low_proof, low, fact_commitment).is_ok()
+        && verify_predicate_dsl(high_proof, high, fact_commitment).is_ok()
 }

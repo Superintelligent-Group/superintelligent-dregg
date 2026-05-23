@@ -46,7 +46,7 @@ pub fn assert_predicate_verifies(
 ) {
     use pyana_circuit::predicate_air::verify_predicate;
     assert!(
-        verify_predicate(proof, threshold, fact_commitment),
+        verify_predicate(proof, threshold, fact_commitment).is_ok(),
         "Predicate proof failed verification: threshold={:?}, fact_commitment={:?}",
         threshold,
         fact_commitment,
@@ -61,7 +61,7 @@ pub fn assert_predicate_rejects(
 ) {
     use pyana_circuit::predicate_air::verify_predicate;
     assert!(
-        !verify_predicate(proof, threshold, fact_commitment),
+        verify_predicate(proof, threshold, fact_commitment).is_err(),
         "Predicate proof SHOULD have been rejected but passed verification",
     );
 }

@@ -492,7 +492,7 @@ mod tests {
         assert_eq!(kimchi.public_input_count, 2);
         // Equality gate has non-zero coefficients
         let gate = &kimchi.gates[0];
-        assert_eq!(gate.typ, pyana_dsl_runtime::GateType::Generic);
+        assert_eq!(gate.typ, pyana_dsl_runtime::KimchiGateType::Generic);
         assert!(gate.coeffs.iter().any(|c| *c != 0));
     }
 
@@ -510,7 +510,7 @@ mod tests {
         let kimchi = different_parties_kimchi();
         assert!(!kimchi.gates.is_empty());
         let gate = &kimchi.gates[0];
-        assert_eq!(gate.typ, pyana_dsl_runtime::GateType::Generic);
+        assert_eq!(gate.typ, pyana_dsl_runtime::KimchiGateType::Generic);
         // Inverse-existence: coeffs[3]=1, coeffs[4]=-1
         assert_eq!(gate.coeffs[3], 1);
         assert_eq!(gate.coeffs[4], -1);
@@ -523,7 +523,7 @@ mod tests {
         assert!(kimchi.gates.len() > 1);
         // Find the SubAssign gate (coeffs[0]=1, coeffs[1]=-1, coeffs[2]=-1)
         let has_sub_gate = kimchi.gates.iter().any(|g| {
-            g.typ == pyana_dsl_runtime::GateType::Generic
+            g.typ == pyana_dsl_runtime::KimchiGateType::Generic
                 && g.coeffs.len() >= 3
                 && g.coeffs[0] == 1
                 && g.coeffs[1] == -1
@@ -539,7 +539,7 @@ mod tests {
         let poseidon_count = kimchi
             .gates
             .iter()
-            .filter(|g| g.typ == pyana_dsl_runtime::GateType::Poseidon)
+            .filter(|g| g.typ == pyana_dsl_runtime::KimchiGateType::Poseidon)
             .count();
         assert_eq!(
             poseidon_count, 32,

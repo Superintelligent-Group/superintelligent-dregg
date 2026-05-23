@@ -37,10 +37,24 @@ pub mod p3_temporal {
         }
     }
 
-    #[derive(Clone, Debug)]
     pub struct P3TemporalPredicateProof {
         pub proof: PyanaProof,
         pub num_steps: usize,
+    }
+
+    impl Clone for P3TemporalPredicateProof {
+        fn clone(&self) -> Self {
+            // PyanaProof doesn't derive Clone; this is only used in stubs
+            unimplemented!("P3TemporalPredicateProof::clone not available")
+        }
+    }
+
+    impl std::fmt::Debug for P3TemporalPredicateProof {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("P3TemporalPredicateProof")
+                .field("num_steps", &self.num_steps)
+                .finish_non_exhaustive()
+        }
     }
 
     pub fn prove_temporal_predicate_p3(

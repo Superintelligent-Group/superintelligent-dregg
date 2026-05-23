@@ -222,8 +222,19 @@ fn generate_predicate_proof(
         state_root: Some(credential.commitment),
     };
 
-    // Check satisfiability first.
-    if !witness.is_satisfiable() {
+    // Check satisfiability first via comparison.
+    let satisfiable = match witness.predicate_type {
+        PredicateType::Gte | PredicateType::InRangeLow => {
+            witness.private_value >= witness.threshold
+        }
+        PredicateType::Lte | PredicateType::InRangeHigh => {
+            witness.private_value <= witness.threshold
+        }
+        PredicateType::Gt => witness.private_value > witness.threshold,
+        PredicateType::Lt => witness.private_value < witness.threshold,
+        PredicateType::Neq => witness.private_value != witness.threshold,
+    };
+    if !satisfiable {
         return PredicateResult {
             attribute_name: attr_name.to_string(),
             predicate_type,
@@ -234,10 +245,10 @@ fn generate_predicate_proof(
     }
 
     // Generate the STARK proof.
-    let proof = predicate_air::prove_predicate(witness);
-    let verified = proof
-        .as_ref()
-        .is_some_and(|p| predicate_air::verify_predicate(p, threshold_field, fact_commitment));
+    let proof = pyana_circuit::predicate_air::prove_predicate(witness);
+    let verified = proof.as_ref().is_some_and(|p| {
+        pyana_circuit::predicate_air::verify_predicate(p, threshold_field, fact_commitment).is_ok()
+    });
 
     PredicateResult {
         attribute_name: attr_name.to_string(),

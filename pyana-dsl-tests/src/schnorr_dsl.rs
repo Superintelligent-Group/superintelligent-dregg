@@ -583,12 +583,8 @@ mod tests {
         };
         let (_trace, correct_pi) = generate_schnorr_trace(&witness);
 
-        // The original AIR catches wrong messages:
-        assert!(!schnorr_air::verify_schnorr_via_trace(
-            &pk,
-            &sig,
-            b"wrong message"
-        ));
+        // The original 3-arg verify_schnorr_via_trace was removed;
+        // verify via trace + wrong PI below instead.
 
         // With wrong message, the challenge e changes, which means the scalar
         // multiplication in phase 1 would be different. The trace is bound to

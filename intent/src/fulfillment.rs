@@ -496,10 +496,10 @@ fn verify_predicate_requirement(
         ))
     })?;
 
-    if proof.predicate_type != expected_type {
+    if proof.op != expected_type {
         return Err(FulfillmentError::PredicateProofFailed(format!(
             "proof type {:?} does not match requirement type '{}'",
-            proof.predicate_type, requirement.predicate_type
+            proof.op, requirement.predicate_type
         )));
     }
 
@@ -511,10 +511,11 @@ fn verify_predicate_requirement(
         )));
     }
 
-    if !verify_predicate(proof, expected_threshold, proof.fact_commitment) {
-        return Err(FulfillmentError::PredicateProofFailed(
-            "predicate proof cryptographic verification failed".into(),
-        ));
+    if let Err(e) = verify_predicate(proof, expected_threshold, proof.fact_commitment) {
+        return Err(FulfillmentError::PredicateProofFailed(format!(
+            "predicate proof cryptographic verification failed: {}",
+            e
+        )));
     }
 
     Ok(())

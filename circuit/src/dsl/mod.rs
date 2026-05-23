@@ -26,6 +26,7 @@ pub mod note_spending;
 pub mod predicates;
 pub mod revocation;
 pub mod temporal_absence;
+pub mod tiered_revocation;
 
 // Re-export primary smart contract runtime types.
 pub use circuit::{
@@ -65,7 +66,7 @@ pub use fold::{
 
 // Re-export legacy Merkle types for backward compatibility.
 pub use crate::merkle_types::{
-    MERKLE_AIR_WIDTH, MerkleAir, MerkleLevelWitness, MerkleWitness, TREE_DEPTH,
+    MERKLE_AIR_WIDTH, MerkleAir, MerkleLevelWitness, MerkleWitness,
     create_test_witness as create_test_witness_legacy,
 };
 
@@ -88,4 +89,9 @@ pub use derivation::{
     BODY_HASH_INV_START, EXTENDED_TRACE_WIDTH, MULTI_STEP_DSL_WIDTH, derivation_circuit_descriptor,
     derivation_dsl_circuit, generate_derivation_trace_dsl, generate_multi_step_trace_dsl,
     prove_authorization_dsl, prove_derivation_dsl, verify_authorization_dsl, verify_derivation_dsl,
+};
+
+// Re-export tiered revocation API.
+pub use tiered_revocation::{
+    CHECKPOINT_INTERVAL, DEFAULT_HOT_CAPACITY, TieredNonRevocationProof, TieredRevocationSet,
 };

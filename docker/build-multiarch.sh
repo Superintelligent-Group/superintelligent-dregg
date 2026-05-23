@@ -14,7 +14,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-REGISTRY="${REGISTRY:-ghcr.io/pyana-dev/breadstuffs}"
+REGISTRY="${REGISTRY:-ghcr.io/emberian/pyana}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 
 PUSH_FLAG=""

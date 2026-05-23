@@ -37,6 +37,20 @@ impl PartialEq for BabyBear {
 
 impl Eq for BabyBear {}
 
+impl PartialOrd for BabyBear {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BabyBear {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.canonical_val().cmp(&other.canonical_val())
+    }
+}
+
 impl std::hash::Hash for BabyBear {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

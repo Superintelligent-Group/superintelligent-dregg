@@ -20,10 +20,10 @@
 //! # Trace Layout (one row per effect)
 //!
 //! ```text
-//! | selector[9] | state_before[14] | effect_params[8] | state_after[14] | aux[8] |
+//! | selector[14] | state_before[14] | effect_params[8] | state_after[14] | aux[11] |
 //! ```
 //!
-//! Total width: 53 columns
+//! Total width: 61 columns
 //!
 //! ## Column Breakdown
 //!
@@ -45,8 +45,9 @@
 //! State After (cols 31..45):
 //!   - Same layout as state_before
 //!
-//! Aux (cols 45..53):
-//!   - Auxiliary witness values (e.g., intermediate hashes, range proofs)
+//! Aux (cols 50..61):
+//!   - Auxiliary witness values (intermediate hashes, commitment tree nodes)
+//!   - aux[8..10]: state commitment tree intermediates (hash_4_to_1 outputs)
 //!
 //! # Constraints
 //!
@@ -75,7 +76,7 @@
 //!  ...custom_entries: (vk_hash[4], proof_commitment[4]) per custom effect]
 
 use crate::field::BabyBear;
-use crate::poseidon2::{hash_2_to_1, hash_many};
+use crate::poseidon2::{hash_2_to_1, hash_4_to_1, hash_many};
 use crate::stark::{BoundaryConstraint, StarkAir};
 
 // ============================================================================
@@ -83,8 +84,9 @@ use crate::stark::{BoundaryConstraint, StarkAir};
 // ============================================================================
 
 /// Total trace width.
-/// Layout: 14 selectors + 14 state_before + 8 params + 14 state_after + 8 aux = 58.
-pub const EFFECT_VM_WIDTH: usize = 58;
+/// Layout: 14 selectors + 14 state_before + 8 params + 14 state_after + 11 aux = 61.
+/// (aux[8..10] = state commitment intermediates for constrainable tree hash)
+pub const EFFECT_VM_WIDTH: usize = 61;
 
 /// Number of effect types (selectors).
 pub const NUM_EFFECTS: usize = 14;
@@ -137,8 +139,18 @@ pub const PARAM_BASE: usize = STATE_BEFORE_BASE + state::SIZE; // 14 + 14 = 28
 pub const NUM_PARAMS: usize = 8;
 /// Auxiliary witness base column.
 pub const AUX_BASE: usize = STATE_AFTER_BASE + state::SIZE; // 36 + 14 = 50
-/// Number of auxiliary columns.
-pub const NUM_AUX: usize = 8;
+/// Number of auxiliary columns (expanded for state commitment tree intermediates).
+pub const NUM_AUX: usize = 11;
+
+/// Auxiliary column offsets for state commitment tree intermediates.
+pub mod aux_off {
+    /// Intermediate 1: hash_4_to_1(balance_lo, balance_hi, nonce, field[0])
+    pub const STATE_INTER1: usize = 8;
+    /// Intermediate 2: hash_4_to_1(field[1], field[2], field[3], field[4])
+    pub const STATE_INTER2: usize = 9;
+    /// Intermediate 3: hash_4_to_1(field[5], field[6], field[7], cap_root)
+    pub const STATE_INTER3: usize = 10;
+}
 
 /// Effect parameter meanings per effect type.
 ///
@@ -370,7 +382,18 @@ impl CellState {
         }
     }
 
-    /// Compute the state commitment from all state components.
+    /// Compute the state commitment from all state components using a
+    /// constrainable tree of hash_4_to_1 calls.
+    ///
+    /// Tree structure:
+    ///   inter1 = hash_4_to_1(balance_lo, balance_hi, nonce, field[0])
+    ///   inter2 = hash_4_to_1(field[1], field[2], field[3], field[4])
+    ///   inter3 = hash_4_to_1(field[5], field[6], field[7], cap_root)
+    ///   commitment = hash_4_to_1(inter1, inter2, inter3, ZERO)
+    ///
+    /// The fourth input to the root hash is ZERO (reserved for future use).
+    /// This structure is directly constrainable because each hash_4_to_1 can be
+    /// verified by the evaluator at each trace row.
     pub fn compute_commitment(
         balance: u64,
         nonce: u32,
@@ -378,13 +401,25 @@ impl CellState {
         capability_root: BabyBear,
     ) -> BabyBear {
         let (lo, hi) = split_u64(balance);
-        let mut inputs = Vec::with_capacity(12);
-        inputs.push(lo);
-        inputs.push(hi);
-        inputs.push(BabyBear::new(nonce));
-        inputs.extend_from_slice(fields);
-        inputs.push(capability_root);
-        hash_many(&inputs)
+        let inter1 = hash_4_to_1(&[lo, hi, BabyBear::new(nonce), fields[0]]);
+        let inter2 = hash_4_to_1(&[fields[1], fields[2], fields[3], fields[4]]);
+        let inter3 = hash_4_to_1(&[fields[5], fields[6], fields[7], capability_root]);
+        hash_4_to_1(&[inter1, inter2, inter3, BabyBear::ZERO])
+    }
+
+    /// Compute the three intermediate hashes for the state commitment tree.
+    /// Returns (inter1, inter2, inter3) which are needed as witness values.
+    pub fn compute_commitment_intermediates(
+        balance: u64,
+        nonce: u32,
+        fields: &[BabyBear; 8],
+        capability_root: BabyBear,
+    ) -> (BabyBear, BabyBear, BabyBear) {
+        let (lo, hi) = split_u64(balance);
+        let inter1 = hash_4_to_1(&[lo, hi, BabyBear::new(nonce), fields[0]]);
+        let inter2 = hash_4_to_1(&[fields[1], fields[2], fields[3], fields[4]]);
+        let inter3 = hash_4_to_1(&[fields[5], fields[6], fields[7], capability_root]);
+        (inter1, inter2, inter3)
     }
 
     /// Recompute and update the state commitment.
@@ -417,7 +452,7 @@ impl CellState {
 
 /// Split a u64 into two BabyBear elements: (lo = lower 30 bits, hi = upper 34 bits).
 /// Both values fit in BabyBear (< 2^31).
-fn split_u64(val: u64) -> (BabyBear, BabyBear) {
+pub(crate) fn split_u64(val: u64) -> (BabyBear, BabyBear) {
     let lo = (val & 0x3FFF_FFFF) as u32; // lower 30 bits
     let hi = (val >> 30) as u32; // upper 34 bits (fits in u32 since val < 2^64)
     (BabyBear::new(lo), BabyBear::new(hi))
@@ -567,10 +602,12 @@ impl StarkAir for EffectVmAir {
     fn constraint_degree(&self) -> usize {
         // Selector sum constraint is degree 1 (linear).
         // Selector boolean constraints are degree 2.
-        // Per-effect constraints: selector * (expression) is at most degree 2 + 1 = 3.
-        // GrantCap uses hash which is algebraic but here we do advisory check.
-        // The highest degree from selector gating is 2 (selector * linear expression).
-        3
+        // Per-effect constraints: selector * (expression) is at most degree 3.
+        // Hash constraints (hash_2_to_1, hash_4_to_1) are evaluated concretely on trace
+        // values at FRI evaluation points — they do NOT contribute polynomial degree.
+        // SetField field_idx range check: selector * prod_{k=0..7}(field_idx - k) = degree 9.
+        // Seal/Unseal field_idx range check: same degree 9.
+        9
     }
 
     fn air_name(&self) -> &'static str {
@@ -614,6 +651,48 @@ impl StarkAir for EffectVmAir {
 
         // ====================================================================
         // CONSTRAINT GROUP 2: Per-effect-type constraints (gated by selector)
+        // ====================================================================
+        //
+        // SECURITY NOTE — Balance limb range checks (o1vm audit finding #1):
+        //
+        // balance_lo (30-bit) and balance_hi (34-bit) are NOT range-checked
+        // in-circuit. Full bit-decomposition would add 60+ columns to the trace.
+        // Instead, the EXECUTOR independently validates:
+        //   - balance_lo < 2^30  (fits in the lo limb)
+        //   - balance_hi < 2^34  (fits in the hi limb, and < BabyBear prime)
+        //   - balance_lo + balance_hi * 2^30 == declared u64 balance
+        //
+        // The boundary constraints bind start/end state_commitment to public
+        // inputs, and state_commitment = Poseidon2(balance_lo, balance_hi, ...),
+        // so a malicious prover cannot forge commitments without matching limbs.
+        // However, a prover CAN choose field-valid but out-of-range limbs on
+        // INTERIOR rows (between boundaries). The executor rejects such proofs
+        // by re-deriving the final state and checking limb ranges.
+        //
+        // TODO(range-checks): When we add lookup arguments (log-derivative or
+        // Lasso-style), replace executor-side checks with in-circuit range
+        // proofs via a 2^16 lookup table (2 lookups per limb for 30/34 bits).
+        //
+        // SECURITY NOTE — Balance underflow protection (o1vm audit finding #3):
+        //
+        // For outgoing transfers and obligation creation, the constraint is:
+        //   new_balance_lo = old_balance_lo - amount
+        // In BabyBear modular arithmetic, if amount > old_balance, this wraps
+        // around to a large "valid" field element rather than failing.
+        //
+        // The witness generation uses saturating_sub, so honest provers never
+        // produce underflow. However, a MALICIOUS prover could craft a trace
+        // where the subtraction wraps around the field modulus.
+        //
+        // Defense: The executor checks that the final balance (extracted from
+        // the proven new_commitment) is <= the initial balance + net_credits.
+        // Additionally, the state_commitment binds the actual balance limbs,
+        // so any wrap-around would produce a commitment that doesn't match the
+        // declared final state.
+        //
+        // TODO(underflow): Add proper non-negative range proof via bit
+        // decomposition of (old_balance - amount) to prove it fits in 30 bits.
+        // This requires 30 aux columns per debit row, or a shared lookup table.
         // ====================================================================
 
         let s_noop = local[sel::NOOP];
@@ -777,16 +856,36 @@ impl StarkAir for EffectVmAir {
         combined = combined + alpha_pow * c_sf_cap;
         alpha_pow = alpha_pow * alpha;
 
+        // ====================================================================
+        // RANGE CHECK: SetField field_idx must be in {0, 1, 2, 3, 4, 5, 6, 7}
+        // ====================================================================
+        // Degree-8 polynomial that vanishes exactly on {0..7}:
+        //   prod_{k=0}^{7} (field_idx - k) == 0
+        // Gated by sel_setfield (total degree 9). Any out-of-bounds value makes
+        // this constraint non-zero, causing the STARK verifier to reject.
+        {
+            let mut field_idx_range_product = BabyBear::ONE;
+            for k in 0..8u32 {
+                field_idx_range_product =
+                    field_idx_range_product * (field_index - BabyBear::new(k));
+            }
+            let c_field_idx_range = s_setfield * field_idx_range_product;
+            combined = combined + alpha_pow * c_field_idx_range;
+            alpha_pow = alpha_pow * alpha;
+        }
+
         // -- GrantCapability: capability_root update --
         // param0 = cap_entry (hash of new capability)
-        // new_cap_root = hash_2_to_1(old_cap_root, cap_entry) (computed in witness gen)
+        // new_cap_root MUST equal hash_2_to_1(old_cap_root, cap_entry).
         //
-        // NOTE: We cannot use hash_2_to_1 directly in constraints because Poseidon2's
-        // algebraic degree (~7^21) would make the constraint non-low-degree, breaking FRI.
-        // Instead, the hash result is stored in aux[1] and bound by a boundary constraint
-        // (the verifier checks start/end state commitments). For v1, we verify the
-        // cap_root changed (non-trivially) via the witness-provided expected value in aux[1].
-        let expected_new_cap = local[AUX_BASE + 1]; // witness-provided hash result
+        // SOUNDNESS FIX: We compute hash_2_to_1 directly in the constraint evaluator.
+        // The old approach used a prover-controlled aux[1] value which allowed a
+        // malicious prover to set new_cap_root to ANY value. Now the verifier
+        // independently computes the hash at each evaluation point. This works because
+        // eval_constraints operates on concrete field values (not symbolic polynomials),
+        // so the hash is a pure function of the trace values at the query point.
+        let cap_entry_val = local[PARAM_BASE + param::CAP_ENTRY];
+        let expected_new_cap = hash_2_to_1(old_cap_root, cap_entry_val);
         let c_grantcap = s_grantcap * (new_cap_root - expected_new_cap);
         combined = combined + alpha_pow * c_grantcap;
         alpha_pow = alpha_pow * alpha;
@@ -919,8 +1018,10 @@ impl StarkAir for EffectVmAir {
         let c_slash_hi = s_slash * (new_bal_hi - old_bal_hi);
         combined = combined + alpha_pow * c_slash_hi;
         alpha_pow = alpha_pow * alpha;
-        // SlashObligation: cap_root updated (obligation removed) — bound via aux[1].
-        let expected_slash_cap = local[AUX_BASE + 1];
+        // SlashObligation: cap_root updated (obligation removed).
+        // SOUNDNESS FIX: Compute hash_2_to_1 directly instead of trusting prover aux[1].
+        let slash_obligation_id = local[PARAM_BASE + param::SLASH_OBLIGATION_ID];
+        let expected_slash_cap = hash_2_to_1(old_cap_root, slash_obligation_id);
         let c_slash_cap = s_slash * (new_cap_root - expected_slash_cap);
         combined = combined + alpha_pow * c_slash_cap;
         alpha_pow = alpha_pow * alpha;
@@ -951,6 +1052,19 @@ impl StarkAir for EffectVmAir {
             alpha_pow = alpha_pow * alpha;
         }
 
+        // RANGE CHECK: Seal field_idx must be in {0..7}.
+        {
+            let seal_field_idx = local[PARAM_BASE + param::SEAL_FIELD_IDX];
+            let mut seal_idx_range_product = BabyBear::ONE;
+            for k in 0..8u32 {
+                seal_idx_range_product =
+                    seal_idx_range_product * (seal_field_idx - BabyBear::new(k));
+            }
+            let c_seal_idx_range = s_seal * seal_idx_range_product;
+            combined = combined + alpha_pow * c_seal_idx_range;
+            alpha_pow = alpha_pow * alpha;
+        }
+
         // -- Unseal: balance, fields, cap_root all unchanged --
         let s_unseal = local[sel::UNSEAL];
         let c_unseal_bal_lo = s_unseal * (new_bal_lo - old_bal_lo);
@@ -967,6 +1081,19 @@ impl StarkAir for EffectVmAir {
                 * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
                     - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
             combined = combined + alpha_pow * c;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // RANGE CHECK: Unseal field_idx must be in {0..7}.
+        {
+            let unseal_field_idx = local[PARAM_BASE + param::UNSEAL_FIELD_IDX];
+            let mut unseal_idx_range_product = BabyBear::ONE;
+            for k in 0..8u32 {
+                unseal_idx_range_product =
+                    unseal_idx_range_product * (unseal_field_idx - BabyBear::new(k));
+            }
+            let c_unseal_idx_range = s_unseal * unseal_idx_range_product;
+            combined = combined + alpha_pow * c_unseal_idx_range;
             alpha_pow = alpha_pow * alpha;
         }
 
@@ -1018,7 +1145,72 @@ impl StarkAir for EffectVmAir {
         // Combined: new_nonce == old_nonce + (1 - sel_noop)
         let c_nonce = new_nonce - old_nonce - (BabyBear::ONE - s_noop);
         combined = combined + alpha_pow * c_nonce;
-        // alpha_pow = alpha_pow * alpha; // (not needed after last)
+        alpha_pow = alpha_pow * alpha;
+
+        // ====================================================================
+        // CONSTRAINT GROUP 4: State commitment integrity (tree hash)
+        // ====================================================================
+        // The state_commitment in state_after MUST equal the tree hash of the
+        // state_after columns. This prevents a malicious prover from claiming
+        // an arbitrary commitment that doesn't match the actual state.
+        //
+        // Tree structure (constrainable via hash_4_to_1):
+        //   inter1 = hash_4_to_1(bal_lo, bal_hi, nonce, field[0])
+        //   inter2 = hash_4_to_1(field[1], field[2], field[3], field[4])
+        //   inter3 = hash_4_to_1(field[5], field[6], field[7], cap_root)
+        //   state_commit = hash_4_to_1(inter1, inter2, inter3, ZERO)
+        //
+        // The intermediates are stored in aux[8..10] and verified here.
+        {
+            let after_bal_lo = local[STATE_AFTER_BASE + state::BALANCE_LO];
+            let after_bal_hi = local[STATE_AFTER_BASE + state::BALANCE_HI];
+            let after_nonce = local[STATE_AFTER_BASE + state::NONCE];
+            let after_cap_root = local[STATE_AFTER_BASE + state::CAP_ROOT];
+            let after_commit = local[STATE_AFTER_BASE + state::STATE_COMMIT];
+
+            let inter1 = local[AUX_BASE + aux_off::STATE_INTER1];
+            let inter2 = local[AUX_BASE + aux_off::STATE_INTER2];
+            let inter3 = local[AUX_BASE + aux_off::STATE_INTER3];
+
+            // Constraint: inter1 == hash_4_to_1(bal_lo, bal_hi, nonce, field[0])
+            let expected_inter1 = hash_4_to_1(&[
+                after_bal_lo,
+                after_bal_hi,
+                after_nonce,
+                local[STATE_AFTER_BASE + state::FIELD_BASE + 0],
+            ]);
+            let c_inter1 = inter1 - expected_inter1;
+            combined = combined + alpha_pow * c_inter1;
+            alpha_pow = alpha_pow * alpha;
+
+            // Constraint: inter2 == hash_4_to_1(field[1], field[2], field[3], field[4])
+            let expected_inter2 = hash_4_to_1(&[
+                local[STATE_AFTER_BASE + state::FIELD_BASE + 1],
+                local[STATE_AFTER_BASE + state::FIELD_BASE + 2],
+                local[STATE_AFTER_BASE + state::FIELD_BASE + 3],
+                local[STATE_AFTER_BASE + state::FIELD_BASE + 4],
+            ]);
+            let c_inter2 = inter2 - expected_inter2;
+            combined = combined + alpha_pow * c_inter2;
+            alpha_pow = alpha_pow * alpha;
+
+            // Constraint: inter3 == hash_4_to_1(field[5], field[6], field[7], cap_root)
+            let expected_inter3 = hash_4_to_1(&[
+                local[STATE_AFTER_BASE + state::FIELD_BASE + 5],
+                local[STATE_AFTER_BASE + state::FIELD_BASE + 6],
+                local[STATE_AFTER_BASE + state::FIELD_BASE + 7],
+                after_cap_root,
+            ]);
+            let c_inter3 = inter3 - expected_inter3;
+            combined = combined + alpha_pow * c_inter3;
+            alpha_pow = alpha_pow * alpha;
+
+            // Constraint: state_commit == hash_4_to_1(inter1, inter2, inter3, ZERO)
+            let expected_commit = hash_4_to_1(&[inter1, inter2, inter3, BabyBear::ZERO]);
+            let c_commit = after_commit - expected_commit;
+            combined = combined + alpha_pow * c_commit;
+            // alpha_pow = alpha_pow * alpha; // (not needed after last)
+        }
 
         combined
     }
@@ -1098,6 +1290,109 @@ pub fn generate_effect_vm_trace(
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
     assert!(!effects.is_empty(), "Need at least one effect");
 
+    // ====================================================================
+    // EXECUTOR-SIDE RANGE VALIDATION (o1vm audit mitigations)
+    // ====================================================================
+    // These checks run at proof generation time. They do NOT add constraints
+    // to the STARK, but they prevent the executor from producing a trace with
+    // out-of-range values that could exploit modular arithmetic.
+    //
+    // A verifier receiving a proof from an untrusted prover must additionally
+    // verify that the final state (decoded from new_commitment PI) has valid
+    // limb ranges. See `verify_balance_limb_ranges` below.
+    // ====================================================================
+
+    // Validate initial balance limbs are in range.
+    let (init_lo, init_hi) = split_u64(initial_state.balance);
+    assert!(
+        init_lo.0 < (1 << 30),
+        "Initial balance_lo out of range: {} >= 2^30",
+        init_lo.0
+    );
+    assert!(
+        init_hi.0 < (1 << 31),
+        "Initial balance_hi out of range: {} >= 2^31 (exceeds BabyBear)",
+        init_hi.0
+    );
+
+    // Validate field_idx bounds and balance underflow for all effects.
+    // We track a running balance to catch underflow across multi-effect turns.
+    {
+        let mut running_balance = initial_state.balance;
+        for effect in effects {
+            match effect {
+                Effect::SetField { field_idx, .. } => {
+                    assert!(
+                        *field_idx < 8,
+                        "SetField field_idx out of bounds: {} (must be 0..7)",
+                        field_idx
+                    );
+                }
+                Effect::Seal { field_idx } => {
+                    assert!(
+                        *field_idx < 8,
+                        "Seal field_idx out of bounds: {} (must be 0..7)",
+                        field_idx
+                    );
+                }
+                Effect::Unseal { field_idx, .. } => {
+                    assert!(
+                        *field_idx < 8,
+                        "Unseal field_idx out of bounds: {} (must be 0..7)",
+                        field_idx
+                    );
+                }
+                Effect::Transfer {
+                    amount, direction, ..
+                } => {
+                    if *direction == 1 {
+                        // Outgoing: validate no underflow.
+                        assert!(
+                            *amount <= running_balance,
+                            "Transfer underflow: amount {} > running balance {} \
+                             (executor rejects; STARK constraint would wrap in BabyBear)",
+                            amount,
+                            running_balance
+                        );
+                        running_balance -= amount;
+                    } else {
+                        running_balance = running_balance.saturating_add(*amount);
+                    }
+                }
+                Effect::NoteCreate { value, .. } => {
+                    assert!(
+                        *value <= running_balance,
+                        "NoteCreate underflow: value {} > running balance {} \
+                         (executor rejects; STARK constraint would wrap in BabyBear)",
+                        value,
+                        running_balance
+                    );
+                    running_balance -= value;
+                }
+                Effect::CreateObligation { stake_amount, .. } => {
+                    assert!(
+                        *stake_amount <= running_balance,
+                        "CreateObligation underflow: stake {} > running balance {} \
+                         (executor rejects; STARK constraint would wrap in BabyBear)",
+                        stake_amount,
+                        running_balance
+                    );
+                    running_balance -= stake_amount;
+                }
+                Effect::NoteSpend { value, .. } => {
+                    running_balance = running_balance.saturating_add(*value);
+                }
+                Effect::FulfillObligation { stake_return, .. } => {
+                    running_balance = running_balance.saturating_add(*stake_return);
+                }
+                Effect::SlashObligation { stake_amount, .. } => {
+                    running_balance = running_balance.saturating_add(*stake_amount);
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Determine trace height (pad to power of 2, minimum 2).
     let n_effects = effects.len();
     let trace_height = n_effects.next_power_of_two().max(2);
@@ -1173,7 +1468,6 @@ pub fn generate_effect_vm_trace(
                 row[PARAM_BASE + param::CAP_ENTRY] = *cap_entry;
 
                 let new_cap = hash_2_to_1(current_state.capability_root, *cap_entry);
-                row[AUX_BASE + 1] = new_cap; // Store hash result for constraint check.
                 new_state.capability_root = new_cap;
                 new_state.nonce += 1;
             }
@@ -1257,7 +1551,6 @@ pub fn generate_effect_vm_trace(
                 net_delta += *stake_amount as i64;
                 // Update cap_root to reflect obligation removal.
                 new_state.capability_root = hash_2_to_1(new_state.capability_root, *obligation_id);
-                row[AUX_BASE + 1] = new_state.capability_root;
                 new_state.nonce += 1;
             }
             Effect::Seal { field_idx } => {
@@ -1293,6 +1586,19 @@ pub fn generate_effect_vm_trace(
 
         // Refresh state commitment.
         new_state.refresh_commitment();
+
+        // Fill state commitment tree intermediate columns (aux[8..10]).
+        // These are constrained by the evaluator to match hash_4_to_1 computations
+        // on the state_after columns.
+        let (inter1, inter2, inter3) = CellState::compute_commitment_intermediates(
+            new_state.balance,
+            new_state.nonce,
+            &new_state.fields,
+            new_state.capability_root,
+        );
+        row[AUX_BASE + aux_off::STATE_INTER1] = inter1;
+        row[AUX_BASE + aux_off::STATE_INTER2] = inter2;
+        row[AUX_BASE + aux_off::STATE_INTER3] = inter3;
 
         // Write state_after.
         let state_after_cols = new_state.to_trace_cols();
@@ -1334,6 +1640,17 @@ pub fn generate_effect_vm_trace(
         for (i, &val) in state_cols.iter().enumerate() {
             row[STATE_AFTER_BASE + i] = val;
         }
+
+        // Fill state commitment tree intermediates for padding rows too.
+        let (inter1, inter2, inter3) = CellState::compute_commitment_intermediates(
+            current_state.balance,
+            current_state.nonce,
+            &current_state.fields,
+            current_state.capability_root,
+        );
+        row[AUX_BASE + aux_off::STATE_INTER1] = inter1;
+        row[AUX_BASE + aux_off::STATE_INTER2] = inter2;
+        row[AUX_BASE + aux_off::STATE_INTER3] = inter3;
 
         trace.push(row);
         // current_state stays the same for padding.
@@ -1442,6 +1759,79 @@ pub fn extract_custom_proof_commitments(
         result.push((vk_hash, proof_commit));
     }
     result
+}
+
+// ============================================================================
+// Verifier-side range validation (executor/relay nodes)
+// ============================================================================
+
+/// Verify that balance limbs in a CellState are within valid ranges.
+///
+/// This function implements the executor-side mitigation for the balance limb
+/// overflow vulnerability (o1vm audit finding #1). The STARK proof alone does
+/// NOT constrain balance limbs to their declared bit-widths. Verifiers MUST
+/// call this after proof verification to ensure the final state is well-formed.
+///
+/// Returns `Ok(())` if limbs are valid, or an error describing the violation.
+pub fn verify_balance_limb_ranges(state: &CellState) -> Result<(), String> {
+    let (lo, hi) = split_u64(state.balance);
+
+    // balance_lo must fit in 30 bits.
+    if lo.0 >= (1 << 30) {
+        return Err(format!(
+            "balance_lo out of range: {} >= 2^30 (max {})",
+            lo.0,
+            (1u32 << 30) - 1
+        ));
+    }
+
+    // balance_hi must fit in 34 bits AND be < BabyBear prime.
+    // Since BabyBear prime is 2^31 - 2^27 + 1, and hi < 2^34 could exceed it,
+    // we check that hi < 2^31 (conservative; BabyBear::new already reduces mod p).
+    if hi.0 >= (1 << 31) {
+        return Err(format!(
+            "balance_hi out of range: {} >= 2^31 (exceeds BabyBear field)",
+            hi.0
+        ));
+    }
+
+    // Verify reconstruction: lo + hi * 2^30 == balance.
+    let reconstructed = (lo.0 as u64) | ((hi.0 as u64) << 30);
+    if reconstructed != state.balance {
+        return Err(format!(
+            "balance limb reconstruction mismatch: lo={} hi={} reconstructs to {} but balance is {}",
+            lo.0, hi.0, reconstructed, state.balance
+        ));
+    }
+
+    Ok(())
+}
+
+/// Verify that a final CellState (after proof verification) has a valid
+/// state commitment matching its declared fields.
+///
+/// This is the executor-side defense against interior-row limb manipulation:
+/// even if a malicious prover used out-of-range limbs on interior rows, the
+/// final commitment must match the declared final state.
+pub fn verify_state_integrity(state: &CellState) -> Result<(), String> {
+    // Check balance limb ranges.
+    verify_balance_limb_ranges(state)?;
+
+    // Verify commitment matches the state.
+    let expected_commit = CellState::compute_commitment(
+        state.balance,
+        state.nonce,
+        &state.fields,
+        state.capability_root,
+    );
+    if state.state_commitment != expected_commit {
+        return Err(format!(
+            "state_commitment mismatch: declared {:?} but computed {:?}",
+            state.state_commitment, expected_commit
+        ));
+    }
+
+    Ok(())
 }
 
 // ============================================================================

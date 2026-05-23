@@ -16,7 +16,7 @@ You will build a service where:
 - Rust 1.94+ (`rustup update stable`)
 - A clone of the pyana repository:
   ```sh
-  git clone https://github.com/pyana-dev/breadstuffs.git
+  git clone https://github.com/emberian/pyana.git
   cd breadstuffs
   ```
 

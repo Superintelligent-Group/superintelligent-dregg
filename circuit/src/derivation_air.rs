@@ -360,9 +360,19 @@ impl DerivationAir {
     pub fn new(witness: DerivationWitness) -> Self {
         Self { witness }
     }
+}
 
-    /// Generate trace and public inputs (delegates to DSL).
-    pub fn generate_trace(&self) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+impl crate::constraint_prover::Air for DerivationAir {
+    fn trace_width(&self) -> usize {
+        DERIVATION_AIR_WIDTH
+    }
+    fn num_public_inputs(&self) -> usize {
+        4
+    }
+    fn constraints(&self) -> Vec<crate::constraint_prover::Constraint> {
+        vec![] // Constraints evaluated by DSL runtime
+    }
+    fn generate_trace(&self) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         crate::dsl::derivation::generate_derivation_trace_dsl(&self.witness)
     }
 }
@@ -400,7 +410,11 @@ impl crate::stark::StarkAir for DerivationStarkAir {
     ) -> BabyBear {
         BabyBear::ZERO
     }
-    fn boundary_constraints(&self) -> Vec<crate::stark::BoundaryConstraint> {
+    fn boundary_constraints(
+        &self,
+        _public_inputs: &[BabyBear],
+        _trace_len: usize,
+    ) -> Vec<crate::stark::BoundaryConstraint> {
         vec![]
     }
 }

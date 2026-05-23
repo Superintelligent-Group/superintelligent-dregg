@@ -607,19 +607,12 @@ impl PredicateBackend for Plonky3Backend {
         let public_inputs = vec![threshold, fact_commitment];
         crate::fold_air::verify_fold_stark(&stark_proof, &public_inputs)
             .or_else(|_| {
-                // The predicate AIR is different from fold. Use direct verification.
-                use crate::predicate_air::{PredicateAir, PredicateType, PredicateWitness};
-                let dummy_witness = PredicateWitness {
-                    private_value: BabyBear::ZERO,
-                    threshold,
-                    predicate_type: PredicateType::Gte,
-                    fact_commitment,
-                    blinding: None,
-                    fact_hash: None,
-                    state_root: None,
-                };
-                let air = PredicateAir::new(dummy_witness);
-                stark::verify(&air, &stark_proof, &public_inputs)
+                // The predicate AIR is different from fold. Use DSL verification.
+                use crate::dsl::circuit::DslCircuit;
+                use crate::dsl::predicates::base::predicate_descriptor;
+                let descriptor = predicate_descriptor();
+                let circuit = DslCircuit::new(descriptor);
+                stark::verify(&circuit, &stark_proof, &public_inputs)
             })
             .map(|()| true)
             .map_err(|e| format!("Predicate STARK verification failed: {}", e))

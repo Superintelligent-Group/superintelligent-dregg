@@ -14,8 +14,19 @@ use crate::stark::{self, StarkProof};
 /// Multi-step AIR width.
 pub const MULTI_STEP_AIR_WIDTH: usize = DERIVATION_AIR_WIDTH + 5;
 
-/// Maximum derivation steps per proof.
+/// Maximum derivation steps per proof (single-proof AIR constraint).
 pub const MAX_STEPS: usize = 32;
+
+/// Maximum delegation chain depth across all composed proofs.
+///
+/// Bounds the total proving time for a delegation chain to approximately 50 seconds
+/// at ~500ms per step. Chains deeper than this are rejected at proof generation time
+/// to prevent DoS via unbounded recursive proving.
+///
+/// This limit applies to the total chain from root issuer to final delegate. A single
+/// proof covers up to MAX_STEPS steps; chains longer than MAX_STEPS use chunked
+/// derivation (multiple proofs composed). This cap limits the TOTAL depth.
+pub const MAX_DELEGATION_DEPTH: usize = 100;
 
 /// The "allow" predicate marker value.
 pub const ALLOW_PREDICATE: u32 = 0xA110;
@@ -180,7 +191,11 @@ impl crate::stark::StarkAir for MultiStepStarkAir {
         // Constraint evaluation delegates to DSL runtime.
         BabyBear::ZERO
     }
-    fn boundary_constraints(&self) -> Vec<crate::stark::BoundaryConstraint> {
+    fn boundary_constraints(
+        &self,
+        _public_inputs: &[BabyBear],
+        _trace_len: usize,
+    ) -> Vec<crate::stark::BoundaryConstraint> {
         vec![]
     }
 }
@@ -193,10 +208,43 @@ pub fn generate_multi_step_trace(
 }
 
 /// Prove multi-step authorization using STARK.
+/// Prove authorization, enforcing the delegation chain depth cap.
+///
+/// Returns a StarkProof if the witness is valid and within depth limits.
+///
+/// # Panics
+///
+/// Panics if the delegation chain exceeds [`MAX_DELEGATION_DEPTH`] steps.
+/// Callers that want a Result should use [`try_prove_authorization_stark`] instead.
 pub fn prove_authorization_stark(witness: &MultiStepWitness) -> StarkProof {
+    assert!(
+        witness.steps.len() <= MAX_DELEGATION_DEPTH,
+        "Delegation chain too deep: {} > {} (MAX_DELEGATION_DEPTH). \
+         Consider revoking intermediate delegates or flattening the chain.",
+        witness.steps.len(),
+        MAX_DELEGATION_DEPTH,
+    );
     let air = MultiStepStarkAir::new(witness.steps.len());
     let (trace, public_inputs) = generate_multi_step_trace(witness);
     stark::prove(&air, &trace, &public_inputs)
+}
+
+/// Try to prove authorization, returning an error if the chain is too deep.
+///
+/// This is the fallible version of [`prove_authorization_stark`]. Use when you
+/// want to handle depth violations gracefully (e.g., return an error to the user
+/// suggesting chain restructuring).
+pub fn try_prove_authorization_stark(witness: &MultiStepWitness) -> Result<StarkProof, String> {
+    if witness.steps.len() > MAX_DELEGATION_DEPTH {
+        return Err(format!(
+            "Delegation chain too deep: {} steps exceeds maximum of {}. \
+             Proving time would be approximately {}s which exceeds acceptable limits.",
+            witness.steps.len(),
+            MAX_DELEGATION_DEPTH,
+            witness.steps.len() as f64 * 0.5,
+        ));
+    }
+    Ok(prove_authorization_stark(witness))
 }
 
 /// Verify a multi-step authorization STARK proof.

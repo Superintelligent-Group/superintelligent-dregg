@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use redb::ReadableTable;
+use redb::{ReadableTable, ReadableTableMetadata};
 use serde::{Deserialize, Serialize};
 
 use pyana_blocklace::finality::{Block, BlockId, Blocklace, CheckpointData};

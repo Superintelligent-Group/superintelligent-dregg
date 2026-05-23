@@ -7441,12 +7441,20 @@ fn hash_tree_effects_test(tree: &crate::forest::CallTree, hasher: &mut blake3::H
 #[test]
 fn test_custom_program_proof_carrying_turn() {
     use pyana_circuit::field::BabyBear;
-    use pyana_circuit::sovereign_transition_air::bytes32_to_babybear;
     use pyana_dsl_runtime::{
         BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
         ConstraintExpr, PolyTerm, ProgramRegistry,
     };
     use std::collections::HashMap;
+
+    fn bytes32_to_babybear(bytes: &[u8; 32]) -> Vec<BabyBear> {
+        let mut result = Vec::with_capacity(8);
+        for chunk in bytes.chunks(4) {
+            let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            result.push(BabyBear(val % pyana_circuit::field::BABYBEAR_P));
+        }
+        result
+    }
 
     // === Step 1: Build a custom program descriptor ===
     // This is a simple "identity transition" circuit: new_balance == old_balance
@@ -7587,8 +7595,16 @@ fn test_custom_program_proof_carrying_turn() {
 #[test]
 fn test_custom_program_missing_from_registry_rejected() {
     use pyana_circuit::field::BabyBear;
-    use pyana_circuit::sovereign_transition_air::bytes32_to_babybear;
     use pyana_dsl_runtime::ProgramRegistry;
+
+    fn bytes32_to_babybear(bytes: &[u8; 32]) -> Vec<BabyBear> {
+        let mut result = Vec::with_capacity(8);
+        for chunk in bytes.chunks(4) {
+            let val = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            result.push(BabyBear(val % pyana_circuit::field::BABYBEAR_P));
+        }
+        result
+    }
 
     let mut executor = zero_cost_executor();
     // Empty registry — no programs deployed.
@@ -8033,6 +8049,7 @@ fn make_bearer_delegation(
         },
         expires_at,
         revocation_channel: None,
+        allowed_effects: None,
     }
 }
 
@@ -8470,6 +8487,7 @@ fn test_bearer_cap_stark_delegation_invalid_proof_rejected() {
         },
         expires_at: 1000,
         revocation_channel: None,
+        allowed_effects: None,
     };
     let turn = make_bearer_turn(
         bearer_id,

@@ -191,6 +191,43 @@ pub enum TurnError {
         allowed_mask: u32,
     },
 
+    /// A breadstuff (capability token) has expired.
+    BreadstuffExpired {
+        actor: CellId,
+        target: CellId,
+        expires_at: u64,
+        current_height: u64,
+    },
+
+    /// A breadstuff (capability token) has been revoked via its revocation channel.
+    BreadstuffRevoked {
+        actor: CellId,
+        target: CellId,
+        channel_id: ChannelId,
+    },
+
+    /// A breadstuff (capability token) was exercised with an effect not permitted by its facet.
+    BreadstuffFacetViolation {
+        actor: CellId,
+        target: CellId,
+        attempted_effects_mask: u32,
+        allowed_mask: u32,
+    },
+
+    /// A bearer capability was exercised with effects not permitted by its facet mask.
+    BearerCapFacetViolation {
+        target: CellId,
+        attempted_effects_mask: u32,
+        allowed_mask: u32,
+    },
+
+    /// A bearer capability's facet exceeds the delegator's facet (amplification).
+    BearerCapFacetAmplification {
+        target: CellId,
+        delegator_mask: u32,
+        bearer_mask: u32,
+    },
+
     /// A bearer capability proof has expired.
     BearerCapExpired {
         target: CellId,
@@ -468,6 +505,64 @@ impl core::fmt::Display for TurnError {
                     f,
                     "facet violation: actor {actor} tried {attempted_effect} on target {target} \
                      via cap slot {cap_slot}, but capability mask 0x{allowed_mask:08x} does not permit it"
+                )
+            }
+            TurnError::BreadstuffExpired {
+                actor,
+                target,
+                expires_at,
+                current_height,
+            } => {
+                write!(
+                    f,
+                    "breadstuff expired: actor {actor} -> target {target}, \
+                     expires_at={expires_at}, current_height={current_height}"
+                )
+            }
+            TurnError::BreadstuffRevoked {
+                actor,
+                target,
+                channel_id,
+            } => {
+                write!(
+                    f,
+                    "breadstuff revoked: actor {actor} -> target {target}, \
+                     channel {:02x}{:02x}...",
+                    channel_id[0], channel_id[1]
+                )
+            }
+            TurnError::BreadstuffFacetViolation {
+                actor,
+                target,
+                attempted_effects_mask,
+                allowed_mask,
+            } => {
+                write!(
+                    f,
+                    "breadstuff facet violation: actor {actor} -> target {target}, \
+                     attempted 0x{attempted_effects_mask:08x} but allowed 0x{allowed_mask:08x}"
+                )
+            }
+            TurnError::BearerCapFacetViolation {
+                target,
+                attempted_effects_mask,
+                allowed_mask,
+            } => {
+                write!(
+                    f,
+                    "bearer cap facet violation: target {target}, \
+                     attempted 0x{attempted_effects_mask:08x} but allowed 0x{allowed_mask:08x}"
+                )
+            }
+            TurnError::BearerCapFacetAmplification {
+                target,
+                delegator_mask,
+                bearer_mask,
+            } => {
+                write!(
+                    f,
+                    "bearer cap facet amplification: target {target}, \
+                     bearer mask 0x{bearer_mask:08x} exceeds delegator mask 0x{delegator_mask:08x}"
                 )
             }
             TurnError::BearerCapExpired {

@@ -190,7 +190,7 @@ if [ -n "$BOUNTY_ID" ]; then
     -d "{
       \"bounty_id\": \"$BOUNTY_ID\",
       \"worker_commitment\": [187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187,187],
-      \"completion_evidence\": {\"ExternalProof\": {\"url\": \"https://github.com/pyana-dev/breadstuffs/pull/42\", \"hash\": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]}},
+      \"completion_evidence\": {\"ExternalProof\": {\"url\": \"https://github.com/emberian/pyana/pull/42\", \"hash\": [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]}},
       \"completion_proof\": [1,2,3,4,5,6,7,8]
     }")
   echo "$SUBMIT_RESULT" | python3 -m json.tool 2>/dev/null || echo "$SUBMIT_RESULT"

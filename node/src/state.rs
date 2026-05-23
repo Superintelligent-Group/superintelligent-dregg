@@ -23,7 +23,7 @@ use pyana_dsl_runtime::ProgramRegistry;
 use pyana_sdk::AgentWallet;
 use pyana_store::{PersistentStore, Poseidon2NoteTree};
 
-use crate::federation_sync::GossipHandle;
+use crate::gossip::GossipHandle;
 use crate::routing_table::RoutingTable;
 
 // =============================================================================
