@@ -584,7 +584,7 @@ impl EpochConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::generate_keypair;
+    use crate::types::{Signature, SigningKey, generate_keypair, sign};
 
     /// Helper to create a ValidatorInfo with a random keypair.
     fn make_validator(epoch: u64) -> (ValidatorInfo, SigningKey) {

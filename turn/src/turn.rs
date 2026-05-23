@@ -188,6 +188,26 @@ impl TurnResult {
     }
 }
 
+/// The finality status of a committed turn receipt.
+///
+/// In full BFT mode, all receipts are `Final` (backed by quorum certificate).
+/// In solo mode, receipts for consensus-path turns are `Tentative` until
+/// peer nodes rejoin and validate them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Finality {
+    /// Fully finalized by BFT quorum (or fast-path certificate with quorum signatures).
+    Final,
+    /// Processed by a single node in solo mode, awaiting quorum validation on rejoin.
+    /// Safe under the assumption of no Byzantine adversaries (devnet, single-operator).
+    Tentative,
+}
+
+impl Default for Finality {
+    fn default() -> Self {
+        Finality::Final
+    }
+}
+
 /// A receipt produced when a turn is committed, providing cryptographic evidence.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TurnReceipt {
@@ -222,6 +242,11 @@ pub struct TurnReceipt {
     /// Contains exactly 64 bytes when set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executor_signature: Option<Vec<u8>>,
+    /// Finality status of this receipt.
+    /// `Final` when backed by a BFT quorum certificate or full fast-path threshold.
+    /// `Tentative` when produced by a solo-mode node awaiting peer validation.
+    #[serde(default)]
+    pub finality: Finality,
 }
 
 impl TurnReceipt {
@@ -265,6 +290,15 @@ impl TurnReceipt {
             hasher.update(&ev.topic);
             for d in &ev.data {
                 hasher.update(d);
+            }
+        }
+        // Finality status binding.
+        match self.finality {
+            Finality::Final => {
+                hasher.update(&[0x01]);
+            }
+            Finality::Tentative => {
+                hasher.update(&[0x02]);
             }
         }
         *hasher.finalize().as_bytes()

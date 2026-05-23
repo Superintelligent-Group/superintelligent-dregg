@@ -11,6 +11,7 @@ pyana-morpheus = { path = "../morpheus", optional = true }
 hints = { path = "../hints" }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"] }
+hex = "0.4"
 getrandom = { workspace = true }
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }

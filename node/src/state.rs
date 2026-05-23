@@ -4,7 +4,7 @@
 //! Arc<RwLock<>> for concurrent access from HTTP handlers and the
 //! federation sync background task.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -204,6 +204,29 @@ pub struct NodeStateInner {
     /// Items are accumulated and released in batches at fixed intervals to prevent
     /// timing correlation between intent matching and fulfillment publication.
     pub delay_pool: pyana_intent::delay_pool::DelayPool,
+
+    // ─── Event Log (REST polling endpoint) ────────────────────────────────────
+    /// Bounded ring buffer of recent committed events for the REST event stream
+    /// endpoint (`GET /api/events?since_height=N`). Capped at `MAX_EVENT_LOG` entries.
+    pub event_log: VecDeque<CommittedEvent>,
+}
+
+/// Maximum number of events retained in the ring buffer for REST polling.
+pub const MAX_EVENT_LOG: usize = 1000;
+
+/// A committed event stored in the ring buffer for the REST event stream.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct CommittedEvent {
+    /// Block height at which this event was committed.
+    pub height: u64,
+    /// Hex-encoded turn hash.
+    pub turn_hash: String,
+    /// Hex-encoded cell ID affected.
+    pub cell_id: String,
+    /// Effects applied (human-readable summary strings).
+    pub effects: Vec<String>,
+    /// Unix timestamp (seconds).
+    pub timestamp: i64,
 }
 
 /// An active atomic proposal tracked by the node.
@@ -393,6 +416,7 @@ impl NodeState {
                 delay_pool: pyana_intent::delay_pool::DelayPool::new(
                     pyana_intent::delay_pool::DelayPoolConfig::default(),
                 ),
+                event_log: VecDeque::new(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -459,6 +483,7 @@ impl NodeState {
                 delay_pool: pyana_intent::delay_pool::DelayPool::new(
                     pyana_intent::delay_pool::DelayPoolConfig::default(),
                 ),
+                event_log: VecDeque::new(),
             })),
             events_tx,
             gossip: Arc::new(RwLock::new(None)),
@@ -556,6 +581,14 @@ impl NodeState {
 // =============================================================================
 
 impl NodeStateInner {
+    /// Append a committed event to the ring buffer, evicting the oldest if at capacity.
+    pub fn push_event(&mut self, event: CommittedEvent) {
+        if self.event_log.len() >= MAX_EVENT_LOG {
+            self.event_log.pop_front();
+        }
+        self.event_log.push_back(event);
+    }
+
     /// Remove proposals older than `PROPOSAL_EXPIRY_SECS`.
     ///
     /// Called lazily from the proposal/vote handlers to bound memory usage.

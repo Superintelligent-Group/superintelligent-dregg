@@ -3356,19 +3356,14 @@ impl AgentWallet {
         // 7. Compute cell_id hash (must match executor's format).
         let cell_id_hash = *blake3::hash(cell_id.as_bytes()).as_bytes();
 
-        // 8. Generate the STARK proof.
+        // 8. Generate the STARK proof using EffectVmAir (DSL cutover).
+        let vm_effects = Self::convert_effects_to_vm(cell_id, &effects);
+        let initial_vm_state =
+            pyana_circuit::CellState::new(cell_state.state.balance, cell_state.state.nonce as u32);
         let (trace, public_inputs) =
-            pyana_circuit::sovereign_transition_air::generate_sovereign_transition_trace(
-                cell_state.state.balance,
-                transfer_amount,
-                direction,
-                &old_commitment,
-                &new_commitment,
-                &effects_hash,
-                &cell_id_hash,
-            );
+            pyana_circuit::generate_effect_vm_trace(&initial_vm_state, &vm_effects);
 
-        let air = pyana_circuit::SovereignTransitionAir;
+        let air = pyana_circuit::EffectVmAir::new(trace.len());
         let proof = pyana_circuit::stark::prove(&air, &trace, &public_inputs);
         let proof_bytes = pyana_circuit::stark::proof_to_bytes(&proof);
 
@@ -3442,6 +3437,54 @@ impl AgentWallet {
             hasher.update(&effect.hash());
         }
         *hasher.finalize().as_bytes()
+    }
+
+    /// Convert turn-level Effects into circuit-level effect_vm::Effects for STARK proving.
+    fn convert_effects_to_vm(
+        cell_id: &CellId,
+        effects: &[Effect],
+    ) -> Vec<pyana_circuit::effect_vm::Effect> {
+        use pyana_circuit::effect_vm::Effect as VmEffect;
+        let mut vm_effects = Vec::new();
+        for effect in effects {
+            match effect {
+                Effect::Transfer { from, to, amount } => {
+                    if from == cell_id {
+                        vm_effects.push(VmEffect::Transfer {
+                            amount: *amount,
+                            direction: 1, // outgoing
+                        });
+                    } else if to == cell_id {
+                        vm_effects.push(VmEffect::Transfer {
+                            amount: *amount,
+                            direction: 0, // incoming
+                        });
+                    }
+                }
+                Effect::SetField { cell, index, value } if cell == cell_id => {
+                    // Encode the first 4 bytes of the 32-byte field element as a BabyBear.
+                    let val_u32 = u32::from_le_bytes([value[0], value[1], value[2], value[3]]);
+                    vm_effects.push(VmEffect::SetField {
+                        field_idx: *index as u32,
+                        value: pyana_circuit::field::BabyBear::new(val_u32),
+                    });
+                }
+                Effect::IncrementNonce { cell } if cell == cell_id => {
+                    // Nonce increment is implicit in the VM (row-to-row nonce+1).
+                    // No explicit effect needed.
+                }
+                _ => {
+                    // Other effects (GrantCapability, EmitEvent, etc.) map to NoOp
+                    // in the VM for now. The VM trace handles them as state-preserving.
+                    vm_effects.push(VmEffect::NoOp);
+                }
+            }
+        }
+        // Must have at least one effect for the VM.
+        if vm_effects.is_empty() {
+            vm_effects.push(VmEffect::NoOp);
+        }
+        vm_effects
     }
 
     /// Store sovereign cell state in the wallet (agent maintains it).
@@ -4083,6 +4126,7 @@ mod tests {
             derivation_records: Vec::new(),
             emitted_events: Vec::new(),
             executor_signature: None,
+            finality: Default::default(),
         }
     }
 

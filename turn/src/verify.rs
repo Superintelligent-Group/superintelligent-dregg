@@ -315,6 +315,7 @@ mod tests {
             derivation_records: vec![],
             emitted_events: vec![],
             executor_signature: None,
+            finality: Default::default(),
         }
     }
 

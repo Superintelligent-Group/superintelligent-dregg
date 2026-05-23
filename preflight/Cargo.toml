@@ -1,0 +1,36 @@
+[package]
+name = "pyana-preflight"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Golden Master Preflight: end-to-end integration test gate for devnet -> testnet -> mainnet promotion"
+
+[[bin]]
+name = "pyana-preflight"
+path = "src/main.rs"
+
+[dependencies]
+pyana-sdk = { path = "../sdk" }
+pyana-circuit = { path = "../circuit" }
+pyana-turn = { path = "../turn" }
+pyana-cell = { path = "../cell" }
+pyana-intent = { path = "../intent" }
+pyana-commit = { path = "../commit" }
+pyana-federation = { path = "../federation" }
+pyana-bridge = { path = "../bridge" }
+pyana-types = { path = "../types" }
+token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
+
+blake3 = "1"
+curve25519-dalek = { version = "4", features = ["alloc"] }
+ed25519-dalek = { version = "2", features = ["std"] }
+getrandom = { workspace = true }
+postcard = { version = "1", features = ["use-std"] }
+tokio = { version = "1", features = ["full"] }
+
+[lints]
+workspace = true

@@ -6272,6 +6272,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyana-blocklace"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "postcard",
+ "proptest",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "pyana-bounty-board"
 version = "0.1.0"
 dependencies = [
@@ -6518,6 +6529,7 @@ dependencies = [
  "crossbeam-channel",
  "ed25519-dalek",
  "getrandom 0.3.4",
+ "hex",
  "hints",
  "postcard",
  "pyana-commit",
@@ -6562,6 +6574,8 @@ dependencies = [
  "axum 0.8.9",
  "blake3",
  "pyana-circuit",
+ "pyana-dsl-runtime",
+ "pyana-dsl-tests",
  "serde",
  "serde_json",
  "tokio",
@@ -6697,6 +6711,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyana-preflight"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "curve25519-dalek",
+ "ed25519-dalek",
+ "getrandom 0.3.4",
+ "postcard",
+ "pyana-bridge",
+ "pyana-cell",
+ "pyana-circuit",
+ "pyana-commit",
+ "pyana-federation",
+ "pyana-intent",
+ "pyana-sdk",
+ "pyana-turn",
+ "pyana-types",
+ "token",
+ "tokio",
+]
+
+[[package]]
 name = "pyana-sdk"
 version = "0.1.0"
 dependencies = [
@@ -6715,6 +6751,7 @@ dependencies = [
  "pyana-circuit",
  "pyana-commit",
  "pyana-dsl-runtime",
+ "pyana-dsl-tests",
  "pyana-intent",
  "pyana-trace",
  "pyana-turn",

@@ -17,6 +17,7 @@ pyana-bridge = { path = "../bridge" }
 pyana-circuit = { path = "../circuit" }
 pyana-commit = { path = "../commit" }
 pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
+pyana-dsl-tests = { path = "../pyana-dsl-tests" }
 pyana-intent = { path = "../intent" }
 pyana-wire = { path = "../wire" }
 macaroon = { workspace = true, features = ["crypto"] }

@@ -181,8 +181,8 @@ impl AnonymousMembershipProof {
             return false;
         }
 
-        // Verify the STARK proof.
-        use pyana_circuit::poseidon2_air::BlindedMerklePoseidon2StarkAir;
+        // Verify the STARK proof using DSL blinded Merkle circuit.
+        let circuit = pyana_dsl_runtime::descriptors::blinded_merkle_poseidon2_circuit();
         let public_inputs: Vec<BabyBear> = self
             .stark_proof
             .public_inputs
@@ -198,11 +198,6 @@ impl AnonymousMembershipProof {
             return false;
         }
 
-        stark::verify(
-            &BlindedMerklePoseidon2StarkAir,
-            &self.stark_proof,
-            &public_inputs,
-        )
-        .is_ok()
+        stark::verify(&circuit, &self.stark_proof, &public_inputs).is_ok()
     }
 }

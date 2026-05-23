@@ -19,15 +19,17 @@
 use pyana_cell::note::{Note, NoteCommitment, Nullifier};
 use pyana_circuit::BabyBear;
 use pyana_circuit::field::BABYBEAR_P;
-use pyana_circuit::non_revocation_air::{
-    SortedRevocationTree, prove_non_revocation, revocation_hash_to_field,
-};
+use pyana_circuit::non_revocation_air::{SortedRevocationTree, revocation_hash_to_field};
+// DSL-based non-revocation proving (30-bit range, sound).
 use pyana_circuit::note_spending_air::{
     NoteSpendingWitness, key_to_field_elements, prove_note_spend,
 };
 use pyana_circuit::poseidon2;
 use pyana_circuit::stark::{self, StarkProof};
 use pyana_commit::accumulator::{AccumulatorWitness, BabyBear4, PolynomialAccumulator};
+use pyana_dsl_tests::non_revocation_dsl::{
+    DslRevocationTree, generate_non_revocation_trace, non_revocation_dsl_circuit,
+};
 use pyana_token::AuthRequest;
 
 use crate::discovery::{PirTransport, PrivateDiscoveryClient};
@@ -523,7 +525,7 @@ impl AgentWallet {
     pub fn prove_not_revoked(
         &self,
         token: &HeldToken,
-        revocation_tree: &SortedRevocationTree,
+        revocation_tree: &DslRevocationTree,
     ) -> Result<NonRevocationProof, SdkError> {
         // Decode the token to verify it's structurally valid.
         let _decoded = token.decode()?;
@@ -550,14 +552,35 @@ impl AgentWallet {
             ancestor_hashes.push(revocation_hash_to_field(&step_hash));
         }
 
-        // Generate the non-revocation proof.
+        // Generate the non-revocation proof using DSL circuit (30-bit range, sound).
         let revocation_root = revocation_tree.root();
-        let proof = prove_non_revocation(&ancestor_hashes, revocation_tree).ok_or_else(|| {
-            SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(
-                "non-revocation proof generation failed: one or more ancestors are revoked"
-                    .to_string(),
-            ))
-        })?;
+
+        // For each ancestor, generate a non-membership witness and prove it.
+        // With the DSL circuit, we prove one ancestor at a time (single control row).
+        // Use the first ancestor (root issuer) as the primary proof.
+        let primary_hash = &ancestor_hashes[0];
+        let witness = revocation_tree
+            .prove_non_membership(primary_hash)
+            .ok_or_else(|| {
+                SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(
+                    "non-revocation proof generation failed: one or more ancestors are revoked"
+                        .to_string(),
+                ))
+            })?;
+
+        // Verify all other ancestors are also not revoked.
+        for hash in &ancestor_hashes[1..] {
+            if revocation_tree.prove_non_membership(hash).is_none() {
+                return Err(SdkError::Auth(pyana_bridge::AuthError::InvalidRequest(
+                    "non-revocation proof generation failed: one or more ancestors are revoked"
+                        .to_string(),
+                )));
+            }
+        }
+
+        let (trace, public_inputs) = generate_non_revocation_trace(&witness, revocation_root);
+        let circuit = non_revocation_dsl_circuit();
+        let proof = stark::prove(&circuit, &trace, &public_inputs);
 
         Ok(NonRevocationProof {
             proof,
@@ -656,22 +679,15 @@ pub fn verify_anonymous_presentation(
             .collect();
 
         let air_name = &real_stark.issuer_membership_stark_proof.air_name;
-        use pyana_circuit::poseidon2_air::BlindedMerklePoseidon2StarkAir;
-        use pyana_circuit::stark::StarkAir;
 
         // Must be a blinded proof for anonymous presentation.
-        if air_name != BlindedMerklePoseidon2StarkAir.air_name() {
+        if air_name != pyana_dsl_runtime::descriptors::BLINDED_MERKLE_AIR_NAME {
             return false;
         }
 
-        // Verify the STARK proof.
-        if stark::verify(
-            &BlindedMerklePoseidon2StarkAir,
-            &real_stark.issuer_membership_stark_proof,
-            &pi,
-        )
-        .is_err()
-        {
+        // Verify the STARK proof using DSL blinded Merkle circuit.
+        let circuit = pyana_dsl_runtime::descriptors::blinded_merkle_poseidon2_circuit();
+        if stark::verify(&circuit, &real_stark.issuer_membership_stark_proof, &pi).is_err() {
             return false;
         }
 

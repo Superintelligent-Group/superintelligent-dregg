@@ -338,9 +338,11 @@ fn resolve_inner(
             // Reconstruct public inputs as BabyBear field elements.
             let pi: Vec<BabyBear> = public_outputs.iter().map(|&v| BabyBear::new(v)).collect();
 
-            // Verify the STARK proof against the MerklePoseidon2 AIR.
-            let air = MerklePoseidon2StarkAir;
-            if stark::verify(&air, &stark_proof, &pi).is_err() {
+            // Verify the STARK proof using DSL circuit dispatch.
+            let circuit =
+                pyana_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
+                    .unwrap_or_else(|| pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+            if stark::verify(&circuit, &stark_proof, &pi).is_err() {
                 return ConditionalResult::InvalidProof("STARK verification failed".to_string());
             }
 
@@ -392,9 +394,11 @@ fn resolve_inner(
             // Reconstruct public inputs as BabyBear field elements.
             let pi: Vec<BabyBear> = public_outputs.iter().map(|&v| BabyBear::new(v)).collect();
 
-            // Verify the STARK proof against the MerklePoseidon2 AIR.
-            let air = MerklePoseidon2StarkAir;
-            if stark::verify(&air, &stark_proof, &pi).is_err() {
+            // Verify the STARK proof using DSL circuit dispatch.
+            let circuit =
+                pyana_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
+                    .unwrap_or_else(|| pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+            if stark::verify(&circuit, &stark_proof, &pi).is_err() {
                 return ConditionalResult::InvalidProof("STARK verification failed".to_string());
             }
 
@@ -788,6 +792,7 @@ mod tests {
             derivation_records: vec![],
             emitted_events: vec![],
             executor_signature: None,
+            finality: Default::default(),
         };
         // Sign the receipt hash with the executor key.
         let receipt_hash = receipt.receipt_hash();
@@ -830,6 +835,7 @@ mod tests {
             derivation_records: vec![],
             emitted_events: vec![],
             executor_signature: None,
+            finality: Default::default(),
         };
         let proof = ConditionProof::Receipt(receipt);
         let mut n = nullifiers();
@@ -868,6 +874,7 @@ mod tests {
             derivation_records: vec![],
             emitted_events: vec![],
             executor_signature: None,
+            finality: Default::default(),
         };
         let proof = ConditionProof::Receipt(receipt);
         let mut n = nullifiers();

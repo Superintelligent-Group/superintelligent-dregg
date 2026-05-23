@@ -13,7 +13,7 @@
 //! each level hashes (current, sibling) into a parent. This is structurally equivalent
 //! and demonstrates the same security property.
 //!
-//! # Trace Layout (width = 42)
+//! # Trace Layout (width = 70)
 //!
 //! For a single non-membership proof with TREE_DEPTH=4 levels:
 //!
@@ -24,21 +24,21 @@
 //! - col 3: left_position (tree index of left neighbor)
 //! - col 4: right_position (tree index of right neighbor)
 //! - col 5: diff_left = ancestor_hash - left_neighbor - 1
-//! - col 6..21: diff_left_bits[0..16] (bit decomposition for ordering range check)
-//! - col 22: diff_right = right_neighbor - ancestor_hash - 1
-//! - col 23..38: diff_right_bits[0..16] (bit decomposition for ordering range check)
-//! - col 39: is_control (1 on control rows, 0 on Merkle rows)
-//! - col 40: is_merkle_left (1 on left Merkle rows)
-//! - col 41: is_merkle_right (1 on right Merkle rows)
+//! - col 6..35: diff_left_bits[0..30] (bit decomposition for ordering range check)
+//! - col 36: diff_right = right_neighbor - ancestor_hash - 1
+//! - col 37..66: diff_right_bits[0..30] (bit decomposition for ordering range check)
+//! - col 67: is_control (1 on control rows, 0 on Merkle rows)
+//! - col 68: is_merkle_left (1 on left Merkle rows)
+//! - col 69: is_merkle_right (1 on right Merkle rows)
 //!
 //! ## Left Merkle rows (rows 1..=TREE_DEPTH):
 //! - col 0: current (hash being walked up)
 //! - col 1: sibling
 //! - col 2: parent = hash_fact(current, [sibling]) or hash_fact(sibling, [current])
 //! - col 3: direction_bit (0 = current is left child, 1 = current is right child)
-//! - col 39: is_control = 0
-//! - col 40: is_merkle_left = 1
-//! - col 41: is_merkle_right = 0
+//! - col 67: is_control = 0
+//! - col 68: is_merkle_left = 1
+//! - col 69: is_merkle_right = 0
 //!
 //! ## Right Merkle rows (rows TREE_DEPTH+1..=2*TREE_DEPTH):
 //! - Same layout as left Merkle rows but with is_merkle_right = 1
@@ -64,12 +64,18 @@ use pyana_dsl_runtime::circuit::{
 pub const TREE_DEPTH: usize = 4;
 
 /// Number of bits for the ordering range check.
-/// We use 16 bits here (sufficient for test values < 65536).
-/// For production, this would be 30 bits to cover the full BabyBear range.
-pub const ORDERING_BITS: usize = 16;
+///
+/// BabyBear p = 2013265921, (p-1)/2 = 1006632960 < 2^30 = 1073741824.
+/// To prove diff < (p-1)/2 (which implies canonical ordering), we prove that
+/// `(p-1)/2 - diff` fits in 30 bits. If diff >= (p-1)/2, the subtraction
+/// wraps to a value > 2^30 that cannot be decomposed into 30 bits.
+/// Using fewer bits (e.g., 16) is UNSOUND: a malicious prover can craft
+/// values that pass the 16-bit check but violate the ordering property.
+pub const ORDERING_BITS: usize = 30;
 
 /// Trace width for the non-revocation DSL circuit.
-pub const TRACE_WIDTH: usize = 42;
+/// 5 shared + 1 diff_left + 30 diff_left_bits + 1 diff_right + 30 diff_right_bits + 3 selectors = 70
+pub const TRACE_WIDTH: usize = 70;
 
 /// (p-1)/2 for BabyBear, used in ordering range checks.
 pub const HALF_P_MINUS_1: u32 = 1006632959;
@@ -91,10 +97,10 @@ pub mod col {
     pub const DIFF_RIGHT: usize = DIFF_LEFT_BITS_START + ORDERING_BITS; // 22
     pub const DIFF_RIGHT_BITS_START: usize = DIFF_RIGHT + 1; // 23
 
-    // Row type selectors
-    pub const IS_CONTROL: usize = 39;
-    pub const IS_MERKLE_LEFT: usize = 40;
-    pub const IS_MERKLE_RIGHT: usize = 41;
+    // Row type selectors (after: 5 shared + 1 diff_left + ORDERING_BITS + 1 diff_right + ORDERING_BITS)
+    pub const IS_CONTROL: usize = DIFF_RIGHT_BITS_START + super::ORDERING_BITS; // 67
+    pub const IS_MERKLE_LEFT: usize = IS_CONTROL + 1; // 68
+    pub const IS_MERKLE_RIGHT: usize = IS_MERKLE_LEFT + 1; // 69
 
     #[inline]
     pub const fn diff_left_bit(i: usize) -> usize {
@@ -454,7 +460,7 @@ pub fn non_revocation_circuit_descriptor() -> CircuitDescriptor {
     CircuitDescriptor {
         name: "pyana-non-revocation-dsl-v1".into(),
         trace_width: TRACE_WIDTH,
-        max_degree: 2, // Binary and Gated(Binary) are degree 2; Hash is degree 2 in DSL
+        max_degree: 3, // Gated(Binary) is degree 3: selector * col * (col - 1)
         columns,
         constraints,
         boundaries,
@@ -779,8 +785,8 @@ mod tests {
 
         // Count constraints:
         // 3 binary (selectors) + 2 gated binary (direction) + 2 hash (Merkle)
-        // + 2 ordering diff + 16 diff_left bits + 16 diff_right bits
-        // + 2 range check reconstruction + 1 adjacency = 44
+        // + 2 ordering diff + 30 diff_left bits + 30 diff_right bits
+        // + 2 range check reconstruction + 1 adjacency = 72
         let expected_constraints = 3 + 2 + 2 + 2 + ORDERING_BITS + ORDERING_BITS + 2 + 1;
         assert_eq!(
             desc.constraints.len(),

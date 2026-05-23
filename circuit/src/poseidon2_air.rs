@@ -348,6 +348,9 @@ impl StarkAir for MerklePoseidon2Air {
 /// Constraints:
 /// 1. Position validity: pos*(pos-1)*(pos-2)*(pos-3) = 0
 /// 2. Hash binding: parent == hash_4_to_1(children) computed via Lagrange selection
+#[deprecated(
+    note = "Use pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit(). This AIR is superseded by the DSL Merkle Poseidon2 circuit."
+)]
 pub struct MerklePoseidon2StarkAir;
 
 impl StarkAir for MerklePoseidon2StarkAir {
@@ -528,6 +531,9 @@ pub fn generate_merkle_poseidon2_trace(
 /// - Last row, col 5 = public_inputs[1] (root)
 ///
 /// NOTE: Row 0 col 0 is NOT publicly bound — the leaf_hash remains private.
+#[deprecated(
+    note = "Use pyana_dsl_runtime::descriptors::blinded_merkle_poseidon2_circuit(). This AIR is superseded by the DSL blinded Merkle circuit."
+)]
 pub struct BlindedMerklePoseidon2StarkAir;
 
 impl StarkAir for BlindedMerklePoseidon2StarkAir {

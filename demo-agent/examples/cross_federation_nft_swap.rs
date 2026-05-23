@@ -367,6 +367,7 @@ fn main() {
         derivation_records: vec![],
         emitted_events: vec![],
         executor_signature: None,
+        finality: Default::default(),
     };
 
     // Use resolve_condition to demonstrate the timeout logic
@@ -426,6 +427,7 @@ fn main() {
         derivation_records: vec![],
         emitted_events: vec![],
         executor_signature: None,
+        finality: Default::default(),
     };
 
     // Fresh conditional for this test

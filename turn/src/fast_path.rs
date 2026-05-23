@@ -400,6 +400,13 @@ pub fn process_fast_path_lock(
 /// - At least `threshold` (2f+1) signatures are present
 /// - All signatures are from distinct validators
 /// - All signatures are over the same turn_hash
+///
+/// The `threshold` parameter should be set based on the federation mode:
+/// - Full mode: `quorum_threshold(n)` (standard BFT threshold)
+/// - Solo mode: `1` (single local node signature is sufficient)
+///
+/// Use `pyana_federation::effective_quorum_threshold(mode, n)` to compute the
+/// correct threshold for the current operating mode.
 pub fn assemble_certificate(
     turn: Turn,
     turn_hash: [u8; 32],

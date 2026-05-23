@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use pyana_federation::transport::{NetworkConsensusNode, TcpFederationTransport};
 use pyana_federation::types::*;
-use pyana_federation::{ConsensusConfig, ConsensusState};
+use pyana_federation::{ConsensusConfig, ConsensusState, FederationMode};
 
 /// Simple argument parsing (no external dep).
 struct NodeConfig {
@@ -29,6 +29,7 @@ struct NodeConfig {
     peers: HashMap<usize, SocketAddr>,
     num_nodes: usize,
     round_interval: Duration,
+    federation_mode: FederationMode,
 }
 
 fn parse_args() -> Result<NodeConfig, String> {
@@ -44,6 +45,7 @@ fn parse_args() -> Result<NodeConfig, String> {
     let mut peers = HashMap::new();
     let mut num_nodes = None;
     let mut round_interval = Duration::from_secs(5);
+    let mut federation_mode = FederationMode::Full;
 
     let mut i = 1;
     while i < args.len() {
@@ -77,6 +79,12 @@ fn parse_args() -> Result<NodeConfig, String> {
                 let secs = args[i].parse::<u64>().map_err(|e| e.to_string())?;
                 round_interval = Duration::from_secs(secs);
             }
+            "--federation-mode" => {
+                i += 1;
+                federation_mode = args[i]
+                    .parse::<FederationMode>()
+                    .map_err(|e| e.to_string())?;
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
         i += 1;
@@ -92,6 +100,7 @@ fn parse_args() -> Result<NodeConfig, String> {
         peers,
         num_nodes,
         round_interval,
+        federation_mode,
     })
 }
 
@@ -105,7 +114,7 @@ async fn main() {
             eprintln!();
             eprintln!("Usage:");
             eprintln!(
-                "  pyana-federation-node --id <N> --listen <ADDR> --peers <ID=ADDR,...> [--num-nodes <N>] [--interval <SECS>]"
+                "  pyana-federation-node --id <N> --listen <ADDR> --peers <ID=ADDR,...> [--num-nodes <N>] [--interval <SECS>] [--federation-mode full|solo]"
             );
             eprintln!();
             eprintln!("  pyana-federation-node --local-demo");
@@ -119,12 +128,20 @@ async fn run_node(config: NodeConfig) {
         "[node {}] Starting federation node on {}",
         config.node_id, config.listen_addr
     );
+
+    let effective_threshold =
+        pyana_federation::effective_quorum_threshold(config.federation_mode, config.num_nodes);
     println!(
-        "[node {}] Federation: {} nodes, threshold={}",
-        config.node_id,
-        config.num_nodes,
-        ConsensusConfig::new(config.num_nodes).threshold
+        "[node {}] Federation: {} nodes, mode={}, effective_threshold={}",
+        config.node_id, config.num_nodes, config.federation_mode, effective_threshold,
     );
+    if config.federation_mode == FederationMode::Solo {
+        println!(
+            "[node {}] WARNING: Running in SOLO mode. No BFT safety guarantees. \
+             Receipts will have Tentative finality until peers rejoin.",
+            config.node_id
+        );
+    }
     println!("[node {}] Peers: {:?}", config.node_id, config.peers);
 
     let consensus_config = ConsensusConfig::new(config.num_nodes);

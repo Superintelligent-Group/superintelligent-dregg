@@ -10,8 +10,10 @@ use crate::credential::Credential;
 use crate::revocation::NonRevocationProof;
 use crate::{AttributeName, AttributeValue};
 use pyana_circuit::field::BabyBear;
-use pyana_circuit::non_revocation_air::SortedRevocationTree;
 use pyana_circuit::predicate_air::{self, PredicateProof, PredicateType, PredicateWitness};
+use pyana_dsl_tests::non_revocation_dsl::{
+    DslRevocationTree, generate_non_revocation_trace, non_revocation_dsl_circuit,
+};
 use std::collections::BTreeMap;
 
 /// A request from a verifier specifying what must be proven.
@@ -246,28 +248,34 @@ fn generate_predicate_proof(
     }
 }
 
-/// Generate a non-revocation proof for a credential.
+/// Generate a non-revocation proof for a credential using the DSL circuit.
 ///
 /// Proves that the credential's revocation hash does NOT appear in the
-/// given revocation tree.
+/// given revocation tree. Uses the 30-bit range check DSL circuit (sound).
 pub fn prove_non_revocation(
     credential: &Credential,
-    revocation_tree: &SortedRevocationTree,
+    revocation_tree: &DslRevocationTree,
 ) -> NonRevocationProof {
-    let ancestor_hashes = vec![credential.revocation_hash];
-    let proof =
-        pyana_circuit::non_revocation_air::prove_non_revocation(&ancestor_hashes, revocation_tree);
-
-    let is_valid = match &proof {
-        Some(p) => {
-            let root = revocation_tree.root();
-            pyana_circuit::non_revocation_air::verify_non_revocation(root, p).is_ok()
+    let witness = match revocation_tree.prove_non_membership(&credential.revocation_hash) {
+        Some(w) => w,
+        None => {
+            return NonRevocationProof {
+                revocation_root: revocation_tree.root(),
+                is_valid: false,
+            };
         }
-        None => false,
     };
 
+    let root = revocation_tree.root();
+    let (trace, public_inputs) = generate_non_revocation_trace(&witness, root);
+    let circuit = non_revocation_dsl_circuit();
+    let proof = pyana_circuit::stark::prove(&circuit, &trace, &public_inputs);
+
+    // Verify the generated proof.
+    let is_valid = pyana_circuit::stark::verify(&circuit, &proof, &public_inputs).is_ok();
+
     NonRevocationProof {
-        revocation_root: revocation_tree.root(),
+        revocation_root: root,
         is_valid,
     }
 }

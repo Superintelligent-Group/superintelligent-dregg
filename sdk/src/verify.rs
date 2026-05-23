@@ -105,10 +105,11 @@ pub fn verify_authorization_proof(
         }
     }
 
-    // SECURITY: Only accept Poseidon2 AIR proofs (production-grade, collision-resistant).
-    // No fallback to weaker AIRs — a failed verification is a failed verification.
-    use pyana_circuit::poseidon2_air::MerklePoseidon2StarkAir;
-    if stark::verify(&MerklePoseidon2StarkAir, &stark_proof, &pi).is_err() {
+    // SECURITY: All membership proofs verified via DSL circuits (DSL cutover).
+    // Dispatch to the correct DSL circuit based on the proof's air_name.
+    let circuit = pyana_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
+        .unwrap_or_else(|| pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+    if stark::verify(&circuit, &stark_proof, &pi).is_err() {
         return Ok(false);
     }
 
@@ -216,9 +217,10 @@ pub fn verify_selective_disclosure(
         }
     }
 
-    // 3. Verify the STARK proof cryptographically.
-    use pyana_circuit::poseidon2_air::MerklePoseidon2StarkAir;
-    if stark::verify(&MerklePoseidon2StarkAir, &stark_proof, &pi).is_err() {
+    // 3. Verify the STARK proof cryptographically using DSL circuit.
+    let circuit = pyana_dsl_runtime::descriptors::circuit_for_air_name(&stark_proof.air_name)
+        .unwrap_or_else(|| pyana_dsl_runtime::descriptors::merkle_poseidon2_circuit());
+    if stark::verify(&circuit, &stark_proof, &pi).is_err() {
         return Ok(false);
     }
 

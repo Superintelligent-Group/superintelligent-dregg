@@ -64,6 +64,9 @@ pub const DELTA_PI_LEN: usize = 2;
 ///   old_balance + amount = new_balance (incoming, direction=0)
 ///   delta_magnitude == transfer_amount (binds PI to proven value)
 ///   delta_sign == direction (binds PI to proven direction)
+#[deprecated(
+    note = "Use EffectVmAir for sovereign transitions. This AIR is superseded by the DSL-based Effect VM."
+)]
 pub struct SovereignTransitionAir;
 
 impl StarkAir for SovereignTransitionAir {

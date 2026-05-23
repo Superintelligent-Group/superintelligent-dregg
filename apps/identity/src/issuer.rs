@@ -9,12 +9,9 @@
 use crate::credential::{Credential, CredentialBuilder, CredentialSchema};
 use crate::{AttributeValue, CredentialId, HolderId, IssuerId};
 use pyana_circuit::field::BabyBear;
-use pyana_circuit::non_revocation_air::SortedRevocationTree;
 use pyana_circuit::poseidon2;
+use pyana_dsl_tests::non_revocation_dsl::{DslRevocationTree, TREE_DEPTH as REVOCATION_TREE_DEPTH};
 use std::collections::BTreeMap;
-
-/// Tree depth for the revocation Merkle tree.
-const REVOCATION_TREE_DEPTH: usize = 4;
 
 /// An issuer that can create and revoke credentials.
 pub struct IssuerRegistry {
@@ -29,7 +26,7 @@ pub struct IssuerRegistry {
     /// Revoked credential hashes.
     revoked_hashes: Vec<BabyBear>,
     /// The current revocation tree (rebuilt on revocation).
-    revocation_tree: SortedRevocationTree,
+    revocation_tree: DslRevocationTree,
 }
 
 impl IssuerRegistry {
@@ -42,7 +39,7 @@ impl IssuerRegistry {
             schemas: BTreeMap::new(),
             issued: BTreeMap::new(),
             revoked_hashes: Vec::new(),
-            revocation_tree: SortedRevocationTree::new(Vec::new(), REVOCATION_TREE_DEPTH),
+            revocation_tree: DslRevocationTree::new(Vec::new(), REVOCATION_TREE_DEPTH),
         }
     }
 
@@ -95,7 +92,7 @@ impl IssuerRegistry {
         self.revoked_hashes.push(revocation_hash);
         // Rebuild the revocation tree with the new entry.
         self.revocation_tree =
-            SortedRevocationTree::new(self.revoked_hashes.clone(), REVOCATION_TREE_DEPTH);
+            DslRevocationTree::new(self.revoked_hashes.clone(), REVOCATION_TREE_DEPTH);
         true
     }
 
@@ -111,7 +108,7 @@ impl IssuerRegistry {
     }
 
     /// Get a reference to the revocation tree (for generating non-revocation proofs).
-    pub fn revocation_tree(&self) -> &SortedRevocationTree {
+    pub fn revocation_tree(&self) -> &DslRevocationTree {
         &self.revocation_tree
     }
 

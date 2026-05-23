@@ -79,6 +79,7 @@ fn make_channel_receipt(
         derivation_records: Vec::new(),
         emitted_events: Vec::new(),
         executor_signature: None,
+        finality: Default::default(),
     }
 }
 

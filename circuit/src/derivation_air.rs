@@ -296,6 +296,35 @@ pub mod col {
 
     /// Total columns: CHECK_TERM_BINDING_START + NUM_CHECK_TERMS * CHECK_TERM_COLS = 171 + 200 = 371
     pub const _TOTAL: usize = CHECK_TERM_BINDING_START + NUM_CHECK_TERMS * CHECK_TERM_COLS;
+
+    // =========================================================================
+    // Legacy compatibility aliases (used by pyana-dsl-runtime descriptors)
+    // =========================================================================
+
+    /// State root column (alias for BODY_ROOT_START -- the Merkle root of body atoms).
+    pub const STATE_ROOT: usize = BODY_ROOT_START;
+    /// Predicate hash (alias for HEAD_PRED).
+    pub const PREDICATE_HASH: usize = HEAD_PRED;
+    /// Equal check flag columns (alias for EQ_CHECK_START-based).
+    pub const EQUAL_FLAG_START: usize = EQ_CHECK_START;
+    /// Equal check left operand columns.
+    pub const EQUAL_LEFT_START: usize = EQ_CHECK_START + MAX_EQUAL_CHECKS;
+    /// Equal check right operand columns.
+    pub const EQUAL_RIGHT_START: usize = EQ_CHECK_START + MAX_EQUAL_CHECKS * 2;
+    /// Substitution variable columns (alias for SUB_VALUE_START).
+    pub const SUB_VAR_START: usize = SUB_VALUE_START;
+    /// Substitution value columns.
+    pub const SUB_VAL_START: usize = SUB_VALUE_START + MAX_SUB_VARS;
+    /// Substitution flag columns.
+    pub const SUB_FLAG_START: usize = SUB_VALUE_START + MAX_SUB_VARS * 2;
+    /// MemberOf flag columns (alias for MEMBEROF_CHECK_START).
+    pub const MEMBEROF_FLAG_START: usize = MEMBEROF_CHECK_START;
+    /// NOT_AFTER temporal constraint column (placed after GTE check).
+    pub const NOT_AFTER: usize = GTE_CHECK_TERM_A;
+    /// ORG_ID column (placed after NOT_AFTER).
+    pub const ORG_ID: usize = GTE_CHECK_TERM_B;
+    /// BUDGET column (placed at GTE diff).
+    pub const BUDGET: usize = GTE_CHECK_DIFF;
 }
 
 /// A rule definition for the circuit (simplified representation).
@@ -619,6 +648,9 @@ impl DerivationWitness {
 }
 
 /// The derivation step AIR.
+#[deprecated(
+    note = "Use pyana_dsl_runtime::descriptors::derivation_circuit(). This AIR is superseded by the DSL derivation circuit (379 cols, max_degree 8)."
+)]
 pub struct DerivationAir {
     pub witness: DerivationWitness,
 }

@@ -64,6 +64,7 @@ pub mod morpheus_adapter;
 pub mod network;
 pub mod node;
 pub mod revocation;
+pub mod solo;
 pub mod threshold;
 pub mod threshold_decrypt;
 pub mod transport;
@@ -79,6 +80,10 @@ pub use node::{
     FederationNode, PendingStateRoots, ReconfigurationProposal, ReconfigurationVotes,
 };
 pub use revocation::{RevocationTree, RevocationVerification, RevocationVerifier};
+pub use solo::{
+    FederationMode, NullifierConflict, NullifierLog, NullifierLogEntry, SoloConsensusState,
+    effective_quorum_threshold,
+};
 pub use threshold::{
     FederationCommittee, MemberSecret, ThresholdError, ThresholdQC, generate_test_committee,
 };

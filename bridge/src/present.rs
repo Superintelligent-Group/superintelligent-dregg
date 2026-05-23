@@ -279,24 +279,20 @@ impl BridgePresentationProof {
                 .map(|&v| BabyBear::new(v))
                 .collect();
 
-            // Dispatch based on AIR name: blinded (ring membership) or non-blinded.
-            use pyana_circuit::poseidon2_air::{
-                BlindedMerklePoseidon2StarkAir, MerklePoseidon2StarkAir,
-            };
-            use pyana_circuit::stark::StarkAir;
+            // Dispatch to DSL circuit based on AIR name (unified path).
+            use pyana_dsl_runtime::descriptors;
             let air_name = &real.issuer_membership_stark_proof.air_name;
-            if air_name == BlindedMerklePoseidon2StarkAir.air_name() {
-                stark::verify(
-                    &BlindedMerklePoseidon2StarkAir,
-                    &real.issuer_membership_stark_proof,
-                    &pi,
-                )
+            if let Some(circuit) = descriptors::circuit_for_air_name(air_name) {
+                stark::verify(&circuit, &real.issuer_membership_stark_proof, &pi)
             } else {
-                stark::verify(
-                    &MerklePoseidon2StarkAir,
-                    &real.issuer_membership_stark_proof,
-                    &pi,
-                )
+                // Fallback: try blinded and standard merkle circuits for legacy air names.
+                let blinded = descriptors::blinded_merkle_poseidon2_circuit();
+                let standard = descriptors::merkle_poseidon2_circuit();
+                if air_name.contains("blinded") {
+                    stark::verify(&blinded, &real.issuer_membership_stark_proof, &pi)
+                } else {
+                    stark::verify(&standard, &real.issuer_membership_stark_proof, &pi)
+                }
             }
         })
     }

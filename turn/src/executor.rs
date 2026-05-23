@@ -570,8 +570,8 @@ impl TurnExecutor {
                 )));
             }
         } else {
-            // Default path: verify using the hardcoded SovereignTransitionAir.
-            let air = pyana_circuit::SovereignTransitionAir;
+            // Default path: verify using the EffectVmAir (DSL cutover).
+            let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
             stark::verify(&air, &proof, &public_inputs)
                 .map_err(|e| TurnError::ProofVerificationFailed(e))?;
         }
@@ -833,6 +833,7 @@ impl TurnExecutor {
                         derivation_records: vec![],
                         emitted_events: vec![],
                         executor_signature: None,
+                        finality: crate::turn::Finality::Final,
                     };
 
                     // Fee distribution (same as normal path).
@@ -1172,6 +1173,7 @@ impl TurnExecutor {
             ),
             emitted_events: Self::collect_emitted_events(&journal),
             executor_signature: None,
+            finality: crate::turn::Finality::Final,
         };
 
         TurnResult::Committed {
@@ -2022,7 +2024,7 @@ impl TurnExecutor {
 
     /// Verify a bearer capability proof: the parallel authorization path for capabilities
     /// NOT in the actor's c-list but proven via delegation chain.
-    fn verify_bearer_cap(
+    pub fn verify_bearer_cap(
         &self,
         proof: &crate::action::BearerCapProof,
         ledger: &Ledger,
@@ -2187,7 +2189,7 @@ impl TurnExecutor {
                         ));
                     }
                 }
-                let air = pyana_circuit::SovereignTransitionAir;
+                let air = pyana_circuit::EffectVmAir::new(stark_proof.trace_len);
                 stark::verify(&air, &stark_proof, &public_inputs).map_err(|e| {
                     (
                         TurnError::BearerCapInvalidProof {

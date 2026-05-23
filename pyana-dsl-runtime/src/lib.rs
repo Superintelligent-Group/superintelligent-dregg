@@ -17,6 +17,7 @@
 
 pub mod circuit;
 pub mod composition;
+pub mod descriptors;
 
 #[cfg(feature = "plonky3")]
 pub mod dsl_plonky3;

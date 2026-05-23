@@ -1,0 +1,22 @@
+[package]
+name = "pyana-blocklace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Blocklace: a DAG-based structure for BFT consensus with cordial dissemination"
+
+[dependencies]
+blake3 = "1"
+postcard = { version = "1", features = ["use-std"] }
+serde = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

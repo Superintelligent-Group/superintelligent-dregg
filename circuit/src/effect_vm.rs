@@ -12,35 +12,38 @@
 //! - GrantCapability (3): Add capability to c-list (capability_root update).
 //! - NoteSpend (4): Spend a note (nullifier reveal, balance credit).
 //! - NoteCreate (5): Create a note (commitment creation, balance debit).
+//! - CreateObligation (6): Lock stake from balance as a bonded obligation.
+//! - FulfillObligation (7): Return locked stake on successful fulfillment.
 //!
 //! # Trace Layout (one row per effect)
 //!
 //! ```text
-//! | selector[6] | state_before[14] | effect_params[8] | state_after[14] | aux[8] |
+//! | selector[8] | state_before[14] | effect_params[8] | state_after[14] | aux[8] |
 //! ```
 //!
-//! Total width: 50 columns
+//! Total width: 52 columns
 //!
 //! ## Column Breakdown
 //!
-//! Selectors (cols 0..6): Exactly one active per row.
-//!   - sel_noop, sel_transfer, sel_setfield, sel_grantcap, sel_notespend, sel_notecreate
+//! Selectors (cols 0..8): Exactly one active per row.
+//!   - sel_noop, sel_transfer, sel_setfield, sel_grantcap, sel_notespend, sel_notecreate,
+//!     sel_create_obligation, sel_fulfill_obligation
 //!
-//! State Before (cols 6..20):
-//!   - balance_lo, balance_hi (u64 as two BabyBear limbs, 31+33 bits)
+//! State Before (cols 8..22):
+//!   - balance_lo, balance_hi (u64 as two BabyBear limbs, 30+34 bits)
 //!   - nonce
 //!   - field_values[0..7] (8 custom fields)
 //!   - capability_root
 //!   - state_commitment (running Poseidon2 hash of full state)
 //!   - reserved
 //!
-//! Effect Params (cols 20..28):
+//! Effect Params (cols 22..30):
 //!   - param0..param7 (meaning depends on effect type)
 //!
-//! State After (cols 28..42):
+//! State After (cols 30..44):
 //!   - Same layout as state_before
 //!
-//! Aux (cols 42..50):
+//! Aux (cols 44..52):
 //!   - Auxiliary witness values (e.g., intermediate hashes, range proofs)
 //!
 //! # Constraints
@@ -52,6 +55,8 @@
 //!    - GrantCap: capability_root = hash(old_root, new_entry)
 //!    - NoteSpend: nullifier valid, balance increases
 //!    - NoteCreate: commitment valid, balance decreases
+//!    - CreateObligation: balance decreases by stake_amount
+//!    - FulfillObligation: balance increases by stake_return
 //! 3. Transition constraints (row-to-row continuity):
 //!    - next_row.state_before == this_row.state_after
 //!    - next_row.nonce == this_row.nonce + 1 (or same for NoOp padding)
@@ -74,10 +79,11 @@ use crate::stark::{BoundaryConstraint, StarkAir};
 // ============================================================================
 
 /// Total trace width.
-pub const EFFECT_VM_WIDTH: usize = 50;
+/// Layout: 8 selectors + 14 state_before + 8 params + 14 state_after + 8 aux = 52.
+pub const EFFECT_VM_WIDTH: usize = 52;
 
 /// Number of effect types (selectors).
-pub const NUM_EFFECTS: usize = 6;
+pub const NUM_EFFECTS: usize = 8;
 
 /// Selector column indices.
 pub mod sel {
@@ -87,6 +93,8 @@ pub mod sel {
     pub const GRANT_CAP: usize = 3;
     pub const NOTE_SPEND: usize = 4;
     pub const NOTE_CREATE: usize = 5;
+    pub const CREATE_OBLIGATION: usize = 6;
+    pub const FULFILL_OBLIGATION: usize = 7;
 }
 
 /// State column offsets (relative to state start).
@@ -102,15 +110,15 @@ pub mod state {
 }
 
 /// Absolute column indices for state_before.
-pub const STATE_BEFORE_BASE: usize = NUM_EFFECTS; // 6
+pub const STATE_BEFORE_BASE: usize = NUM_EFFECTS; // 8
 /// Absolute column indices for state_after.
-pub const STATE_AFTER_BASE: usize = STATE_BEFORE_BASE + state::SIZE + 8; // 6 + 14 + 8 = 28
+pub const STATE_AFTER_BASE: usize = STATE_BEFORE_BASE + state::SIZE + NUM_PARAMS; // 8 + 14 + 8 = 30
 /// Effect parameter base column.
-pub const PARAM_BASE: usize = STATE_BEFORE_BASE + state::SIZE; // 6 + 14 = 20
+pub const PARAM_BASE: usize = STATE_BEFORE_BASE + state::SIZE; // 8 + 14 = 22
 /// Number of parameter columns.
 pub const NUM_PARAMS: usize = 8;
 /// Auxiliary witness base column.
-pub const AUX_BASE: usize = STATE_AFTER_BASE + state::SIZE; // 28 + 14 = 42
+pub const AUX_BASE: usize = STATE_AFTER_BASE + state::SIZE; // 30 + 14 = 44
 /// Number of auxiliary columns.
 pub const NUM_AUX: usize = 8;
 
@@ -136,6 +144,17 @@ pub const NUM_AUX: usize = 8;
 ///   param0 = commitment
 ///   param1 = value_lo
 ///   param2 = value_hi
+///
+/// CreateObligation:
+///   param0 = stake_amount_lo
+///   param1 = stake_amount_hi
+///   param2 = obligation_id (hash of terms)
+///   param3 = beneficiary_hash
+///
+/// FulfillObligation:
+///   param0 = obligation_id (hash identifying the obligation)
+///   param1 = stake_return_lo (amount returned to obligor)
+///   param2 = stake_return_hi
 pub mod param {
     pub const AMOUNT: usize = 0;
     pub const DIRECTION: usize = 1;
@@ -146,6 +165,14 @@ pub mod param {
     pub const NOTE_VALUE_LO: usize = 1;
     pub const NOTE_VALUE_HI: usize = 2;
     pub const NOTE_COMMITMENT: usize = 0;
+    // Obligation params.
+    pub const OBLIGATION_STAKE_LO: usize = 0;
+    pub const OBLIGATION_STAKE_HI: usize = 1;
+    pub const OBLIGATION_ID: usize = 2;
+    pub const OBLIGATION_BENEFICIARY: usize = 3;
+    pub const FULFILL_OBLIGATION_ID: usize = 0;
+    pub const FULFILL_RETURN_LO: usize = 1;
+    pub const FULFILL_RETURN_HI: usize = 2;
 }
 
 /// Public input layout.
@@ -187,6 +214,24 @@ pub enum Effect {
     NoteSpend { nullifier: BabyBear, value: u64 },
     /// Create a note (create commitment, debit balance).
     NoteCreate { commitment: BabyBear, value: u64 },
+    /// Create a bonded obligation (locks stake from balance).
+    /// Balance decreases by stake_amount. The obligation_id binds the terms.
+    CreateObligation {
+        /// Amount to lock.
+        stake_amount: u64,
+        /// Hash identifying the obligation terms (beneficiary, condition, deadline).
+        obligation_id: BabyBear,
+        /// Hash of the beneficiary cell.
+        beneficiary_hash: BabyBear,
+    },
+    /// Fulfill an obligation (returns stake to obligor's balance).
+    /// Balance increases by the returned stake amount.
+    FulfillObligation {
+        /// Hash identifying the obligation being fulfilled.
+        obligation_id: BabyBear,
+        /// Amount returned to obligor on fulfillment.
+        stake_return: u64,
+    },
 }
 
 /// Cell state that flows between rows.
@@ -316,6 +361,28 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(lo);
                 hasher_inputs.push(hi);
             }
+            Effect::CreateObligation {
+                stake_amount,
+                obligation_id,
+                beneficiary_hash,
+            } => {
+                hasher_inputs.push(BabyBear::new(6));
+                let (lo, hi) = split_u64(*stake_amount);
+                hasher_inputs.push(lo);
+                hasher_inputs.push(hi);
+                hasher_inputs.push(*obligation_id);
+                hasher_inputs.push(*beneficiary_hash);
+            }
+            Effect::FulfillObligation {
+                obligation_id,
+                stake_return,
+            } => {
+                hasher_inputs.push(BabyBear::new(7));
+                hasher_inputs.push(*obligation_id);
+                let (lo, hi) = split_u64(*stake_return);
+                hasher_inputs.push(lo);
+                hasher_inputs.push(hi);
+            }
         }
     }
     let h = hash_many(&hasher_inputs);
@@ -408,6 +475,8 @@ impl StarkAir for EffectVmAir {
         let s_grantcap = local[sel::GRANT_CAP];
         let s_notespend = local[sel::NOTE_SPEND];
         let s_notecreate = local[sel::NOTE_CREATE];
+        let s_create_obligation = local[sel::CREATE_OBLIGATION];
+        let s_fulfill_obligation = local[sel::FULFILL_OBLIGATION];
 
         // State accessors (before).
         let old_bal_lo = local[STATE_BEFORE_BASE + state::BALANCE_LO];
@@ -424,7 +493,7 @@ impl StarkAir for EffectVmAir {
         // Parameters.
         let p0 = local[PARAM_BASE + 0];
         let p1 = local[PARAM_BASE + 1];
-        let p2 = local[PARAM_BASE + 2];
+        let _p2 = local[PARAM_BASE + 2];
 
         // -- NoOp: state_after == state_before for all state columns --
         for i in 0..state::SIZE {
@@ -634,6 +703,50 @@ impl StarkAir for EffectVmAir {
             alpha_pow = alpha_pow * alpha;
         }
 
+        // -- CreateObligation: balance debit (locks stake) --
+        // param0 = stake_lo, param1 = stake_hi (unused for single-limb), param2 = obligation_id
+        // new_bal_lo = old_bal_lo - stake_lo (stake locked from balance)
+        let stake_lo = p0;
+        let c_co_bal = s_create_obligation * (new_bal_lo - old_bal_lo + stake_lo);
+        combined = combined + alpha_pow * c_co_bal;
+        alpha_pow = alpha_pow * alpha;
+        let c_co_hi = s_create_obligation * (new_bal_hi - old_bal_hi);
+        combined = combined + alpha_pow * c_co_hi;
+        alpha_pow = alpha_pow * alpha;
+        // CreateObligation: fields and cap unchanged.
+        let c_co_cap = s_create_obligation * (new_cap_root - old_cap_root);
+        combined = combined + alpha_pow * c_co_cap;
+        alpha_pow = alpha_pow * alpha;
+        for i in 0..8 {
+            let c = s_create_obligation
+                * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
+                    - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
+            combined = combined + alpha_pow * c;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // -- FulfillObligation: balance credit (returns stake) --
+        // param0 = obligation_id, param1 = return_lo, param2 = return_hi
+        // new_bal_lo = old_bal_lo + return_lo
+        let return_lo = p1;
+        let c_fo_bal = s_fulfill_obligation * (new_bal_lo - old_bal_lo - return_lo);
+        combined = combined + alpha_pow * c_fo_bal;
+        alpha_pow = alpha_pow * alpha;
+        let c_fo_hi = s_fulfill_obligation * (new_bal_hi - old_bal_hi);
+        combined = combined + alpha_pow * c_fo_hi;
+        alpha_pow = alpha_pow * alpha;
+        // FulfillObligation: fields and cap unchanged.
+        let c_fo_cap = s_fulfill_obligation * (new_cap_root - old_cap_root);
+        combined = combined + alpha_pow * c_fo_cap;
+        alpha_pow = alpha_pow * alpha;
+        for i in 0..8 {
+            let c = s_fulfill_obligation
+                * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
+                    - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
+            combined = combined + alpha_pow * c;
+            alpha_pow = alpha_pow * alpha;
+        }
+
         // ====================================================================
         // CONSTRAINT GROUP 3: Transition constraints (row continuity)
         // ====================================================================
@@ -659,7 +772,7 @@ impl StarkAir for EffectVmAir {
     fn boundary_constraints(
         &self,
         public_inputs: &[BabyBear],
-        _trace_len: usize,
+        trace_len: usize,
     ) -> Vec<BoundaryConstraint> {
         let mut constraints = vec![];
         if public_inputs.len() < pi::COUNT {
@@ -671,6 +784,17 @@ impl StarkAir for EffectVmAir {
             row: 0,
             col: STATE_BEFORE_BASE + state::STATE_COMMIT,
             value: public_inputs[pi::OLD_COMMIT],
+        });
+
+        // CRITICAL: Last row state_after commitment must match new_commitment PI.
+        // Without this, a malicious prover could claim any new_commitment.
+        // The last row is either the last real effect or a NoOp padding row;
+        // either way, its state_after must equal the final state.
+        let last_row = trace_len.saturating_sub(1);
+        constraints.push(BoundaryConstraint {
+            row: last_row,
+            col: STATE_AFTER_BASE + state::STATE_COMMIT,
+            value: public_inputs[pi::NEW_COMMIT],
         });
 
         // Net balance delta binding: the net delta is carried in aux columns.
@@ -741,6 +865,8 @@ pub fn generate_effect_vm_trace(
             Effect::GrantCapability { .. } => sel::GRANT_CAP,
             Effect::NoteSpend { .. } => sel::NOTE_SPEND,
             Effect::NoteCreate { .. } => sel::NOTE_CREATE,
+            Effect::CreateObligation { .. } => sel::CREATE_OBLIGATION,
+            Effect::FulfillObligation { .. } => sel::FULFILL_OBLIGATION,
         };
         row[sel_idx] = BabyBear::ONE;
 
@@ -809,6 +935,34 @@ pub fn generate_effect_vm_trace(
 
                 new_state.balance = new_state.balance.saturating_sub(*value);
                 net_delta -= *value as i64;
+                new_state.nonce += 1;
+            }
+            Effect::CreateObligation {
+                stake_amount,
+                obligation_id,
+                beneficiary_hash,
+            } => {
+                let (stake_lo, stake_hi) = split_u64(*stake_amount);
+                row[PARAM_BASE + param::OBLIGATION_STAKE_LO] = stake_lo;
+                row[PARAM_BASE + param::OBLIGATION_STAKE_HI] = stake_hi;
+                row[PARAM_BASE + param::OBLIGATION_ID] = *obligation_id;
+                row[PARAM_BASE + param::OBLIGATION_BENEFICIARY] = *beneficiary_hash;
+
+                new_state.balance = new_state.balance.saturating_sub(*stake_amount);
+                net_delta -= *stake_amount as i64;
+                new_state.nonce += 1;
+            }
+            Effect::FulfillObligation {
+                obligation_id,
+                stake_return,
+            } => {
+                let (ret_lo, ret_hi) = split_u64(*stake_return);
+                row[PARAM_BASE + param::FULFILL_OBLIGATION_ID] = *obligation_id;
+                row[PARAM_BASE + param::FULFILL_RETURN_LO] = ret_lo;
+                row[PARAM_BASE + param::FULFILL_RETURN_HI] = ret_hi;
+
+                new_state.balance = new_state.balance.saturating_add(*stake_return);
+                net_delta += *stake_return as i64;
                 new_state.nonce += 1;
             }
         }
@@ -1329,5 +1483,718 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ========================================================================
+    // INTEGRATION TESTS: Real multi-effect turns through the full pipeline
+    // ========================================================================
+
+    /// Integration test: compose a realistic 4-effect turn (Transfer + SetField + GrantCap + CreateObligation),
+    /// prove via STARK, verify, and confirm commitments match expected state transitions.
+    #[test]
+    fn test_integration_real_multi_effect_turn() {
+        // Simulate a real sovereign cell with initial balance.
+        let initial_state = CellState::new(50_000, 0);
+
+        // A realistic turn: transfer some funds, update a field, grant a capability,
+        // and lock a bond via CreateObligation.
+        let effects = vec![
+            Effect::Transfer {
+                amount: 1000,
+                direction: 1, // outgoing
+            },
+            Effect::SetField {
+                field_idx: 0,
+                value: BabyBear::new(0x1234),
+            },
+            Effect::GrantCapability {
+                cap_entry: BabyBear::new(0xCAFEBABE),
+            },
+            Effect::CreateObligation {
+                stake_amount: 500,
+                obligation_id: BabyBear::new(0xDEAD01),
+                beneficiary_hash: BabyBear::new(0xBEEF01),
+            },
+        ];
+
+        // Generate trace and public inputs.
+        let (trace, public_inputs) = generate_effect_vm_trace(&initial_state, &effects);
+        assert_eq!(trace.len(), 4); // 4 effects = power of 2
+
+        // Verify constraints are satisfied on all rows.
+        let air = EffectVmAir::new(trace.len());
+        for alpha_val in [7, 13, 29, 101, 65537] {
+            let alpha = BabyBear::new(alpha_val);
+            for row in 0..trace.len() - 1 {
+                let next_row = (row + 1) % trace.len();
+                let c = air.eval_constraints(&trace[row], &trace[next_row], &public_inputs, alpha);
+                assert_eq!(
+                    c,
+                    BabyBear::ZERO,
+                    "Integration: constraint non-zero at row {} with alpha={}: c={}",
+                    row,
+                    alpha_val,
+                    c.0
+                );
+            }
+        }
+
+        // Full STARK prove + verify roundtrip.
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "Integration: multi-effect turn should verify: {:?}",
+            result.err()
+        );
+
+        // Verify state commitments match expected transitions.
+        // The old_commitment PI should match initial_state.
+        assert_eq!(
+            public_inputs[pi::OLD_COMMIT],
+            initial_state.state_commitment
+        );
+
+        // Manually replay the effects to get the expected final state.
+        let mut expected_state = initial_state.clone();
+        expected_state.balance -= 1000; // Transfer out
+        expected_state.nonce += 1;
+        expected_state.refresh_commitment();
+
+        expected_state.fields[0] = BabyBear::new(0x1234); // SetField
+        expected_state.nonce += 1;
+        expected_state.refresh_commitment();
+
+        expected_state.capability_root =
+            hash_2_to_1(expected_state.capability_root, BabyBear::new(0xCAFEBABE));
+        expected_state.nonce += 1;
+        expected_state.refresh_commitment();
+
+        expected_state.balance -= 500; // CreateObligation locks stake
+        expected_state.nonce += 1;
+        expected_state.refresh_commitment();
+
+        assert_eq!(
+            public_inputs[pi::NEW_COMMIT],
+            expected_state.state_commitment,
+            "Final commitment mismatch"
+        );
+
+        // Verify net delta: -1000 (transfer) - 500 (obligation) = -1500
+        let delta = extract_net_delta(&public_inputs).unwrap();
+        assert_eq!(delta, -1500);
+
+        // Verify effects hash covers ALL effects.
+        let (expected_hash_lo, expected_hash_hi) = compute_effects_hash(&effects);
+        assert_eq!(public_inputs[pi::EFFECTS_HASH_LO], expected_hash_lo);
+        assert_eq!(public_inputs[pi::EFFECTS_HASH_HI], expected_hash_hi);
+    }
+
+    /// Integration test: obligation lifecycle (Create + Fulfill) in a single turn.
+    #[test]
+    fn test_integration_obligation_lifecycle() {
+        let initial_state = CellState::new(10_000, 5);
+
+        let effects = vec![
+            // Lock 2000 as a bond.
+            Effect::CreateObligation {
+                stake_amount: 2000,
+                obligation_id: BabyBear::new(0xAA),
+                beneficiary_hash: BabyBear::new(0xBB),
+            },
+            // Fulfill the obligation (return 2000).
+            Effect::FulfillObligation {
+                obligation_id: BabyBear::new(0xAA),
+                stake_return: 2000,
+            },
+        ];
+
+        let (trace, public_inputs) = generate_effect_vm_trace(&initial_state, &effects);
+        let air = EffectVmAir::new(trace.len());
+
+        // Verify constraints.
+        for alpha_val in [7, 13, 101] {
+            let alpha = BabyBear::new(alpha_val);
+            for row in 0..trace.len() - 1 {
+                let next_row = (row + 1) % trace.len();
+                let c = air.eval_constraints(&trace[row], &trace[next_row], &public_inputs, alpha);
+                assert_eq!(
+                    c,
+                    BabyBear::ZERO,
+                    "Obligation lifecycle: constraint non-zero at row {} with alpha={}: c={}",
+                    row,
+                    alpha_val,
+                    c.0
+                );
+            }
+        }
+
+        // STARK roundtrip.
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "Obligation lifecycle should verify: {:?}",
+            result.err()
+        );
+
+        // Net delta: -2000 + 2000 = 0 (obligation created and fulfilled).
+        let delta = extract_net_delta(&public_inputs).unwrap();
+        assert_eq!(delta, 0, "Balance should be net-zero after create+fulfill");
+    }
+
+    /// IVC compression test: prove sequential turns and compress via the state
+    /// transition hash chain.
+    #[test]
+    fn test_ivc_compression_sequential_turns() {
+        use crate::ivc::{prove_ivc_stark, verify_ivc_stark};
+
+        // Turn 1: Transfer
+        let state_0 = CellState::new(10_000, 0);
+        let effects_1 = vec![Effect::Transfer {
+            amount: 300,
+            direction: 1,
+        }];
+        let (trace_1, pi_1) = generate_effect_vm_trace(&state_0, &effects_1);
+        let air_1 = EffectVmAir::new(trace_1.len());
+        let proof_1 = prove(&air_1, &trace_1, &pi_1);
+        assert!(
+            verify(&air_1, &proof_1, &pi_1).is_ok(),
+            "Turn 1 should verify"
+        );
+
+        let commitment_1 = pi_1[pi::NEW_COMMIT];
+
+        // Turn 2: SetField (starts from commitment_1)
+        let mut state_1 = state_0.clone();
+        state_1.balance -= 300;
+        state_1.nonce += 1;
+        state_1.refresh_commitment();
+        assert_eq!(state_1.state_commitment, commitment_1);
+
+        let effects_2 = vec![Effect::SetField {
+            field_idx: 5,
+            value: BabyBear::new(999),
+        }];
+        let (trace_2, pi_2) = generate_effect_vm_trace(&state_1, &effects_2);
+        let air_2 = EffectVmAir::new(trace_2.len());
+        let proof_2 = prove(&air_2, &trace_2, &pi_2);
+        assert!(
+            verify(&air_2, &proof_2, &pi_2).is_ok(),
+            "Turn 2 should verify"
+        );
+
+        let commitment_2 = pi_2[pi::NEW_COMMIT];
+
+        // Verify chain continuity: turn 2 starts where turn 1 ended.
+        assert_eq!(
+            pi_2[pi::OLD_COMMIT],
+            commitment_1,
+            "Turn 2 should start from Turn 1's final commitment"
+        );
+
+        // IVC compression: prove the hash chain [commitment_0 -> commitment_1 -> commitment_2]
+        // via the StateTransitionAir (hash chain proof).
+        let initial_root = state_0.state_commitment;
+        let new_roots = vec![commitment_1, commitment_2];
+        let (ivc_proof, ivc_pi) = prove_ivc_stark(initial_root, &new_roots);
+
+        // Verify the compressed proof.
+        let ivc_result = verify_ivc_stark(&ivc_proof, &ivc_pi);
+        assert!(
+            ivc_result.is_ok(),
+            "IVC compressed proof should verify: {:?}",
+            ivc_result.err()
+        );
+
+        // The IVC proof covers both turns in a single STARK proof.
+        // Its public inputs bind: initial_root -> final accumulated hash covering all steps.
+    }
+
+    /// Test: malicious prover cannot skip effects via NoOp injection.
+    /// Inserting a NoOp between real effects would change the effects_hash (since
+    /// the hash covers the INTENDED effect list, not the padded trace).
+    #[test]
+    fn test_noop_padding_cannot_be_exploited() {
+        let state = make_initial_state(1000);
+
+        // Real effects list (what the prover commits to).
+        let real_effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+
+        // Compute the correct effects hash.
+        let (real_hash_lo, real_hash_hi) = compute_effects_hash(&real_effects);
+
+        // Now try a modified list with an injected NoOp.
+        let tampered_effects = vec![
+            Effect::NoOp, // injected
+            Effect::Transfer {
+                amount: 100,
+                direction: 1,
+            },
+        ];
+        let (tampered_hash_lo, tampered_hash_hi) = compute_effects_hash(&tampered_effects);
+
+        // The hashes MUST differ -- the NoOp changes the commitment.
+        assert_ne!(
+            (real_hash_lo, real_hash_hi),
+            (tampered_hash_lo, tampered_hash_hi),
+            "Injecting NoOp must change the effects hash"
+        );
+    }
+
+    /// Test: effect reordering is detected via effects_hash.
+    #[test]
+    fn test_effect_reordering_detected() {
+        let effects_a = vec![
+            Effect::Transfer {
+                amount: 100,
+                direction: 1,
+            },
+            Effect::SetField {
+                field_idx: 0,
+                value: BabyBear::new(1),
+            },
+        ];
+        let effects_b = vec![
+            Effect::SetField {
+                field_idx: 0,
+                value: BabyBear::new(1),
+            },
+            Effect::Transfer {
+                amount: 100,
+                direction: 1,
+            },
+        ];
+
+        let (ha_lo, ha_hi) = compute_effects_hash(&effects_a);
+        let (hb_lo, hb_hi) = compute_effects_hash(&effects_b);
+        assert_ne!(
+            (ha_lo, ha_hi),
+            (hb_lo, hb_hi),
+            "Reordering effects must change the effects hash"
+        );
+    }
+
+    /// Test: NoOp padding row state_commitment tampering is caught by boundary constraint.
+    ///
+    /// NOTE: The EffectVM AIR does NOT enforce `state_commitment == hash(state_columns)`
+    /// in-circuit (Poseidon2 is too high-degree for a degree-3 AIR). Individual field
+    /// tampering on the last row is caught only indirectly: the state_commitment boundary
+    /// constraint binds the last row's state_after.state_commitment to the public input
+    /// new_commitment. If an attacker tampers the commitment column itself, the boundary
+    /// constraint fires. For full field-level integrity on the last row, the executor
+    /// independently verifies the commitment matches the claimed state.
+    #[test]
+    fn test_noop_state_commitment_tamper_caught() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 50,
+            direction: 0,
+        }];
+
+        let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        assert_eq!(trace.len(), 2); // row 1 is NoOp padding
+
+        // Tamper: change the NoOp row's state_after commitment to a wrong value.
+        // This MUST be caught by the boundary constraint on the last row.
+        trace[1][STATE_AFTER_BASE + state::STATE_COMMIT] = BabyBear::new(0xBAD);
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "Tampered state_commitment on last row should be caught by boundary constraint"
+        );
+    }
+
+    /// Test: transition constraint catches state_after != next.state_before on non-last rows.
+    /// This verifies that NoOp padding on interior rows (not the last) is fully constrained.
+    #[test]
+    fn test_interior_noop_state_change_caught() {
+        let state = make_initial_state(1000);
+        // Use 3 effects so that padding fills row 3 (the last), and we tamper row 0's state_after.
+        let effects = vec![
+            Effect::Transfer {
+                amount: 10,
+                direction: 0,
+            },
+            Effect::Transfer {
+                amount: 20,
+                direction: 0,
+            },
+            Effect::Transfer {
+                amount: 30,
+                direction: 0,
+            },
+        ];
+
+        let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        assert_eq!(trace.len(), 4); // 3 effects + 1 NoOp padding
+
+        // Tamper: change row 0's state_after balance (an interior row).
+        // The transition constraint requires row 1's state_before == row 0's state_after,
+        // so this must fail.
+        trace[0][STATE_AFTER_BASE + state::BALANCE_LO] =
+            trace[0][STATE_AFTER_BASE + state::BALANCE_LO] + BabyBear::new(9999);
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "Interior row state tampering should be caught by transition constraints"
+        );
+    }
+
+    /// Integration test: 8-effect turn (maximum before power-of-2 padding to 8).
+    /// Tests a complex realistic scenario.
+    #[test]
+    fn test_integration_8_effect_sovereign_turn() {
+        let state = CellState::new(100_000, 10);
+
+        let effects = vec![
+            Effect::Transfer {
+                amount: 5000,
+                direction: 1,
+            }, // -5000
+            Effect::Transfer {
+                amount: 2000,
+                direction: 0,
+            }, // +2000
+            Effect::SetField {
+                field_idx: 0,
+                value: BabyBear::new(42),
+            },
+            Effect::SetField {
+                field_idx: 7,
+                value: BabyBear::new(99),
+            },
+            Effect::GrantCapability {
+                cap_entry: BabyBear::new(0x1111),
+            },
+            Effect::GrantCapability {
+                cap_entry: BabyBear::new(0x2222),
+            },
+            Effect::CreateObligation {
+                stake_amount: 1000,
+                obligation_id: BabyBear::new(0x0B01),
+                beneficiary_hash: BabyBear::new(0xBE01),
+            },
+            Effect::FulfillObligation {
+                obligation_id: BabyBear::new(0x0B01),
+                stake_return: 1000,
+            },
+        ];
+
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        assert_eq!(trace.len(), 8); // exactly power of 2
+
+        let air = EffectVmAir::new(trace.len());
+
+        // Verify all constraint rows.
+        for alpha_val in [7, 13, 101] {
+            let alpha = BabyBear::new(alpha_val);
+            for row in 0..trace.len() - 1 {
+                let next_row = (row + 1) % trace.len();
+                let c = air.eval_constraints(&trace[row], &trace[next_row], &public_inputs, alpha);
+                assert_eq!(
+                    c,
+                    BabyBear::ZERO,
+                    "8-effect: constraint non-zero at row {} with alpha={}: c={}",
+                    row,
+                    alpha_val,
+                    c.0
+                );
+            }
+        }
+
+        // STARK roundtrip.
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "8-effect sovereign turn should verify: {:?}",
+            result.err()
+        );
+
+        // Net delta: -5000 + 2000 - 1000 + 1000 = -3000
+        let delta = extract_net_delta(&public_inputs).unwrap();
+        assert_eq!(delta, -3000);
+    }
+
+    /// Test: commitment continuity across multiple sequential effect VM proofs.
+    /// Verifies that proof N's new_commitment == proof N+1's old_commitment.
+    #[test]
+    fn test_commitment_chain_continuity() {
+        let mut current_state = CellState::new(20_000, 0);
+
+        // 3 sequential turns, each proven separately.
+        let turn_effects = vec![
+            vec![Effect::Transfer {
+                amount: 100,
+                direction: 1,
+            }],
+            vec![
+                Effect::SetField {
+                    field_idx: 2,
+                    value: BabyBear::new(77),
+                },
+                Effect::Transfer {
+                    amount: 200,
+                    direction: 0,
+                },
+            ],
+            vec![Effect::GrantCapability {
+                cap_entry: BabyBear::new(0xFACE),
+            }],
+        ];
+
+        let mut commitments = vec![current_state.state_commitment];
+
+        for effects in &turn_effects {
+            let (trace, pi) = generate_effect_vm_trace(&current_state, effects);
+            let air = EffectVmAir::new(trace.len());
+            let proof = prove(&air, &trace, &pi);
+            assert!(verify(&air, &proof, &pi).is_ok());
+
+            // Verify chain link: old_commit matches our tracked state.
+            assert_eq!(pi[pi::OLD_COMMIT], current_state.state_commitment);
+
+            // Advance state by replaying effects.
+            for effect in effects {
+                match effect {
+                    Effect::Transfer { amount, direction } => {
+                        if *direction == 1 {
+                            current_state.balance -= amount;
+                        } else {
+                            current_state.balance += amount;
+                        }
+                        current_state.nonce += 1;
+                        current_state.refresh_commitment();
+                    }
+                    Effect::SetField { field_idx, value } => {
+                        current_state.fields[*field_idx as usize] = *value;
+                        current_state.nonce += 1;
+                        current_state.refresh_commitment();
+                    }
+                    Effect::GrantCapability { cap_entry } => {
+                        current_state.capability_root =
+                            hash_2_to_1(current_state.capability_root, *cap_entry);
+                        current_state.nonce += 1;
+                        current_state.refresh_commitment();
+                    }
+                    _ => {}
+                }
+            }
+
+            assert_eq!(pi[pi::NEW_COMMIT], current_state.state_commitment);
+            commitments.push(current_state.state_commitment);
+        }
+
+        // Verify all commitments form a chain.
+        assert_eq!(commitments.len(), 4);
+        for i in 0..commitments.len() - 1 {
+            assert_ne!(
+                commitments[i],
+                commitments[i + 1],
+                "Sequential commitments should differ"
+            );
+        }
+    }
+
+    /// Test: CreateObligation correctly debits balance.
+    #[test]
+    fn test_create_obligation_standalone() {
+        let state = CellState::new(5000, 0);
+        let effects = vec![Effect::CreateObligation {
+            stake_amount: 1500,
+            obligation_id: BabyBear::new(0x42),
+            beneficiary_hash: BabyBear::new(0x99),
+        }];
+
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "CreateObligation should verify: {:?}",
+            result.err()
+        );
+
+        let delta = extract_net_delta(&public_inputs).unwrap();
+        assert_eq!(delta, -1500, "CreateObligation should debit balance");
+    }
+
+    /// Test: FulfillObligation correctly credits balance.
+    #[test]
+    fn test_fulfill_obligation_standalone() {
+        let state = CellState::new(3000, 0);
+        let effects = vec![Effect::FulfillObligation {
+            obligation_id: BabyBear::new(0x42),
+            stake_return: 800,
+        }];
+
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "FulfillObligation should verify: {:?}",
+            result.err()
+        );
+
+        let delta = extract_net_delta(&public_inputs).unwrap();
+        assert_eq!(delta, 800, "FulfillObligation should credit balance");
+    }
+
+    /// Test: tampered obligation stake amount is detected.
+    #[test]
+    fn test_create_obligation_wrong_amount_caught() {
+        let state = CellState::new(5000, 0);
+        let effects = vec![Effect::CreateObligation {
+            stake_amount: 1000,
+            obligation_id: BabyBear::new(0x01),
+            beneficiary_hash: BabyBear::new(0x02),
+        }];
+
+        let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+
+        // Tamper: change the balance debit to less than stake_amount.
+        // The constraint says new_bal_lo = old_bal_lo - p0, so if we change new_bal_lo
+        // to only debit 500 instead of 1000, constraint should catch it.
+        let old_bal_lo = trace[0][STATE_BEFORE_BASE + state::BALANCE_LO];
+        trace[0][STATE_AFTER_BASE + state::BALANCE_LO] = old_bal_lo - BabyBear::new(500);
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "Wrong obligation debit amount should be caught"
+        );
+    }
+
+    /// Test: fulfill obligation with wrong return amount is detected.
+    #[test]
+    fn test_fulfill_obligation_wrong_return_caught() {
+        let state = CellState::new(5000, 0);
+        let effects = vec![Effect::FulfillObligation {
+            obligation_id: BabyBear::new(0x42),
+            stake_return: 1000,
+        }];
+
+        let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+
+        // Tamper: credit more than the declared return amount.
+        let old_bal_lo = trace[0][STATE_BEFORE_BASE + state::BALANCE_LO];
+        trace[0][STATE_AFTER_BASE + state::BALANCE_LO] = old_bal_lo + BabyBear::new(9999);
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "Wrong obligation return amount should be caught"
+        );
+    }
+
+    /// Test: effects_hash binding prevents subset attacks.
+    /// A prover cannot claim a subset of effects and get a valid proof.
+    #[test]
+    fn test_effects_hash_prevents_subset_attack() {
+        let state = make_initial_state(5000);
+
+        let full_effects = vec![
+            Effect::Transfer {
+                amount: 100,
+                direction: 1,
+            },
+            Effect::Transfer {
+                amount: 200,
+                direction: 1,
+            },
+        ];
+        let subset_effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+
+        let (full_hash_lo, full_hash_hi) = compute_effects_hash(&full_effects);
+        let (sub_hash_lo, sub_hash_hi) = compute_effects_hash(&subset_effects);
+
+        assert_ne!(
+            (full_hash_lo, full_hash_hi),
+            (sub_hash_lo, sub_hash_hi),
+            "Subset of effects must have different hash"
+        );
+
+        // Generate proof for full effects, but tamper public inputs to claim subset hash.
+        let (trace, mut pi) = generate_effect_vm_trace(&state, &full_effects);
+        pi[pi::EFFECTS_HASH_LO] = sub_hash_lo;
+        pi[pi::EFFECTS_HASH_HI] = sub_hash_hi;
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &pi);
+        let result = verify(&air, &proof, &pi);
+        assert!(
+            result.is_err(),
+            "Tampered effects_hash should fail verification"
+        );
+    }
+
+    /// Benchmark-style test: measure proof size for a 4-effect turn.
+    #[test]
+    fn test_proof_size_measurement() {
+        use crate::stark::proof_to_bytes;
+
+        let state = CellState::new(100_000, 0);
+        let effects = vec![
+            Effect::Transfer {
+                amount: 500,
+                direction: 1,
+            },
+            Effect::SetField {
+                field_idx: 1,
+                value: BabyBear::new(42),
+            },
+            Effect::GrantCapability {
+                cap_entry: BabyBear::new(0xBEEF),
+            },
+            Effect::Transfer {
+                amount: 100,
+                direction: 0,
+            },
+        ];
+
+        let (trace, pi) = generate_effect_vm_trace(&state, &effects);
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &pi);
+        let proof_bytes = proof_to_bytes(&proof);
+
+        // The proof should be reasonable in size. For a 4-row, 52-column trace
+        // with our STARK parameters (blowup 4, 32 queries), expect ~112 KiB.
+        // This is larger than the 6-column SovereignTransitionAir (~24 KiB) due to
+        // the wider trace (52 columns), but acceptable for a general-purpose VM.
+        assert!(
+            proof_bytes.len() < 150_000,
+            "Proof too large: {} bytes (expected < 150 KiB)",
+            proof_bytes.len()
+        );
+
+        // Also verify the proof after serialization roundtrip.
+        use crate::stark::proof_from_bytes;
+        let deserialized = proof_from_bytes(&proof_bytes).unwrap();
+        let result = verify(&air, &deserialized, &pi);
+        assert!(
+            result.is_ok(),
+            "Deserialized proof should verify: {:?}",
+            result.err()
+        );
     }
 }

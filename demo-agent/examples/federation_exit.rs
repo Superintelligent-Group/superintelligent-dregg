@@ -82,6 +82,7 @@ fn simulate_turn(agent: CellId, turn_number: u64, pre_state: [u8; 32]) -> TurnRe
         derivation_records: Vec::new(),
         emitted_events: Vec::new(),
         executor_signature: None,
+        finality: Default::default(),
     }
 }
 

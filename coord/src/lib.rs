@@ -46,6 +46,7 @@ pub mod budget;
 pub mod causal;
 pub mod error;
 pub mod serde_sig;
+pub mod shared_budget;
 
 #[cfg(test)]
 mod tests;
@@ -61,3 +62,4 @@ pub use budget::{
 };
 pub use causal::{CausalDag, CausalLedger, CausalTurn};
 pub use error::CoordError;
+pub use shared_budget::{SharedBudgetError, SharedResourceBudget};

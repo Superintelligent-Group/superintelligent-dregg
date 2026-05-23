@@ -19,6 +19,7 @@ use axum::{
     Json, Router,
     extract::ConnectInfo,
     extract::Path as AxumPath,
+    extract::Query,
     extract::State,
     http::StatusCode,
     middleware,
@@ -31,7 +32,7 @@ use tokio::sync::Mutex;
 use pyana_sdk::{Attenuation, AuthRequest, CellId};
 use pyana_turn::{CallForest, Turn};
 
-use crate::state::{NodeEvent, NodeState};
+use crate::state::{CommittedEvent, NodeEvent, NodeState};
 use crate::ws::handle_ws;
 
 // =============================================================================
@@ -210,6 +211,19 @@ pub struct IntentSubmitResponse {
 pub struct EncryptedIntentSubmitResponse {
     pub intent_id: String,
     pub stored: bool,
+}
+
+// =============================================================================
+// Events query types
+// =============================================================================
+
+/// Query parameters for GET /api/events.
+#[derive(Deserialize)]
+pub struct EventsQuery {
+    /// Return events committed at or after this block height.
+    pub since_height: Option<u64>,
+    /// Maximum number of events to return (default 50, max 200).
+    pub limit: Option<usize>,
 }
 
 // =============================================================================
@@ -791,6 +805,7 @@ pub fn router(
     // Public routes (no auth required)
     let mut public_routes = Router::new()
         .route("/status", get(get_status))
+        .route("/health", get(get_status))
         .route("/federation/roots", get(get_federation_roots))
         .route("/api/blocks", get(get_federation_roots))
         .route("/api/cells", get(get_all_cells))
@@ -798,6 +813,7 @@ pub fn router(
         .route("/api/intents", get(get_intents))
         .route("/api/conditionals", get(get_pending_conditionals))
         .route("/api/discharge", post(post_discharge))
+        .route("/api/events", get(get_events))
         .route("/checkpoint/latest", get(get_checkpoint_latest))
         .route("/checkpoint/{height}", get(get_checkpoint_at_height))
         .route("/pir/info", get(get_pir_info))
@@ -877,8 +893,31 @@ pub fn router(
         .route("/metrics", get(crate::metrics::metrics_handler))
         .with_state(metrics_handle);
 
+    // ─── Path normalization aliases (Gap 3: bot/app compatibility) ────────────
+    // The bot/apps expect /api/node/... and /api/turns/... prefixed paths.
+    // These aliases ensure BOTH the canonical and prefixed paths work.
+    let path_aliases = Router::new()
+        // /api/node/* aliases
+        .route("/api/node/health", get(get_status))
+        .route("/api/node/status", get(get_status))
+        // /api/turns/* aliases (protected — require auth)
+        .route(
+            "/api/turns/submit",
+            post({
+                let limiter = turn_limiter.clone();
+                move |connect_info, state, body| {
+                    post_submit_turn(connect_info, state, body, limiter)
+                }
+            }),
+        )
+        .route("/api/turns/bearer-auth", post(post_bearer_auth))
+        .route("/api/turns/fast-path", post(post_fast_path_lock))
+        .route("/api/turns/certificate", post(post_fast_path_certificate))
+        .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
+
     public_routes
         .merge(protected_routes)
+        .merge(path_aliases)
         .merge(metrics_route)
         .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
         .layer(middleware::from_fn(cors_middleware))
@@ -1099,6 +1138,26 @@ async fn post_submit_turn(
             crate::metrics::set_ledger_cell_count(s.ledger.len() as f64);
 
             s.wallet.append_receipt(receipt);
+
+            // Push committed event into the ring buffer for REST polling.
+            let current_height = s
+                .store
+                .latest_attested_root()
+                .ok()
+                .flatten()
+                .map(|r| r.height)
+                .unwrap_or(0);
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            s.push_event(CommittedEvent {
+                height: current_height,
+                turn_hash: turn_hash.clone(),
+                cell_id: req.agent.clone(),
+                effects: vec!["turn_committed".to_string()],
+                timestamp,
+            });
 
             // Serialize the full SignedTurn for gossip (postcard format).
             let turn_data = postcard::to_stdvec(&signed).expect("SignedTurn serialization");
@@ -1395,6 +1454,28 @@ async fn post_intent(
         intent_id: intent_id_hex,
         stored: true,
     }))
+}
+
+/// GET /api/events — return committed events since a given block height.
+///
+/// Used by the Discord bot and other polling clients to catch up on state changes
+/// without maintaining a persistent WebSocket connection.
+async fn get_events(
+    Query(params): Query<EventsQuery>,
+    State(state): State<NodeState>,
+) -> Json<Vec<CommittedEvent>> {
+    let since_height = params.since_height.unwrap_or(0);
+    let limit = params.limit.unwrap_or(50).min(200);
+
+    let s = state.read().await;
+    let events: Vec<CommittedEvent> = s
+        .event_log
+        .iter()
+        .filter(|e| e.height >= since_height)
+        .take(limit)
+        .cloned()
+        .collect();
+    Json(events)
 }
 
 /// POST /intents/encrypted — submit an SSE-encrypted intent for gossip propagation.
@@ -3108,8 +3189,11 @@ async fn post_compose_proofs(
 
 #[derive(Deserialize)]
 struct BearerAuthRequest {
-    bearer_token: String,
+    /// JSON-serialized BearerCapProof (the delegation chain proof).
+    bearer_proof: serde_json::Value,
+    /// Hex-encoded 32-byte target cell ID.
     target_cell: String,
+    /// Action being authorized (for logging/audit; actual permissions come from proof).
     action: String,
 }
 
@@ -3119,6 +3203,11 @@ struct BearerAuthResponse {
     error: Option<String>,
 }
 
+/// POST /turns/bearer-auth — verify a bearer capability delegation chain.
+///
+/// Deserializes the BearerCapProof, checks expiry against current block height,
+/// checks revocation channels, verifies Ed25519 signatures or STARK proofs in
+/// the delegation chain, and confirms attenuation (bearer perms subset of delegator perms).
 async fn post_bearer_auth(
     State(state): State<NodeState>,
     Json(req): Json<BearerAuthRequest>,
@@ -3128,18 +3217,44 @@ async fn post_bearer_auth(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let _bearer_token =
-        hex_decode_32_result(&req.bearer_token).map_err(|_| StatusCode::BAD_REQUEST)?;
+    // Deserialize the BearerCapProof from the request JSON.
+    let bearer_proof: pyana_turn::BearerCapProof =
+        serde_json::from_value(req.bearer_proof).map_err(|_| StatusCode::BAD_REQUEST)?;
+
     let _target_cell =
         hex_decode_32_result(&req.target_cell).map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    // Bearer cap verification: the token is BLAKE3(delegator_key || target || action || expiry).
-    // For now accept structurally valid tokens — full verification requires looking up
-    // the delegator's registered capability chain.
-    Ok(Json(BearerAuthResponse {
-        authorized: true,
-        error: None,
-    }))
+    // Build a TurnExecutor configured with current block height and revocation state.
+    let current_height = s
+        .store
+        .latest_attested_root()
+        .ok()
+        .flatten()
+        .map(|r| r.height)
+        .unwrap_or(0);
+
+    let mut executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
+    executor.set_block_height(current_height);
+
+    // Set the local federation ID for delegation message computation.
+    let fed_id = s
+        .known_federation_keys
+        .first()
+        .map(|k| k.0)
+        .unwrap_or([0u8; 32]);
+    executor.set_local_federation_id(fed_id);
+
+    // Call the executor's verify_bearer_cap with an empty path (top-level check).
+    match executor.verify_bearer_cap(&bearer_proof, &s.ledger, &[]) {
+        Ok(()) => Ok(Json(BearerAuthResponse {
+            authorized: true,
+            error: None,
+        })),
+        Err((turn_error, _path)) => Ok(Json(BearerAuthResponse {
+            authorized: false,
+            error: Some(format!("{turn_error}")),
+        })),
+    }
 }
 
 #[derive(Deserialize)]

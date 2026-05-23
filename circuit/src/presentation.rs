@@ -452,7 +452,8 @@ impl PresentationAir {
             fold_proofs.push(proof);
         }
 
-        // 2. Prove the derivation
+        // 2. Prove the derivation (DEPRECATED: uses old DerivationAir).
+        // Production STARK proofs use pyana_dsl_runtime::descriptors::derivation_circuit().
         let derivation_air = DerivationAir::new(w.derivation.clone());
         let deriv_result = ConstraintProver::verify(&derivation_air);
         if !deriv_result.is_valid() {
@@ -535,7 +536,8 @@ impl PresentationAir {
 
         let ivc_proof = prove_ivc(initial_root, deltas)?;
 
-        // 2. Prove the derivation
+        // 2. Prove the derivation (DEPRECATED: uses old DerivationAir).
+        // Production STARK proofs use pyana_dsl_runtime::descriptors::derivation_circuit().
         let derivation_air = DerivationAir::new(w.derivation.clone());
         let deriv_result = ConstraintProver::verify(&derivation_air);
         if !deriv_result.is_valid() {

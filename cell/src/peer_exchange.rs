@@ -279,7 +279,6 @@ impl PeerExchange {
         new_commitment: &[u8; 32],
         effects_hash: &[u8; 32],
     ) -> Result<(), PeerExchangeError> {
-        use pyana_circuit::SovereignTransitionAir;
         use pyana_circuit::field::BabyBear;
         use pyana_circuit::stark;
 
@@ -313,8 +312,8 @@ impl PeerExchange {
             }
         }
 
-        // Verify the STARK proof.
-        let air = SovereignTransitionAir;
+        // Verify the STARK proof using EffectVmAir (DSL cutover).
+        let air = pyana_circuit::EffectVmAir::new(proof.trace_len);
         stark::verify(&air, &proof, &public_inputs)
             .map_err(|e| PeerExchangeError::InvalidTransitionProof(e))?;
 

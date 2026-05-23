@@ -972,6 +972,7 @@ async fn handle_remote_receipt(
         derivation_records: vec![],
         emitted_events: vec![],
         executor_signature: None,
+        finality: Default::default(),
     };
 
     // Resolve the pending turn in the local registry.
