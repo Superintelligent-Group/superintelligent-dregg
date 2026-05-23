@@ -117,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let worker_token = worker_wallet.mint_token(&WORKER_ROOT_KEY, "federation");
     println!(
         "    Worker credential minted: service='{}', can_prove={}",
-        worker_token.service,
+        worker_token.service(),
         worker_token.can_prove()
     );
     println!();

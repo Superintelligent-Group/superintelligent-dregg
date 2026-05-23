@@ -37,9 +37,9 @@ fn main() {
     };
     let root_token = wallet.mint_token(&root_key, "compute");
     println!("[2] Minted root token");
-    println!("    Label: {}", root_token.label);
-    println!("    Service: {}", root_token.service);
-    println!("    ID: {}\n", root_token.id);
+    println!("    Label: {}", root_token.label());
+    println!("    Service: {}", root_token.service());
+    println!("    ID: {}\n", root_token.id());
 
     // Verify the root token works for any request (unrestricted).
     let unrestricted_request = AuthRequest {
@@ -60,8 +60,8 @@ fn main() {
 
     let restricted_token = wallet.attenuate(&root_token, &app_restrictions).unwrap();
     println!("[3] Attenuated token for monitoring read-only");
-    println!("    Label: {}", restricted_token.label);
-    println!("    ID: {}", restricted_token.id);
+    println!("    Label: {}", restricted_token.label());
+    println!("    ID: {}", restricted_token.id());
 
     // Verify the attenuated token (the HMAC chain is valid regardless of caveats;
     // semantic caveat checking may vary based on the request).
@@ -97,7 +97,7 @@ fn main() {
     println!("    Spawned sub-agent");
     println!("    Sub-agent public key: {}", sub_agent.public_key());
     println!("    Sub-agent cell ID: {}", sub_agent.cell_id);
-    println!("    Sub-agent token: {}\n", sub_agent.token.label);
+    println!("    Sub-agent token: {}\n", sub_agent.token.label());
 
     // -------------------------------------------------------------------------
     // Step 5: Sub-agent verifies its authorization.
@@ -164,10 +164,11 @@ fn main() {
     );
     println!("  Sub-agent:    {}", sub_agent.public_key());
     println!("  Domain:       {}", runtime.domain());
-    println!("  Root token:   {}", root_token.id);
+    println!("  Root token:   {}", root_token.id());
     println!(
         "  Delegated:    {} -> {}",
-        root_token.id, sub_agent.token.id
+        root_token.id(),
+        sub_agent.token.id()
     );
     println!("  Restrictions: apps=[monitoring:r], sub-apps=[monitoring-sub:r]");
     println!("  Turns executed: 2 (1 parent, 1 sub-agent)");

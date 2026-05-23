@@ -155,13 +155,20 @@ pub async fn start_server(
         app_routes = app_routes.fallback_service(ServeDir::new(fp));
     }
 
-    // Upgrade 1: TRUE Vickrey auctions via blinded queue.
-    // Bids committed here cannot be reordered by the operator — strictly stronger
-    // than the legacy commit-reveal flow (kept at /auctions/* for compatibility).
+    // Upgrade 1: blinded bid commitment queue.
+    // REVIEW[P2]: this is NOT a Vickrey implementation — `BlindedQueue` does not
+    // rank bids. See `blinded_bids.rs` module docs. Bids here aren't linked to a
+    // specific auction_id, and the legacy `/auctions/*` path still works in
+    // parallel (no cross-path dedup).
+    // REVIEW[P3]: this duplicates the constructor logic in
+    // `blinded_bids::blinded_bid_endpoint()`. Either call the helper or remove it.
     let blinded_bids = FairDistributionEndpoint::new(BLINDED_BID_QUEUE_CAPACITY);
 
     // Upgrade 2: Store-and-forward inbox for offline bidder notifications.
-    // Outbid and winner messages are pushed here as encrypted payloads.
+    // REVIEW[P1]: no auction code calls `.receive(...)` on this inbox. Outbid /
+    // win notifications are NEVER pushed by the gallery itself. See
+    // `notification_inbox.rs` module docs.
+    // REVIEW[P3]: duplicates `notification_inbox::bidder_inbox_endpoint()`.
     let bidder_inbox = InboxEndpoint::new(INBOX_CAPACITY, INBOX_MIN_DEPOSIT);
 
     AppServer::new(config)

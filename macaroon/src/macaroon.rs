@@ -73,6 +73,21 @@ impl Nonce {
     }
 }
 
+// AUDIT[P2]: `Macaroon` has all `pub` fields including `caveats` and `tail`.
+// This is the underlying credential type wrapped by `token::MacaroonToken`.
+// The wrapping type keeps the `Macaroon` private and exposes only an
+// immutable `inner()` accessor, so the SDK boundary is sealed. BUT a caller
+// who deserializes a `Macaroon` directly (the type is `Serialize +
+// Deserialize`) can freely mutate `caveats` and recompute `tail` if they
+// know any HMAC root. The integrity guarantee is "tail HMAC matches the
+// caveat chain under the issuer root key, which the prover doesn't hold,"
+// so an attacker cannot forge a valid `tail` for tampered caveats without
+// the root key. So this is currently safe at the cryptographic layer.
+// However, callers that construct `Macaroon` literals (test code, mocks,
+// adapters) may accidentally compose without HMAC checking. Severity P2:
+// document that all consumers MUST go through HMAC `verify()` before
+// trusting the caveat set, and consider making fields `pub(crate)` with
+// read-only accessors in a future hardening pass.
 /// A macaroon token.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Macaroon {

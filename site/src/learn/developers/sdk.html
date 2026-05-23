@@ -116,8 +116,13 @@ let delegated = alice.delegate(&root, &bob.public_key(), &Attenuation {
     ..Default::default()
 }).unwrap();
 
-// Bob receives the delegation
-bob.receive_delegation(delegated).unwrap();</code></pre>
+// Bob receives the signed delegation envelope. He must declare the authority
+// policy (which delegator key he trusts for this envelope) — the SDK refuses
+// to consume untrusted envelopes silently.
+bob.receive_signed_delegation(
+    delegated,
+    &amp;DelegationAuthority::TrustedKey(alice.public_key()),
+).unwrap();</code></pre>
 
     <h2 id="authorize">Generating Authorization Proofs</h2>
 

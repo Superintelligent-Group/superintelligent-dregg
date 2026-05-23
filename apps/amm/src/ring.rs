@@ -161,6 +161,13 @@ impl RingTradeParticipant for AmmRingParticipant {
 
     fn settle_leg(&mut self, settlement: &Settlement) -> Result<(), RingError> {
         let offer_key = Self::asset_to_key(&settlement.asset);
+        // REVIEW[P1]: ambiguous pool selection. If the registry has multiple
+        // pools containing `offer_key` (e.g. ETH/USDC and ETH/DAI), `find`
+        // returns the first one in HashMap iteration order — non-deterministic
+        // and almost certainly wrong. The Settlement only carries one asset
+        // (the offered side), so the "want" side cannot be inferred. The trait
+        // needs `Settlement.want_asset` to disambiguate; until then this only
+        // works correctly when each asset appears in exactly one pool.
         // `want` asset: we need to find it from the settlement's `to` side.
         // The Settlement struct only carries `from`, `to` (CommitmentIds), `asset`
         // (the offered asset), and `amount`. We derive the "want" asset from the
@@ -183,6 +190,14 @@ impl RingTradeParticipant for AmmRingParticipant {
             .get_pool_mut(&pool_id)
             .ok_or_else(|| RingError::PoolNotFound(hex::encode(pool_id)))?;
 
+        // REVIEW[P2]: slippage protection is disabled here (min_output: 1).
+        // The Settlement struct only carries the input amount, not the expected
+        // output, so we cannot enforce the solver's `want_min_amount`. A peer
+        // ring leg can drift the pool arbitrarily and this leg will still
+        // happily execute. Options: (a) extend Settlement with an
+        // `expected_min_out` field (requires app-framework / intent change,
+        // flagging only); (b) cache the expected output from the matching
+        // ExchangeSpec at offer-publish time and look it up by leg_id here.
         let output = pool_mut
             .swap(settlement.amount, 1, direction_a_to_b)
             .map_err(|e| RingError::SwapFailed(e.to_string()))?;
@@ -210,7 +225,15 @@ impl RingTradeParticipant for AmmRingParticipant {
 
         let leg = self.settled.remove(pos);
 
-        // Reverse the swap: swap back the output amount in the opposite direction.
+        // REVIEW[P1]: rollback is NOT idempotent and is lossy. Re-swapping
+        // `amount_out` in the opposite direction incurs ANOTHER 0.3% fee, so a
+        // settle-then-rollback cycle permanently degrades pool reserves (k
+        // grows slightly, LPs effectively get a free fee). It can also fail
+        // outright if the pool was emptied by a later leg in the same ring.
+        // The trait docstring says rollback "must be idempotent". The honest
+        // implementation is to *snapshot* (reserve_a, reserve_b, cumulative_k,
+        // lp_total_supply) at the start of `settle_leg` and restore that
+        // snapshot here — drop the re-swap entirely.
         let pool = self
             .registry
             .get_pool_mut(&leg.pool_id)
@@ -306,6 +329,11 @@ pub async fn ring_settle_handler(
         settlements.push(s);
     }
 
+    // REVIEW[P2]: read-modify-write race. Any concurrent /pools/:id/swap
+    // hitting `state.registry.write()` between this clone and the commit
+    // below is silently overwritten. Hold a single write guard for the entire
+    // settle/rollback sequence (let mut registry = state.registry.write().await;
+    // build the participant inline against `&mut *registry`).
     // Take a snapshot of the registry to work on.
     let registry_snapshot = state.registry.read().await.clone();
     let mut participant = AmmRingParticipant::from_registry(registry_snapshot);

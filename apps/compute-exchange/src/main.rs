@@ -17,6 +17,16 @@
 //!   (qualification)      (escrow + partial)     (commit-reveal)
 //! ```
 
+// REVIEW[P2]: The brief for this app described "new-world framework primitives"
+// (nameservice auto-registration, per-provider `/providers/{id}/publish-name`,
+// a `BatchExecutor`-based `/executor/jobs` + `/executor/run`, and `src/executor.rs`).
+// None of these are present in the current tree — there is no `executor` module,
+// no `discovery::NameserviceClient` use, no `AppServer::with_name`, and the
+// router below has no `/providers/.../publish-name` or `/executor/*` routes.
+// Compute-exchange has NOT been upgraded to the new primitives; only the legacy
+// orderbook / commit-reveal / optimistic-settlement code is present. The
+// nameservice/executor work must still be done, OR the brief is stale.
+
 mod auction;
 mod delivery_verification;
 mod orderbook;

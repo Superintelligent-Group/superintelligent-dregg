@@ -5,6 +5,22 @@
 //! `InboxMessage::Capability`. The holder reads messages on reconnect and the
 //! signature can be re-verified from the deserialized `DelegatedToken`.
 //!
+//! REVIEW[P1]: NEITHER this module NOR the identity server actually serializes a
+//! signed `DelegatedToken` into `cert_bytes`. The tests use placeholder ASCII
+//! (`b"signed-delegated-token-v2-envelope-placeholder"`, etc.) and no code path
+//! constructs a real `DelegatedToken` via `AgentWallet::delegate(...)`. As wired,
+//! the inbox is a transport for opaque bytes; the holder has no way to call
+//! `receive_signed_delegation(...)` because there is no `DelegatedToken` produced
+//! anywhere in this app. Either (a) integrate `AgentWallet` issuance and call
+//! `postcard::to_allocvec(&delegated_token)` for `cert_bytes`, or (b) downgrade
+//! the docstring claims to "transport-only, signature verification out of scope".
+//!
+//! REVIEW[P1]: when the holder eventually receives, what `DelegationAuthority` is
+//! passed to `receive_signed_delegation`? Nothing in this app makes that call.
+//! Tests assert sender round-trip and content_hash non-zero, but NOT signature
+//! verification — so the "mandatory-signature v2" guarantee is asserted in docs
+//! but not exercised in tests.
+//!
 //! # Security
 //!
 //! - Uses the **mandatory-signature v2 envelope**: every `DelegatedToken` in the

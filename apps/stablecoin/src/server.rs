@@ -317,6 +317,14 @@ async fn mint_cdp(
 
     // Base fee = 1% of mint amount (100 bps).
     let base_fee = req.amount / 100;
+    // REVIEW[P1]: `fee_charged` is COMPUTED but never DEDUCTED or transferred.
+    // There is no balance state in `paying_asset` anywhere — no debit on the
+    // caller, no credit to a fee bucket. The response field name
+    // `fee_charged` is therefore misleading; this endpoint accepts a fee
+    // declaration but doesn't enforce payment. Either: (a) wire the fee into
+    // an actual balance ledger keyed by `paying_asset` (large change — flag);
+    // or (b) rename to `fee_quoted` and document it as advisory until
+    // settlement.
     let fee_charged = compute_fee_or_reject(&policy, &paying_asset, base_fee)?;
 
     let height = *state.current_height.read().await;
@@ -582,6 +590,10 @@ async fn stability_fee(
     let paying_asset = resolve_paying_asset(req.paying_asset.as_deref(), &policy)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })))?;
 
+    // REVIEW[P1]: same problem as `mint_cdp` — this endpoint computes a fee in
+    // the chosen asset but never debits/credits anything. It's a quote
+    // endpoint masquerading as a payment endpoint. Either rename to
+    // `/stability-fee/quote` or wire it to an actual balance change.
     let fee_charged = compute_fee_or_reject(&policy, &paying_asset, req.base_amount)?;
 
     Ok(Json(StabilityFeeResponse {

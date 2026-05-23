@@ -48,6 +48,12 @@ zeroize = { workspace = true }
 default = ["federation-client"]
 federation-client = ["dep:reqwest"]
 dev = ["pyana-circuit/dev"]
+# Enables `DelegationAuthority::Open`, which accepts any well-signed envelope
+# without an authority check. This is a footgun in production and is gated
+# behind a feature flag so that production builds cannot construct it at all.
+# Only enable in tests or development binaries — never in production-facing
+# crates.
+unsafe-test-utils = []
 
 [[example]]
 name = "agent_demo"

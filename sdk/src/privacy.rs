@@ -541,7 +541,7 @@ impl AgentWallet {
         // For attenuated tokens, derive additional ancestor hashes from the token ID
         // which encodes the attenuation chain structure.
         // Each segment of the token ID (split by ':') represents a derivation step.
-        let id_parts: Vec<&str> = token.id.split(':').collect();
+        let id_parts: Vec<&str> = token.id().split(':').collect();
         for (i, _part) in id_parts.iter().enumerate().skip(1) {
             let mut hasher = blake3::Hasher::new_derive_key("pyana-revocation-hash-v1");
             hasher.update(issuer_key);

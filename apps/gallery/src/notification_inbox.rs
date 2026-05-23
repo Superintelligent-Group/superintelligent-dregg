@@ -1,9 +1,24 @@
 //! Store-and-forward inbox for auction notifications.
 //!
 //! This module wraps [`InboxEndpoint`] to provide a bidder notification inbox at
-//! `/inbox/bidders/*`.  When a bidder is outbid or wins, the auction logic pushes
-//! an [`InboxMessage::Encrypted`] to their inbox.  Bidders can retrieve messages
-//! even after coming back online from an extended absence.
+//! `/inbox/bidders/*`.  When a bidder is outbid or wins, the auction logic SHOULD
+//! push an [`InboxMessage::Encrypted`] to their inbox.  Bidders can retrieve
+//! messages after coming back online.
+//!
+//! REVIEW[P1]: as of this commit, NO auction code path actually calls
+//! `inbox.receive(...)` with `outbid_notification` / `won_notification`. The
+//! endpoint is mounted (server.rs builds an `InboxEndpoint` inline) but the
+//! reveal/settlement handlers in `handlers.rs` / `auction.rs` never push. The
+//! helper functions below are unused. Until those call sites exist, this is a
+//! decorative HTTP surface — clients can POST to `/inbox/bidders/send` themselves
+//! but the gallery itself never originates a notification.
+//!
+//! REVIEW[P1]: `ciphertext` is NOT encrypted. `outbid_notification` /
+//! `won_notification` return UTF-8 bytes of a plain-text format string. Labeling
+//! these `InboxMessage::Encrypted` is a privacy mis-claim — anyone reading
+//! `/inbox/bidders/next` sees the auction_id and bid amount in cleartext. Either
+//! actually encrypt to the bidder's public key, or change the message variant
+//! (e.g., use `SturdyRef` / a new `Plain` variant) so the framing is honest.
 //!
 //! # Route summary
 //!
@@ -40,16 +55,19 @@ pub fn bidder_inbox_endpoint() -> InboxEndpoint {
     InboxEndpoint::new(INBOX_CAPACITY, INBOX_MIN_DEPOSIT)
 }
 
-/// Encode an "outbid" notification payload as a hex-encoded ciphertext bytes string.
+/// Encode an "outbid" notification payload.
 ///
-/// In a real deployment the server would encrypt this with the bidder's public key.
-/// For now we use plain bytes; the structure is meaningful to the bidder's client.
+/// REVIEW[P1]: returned bytes are PLAINTEXT despite being framed as
+/// `InboxMessage::Encrypted` at the call site. Real deployments must encrypt
+/// these to the bidder's pubkey (e.g., libsodium sealed box) before sending.
 pub fn outbid_notification(auction_id_hex: &str, new_high_bid: u64) -> Vec<u8> {
     format!("outbid:{auction_id_hex}:{new_high_bid:016x}")
         .into_bytes()
 }
 
 /// Encode a "won" notification payload.
+///
+/// REVIEW[P1]: see `outbid_notification` — plaintext bytes, not actually encrypted.
 pub fn won_notification(auction_id_hex: &str) -> Vec<u8> {
     format!("won:{auction_id_hex}:claim_within_50_blocks").into_bytes()
 }

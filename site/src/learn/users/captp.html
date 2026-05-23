@@ -81,8 +81,13 @@ let delegated = alice.delegate(&root, &bob.public_key(), &Attenuation {
     ..Default::default()
 }).unwrap();
 
-// Bob receives
-bob.receive_delegation(delegated).unwrap();</code></pre>
+// Bob receives the signed delegation envelope. He passes the authority policy
+// (here: "I trust envelopes signed by Alice's pubkey") so the SDK can verify
+// the envelope binding before accepting.
+bob.receive_signed_delegation(
+    delegated,
+    &amp;DelegationAuthority::TrustedKey(alice.public_key()),
+).unwrap();</code></pre>
 
     <h2 id="accepting">Accepting a Capability</h2>
 

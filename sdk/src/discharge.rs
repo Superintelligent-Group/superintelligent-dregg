@@ -104,7 +104,7 @@ pub fn extract_third_party_tickets(token: &HeldToken) -> Result<Vec<(String, Vec
     use pyana_macaroon::format::decode_token;
     use pyana_macaroon::{Macaroon, ThirdPartyCaveat};
 
-    let binary = decode_token(&token.encoded)
+    let binary = decode_token(token.encoded())
         .map_err(|e| SdkError::Wire(format!("failed to decode token: {e}")))?;
     let mac = Macaroon::deserialize(&binary)
         .map_err(|e| SdkError::Wire(format!("failed to deserialize token: {e}")))?;

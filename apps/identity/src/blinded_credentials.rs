@@ -4,6 +4,22 @@
 //! (via [`FairDistributionEndpoint`]). Each alumnus withdraws one credential
 //! without the university learning which credential maps to which student.
 //!
+//! REVIEW[P1]: the blinded-queue's `Consumed { nullifier }` path does NOT carry
+//! any credential payload back to the consumer — only proves a slot was spent.
+//! The actual credential bytes must travel via a separate channel (e.g., the
+//! inbox in `inbox_delivery.rs`) keyed by commitment preimage. Today no code
+//! path closes this loop, so "withdrawing a credential" is a misnomer: a holder
+//! gains a nullifier, not a `DelegatedToken`. Either add a per-commitment
+//! payload-fetch endpoint, or document that this module only enforces the
+//! "one-per-alumnus" budget and the credential payload arrives elsewhere.
+//!
+//! REVIEW[P2]: commitment construction `blake3("blinded-queue-commitment" ||
+//! cert_bytes || randomness)` should be verified to match
+//! `pyana_storage::blinded::crypto::create_commitment` exactly (the tests in
+//! `tests.rs` use `create_commitment(item, &randomness)`, which is good). The
+//! docs above describe the binding informally — ensure callers use the storage
+//! helper, not a hand-rolled hash.
+//!
 //! # Protocol
 //!
 //! 1. **Issuer commits**: for each credential, compute

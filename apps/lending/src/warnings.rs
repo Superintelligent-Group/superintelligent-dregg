@@ -7,8 +7,9 @@
 //! # Message Format
 //!
 //! Messages are `InboxMessage::Encrypted { ciphertext, sender }` where:
-//! - `ciphertext` is a JSON-encoded [`HealthWarning`] (unencrypted for now — a
-//!   real deployment would encrypt to the borrower's public key).
+//! - `ciphertext` is a JSON-encoded [`HealthWarning`] — **plaintext today,
+//!   despite the variant name**.  See `REVIEW[P1]` on
+//!   [`push_health_warning`].
 //! - `sender` is the pool's own identity (all zeros sentinel).
 
 use pyana_types::CellId;
@@ -53,16 +54,31 @@ pub fn build_warnings_inbox() -> InboxEndpoint {
 ///
 /// Returns `Ok(root)` on success, or `Err(e)` if the inbox is full or the
 /// deposit is rejected.
+///
+// REVIEW[P1]: the payload is JSON-serialized in plaintext and stored in
+// `InboxMessage::Encrypted { ciphertext, .. }`. The variant name is a lie —
+// nothing encrypts it. A `HealthWarning` reveals the position id, current
+// health, and the block, all of which the borrower likely does NOT want
+// public (this is the same data an MEV searcher would use to time a
+// liquidation). Either (a) require a borrower public key parameter and
+// encrypt-to-recipient before storing, or (b) switch to a per-borrower inbox
+// (one `CapInbox` per borrower cell) so the global inbox doesn't leak.
+// Today, anyone with read access to the warnings inbox can scrape every
+// at-risk position.
+//
+// REVIEW[P2]: `borrower` is currently unused — there is only ONE global
+// warnings inbox (see `AppState.warnings_inbox` in server.rs). Until this is
+// keyed-per-borrower, the parameter is misleading.
 pub fn push_health_warning(
     inbox: &mut CapInbox,
     borrower: CellId,
     warning: HealthWarning,
     deposit: u64,
 ) -> Result<[u8; 32], pyana_storage::inbox::InboxError> {
-    let _ = borrower; // In a multi-user inbox, borrower would route to their sub-inbox.
-    let ciphertext = serde_json::to_vec(&warning).unwrap_or_default();
+    let _ = borrower; // see REVIEW[P2] above — single global inbox for now.
+    let payload = serde_json::to_vec(&warning).unwrap_or_default();
     let msg = InboxMessage::Encrypted {
-        ciphertext,
+        ciphertext: payload,
         sender: POOL_SENDER,
     };
     inbox.receive(msg, deposit)
@@ -157,27 +173,15 @@ mod tests {
         };
         push_health_warning(&mut inbox, borrower, warning.clone(), 0).unwrap();
 
-        // Simulate reconnect: borrower reads from inbox
-        let (entry, proof) = inbox.read_next().expect("should have a message to read");
-
-        // Verify the message content
-        let retrieved: HealthWarning =
-            serde_json::from_slice(&entry.content_hash).unwrap_or_else(|_| {
-                // content_hash is the hash, not the original bytes — we need
-                // to deserialize from the raw ciphertext.
-                // The entry content_hash is a commitment; the ciphertext lives
-                // in the QueueEntry.  We verify the proof is valid and the
-                // queue is now empty.
-                HealthWarning {
-                    position_id_hex: hex_id(&pos_id),
-                    health_factor_bps: health,
-                    threshold_bps: EXECUTOR_HEALTH_THRESHOLD_BPS,
-                    block: 42,
-                }
-            });
-
-        assert_eq!(retrieved.health_factor_bps, health);
-        assert!(retrieved.health_factor_bps < EXECUTOR_HEALTH_THRESHOLD_BPS);
+        // Simulate reconnect: borrower reads from inbox. `read_next` returns
+        // only the entry's content commitment, not the original payload — the
+        // raw ciphertext is held inside the underlying queue entry. For this
+        // smoke test we accept that limitation and only verify that the entry
+        // existed, the dequeue proof's roots changed, and the inbox is now
+        // drained. REVIEW[P3]: when `CapInbox` grows a `read_next_with_message`
+        // accessor, replace this with a real round-trip deserialize.
+        let (_entry, proof) = inbox.read_next().expect("should have a message to read");
+        let _ = &warning; // payload we *would* check once read returns it
 
         // Proof contains old/new roots
         assert_ne!(proof.old_root, proof.new_root, "roots should differ after dequeue");

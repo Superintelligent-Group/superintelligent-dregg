@@ -120,9 +120,9 @@ fn main() {
     let root_key: [u8; 32] = *blake3::hash(b"demo-issuer-root-secret-key").as_bytes();
     let token = wallet.mint_token(&root_key, "compute");
 
-    item(&format!("Token minted for service: {}", token.service));
-    item(&format!("Token ID: {}", token.id));
-    item(&format!("Token label: {}", token.label));
+    item(&format!("Token minted for service: {}", token.service()));
+    item(&format!("Token ID: {}", token.id()));
+    item(&format!("Token label: {}", token.label()));
     item(&format!("Tokens held: {}", wallet.tokens().len()));
 
     // =========================================================================

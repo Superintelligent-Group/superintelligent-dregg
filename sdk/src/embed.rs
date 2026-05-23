@@ -558,6 +558,16 @@ impl PyanaEngine {
         &self.ledger
     }
 
+    // AUDIT[P2]: `ledger_mut()` exposes a raw `&mut Ledger` that lets callers
+    // mutate cell balances, replace state roots, and erase nonce gaps in ways
+    // that bypass every turn-execution invariant the executor enforces. This
+    // is "one-time-checked-then-discarded" in spirit: the executor verifies
+    // each turn but the ledger it operates on is unconditionally writable by
+    // any external caller holding `&mut PyanaEngine`. Recommended fix: gate
+    // `ledger_mut` behind a feature flag, or remove and replace with a
+    // narrower set of authenticated mutation methods (e.g., load_snapshot
+    // already exists). Severity P2 because callers with `&mut PyanaEngine`
+    // already have full process trust; documenting so the reviewer can decide.
     /// Get a mutable reference to the ledger (for direct manipulation).
     pub fn ledger_mut(&mut self) -> &mut Ledger {
         &mut self.ledger
@@ -572,6 +582,19 @@ impl PyanaEngine {
         self.federation_root
     }
 
+    // AUDIT[P2]: `set_federation_root` and `set_max_proof_age_secs` are
+    // "implicit trust based on type, not on a stored proof": the engine
+    // trusts whatever the caller sets, even though the federation root is
+    // the public input that every membership STARK is verified against.
+    // A caller that sets `federation_root = [0u8;32]` and toggles
+    // `max_proof_age_secs = 0` effectively disables freshness + binds
+    // verification to a sentinel root. The current code handles
+    // `[0u8; 32]` by failing closed in verify_presentation_bytes (good)
+    // but nothing prevents the operator from accidentally rolling back
+    // the root to a stale value. Recommended: track an internal
+    // monotonic `root_version` and refuse to roll back without an
+    // explicit downgrade method. Severity P2 — operator-level concern,
+    // not exploitable from untrusted input.
     /// Update the federation root.
     ///
     /// The caller is responsible for fetching/verifying the root from their own

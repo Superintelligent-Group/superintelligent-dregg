@@ -125,12 +125,12 @@ fn main() {
     );
     println!(
         "  Company token:    {} (can mint: {})",
-        company_token.id,
+        company_token.id(),
         company_token.can_mint()
     );
     println!(
         "  Candidate token:  {} (can mint: {})",
-        candidate_token.id,
+        candidate_token.id(),
         candidate_token.can_mint()
     );
     println!();
@@ -293,7 +293,7 @@ fn main() {
 
     // The candidate's held capability (what token they're using to fulfill)
     let candidate_capability = HeldCapability {
-        token_id: candidate_token.id.clone(),
+        token_id: candidate_token.id().to_string(),
         actions: vec!["apply".into()],
         resource: "hiring/*".into(),
         app_id: None,

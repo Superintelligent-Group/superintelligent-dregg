@@ -845,7 +845,7 @@ async fn tool_authorize(params: &Value, state: &NodeState) -> McpToolResult {
     for token in s.wallet.tokens() {
         if s.wallet.verify_token(token, &auth_req) {
             authorized = true;
-            matching_token_id = Some(token.id.clone());
+            matching_token_id = Some(token.id().to_string());
             break;
         }
     }
@@ -1557,9 +1557,9 @@ async fn tool_check_capabilities(state: &NodeState) -> McpToolResult {
         .map(|(i, t)| {
             serde_json::json!({
                 "slot": i,
-                "id": t.id,
-                "label": t.label,
-                "service": t.service,
+                "id": t.id(),
+                "label": t.label(),
+                "service": t.service(),
                 "can_mint": t.can_mint(),
             })
         })

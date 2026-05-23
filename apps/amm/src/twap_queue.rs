@@ -35,7 +35,6 @@ use tokio::sync::RwLock;
 
 use pyana_app_framework::queue_endpoint::QueueEndpoint;
 use pyana_storage::programmable::{ProgrammableQueue, ValidationContext, programs};
-use pyana_storage::queue::QueueEntry;
 
 use crate::server::AppState;
 
@@ -160,6 +159,14 @@ pub async fn execute_batch_handler(
     let mut executed = 0usize;
     let mut skipped = 0usize;
 
+    // REVIEW[P1]: this loop does NOT execute swaps at the TWAP price. The
+    // TWAP `(twap_num, twap_denom)` is only used as a min-output floor; the
+    // actual `pool.swap` call mutates reserves each iteration, so intent N+1
+    // sees the post-intent-N price — i.e. sandwich-protection through the
+    // queue is partially undone by intra-batch state mutation. The doc-comment
+    // on this module promises "all trades see the same price". To deliver
+    // that, compute amount_out off the snapshot for every intent and apply
+    // ALL reserve mutations in a single post-loop commit (net δa, δb).
     for intent in &intents {
         // Execute at TWAP: compute the expected output at the open price.
         // amount_out_twap = amount_in * twap_num / (twap_denom + amount_in)
@@ -234,6 +241,13 @@ pub struct SubmitIntentResponse {
     pub queue_position: usize,
 }
 
+// REVIEW[P2]: this handler bypasses the ProgrammableQueue entirely — intents
+// land only in the in-memory `twap_state.pending` Vec. The whole point of
+// using ProgrammableQueue was provable ordering / Merkle root commitments
+// (per the module doc-comment). To honour the contract, this handler should
+// also call the underlying queue's `enqueue_validated` with content_hash =
+// intent.content_hash(), so the queue root attests to the batch's contents
+// before /execute-batch runs.
 pub async fn submit_intent_handler(
     State(state): State<BatchEndpointState>,
     Json(req): Json<SubmitIntentRequest>,

@@ -96,10 +96,6 @@ pub enum LiquidationQueueError {
     NotLiquidatable { price: u64 },
     #[error("position {position_id:?} is already pending in the queue")]
     AlreadyPending { position_id: [u8; 32] },
-    #[error("queue is full (capacity {capacity})")]
-    QueueFull { capacity: usize },
-    #[error("queue is empty")]
-    Empty,
     #[error("queue constraint violation: {detail}")]
     ConstraintViolation { detail: String },
 }
@@ -231,6 +227,18 @@ impl LiquidationQueue {
         self.pending.lock().await.is_empty()
     }
 
+    // REVIEW[P1]: this constructs a SECOND, independent ProgrammableQueue
+    // with no shared state. When the binary mounts both this endpoint AND the
+    // `Arc<LiquidationQueue>` from `AppState`, callers hitting
+    // `/queue/liquidations/enqueue` (this queue) and `/queue/liquidations/submit`
+    // (the AppState queue) are writing to disjoint backing stores: the
+    // /status root will not reflect /submit-driven entries and vice-versa.
+    // Worse, /enqueue takes ANY content hash above the deposit floor — bypassing
+    // the `is_liquidatable` gate that exists in `submit`. Either: (a) make
+    // QueueEndpoint accept a pre-existing Arc<Mutex<ProgrammableQueue>> (would
+    // be an app-framework API change — flag, don't do here); or (b) drop the
+    // /queue/liquidations HTTP-mount and only expose `/queue/liquidations/submit`
+    // + `/queue/liquidations/drain` which actually go through the gated queue.
     /// Build a [`QueueEndpoint`] backed by a fresh programmable queue with the
     /// same program configuration, suitable for mounting at
     /// `AppServer::with_queue_endpoint("/queue/liquidations", endpoint)`.

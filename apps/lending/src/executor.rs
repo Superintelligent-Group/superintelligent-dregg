@@ -27,6 +27,18 @@ pub const EXECUTOR_HEALTH_THRESHOLD_BPS: u64 = 11_000;
 
 /// A delegation record: the borrower has given the executor permission to repay
 /// up to `reserve_amount` on their behalf.
+///
+// REVIEW[P1]: this struct has NO signature and NO link to the SDK's
+// `DelegatedToken` v2 envelope (see `sdk/src/wallet.rs` lines 682, 2566). The
+// HTTP route `POST /executor/delegate` currently accepts a raw JSON body and
+// trusts whatever `borrower_hex` is provided, with no auth. That means any
+// caller can register a delegation against any position. Combined with the
+// borrower-vs-position check now in `scan_at_risk`, the impact is limited to
+// "executor refuses to act on a forged delegation", but it still lets an
+// attacker spam the executor's delegation list and CPU. To be production-safe
+// this should accept a `DelegatedToken` envelope, call
+// `verify_delegation_envelope_v2`, and bind `BorrowerDelegation.borrower` to
+// the signer of the envelope rather than a free-form field.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BorrowerDelegation {
     /// The borrower's cell identity.
@@ -94,11 +106,13 @@ impl LendingBatchExecutor {
             if health >= EXECUTOR_HEALTH_THRESHOLD_BPS {
                 continue;
             }
-            // Find an active delegation for this position
-            let delegation = self
-                .delegations
-                .iter()
-                .find(|d| d.active && d.position_id == pos.id);
+            // Find an active delegation for this position. The delegation MUST
+            // also name the same borrower as the position — otherwise anyone
+            // could register a delegation against someone else's position and
+            // have repayment turns issued in their (the impostor's) name.
+            let delegation = self.delegations.iter().find(|d| {
+                d.active && d.position_id == pos.id && d.borrower == pos.borrower
+            });
             let Some(delegation) = delegation else {
                 continue;
             };
@@ -128,6 +142,15 @@ impl LendingBatchExecutor {
     /// Apply a collected batch of repayment instructions to the lending pool.
     ///
     /// Returns the positions that were successfully repaid.
+    ///
+    // REVIEW[P2]: this loop is per-turn, NOT atomic. If turn 3 of 5 fails, the
+    // first two repayments remain applied and the executor returns the partial
+    // result. `BatchExecution.batch_id` is still computed across the full
+    // batch in `execute_batch`, so the on-chain batch ID can disagree with the
+    // set of repayments actually applied. Either make the batch all-or-nothing
+    // by snapshotting `LendingPool` before the loop and rolling back on any
+    // failure, or change `BatchExecution` to record `included_turn_count`
+    // alongside `turn_count` and prove only over the included turns.
     pub fn apply_batch(
         &mut self,
         batch: &[ClientTurnRequest],

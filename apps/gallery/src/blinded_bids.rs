@@ -1,11 +1,25 @@
-//! Blinded-queue bid path for TRUE Vickrey auctions.
+//! Blinded-queue bid path (NOT a Vickrey implementation on its own).
 //!
-//! This module adds a `/queue/bids/*` route backed by a [`FairDistributionEndpoint`],
-//! providing strictly stronger privacy than the existing commit-reveal flow:
+//! This module adds a `/queue/bids/*` route backed by a [`FairDistributionEndpoint`].
+//! It provides queue-level privacy (operator cannot reorder commitments) but does
+//! NOT, by itself, implement Vickrey (second-price) semantics — `BlindedQueue`
+//! exposes only `Consumed { nullifier }`, with no notion of "ordering by amount"
+//! or "second-highest bid". The actual second-price extraction lives in
+//! `private_vickrey.rs` (garbled-circuit tournament).
+//!
+//! REVIEW[P1]: prior module docs claimed "TRUE Vickrey via blinded queue". That is
+//! incorrect — the queue does not rank bids, and nothing in this module is wired to
+//! `private_vickrey`. Treat this endpoint as "blinded bid commitment queue" only.
 //!
 //! - Bids enter a blinded Merkle queue (the operator never learns intermediate ordering).
-//! - Consumption reveals only the nullifier, not the bid ordering observed by the operator.
-//! - The existing commit-reveal flow (auction endpoints) is retained as a fallback.
+//! - Consumption reveals only the nullifier (which spending slot was used).
+//! - The legacy commit-reveal flow at `/auctions/*` is retained.
+//!
+//! REVIEW[P2]: there is NO binding between a blinded-queue commitment and any
+//! specific `auction_id`. The queue is global; all auctions share `/queue/bids`.
+//! Today a bidder can submit a commitment via the legacy path AND the blinded
+//! path for the same auction (no dedup across paths). Either bind commitments
+//! to `auction_id` or document that the blinded queue is a future/demo facility.
 //!
 //! # Route summary
 //!

@@ -414,13 +414,13 @@ fn main() {
 
     // The token was successfully created (attenuation did not error)
     assert!(
-        sub_held.encoded.len() > held.encoded.len(),
+        sub_held.encoded().len() > held.encoded().len(),
         "Attenuated token must be longer (more caveats)"
     );
     println!(
         "  Sub-agent token: {} bytes (vs parent: {} bytes) — caveats added",
-        sub_held.encoded.len(),
-        held.encoded.len()
+        sub_held.encoded().len(),
+        held.encoded().len()
     );
     println!();
 

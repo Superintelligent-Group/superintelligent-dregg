@@ -256,15 +256,79 @@ pub enum AuthorizationPresentation {
 // Token storage types
 // =============================================================================
 
+/// A verified delegation binding, captured at receive time, used to re-verify
+/// signature integrity on every authorization use.
+///
+/// # Authority invariant
+///
+/// The delegator's Ed25519 signature covers a canonical digest of the envelope
+/// fields, including `token_bytes`, `caveat_chain_hash`, `proof_key`, and
+/// `membership_proof.leaf_hash`. Any tampering with the corresponding
+/// `HeldToken` fields after receive will produce a different signing message,
+/// breaking signature verification.
+///
+/// The binding stores the verified envelope verbatim (its fields are bytes
+/// captured at successful receive), plus the kind discriminator that selects
+/// the correct signing-message domain tag.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct DelegationBinding {
+    /// Whether this binding was produced via the external (v2) or local path.
+    /// Determines the signing-message domain tag used during re-verification.
+    pub(crate) kind: DelegationBindingKind,
+    /// Verified envelope fields. Stored privately and re-fed into the
+    /// signing-message hash on every use.
+    pub(crate) delegatee: PublicKey,
+    pub(crate) delegator_public_key: PublicKey,
+    pub(crate) delegator_signature: Signature,
+    pub(crate) restrictions: Attenuation,
+    pub(crate) proof_key: Option<[u8; 32]>,
+    pub(crate) membership_leaf: Option<[u8; 32]>,
+    pub(crate) parent_delegation_hash: [u8; 32],
+}
+
+/// Discriminates between external (wire) and local (in-process) delegation
+/// envelopes for signing-message reconstruction.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum DelegationBindingKind {
+    /// External v2 envelope (cross-process / cross-wire).
+    ExternalV2,
+    /// Local in-process envelope produced by `make_local_delegation`.
+    Local,
+}
+
 /// A token held by this wallet, along with metadata.
+///
+/// # Sealed-value construction
+///
+/// All authority-affecting fields are **private**. External callers cannot
+/// mutate `encoded`, `caveat_chain_hash`, `membership_proof`, the secret keys,
+/// or the (private) delegation binding. The only construction paths are:
+///
+/// - [`AgentWallet::mint_token`] — local mint from a held root key (no
+///   delegation binding).
+/// - [`AgentWallet::receive_signed_delegation`] — external envelope receive
+///   path; binds the verified envelope onto the held token.
+/// - [`AgentWallet::receive_local_delegation`] — local envelope receive path;
+///   binds the verified local envelope onto the held token.
+///
+/// External code interacts via read-only accessors ([`HeldToken::encoded`],
+/// [`HeldToken::service`], etc.).
+///
+/// # Durable signature binding
+///
+/// For tokens received via either delegation path, the verified envelope is
+/// retained in [`Self::delegation_binding`] and **re-verified on every
+/// authorization use**. This means external code cannot tamper with `encoded`
+/// or `caveat_chain_hash` after receive: the recomputed signing message would
+/// no longer match the captured signature, and the authorization would fail.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HeldToken {
     /// Human-readable label for this token.
-    pub label: String,
+    label: String,
     /// The service this token grants access to.
-    pub service: String,
+    service: String,
     /// The encoded token string (em2_ prefixed).
-    pub encoded: String,
+    encoded: String,
     /// The root key used to verify this token (needed for re-verification).
     /// Never serialized — stays in memory only.
     #[serde(skip)]
@@ -289,7 +353,7 @@ pub struct HeldToken {
     #[serde(skip)]
     issuer_key: [u8; 32],
     /// Unique identifier for lookup.
-    pub id: String,
+    id: String,
     /// Whether this token's HMAC chain has been cryptographically verified.
     ///
     /// Tokens minted locally or decoded with the real root key are `true`.
@@ -302,7 +366,7 @@ pub struct HeldToken {
     /// tampered with. Verification happens at presentation time when the token is
     /// submitted to a service that holds the root key.
     #[serde(default = "default_verified_false")]
-    pub verified: bool,
+    verified: bool,
     /// Pre-generated federation membership proof (for delegated tokens).
     ///
     /// When a token is received via delegation, the delegator pre-generates a
@@ -313,7 +377,7 @@ pub struct HeldToken {
     ///
     /// `None` for tokens minted locally (they can generate fresh proofs on the fly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub membership_proof: Option<pyana_commit::merkle::MerkleProof>,
+    membership_proof: Option<pyana_commit::merkle::MerkleProof>,
     /// BLAKE3 hash of the serialized caveat chain, computed by the delegator at
     /// delegation time from the HMAC-verified token.
     ///
@@ -325,7 +389,13 @@ pub struct HeldToken {
     /// `None` for tokens minted locally (they hold the root key and can verify the
     /// HMAC chain directly).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub caveat_chain_hash: Option<[u8; 32]>,
+    caveat_chain_hash: Option<[u8; 32]>,
+    /// Verified delegation envelope, present iff this token was produced via a
+    /// `receive_*_delegation` path. The signature is re-checked against the
+    /// current `encoded` / `caveat_chain_hash` / `membership_proof` on every
+    /// authorization use; no mutation can bypass it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delegation_binding: Option<DelegationBinding>,
 }
 
 /// Default for deserialization of older snapshots that lack the `verified` field.
@@ -375,6 +445,7 @@ impl HeldToken {
             verified,
             membership_proof: None,
             caveat_chain_hash: None,
+            delegation_binding: None,
         }
     }
 
@@ -402,7 +473,50 @@ impl HeldToken {
             verified: true, // Locally-attenuated from a verified parent
             membership_proof: None,
             caveat_chain_hash: None,
+            delegation_binding: None,
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Read-only accessors
+    //
+    // Authority-affecting fields are private; external callers may only *read*
+    // them through these methods. See the `Sealed-value construction` section
+    // on the struct doc for the construction rules.
+    // -------------------------------------------------------------------------
+
+    /// Human-readable label for this token.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// The service this token grants access to.
+    pub fn service(&self) -> &str {
+        &self.service
+    }
+
+    /// The encoded token string (em2_ prefixed).
+    ///
+    /// Returned by reference; the encoded bytes are immutable from outside the
+    /// wallet module. Direct mutation is impossible by construction (private
+    /// field + no `&mut self` accessor).
+    pub fn encoded(&self) -> &str {
+        &self.encoded
+    }
+
+    /// Unique identifier for lookup.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Pre-generated federation membership proof (for delegated tokens).
+    pub fn membership_proof(&self) -> Option<&pyana_commit::merkle::MerkleProof> {
+        self.membership_proof.as_ref()
+    }
+
+    /// BLAKE3 hash of the serialized caveat chain.
+    pub fn caveat_chain_hash(&self) -> Option<[u8; 32]> {
+        self.caveat_chain_hash
     }
 
     /// Access the root key by reference (internal use only).
@@ -450,6 +564,101 @@ impl HeldToken {
     /// Decode this held token into a [`MacaroonToken`] for operations.
     pub fn decode(&self) -> Result<MacaroonToken, pyana_token::TokenError> {
         MacaroonToken::from_encoded(&self.encoded, self.root_key)
+    }
+
+    /// Re-verify the captured delegation envelope signature against the
+    /// **current** field values (`encoded`, `caveat_chain_hash`,
+    /// `membership_proof` leaf, restrictions, parent hash, ...).
+    ///
+    /// # Authority invariant
+    ///
+    /// The delegator's signature binds these fields. Every authorization use
+    /// re-verifies; no in-process mutation can bypass. This routine is the
+    /// enforcement point for durable signature binding (P0 fix). Callers
+    /// reaching `prove_authorization_*` or `authorize_private` on a token
+    /// produced by `receive_*_delegation` MUST invoke this method first.
+    ///
+    /// For tokens without a delegation binding (locally minted / attenuated),
+    /// returns `Ok(())` — there is nothing to re-verify and integrity is
+    /// guaranteed by the HMAC chain checked at presentation time.
+    pub(crate) fn reverify_delegation_binding(&self) -> Result<(), SdkError> {
+        let Some(binding) = self.delegation_binding.as_ref() else {
+            return Ok(());
+        };
+
+        // Recompute signing message from the *current* field values. If
+        // `encoded` / `caveat_chain_hash` / `membership_proof` were tampered
+        // with after receive, the digest will differ.
+        let current_membership_leaf = self.membership_proof.as_ref().map(|p| p.leaf_hash);
+        // Belt-and-suspenders: the captured leaf must match what the current
+        // membership_proof carries — otherwise the proof was swapped out for
+        // a different leaf even if signing-message recomputation includes the
+        // captured one.
+        if current_membership_leaf != binding.membership_leaf {
+            return Err(SdkError::InvalidDelegation(
+                "delegation binding broken: membership proof was swapped after receive".into(),
+            ));
+        }
+
+        let signing_message = match binding.kind {
+            DelegationBindingKind::ExternalV2 => {
+                AgentWallet::compute_delegation_signing_message_v2(
+                    &self.encoded,
+                    &binding.delegatee,
+                    &self.service,
+                    &self.id,
+                    &binding.restrictions,
+                    &binding.proof_key,
+                    &self.caveat_chain_hash,
+                    binding.membership_leaf.as_ref(),
+                    &binding.parent_delegation_hash,
+                    &binding.delegator_public_key,
+                )
+            }
+            DelegationBindingKind::Local => AgentWallet::compute_local_delegation_signing_message(
+                &self.encoded,
+                &binding.delegatee,
+                &self.service,
+                &self.id,
+                &binding.restrictions,
+                &binding.proof_key,
+                &self.caveat_chain_hash,
+                binding.membership_leaf.as_ref(),
+                &binding.delegator_public_key,
+            ),
+        };
+
+        use ed25519_dalek::Verifier;
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&binding.delegator_public_key.0)
+            .map_err(|e| {
+                SdkError::InvalidDelegation(format!("invalid delegator public key: {e}"))
+            })?;
+        let signature = ed25519_dalek::Signature::from_bytes(&binding.delegator_signature.0);
+        verifying_key
+            .verify(&signing_message, &signature)
+            .map_err(|e| {
+                SdkError::InvalidDelegation(format!(
+                    "delegation binding broken: re-verification failed (token fields tampered \
+                     after receive): {e}"
+                ))
+            })
+    }
+
+    /// Test-only helper: forcibly overwrite the encoded payload. Used by the
+    /// adversarial test suite to simulate an attacker who somehow obtained
+    /// write access to a sealed HeldToken's encoded bytes.
+    ///
+    /// Only available in `cfg(test)` builds.
+    #[cfg(test)]
+    pub(crate) fn test_only_tamper_encoded(&mut self, new_encoded: String) {
+        self.encoded = new_encoded;
+    }
+
+    /// Test-only helper: forcibly overwrite the caveat chain hash. Used by the
+    /// adversarial test suite.
+    #[cfg(test)]
+    pub(crate) fn test_only_tamper_caveat_chain_hash(&mut self, new_hash: Option<[u8; 32]>) {
+        self.caveat_chain_hash = new_hash;
     }
 }
 
@@ -590,6 +799,16 @@ pub enum DelegationAuthority {
     },
     /// Accept any well-signed envelope. **UNSAFE** — only for development.
     /// `warn` controls whether to emit a tracing warning on use.
+    ///
+    /// # Feature gating
+    ///
+    /// This variant is only compiled when the `unsafe-test-utils` cargo
+    /// feature is enabled (or in `cfg(test)` builds of this crate). Production
+    /// callers depending on `pyana-sdk` without the feature cannot construct
+    /// it, by design — this prevents the well-known footgun of
+    /// `DelegationAuthority::Open { warn: false }` accidentally landing in a
+    /// production codepath that consumes untrusted envelopes.
+    #[cfg(any(test, feature = "unsafe-test-utils"))]
     Open {
         /// Whether to emit a tracing warning on every use (recommended: true).
         warn: bool,
@@ -1296,6 +1515,18 @@ impl AgentWallet {
             "accepted signed delegation: envelope verified; HMAC chain pending until presentation",
         );
 
+        let membership_leaf = delegated.membership_proof.as_ref().map(|p| p.leaf_hash);
+        let binding = DelegationBinding {
+            kind: DelegationBindingKind::ExternalV2,
+            delegatee: delegated.delegatee,
+            delegator_public_key: delegated.delegator_public_key,
+            delegator_signature: delegated.delegator_signature.clone(),
+            restrictions: delegated.restrictions.clone(),
+            proof_key: delegated.proof_key,
+            membership_leaf,
+            parent_delegation_hash: delegated.parent_delegation_hash,
+        };
+
         let mut held = HeldToken::new(
             delegated.label,
             delegated.service,
@@ -1312,6 +1543,14 @@ impl AgentWallet {
         }
         held.membership_proof = delegated.membership_proof;
         held.caveat_chain_hash = delegated.caveat_chain_hash;
+        held.delegation_binding = Some(binding);
+
+        // Sanity check: the binding we just attached must re-verify against
+        // the current field state. This catches any drift between the
+        // receive-time signing message and the post-construct re-verification
+        // routine (i.e., it guarantees future authorization calls won't fail
+        // spuriously on freshly-received tokens).
+        held.reverify_delegation_binding()?;
 
         self.tokens.push(held);
         Ok(())
@@ -1386,6 +1625,17 @@ impl AgentWallet {
                 ))
             })?;
 
+        let binding = DelegationBinding {
+            kind: DelegationBindingKind::Local,
+            delegatee: local.delegatee,
+            delegator_public_key: local.delegator_public_key,
+            delegator_signature: local.delegator_signature.clone(),
+            restrictions: local.restrictions.clone(),
+            proof_key: local.proof_key,
+            membership_leaf,
+            parent_delegation_hash: [0u8; 32],
+        };
+
         let mut held = HeldToken::new(
             local.label,
             local.service,
@@ -1402,6 +1652,11 @@ impl AgentWallet {
         }
         held.membership_proof = local.membership_proof;
         held.caveat_chain_hash = local.caveat_chain_hash;
+        held.delegation_binding = Some(binding);
+
+        // Sanity check that the binding re-verifies in the post-construct
+        // path — same rationale as receive_signed_delegation.
+        held.reverify_delegation_binding()?;
 
         self.tokens.push(held);
         Ok(())
@@ -1465,6 +1720,7 @@ impl AgentWallet {
                 }
                 Ok(())
             }
+            #[cfg(any(test, feature = "unsafe-test-utils"))]
             DelegationAuthority::Open { warn } => {
                 if *warn {
                     tracing::warn!(
@@ -2023,6 +2279,11 @@ impl AgentWallet {
     fn extract_caveat_set_for_proof(
         token: &HeldToken,
     ) -> Result<pyana_token::pyana_macaroon::caveat::CaveatSet, SdkError> {
+        // Authority invariant: any caveat extraction path that produces facts
+        // ultimately fed into a STARK proof must re-verify the delegation
+        // binding so post-receive tampering of `encoded` is detected here too.
+        token.reverify_delegation_binding()?;
+
         if token.can_mint() {
             // Root token: use full HMAC verification (most secure path).
             Self::extract_caveat_set(token)
@@ -2471,6 +2732,11 @@ impl AgentWallet {
             ));
         }
 
+        // Authority invariant (defense in depth): root tokens never carry a
+        // delegation binding by construction, so this is a no-op. Kept for
+        // uniformity with the issuer-key path.
+        token.reverify_delegation_binding()?;
+
         let proof_key = Self::derive_proof_key(token.root_key());
         let federation_root_bb = Self::compute_federation_root_bb(&proof_key);
         let federation_root = Self::bb_to_bytes(federation_root_bb);
@@ -2533,6 +2799,13 @@ impl AgentWallet {
                 "issuer_key must not be zeroed; provide the issuer's derived proof key".into(),
             ));
         }
+
+        // Authority invariant (P0 fix): if this token was produced via a
+        // delegation path, the delegator's signature must still verify against
+        // the *current* `encoded` / `caveat_chain_hash` / membership leaf.
+        // This re-verification is performed on every authorization use so that
+        // post-receive tampering of those fields breaks authorization.
+        token.reverify_delegation_binding()?;
 
         // P0-1: Verify caveat chain integrity before proof generation.
         // If the delegator provided a caveat_chain_hash, check that the decoded token's
@@ -2639,6 +2912,10 @@ impl AgentWallet {
                 "issuer_key must not be zeroed; provide the issuer's derived proof key".into(),
             ));
         }
+
+        // Authority invariant (P0 fix): re-verify the delegation envelope
+        // against current fields. See `reverify_delegation_binding`.
+        token.reverify_delegation_binding()?;
 
         // P0-1: Verify caveat chain integrity before proof generation.
         let actual_token = MacaroonToken::from_encoded(&token.encoded, *issuer_key)?;
@@ -6423,4 +6700,212 @@ mod tests {
             result
         );
     }
+
+    // =========================================================================
+    // P0 durable-binding adversarial tests
+    //
+    // The previous envelope-v2 fix verified the delegator signature once at
+    // receive time and then discarded it. These tests prove that the deeper
+    // fix — re-verifying the signature on every authorization use against the
+    // *current* (potentially tampered) field values — holds.
+    // =========================================================================
+
+    /// Helper: mint a delegation including a federation membership proof so
+    /// the resulting HeldToken can produce ZK proofs (exercises the full
+    /// authorize_private path).
+    fn mint_provable_delegation(
+        delegator: &mut AgentWallet,
+        recipient_pk: PublicKey,
+        root_key: [u8; 32],
+        service: &str,
+    ) -> DelegatedToken {
+        let root_token = delegator.mint_token(&root_key, service);
+        let proof_key = AgentWallet::derive_proof_key(&root_key);
+        let mut tree = pyana_commit::merkle::MerkleTree::new();
+        tree.insert_hash(proof_key);
+        let restrictions = Attenuation {
+            services: vec![(service.to_string(), "r".to_string())],
+            ..Default::default()
+        };
+        delegator
+            .delegate_with_tree(&root_token, &recipient_pk, &restrictions, &tree)
+            .unwrap()
+    }
+
+    /// P0: an attacker who somehow obtains write access to a sealed
+    /// HeldToken's `encoded` field cannot use it to authorize, because the
+    /// captured delegation signature is re-verified on every authorization
+    /// use against the current `encoded` value.
+    #[test]
+    fn test_held_token_tamper_encoded_breaks_authorize() {
+        let mut alice = AgentWallet::new();
+        let alice_pk = alice.public_key();
+        let mut bob = AgentWallet::new();
+        let bob_pk = bob.public_key();
+
+        let env = mint_provable_delegation(&mut alice, bob_pk, [0xAB; 32], "svc");
+        bob.receive_signed_delegation(env, &DelegationAuthority::TrustedKey(alice_pk))
+            .unwrap();
+
+        // Find the held token in Bob's wallet by index (avoid relying on
+        // public accessors mutating state).
+        assert_eq!(bob.tokens.len(), 1);
+        // Pre-tamper: re-verification of the binding must succeed.
+        bob.tokens[0]
+            .reverify_delegation_binding()
+            .expect("freshly-received envelope must re-verify");
+
+        // Simulate an attacker who somehow got write access — test-only helper.
+        bob.tokens[0].test_only_tamper_encoded("em2_forged_payload".to_string());
+
+        // Post-tamper: re-verification must fail.
+        let reverify = bob.tokens[0].reverify_delegation_binding();
+        assert!(
+            matches!(reverify, Err(SdkError::InvalidDelegation(_))),
+            "tampered `encoded` must break binding; got {:?}",
+            reverify,
+        );
+
+        // Authorize uses both extract_caveat_set_for_proof (which calls
+        // reverify) and prove_authorization_with_issuer_key (which also
+        // calls it). Either path must fail.
+        let request = AuthRequest {
+            service: Some("svc".into()),
+            action: Some("r".into()),
+            ..Default::default()
+        };
+        let auth_result = bob.authorize(&bob.tokens[0].clone(), &request, VerificationMode::FullyPrivate);
+        assert!(
+            matches!(auth_result, Err(SdkError::InvalidDelegation(_))),
+            "tampered encoded must break authorize; got {:?}",
+            auth_result,
+        );
+    }
+
+    /// P0: the same property holds for `caveat_chain_hash`. An attacker
+    /// who swaps in a fabricated caveat_chain_hash to match a mutated
+    /// `encoded` cannot escape, because the delegator's signature also binds
+    /// the caveat_chain_hash.
+    #[test]
+    fn test_held_token_tamper_chain_hash_breaks_authorize() {
+        let mut alice = AgentWallet::new();
+        let alice_pk = alice.public_key();
+        let mut bob = AgentWallet::new();
+        let bob_pk = bob.public_key();
+
+        let env = mint_provable_delegation(&mut alice, bob_pk, [0xCD; 32], "svc");
+        bob.receive_signed_delegation(env, &DelegationAuthority::TrustedKey(alice_pk))
+            .unwrap();
+
+        // Tamper only with the caveat_chain_hash.
+        bob.tokens[0].test_only_tamper_caveat_chain_hash(Some([0xFFu8; 32]));
+
+        let reverify = bob.tokens[0].reverify_delegation_binding();
+        assert!(
+            matches!(reverify, Err(SdkError::InvalidDelegation(_))),
+            "tampered caveat_chain_hash must break binding; got {:?}",
+            reverify,
+        );
+
+        let request = AuthRequest {
+            service: Some("svc".into()),
+            action: Some("r".into()),
+            ..Default::default()
+        };
+        let auth_result = bob.authorize(&bob.tokens[0].clone(), &request, VerificationMode::FullyPrivate);
+        assert!(
+            matches!(auth_result, Err(SdkError::InvalidDelegation(_))),
+            "tampered caveat_chain_hash must break authorize; got {:?}",
+            auth_result,
+        );
+    }
+
+    /// P0 (type-level): the authority-affecting fields are sealed. External
+    /// code cannot assign to `held.encoded` (no `pub` on the field, no
+    /// `&mut self` accessor). This test confirms via a sample of read-only
+    /// accessor calls; the actual no-write-access guarantee is enforced by
+    /// `pub(crate)` field visibility and is checked by the Rust compiler at
+    /// the public API boundary.
+    #[test]
+    fn test_held_token_no_public_field_mutation() {
+        // We intentionally do NOT try to *compile* `held.encoded = "x".into()`
+        // here — that compile-fail check is enforced at every external
+        // callsite (the field is private). What we *can* check here is that
+        // the public accessors are read-only references and that the
+        // round-tripped values match what was set internally.
+        let mut alice = AgentWallet::new();
+        let alice_pk = alice.public_key();
+        let mut bob = AgentWallet::new();
+        let bob_pk = bob.public_key();
+
+        let env = mint_provable_delegation(&mut alice, bob_pk, [0xEF; 32], "svc");
+        let original_encoded = env.token_bytes.clone();
+        bob.receive_signed_delegation(env, &DelegationAuthority::TrustedKey(alice_pk))
+            .unwrap();
+
+        // Accessor returns a borrow.
+        let held = &bob.tokens[0];
+        let encoded_ref: &str = held.encoded();
+        assert_eq!(encoded_ref, original_encoded);
+
+        // The accessor does not expose any way to mutate. (This is enforced
+        // by the type — the compiler would reject any attempt to write
+        // through `held.encoded` because the field is private.)
+        //
+        // For completeness, also verify that `caveat_chain_hash` returns by
+        // value (so callers can't acquire a `&mut Option<[u8;32]>` reference
+        // through accident).
+        let _: Option<[u8; 32]> = held.caveat_chain_hash();
+    }
+
+    /// P1: the `Open` authority variant is gated behind the `unsafe-test-utils`
+    /// feature (or `cfg(test)`). This test runs in `cfg(test)` and confirms
+    /// the variant constructs and is wired up — in production builds without
+    /// the feature, the variant does not exist and the code would fail to
+    /// compile, which is the intended footgun-prevention behavior.
+    #[test]
+    fn test_open_authority_gated() {
+        // Inside cfg(test), we can construct `Open`.
+        let policy = DelegationAuthority::Open { warn: false };
+        match policy {
+            DelegationAuthority::Open { warn } => assert!(!warn),
+            _ => panic!("expected Open variant"),
+        }
+        // Production code (not under cfg(test) and without unsafe-test-utils)
+        // cannot reach this branch. Verified at compile time by the
+        // `#[cfg(any(test, feature = "unsafe-test-utils"))]` gate on the
+        // variant — see DelegationAuthority::Open.
+    }
+}
+
+#[cfg(doctest)]
+mod doctest_compile_fail {
+    /// Confirms that `held.encoded = ...` is rejected at compile time. If
+    /// this stops being a compile error, the sealed-value invariant is
+    /// broken.
+    ///
+    /// ```compile_fail
+    /// use pyana_sdk::AgentWallet;
+    /// let mut w = AgentWallet::new();
+    /// let held = w.mint_token(&[0u8; 32], "svc");
+    /// // The `encoded` field is private; this must NOT compile.
+    /// let _ = held.encoded;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use pyana_sdk::AgentWallet;
+    /// let mut w = AgentWallet::new();
+    /// let mut held = w.mint_token(&[0u8; 32], "svc");
+    /// // Direct mutation of `encoded` must NOT compile.
+    /// held.encoded = String::from("forged");
+    /// ```
+    ///
+    /// ```compile_fail
+    /// use pyana_sdk::AgentWallet;
+    /// let mut w = AgentWallet::new();
+    /// let mut held = w.mint_token(&[0u8; 32], "svc");
+    /// // Direct mutation of `caveat_chain_hash` must NOT compile.
+    /// held.caveat_chain_hash = Some([0u8; 32]);
+    /// ```
+    pub struct _Marker;
 }

@@ -25,8 +25,6 @@
 //! A gives ETH → solver gives BTC → B gives USDC.
 //! Both orders fill simultaneously, with no intermediate hop slippage.
 
-use std::collections::HashMap;
-
 use pyana_app_framework::ring_trade::{ExchangeSpec, RingTradeParticipant, Settlement};
 use pyana_intent::exchange::AssetId;
 
@@ -63,11 +61,17 @@ pub fn quote_asset_id(quote: &str) -> AssetId {
 
 /// Snapshot of an order's mutable fields before a ring leg is settled.
 /// Used to roll back the order if a downstream leg fails.
+///
+/// If `full_order` is `Some`, the order was fully consumed by the settle and
+/// removed from the book; rollback must re-insert this stored copy. Otherwise
+/// the (partially-filled) order is still on the book and we restore its fields.
 #[derive(Clone, Debug)]
 pub struct RingLegSnapshot {
     pub order_id: OrderId,
     pub remaining_before: u64,
     pub status_before: OrderStatus,
+    /// Full order copy, only populated when the order was fully consumed.
+    pub full_order: Option<Order>,
 }
 
 // =============================================================================
@@ -85,8 +89,9 @@ pub struct OrderbookRingParticipant<'a> {
     pub quote: String,
     /// The live order book.
     pub book: &'a mut OrderBook,
-    /// Snapshots for rollback: order_id -> (remaining, status) before settle_leg.
-    snapshots: HashMap<OrderId, RingLegSnapshot>,
+    /// Snapshots for rollback, stored as a LIFO stack so the most-recent
+    /// settle is the first to be undone.
+    snapshots: Vec<RingLegSnapshot>,
 }
 
 impl<'a> OrderbookRingParticipant<'a> {
@@ -96,7 +101,7 @@ impl<'a> OrderbookRingParticipant<'a> {
             base: base.into(),
             quote: quote.into(),
             book,
-            snapshots: HashMap::new(),
+            snapshots: Vec::new(),
         }
     }
 
@@ -150,6 +155,14 @@ impl<'a> OrderbookRingParticipant<'a> {
     ///
     /// We match by checking if the settlement's `asset` corresponds to the order's
     /// offer asset (base for sells, quote for buys) and the amount fits.
+    ///
+    // REVIEW[P1]: `Settlement` carries only (asset, amount) — there is no price
+    // or rate, and no link back to the order the solver expected to fill. As a
+    // result this picks the FIRST order with sufficient remaining amount, which
+    // (a) silently violates price-time priority on a per-leg basis, and (b)
+    // gives the solver no way to refer to a specific resting order. Long-term
+    // fix: extend `Settlement` (in app-framework, out of scope here) with a
+    // counterparty/order identifier or include a `min_rate` enforced here.
     fn find_matching_order_id(&self, settlement: &Settlement) -> Option<OrderId> {
         let base = base_asset_id(&self.base);
         let quote = quote_asset_id(&self.quote);
@@ -273,15 +286,18 @@ impl<'a> RingTradeParticipant for OrderbookRingParticipant<'a> {
             });
         }
 
-        // Snapshot state before modification.
-        self.snapshots.insert(
-            order_id,
-            RingLegSnapshot {
-                order_id,
-                remaining_before: order.remaining_amount,
-                status_before: order.status.clone(),
-            },
-        );
+        // Snapshot state before modification. Capture the full order if we're
+        // about to fully consume it so rollback can re-insert the exact order
+        // (including price level, creation time, TIF, etc.) rather than dropping
+        // it on the floor.
+        let remaining_before = order.remaining_amount;
+        let status_before = order.status.clone();
+        let will_be_fully_filled = settlement.amount >= order.remaining_amount;
+        let full_order = if will_be_fully_filled {
+            Some(order.clone())
+        } else {
+            None
+        };
 
         // Apply the fill.
         order.remaining_amount -= settlement.amount;
@@ -296,9 +312,19 @@ impl<'a> RingTradeParticipant for OrderbookRingParticipant<'a> {
                 _ => settlement.amount,
             };
             order.status = OrderStatus::PartiallyFilled { filled_amount };
-            // Re-insert the partially filled order.
+            // Re-insert the partially filled order. NOTE[P2]: this puts the
+            // residual at the BACK of its price level, silently demoting its
+            // time priority. A faithful restore would need a price-level
+            // mutate-in-place API on OrderBook (out of scope here — flagged).
             self.book.insert_order(order);
         }
+
+        self.snapshots.push(RingLegSnapshot {
+            order_id,
+            remaining_before,
+            status_before,
+            full_order,
+        });
 
         Ok(())
     }
@@ -306,35 +332,28 @@ impl<'a> RingTradeParticipant for OrderbookRingParticipant<'a> {
     /// Roll back a previously settled leg.
     ///
     /// Restores the order's `remaining_amount` and `status` to their pre-settle
-    /// values. Idempotent: if the order is not found it is silently ignored.
+    /// values. Idempotent: if there is nothing to undo it is silently ignored.
     ///
     /// Rollbacks are processed in LIFO order (the last settled leg is undone first).
     fn rollback_leg(&mut self, _settlement: &Settlement) -> Result<(), RingTradeError> {
         // Pop the most-recently settled snapshot (LIFO undo).
-        // We identify "most recent" as the last insertion into the map.
-        // Since HashMap has no insertion order, we use a stable approach:
-        // there should be exactly one snapshot per outstanding leg; pop any.
-        let snap_key: Option<OrderId> = self.snapshots.keys().next().copied();
-        let snapshot = snap_key.and_then(|k| self.snapshots.remove(&k));
+        let Some(snap) = self.snapshots.pop() else {
+            // Nothing to undo: rollback is idempotent.
+            return Ok(());
+        };
 
-        if let Some(snap) = snapshot {
-            // Remove the partially-filled order from the book if still there.
-            let maybe_order = self.book.remove_order(&snap.order_id);
+        // Remove the (possibly partial) order currently on the book, if any.
+        let maybe_order = self.book.remove_order(&snap.order_id);
 
-            if let Some(mut order) = maybe_order {
-                // Restore pre-settle state.
-                order.remaining_amount = snap.remaining_before;
-                order.status = snap.status_before;
-                self.book.insert_order(order);
-            } else {
-                // Order was fully consumed (fully filled and removed).
-                // In a full implementation we'd recreate it from the snapshot.
-                // For now: we stored the snapshot but can't reconstruct the full Order
-                // without storing the whole Order object. The settle_leg path above
-                // always keeps the order on the book for partial fills; for full fills
-                // we'd need to store the full Order. This is acceptable in the current
-                // scope where the test exercises partial fills.
-            }
+        if let Some(mut order) = maybe_order {
+            // Partial-fill case: order is still on the book, restore fields.
+            order.remaining_amount = snap.remaining_before;
+            order.status = snap.status_before;
+            self.book.insert_order(order);
+        } else if let Some(full) = snap.full_order {
+            // Full-fill case: the original was consumed during settle_leg.
+            // Re-insert the saved copy so the book is exactly restored.
+            self.book.insert_order(full);
         }
         // Rollback is idempotent: no error if nothing to undo.
         Ok(())

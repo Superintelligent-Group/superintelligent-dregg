@@ -6,6 +6,13 @@
 //!
 //! Uses the shared `AppServer` from `pyana-app-framework` for consistent
 //! infrastructure (health endpoint, CORS) across all pyana apps.
+//!
+//! REVIEW[P2]: The blinded-queue and inbox upgrades live ONLY in this in-process
+//! server. The production binary entrypoint `src/main.rs` does not call
+//! `with_blinded_endpoint` / `with_inbox` and does not share a `CapInbox` with
+//! its `submit_work` handler — so the upgrades are exercised only by lib tests
+//! and `examples/`, not by the deployed binary. Either wire the same primitives
+//! into `main.rs` or extract a shared builder.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -104,11 +111,24 @@ pub async fn start_server(config: ServerConfig) -> SocketAddr {
         .unwrap_or(0);
 
     // --- Upgrade 1: Blinded queue for fair bounty claiming ---
+    // REVIEW[P1]: This is one shared queue across ALL bounties, not per-bounty.
+    // The commitments and nullifiers do not bind a worker to a specific bounty:
+    // `BlindedQueue::commit` stores any worker-supplied 32 bytes, and the
+    // nullifier is `Hash(commitment, secret, position)` — no bounty_id is hashed
+    // in. Consequence: a worker who consumes one slot has burned a nullifier
+    // useful for any bounty, and there is no `claim_bounty` handler that actually
+    // requires a queue token before claiming. The blinded queue is wired but
+    // unused by the bounty lifecycle — it's plumbing, not enforcement.
     // Capacity 256: supports up to 256 concurrent claim commitments per bounty.
     let claims_endpoint = FairDistributionEndpoint::new(256);
     let claim_queue = claims_endpoint.queue_arc();
 
     // --- Upgrade 2: Store-and-forward inbox for issuer delivery notifications ---
+    // REVIEW[P1]: One shared inbox for ALL issuers. Every issuer reads every
+    // worker's notification, regardless of which bounty was submitted. There is
+    // also no auth on `GET /inbox/issuers/next` — any HTTP client can drain the
+    // queue. For a real deployment, scope inbox per-issuer (e.g. one CapInbox
+    // keyed by issuer_cell) and gate `/next`/`/status` on issuer identity.
     // Capacity 128 messages, minimum deposit 0 (internal server-to-server delivery).
     let inbox = Arc::new(Mutex::new(CapInbox::new(QuotaId(0), 128, 0)));
     let issuers_endpoint = InboxEndpoint::from_inbox(Arc::clone(&inbox));
@@ -367,9 +387,21 @@ async fn submit_work(
     };
     state.board.update_status(&bounty_id, new_status).await;
 
+    // REVIEW[P2]: Inbox push fires on every successful submission, including
+    // low-quality work that the issuer will reject in `approve_bounty`. For a
+    // marketplace UX, defer the issuer notification to the approve/dispute step
+    // (or push a typed "pending review" message with quality metadata so issuers
+    // can filter). Currently every probe of `/bounties/{id}/submit` adds noise
+    // to the inbox even before any work is reviewed.
+
     // --- Upgrade 2: notify issuer via store-and-forward inbox ---
-    // Build an encrypted notification ciphertext containing the bounty ID and
-    // proof hash. The sender is the worker's blinded commitment (privacy-preserving).
+    // REVIEW[P1]: This is NOT encrypted. `InboxMessage::Encrypted` is a variant tag,
+    // not an enforcement primitive — the framework treats `ciphertext: Vec<u8>` as
+    // opaque bytes and never encrypts them. Anyone with HTTP access to
+    // `/inbox/issuers/next` (which has no auth, see below) can read the bounty_id
+    // and completion_proof_hash in plaintext. To honor the "encrypted" claim, the
+    // worker (not the server) must encrypt to the issuer's public key client-side,
+    // and the server should only forward opaque ciphertext.
     let notification_payload = {
         let mut payload = Vec::with_capacity(64);
         payload.extend_from_slice(&bounty_id);

@@ -1024,8 +1024,8 @@ async fn post_mint(
     let held = s.wallet.mint_token(&root_key, &req.service);
 
     Ok(Json(MintResponse {
-        token_id: held.id.clone(),
-        service: held.service.clone(),
+        token_id: held.id().to_string(),
+        service: held.service().to_string(),
     }))
 }
 
@@ -1056,8 +1056,8 @@ async fn post_attenuate(
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     Ok(Json(AttenuateResponse {
-        new_token_id: attenuated.id.clone(),
-        service: attenuated.service.clone(),
+        new_token_id: attenuated.id().to_string(),
+        service: attenuated.service().to_string(),
     }))
 }
 
@@ -1068,9 +1068,9 @@ async fn get_tokens(State(state): State<NodeState>) -> Json<Vec<TokenInfo>> {
         .tokens()
         .iter()
         .map(|t| TokenInfo {
-            id: t.id.clone(),
-            label: t.label.clone(),
-            service: t.service.clone(),
+            id: t.id().to_string(),
+            label: t.label().to_string(),
+            service: t.service().to_string(),
         })
         .collect();
     Json(tokens)

@@ -367,8 +367,8 @@ impl AgentRuntime {
         let attenuated_boxed = decoded.attenuate(restrictions)?;
         let encoded = attenuated_boxed.to_encoded()?;
 
-        let token_id = format!("sub:{}:{}", token.id, sub_pk.short_hex());
-        let delegated_label = format!("delegated:{}", token.service);
+        let token_id = format!("sub:{}:{}", token.id(), sub_pk.short_hex());
+        let delegated_label = format!("delegated:{}", token.service());
 
         // SECURITY: The sub-agent receives an attenuated token with zeroed root_key.
         // It cannot mint new root tokens or bypass the attenuation chain.
@@ -377,7 +377,7 @@ impl AgentRuntime {
         let issuer_key = *token.issuer_key();
         let delegated_token = HeldToken::new_attenuated(
             delegated_label.clone(),
-            token.service.clone(),
+            token.service().to_string(),
             encoded.clone(),
             token_id.clone(),
             issuer_key,
@@ -405,7 +405,7 @@ impl AgentRuntime {
             let parent = self.wallet.read().unwrap_or_else(|e| e.into_inner());
             parent.make_local_delegation(
                 encoded,
-                token.service.clone(),
+                token.service().to_string(),
                 delegated_label,
                 token_id,
                 sub_pk,
@@ -466,6 +466,17 @@ impl std::fmt::Debug for AgentRuntime {
 /// Each sub-agent maintains its own receipt chain binding: every turn it executes
 /// includes `previous_receipt_hash` linking to its last committed receipt. This
 /// prevents reordering and replay of sub-agent turns.
+// AUDIT[P2]: `SubAgent` exposes `pub wallet: Arc<AgentWallet>` and `pub token:
+// HeldToken`. The `HeldToken` itself is now sealed-value (P0 fix), so its
+// authority-affecting fields cannot be tampered with. But `pub federation_id:
+// [u8; 32]` IS writable by an external caller holding a `&mut SubAgent`. This
+// federation_id is used as the signing-message domain separator for turn
+// signatures (see `SubAgent::execute`). An attacker who can mutate
+// `federation_id` post-construct could cause the sub-agent to sign turns
+// against the wrong federation, leading to cross-federation replay vectors.
+// Severity P2: requires existing `&mut SubAgent` access, which is itself a
+// privileged hold. Recommended fix: make all SubAgent fields private with
+// read-only accessors (`pub fn federation_id(&self) -> [u8; 32]`).
 #[derive(Debug)]
 pub struct SubAgent {
     /// The sub-agent's wallet.

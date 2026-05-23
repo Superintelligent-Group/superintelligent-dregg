@@ -76,6 +76,15 @@ impl UnsafeLocalOnlyMarker {
         Self(())
     }
 
+    // AUDIT[P2]: `i_know_this_is_not_cryptographically_sound` is a `pub fn`
+    // in production builds (not gated behind `cfg(test)` or a feature flag),
+    // and grants a holder of `UnsafeLocalOnlyMarker` access to unsound
+    // proof-generation paths. This is the same class of footgun as the
+    // previous `DelegationAuthority::Open { warn: false }`: the obvious-name
+    // strategy works for direct readers of the codebase but doesn't prevent
+    // a derived crate from accidentally importing it. Recommended: gate
+    // behind `#[cfg(any(test, feature = "unsafe-test-utils"))]` analogous
+    // to the `DelegationAuthority::Open` fix in this PR.
     /// Escape hatch for non-test code that genuinely needs this (e.g., benchmarks
     /// in separate crates). Deliberately ugly name to discourage casual use.
     pub fn i_know_this_is_not_cryptographically_sound() -> Self {
@@ -335,6 +344,18 @@ impl BridgePresentationProof {
 /// The presentation_tag (in the circuit proof's public inputs) replaces the deterministic
 /// final_state_root for unlinkable multi-show.
 ///
+// AUDIT[P3]: `WirePresentationProof` has all `pub` fields, including
+// `verification: PresentationVerification`. A malicious prover deserializing
+// this proof, mutating `verification = Valid` post-deserialization, and then
+// (in some downstream code path that checks `proof.verification ==
+// PresentationVerification::Valid` without re-running the actual STARK
+// verifier) could short-circuit a verifier. We searched: the canonical
+// `verify_proof_complete` does NOT rely on the prover-supplied
+// `verification` field — it independently runs STARK + composition +
+// freshness checks. So this is currently safe. But the field's existence on
+// the wire is a footgun for future verifiers who might trust it. Severity
+// P3: not currently exploitable but the field should either be removed
+// from the wire form or marked `#[serde(skip)]`.
 /// Obtain via [`BridgePresentationProof::into_wire_proof()`].
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct WirePresentationProof {

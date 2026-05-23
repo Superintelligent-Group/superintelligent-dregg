@@ -24,6 +24,19 @@
 //! - Double-consume is prevented by nullifier uniqueness.
 //! - The operator CANNOT reorder items because the Merkle tree is built from
 //!   commitment-insertion order, which is public and auditable.
+//!
+// REVIEW[P1]: `OrderbookEngine` currently exposes BOTH the commit-reveal path
+// (`commit_order` / `reveal_order` / `process_reveal_batch`) and this blinded
+// queue, but the engine itself has no knowledge of the blinded queue. There is
+// no documented "canonical" path — and worse, nothing prevents the same order
+// from being submitted via both: a trader could commit-reveal one copy, then
+// independently commit/consume the same Order through the blinded queue and
+// have it match TWICE. The blinded queue uses an internal nullifier set; the
+// commit-reveal registry uses its own hash set; there is no shared replay
+// guard. Fix is one of: (a) document blinded queue as the only fair path and
+// remove or gate commit-reveal, (b) feed blinded queue output into the same
+// reveal-batch drain so a single nullifier domain governs both, or (c) include
+// the order's `nonce` in both registries and reject if seen anywhere.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -148,6 +161,13 @@ impl OrderBlindedQueue {
 /// Compute the commitment for an order.
 ///
 /// Uses a domain-separated blake3 key to avoid collisions with other protocols.
+///
+// REVIEW[P2]: binding is OK (blake3 is collision-resistant), but hiding relies
+// entirely on the caller supplying a 32-byte uniformly-random secret.
+// `postcard::to_allocvec(order).unwrap_or_default()` silently emits the empty
+// vector if serialization fails — in the empty case the commitment becomes
+// `blake3(secret)` alone, which still hides but no longer binds to the order
+// at all. Treat serialization failure as a hard error rather than swallowing it.
 pub fn compute_blinded_order_commitment(order: &Order, secret: &[u8; 32]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key("pyana-orderbook-blinded-v1");
     let order_bytes = postcard::to_allocvec(order).unwrap_or_default();
@@ -156,18 +176,10 @@ pub fn compute_blinded_order_commitment(order: &Order, secret: &[u8; 32]) -> [u8
     *hasher.finalize().as_bytes()
 }
 
-/// Compute the nullifier for a consumed commitment.
-///
-/// Nullifier = `blake3(commitment || secret || position_le_bytes)`.
-/// This binds the nullifier to the specific position in the Merkle tree,
-/// preventing cross-position replays.
-pub fn compute_order_nullifier(commitment: &[u8; 32], secret: &[u8; 32], position: usize) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-orderbook-nullifier-v1");
-    hasher.update(commitment);
-    hasher.update(secret);
-    hasher.update(&(position as u64).to_le_bytes());
-    *hasher.finalize().as_bytes()
-}
+// NOTE: nullifier derivation is owned by `pyana_storage::blinded::crypto::derive_nullifier`.
+// Do NOT define a parallel helper here — using a different domain key would produce
+// nullifiers that the underlying `BlindedQueue` would reject (or worse, that collide
+// across protocols).
 
 // =============================================================================
 // Errors
