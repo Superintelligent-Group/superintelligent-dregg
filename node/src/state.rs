@@ -69,10 +69,13 @@ pub struct NodeStateInner {
     pub peers: Vec<String>,
     /// Whether the wallet is unlocked for signing operations.
     pub unlocked: bool,
-    /// BLAKE3 hash of the wallet passphrase, set on first `set-passphrase` call.
-    /// When `Some`, unlock attempts must provide a passphrase whose BLAKE3 hash
-    /// matches this value. When `None`, the first unlock sets the passphrase.
-    pub passphrase_hash: Option<[u8; 32]>,
+    /// Argon2id hash of the wallet passphrase in PHC string format, set on first
+    /// `set-passphrase` call. When `Some`, unlock attempts must verify against
+    /// this hash. When `None`, the first unlock sets the passphrase.
+    pub passphrase_hash: Option<String>,
+    /// Bearer token seed derived from the passphrase + salt via BLAKE3.
+    /// Stored separately so the bearer token can be computed without re-hashing.
+    pub bearer_seed: Option<[u8; 32]>,
     /// Local intent pool: content-addressed ID -> validated Intent.
     pub intent_pool: HashMap<[u8; 32], pyana_intent::Intent>,
     /// Queue of signed turns ready for consensus ordering.

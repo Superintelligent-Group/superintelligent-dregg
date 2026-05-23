@@ -318,10 +318,12 @@ impl PyanaEngine {
         let token = MacaroonToken::from_encoded(encoded_token, *root_key)
             .map_err(|e| EmbedError::ProofGen(format!("token decode: {e}")))?;
 
-        // The issuer key IS the root key (used for federation membership proof).
-        let issuer_key = *root_key;
+        // Derive the proof key from root_key using the same KDF as the wallet.
+        // Federation tree leaves are hash(derived_proof_key), so both engine and
+        // wallet proofs must target the same leaf.
+        let proof_key = blake3::derive_key("pyana-proof-key-v1", root_key);
 
-        let mut builder = BridgePresentationBuilder::new(issuer_key, self.federation_root);
+        let mut builder = BridgePresentationBuilder::new(proof_key, self.federation_root);
         builder.set_root_token(token);
 
         for att in attenuations {
@@ -330,13 +332,23 @@ impl PyanaEngine {
             }
         }
 
+        // Refuse to generate proofs with timestamp 0 — they'll be rejected by any
+        // verifier with real time. Fail loudly at generation rather than silently at verification.
+        let now = if self.executor.current_timestamp > 0 {
+            self.executor.current_timestamp
+        } else {
+            return Err(EmbedError::ProofGen(
+                "engine timestamp is 0; call set_timestamp() before generating proofs".into(),
+            ));
+        };
+
         let request = AuthRequest {
             action: Some(action.to_string()),
             service: Some(resource.to_string()),
             app_id: None,
             features: vec![],
             user_id: None,
-            now: Some(self.executor.current_timestamp),
+            now: Some(now),
             ..Default::default()
         };
 
