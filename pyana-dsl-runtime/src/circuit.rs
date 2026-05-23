@@ -69,6 +69,38 @@ pub enum ConstraintExpr {
     Polynomial { terms: Vec<PolyTerm> },
     /// Gated constraint: `local[selector_col] * inner == 0`
     Gated { selector_col: usize, inner: Box<ConstraintExpr> },
+
+    /// Constrain col_output == Poseidon2(col_inputs[0], col_inputs[1], ...)
+    /// The evaluator computes the hash and checks equality.
+    Hash {
+        output_col: usize,
+        input_cols: Vec<usize>,
+    },
+
+    /// When selector_col != 0, require value_col != 0.
+    /// Implemented as: selector * (value * inverse - 1) == 0
+    /// Needs an auxiliary inverse column (prover fills with value^{-1}, or 0 if value==0).
+    ConditionalNonzero {
+        selector_col: usize,
+        value_col: usize,
+        inverse_col: usize,
+    },
+
+    /// Require sum(flag_cols) >= 1 (at least one flag is active).
+    /// Implemented as: (1 - flag_0) * (1 - flag_1) * ... * (1 - flag_n) == 0
+    /// (product is zero iff at least one flag is 1).
+    AtLeastOne {
+        flag_cols: Vec<usize>,
+    },
+
+    /// Constrain that next[target_col] = local[source_col] when local[pos_col] == target_index.
+    /// (selective write to a specific position in a column group)
+    SelectiveWrite {
+        target_col: usize,
+        source_col: usize,
+        pos_col: usize,
+        target_index: usize,
+    },
 }
 
 /// A single term in a polynomial constraint: `coeff * product(local[col] for col in col_indices)`.

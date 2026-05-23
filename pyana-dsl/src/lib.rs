@@ -18,10 +18,11 @@ mod gen_kimchi;
 mod gen_rust;
 mod ir;
 mod parse;
+mod parse_circuit;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, ItemFn};
+use syn::{parse_macro_input, ItemFn, ItemMod};
 
 /// Marks a function as a pyana caveat constraint.
 ///
@@ -123,6 +124,53 @@ pub fn pyana_effect(attr: TokenStream, item: TokenStream) -> TokenStream {
         #stark_impl
     };
 
+    output.into()
+}
+
+/// Marks a module as a pyana circuit definition (Level 2 DSL).
+///
+/// The module must contain:
+/// - `const WIDTH: usize = N;` — trace width (number of columns)
+/// - `const DEGREE: usize = N;` — maximum constraint degree
+/// - `const PI_COUNT: usize = N;` — number of public inputs
+/// - `mod col { ... }` — column index definitions (passed through)
+/// - `fn constraints(local, next, pi) -> Vec<BabyBear>` — per-row constraints
+/// - `fn transitions(local, next) -> Vec<BabyBear>` — row-to-row constraints (optional)
+/// - `fn boundaries(pi, trace_len) -> Vec<(usize, usize, BabyBear)>` — boundary constraints (optional)
+///
+/// Generates:
+/// - A struct with the PascalCase name of the module
+/// - `impl StarkAir` for that struct
+///
+/// # Example
+///
+/// ```ignore
+/// #[pyana_circuit]
+/// mod my_circuit {
+///     const WIDTH: usize = 4;
+///     const DEGREE: usize = 2;
+///     const PI_COUNT: usize = 1;
+///
+///     mod col {
+///         pub const A: usize = 0;
+///         pub const B: usize = 1;
+///     }
+///
+///     fn constraints(local: &[BabyBear], _next: &[BabyBear], pi: &[BabyBear]) -> Vec<BabyBear> {
+///         vec![local[col::A] - local[col::B]]
+///     }
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn pyana_circuit(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let module = parse_macro_input!(item as ItemMod);
+
+    let parsed = match parse_circuit::parse_circuit_module(&module) {
+        Ok(m) => m,
+        Err(e) => return e.to_compile_error().into(),
+    };
+
+    let output = parse_circuit::emit_circuit(&parsed);
     output.into()
 }
 

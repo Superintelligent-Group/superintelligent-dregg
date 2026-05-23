@@ -215,6 +215,11 @@ pub struct SovereignRegistration {
     /// Block height of the most recent activity (registration, commitment update,
     /// or any federation interaction that resets the timer).
     pub last_activity: u64,
+    /// Optional verification key hash binding this cell to a deployed program.
+    /// When set, proof-carrying turns for this cell are verified against the
+    /// program in the ProgramRegistry identified by this VK hash.
+    #[serde(default)]
+    pub verification_key_hash: Option<[u8; 32]>,
 }
 
 /// Default TTL for sovereign cell registrations (in blocks).
@@ -1077,6 +1082,19 @@ impl Ledger {
         current_height: u64,
         ttl_blocks: u64,
     ) -> Result<(), LedgerError> {
+        self.register_sovereign_cell_with_vk(id, commitment, current_height, ttl_blocks, None)
+    }
+
+    /// Register a sovereign cell with an optional verification key hash binding
+    /// it to a deployed program in the ProgramRegistry.
+    pub fn register_sovereign_cell_with_vk(
+        &mut self,
+        id: CellId,
+        commitment: [u8; 32],
+        current_height: u64,
+        ttl_blocks: u64,
+        verification_key_hash: Option<[u8; 32]>,
+    ) -> Result<(), LedgerError> {
         if self.cells.contains_key(&id)
             || self.sovereign_commitments.contains_key(&id)
             || self.sovereign_registrations.contains_key(&id)
@@ -1090,6 +1108,7 @@ impl Ledger {
                 registered_at: current_height,
                 ttl_blocks,
                 last_activity: current_height,
+                verification_key_hash,
             },
         );
         Ok(())
