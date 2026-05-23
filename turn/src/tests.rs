@@ -4125,6 +4125,8 @@ fn test_note_nft_transfer() {
             value: 0,
             asset_type: unique_asset_id,
             encrypted_note: vec![1, 2, 3], // encrypted for recipient
+            value_commitment: None,
+            range_proof: None,
         });
     }
     let turn = builder.fee(10000).build();
@@ -4268,6 +4270,7 @@ fn test_note_spend_rejected_without_proof() {
             value: 100,
             asset_type: 1,
             spending_proof: vec![], // empty = missing
+            value_commitment: None,
         });
         action.effect(Effect::NoteCreate {
             commitment: pyana_cell::NoteCommitment([0xBB; 32]),
@@ -4313,6 +4316,7 @@ fn test_note_spend_rejected_with_invalid_proof() {
             value: 100,
             asset_type: 1,
             spending_proof: vec![0xDE, 0xAD, 0xBE, 0xEF], // garbage proof
+            value_commitment: None,
         });
         action.effect(Effect::NoteCreate {
             commitment: pyana_cell::NoteCommitment([0xBB; 32]),
@@ -6474,4 +6478,183 @@ fn test_create_escrow_correct_cell_matches_target() {
     // Verify balance was deducted.
     let sender = ledger.get(&sender_id).unwrap();
     assert_eq!(sender.state.balance, 10000 - 100 - 3000);
+}
+
+// =============================================================================
+// Tests: Committed (Pedersen) conservation path
+// =============================================================================
+
+#[test]
+fn test_committed_conservation_valid_proof_passes() {
+    use curve25519_dalek::scalar::Scalar;
+    use pyana_cell::{
+        ValueCommitment, prove_conservation,
+    };
+
+    // Setup: single agent cell with open permissions and a proof verifier.
+    let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
+
+    // Create blinding factors.
+    let r_in = {
+        let mut bytes = [0u8; 64];
+        bytes[0] = 10;
+        bytes[1] = 37;
+        Scalar::from_bytes_mod_order_wide(&bytes)
+    };
+    let r_out1 = {
+        let mut bytes = [0u8; 64];
+        bytes[0] = 20;
+        bytes[1] = 74;
+        Scalar::from_bytes_mod_order_wide(&bytes)
+    };
+    let r_out2 = {
+        let mut bytes = [0u8; 64];
+        bytes[0] = 30;
+        bytes[1] = 111;
+        Scalar::from_bytes_mod_order_wide(&bytes)
+    };
+
+    // Commit: input 500, output 300 + 200 (conservation holds).
+    let input_vc = ValueCommitment::commit(500, &r_in);
+    let output_vc1 = ValueCommitment::commit(300, &r_out1);
+    let output_vc2 = ValueCommitment::commit(200, &r_out2);
+
+    let input_vc_bytes = input_vc.to_bytes().0;
+    let output_vc1_bytes = output_vc1.to_bytes().0;
+    let output_vc2_bytes = output_vc2.to_bytes().0;
+
+    // Build the turn with committed note effects.
+    let nullifier = pyana_cell::Nullifier([0xBB; 32]);
+    let commitment1 = pyana_cell::NoteCommitment([0xCC; 32]);
+    let commitment2 = pyana_cell::NoteCommitment([0xDD; 32]);
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "committed_transfer");
+        action.effect(Effect::NoteSpend {
+            nullifier,
+            note_tree_root: [0xFFu8; 32],
+            value: 500,
+            asset_type: 1,
+            spending_proof: vec![0x01],
+            value_commitment: Some(input_vc_bytes),
+        });
+        action.effect(Effect::NoteCreate {
+            commitment: commitment1,
+            value: 300,
+            asset_type: 1,
+            encrypted_note: vec![],
+            value_commitment: Some(output_vc1_bytes),
+            range_proof: Some(vec![0x01]), // placeholder range proof
+        });
+        action.effect(Effect::NoteCreate {
+            commitment: commitment2,
+            value: 200,
+            asset_type: 1,
+            encrypted_note: vec![],
+            value_commitment: Some(output_vc2_bytes),
+            range_proof: Some(vec![0x01]), // placeholder range proof
+        });
+    }
+    let mut turn = builder.fee(10000).build();
+
+    // Produce and attach the conservation proof.
+    // Excess blinding = sum(input_blindings) - sum(output_blindings).
+    let excess_blinding = r_in - (r_out1 + r_out2);
+    let turn_hash = turn.hash();
+    let conservation_proof = prove_conservation(
+        &[input_vc.clone()],
+        &[output_vc1.clone(), output_vc2.clone()],
+        &excess_blinding,
+        &turn_hash,
+    );
+    let proof_bytes = postcard::to_allocvec(&conservation_proof).unwrap();
+    turn.conservation_proof = Some(proof_bytes);
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "committed conservation with valid proof should pass"
+    );
+}
+
+#[test]
+fn test_committed_conservation_inflated_output_fails() {
+    use curve25519_dalek::scalar::Scalar;
+    use pyana_cell::{
+        ValueCommitment, prove_conservation,
+    };
+
+    // Setup: single agent cell with open permissions and a proof verifier.
+    let (mut ledger, agent_id, _target_id) = setup_two_open_cells(100000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
+
+    // Create blinding factors.
+    let r_in = {
+        let mut bytes = [0u8; 64];
+        bytes[0] = 40;
+        bytes[1] = 77;
+        Scalar::from_bytes_mod_order_wide(&bytes)
+    };
+    let r_out = {
+        let mut bytes = [0u8; 64];
+        bytes[0] = 50;
+        bytes[1] = 99;
+        Scalar::from_bytes_mod_order_wide(&bytes)
+    };
+
+    // Commit: input 500, output 600 (INFLATED -- conservation violated).
+    let input_vc = ValueCommitment::commit(500, &r_in);
+    let output_vc = ValueCommitment::commit(600, &r_out);
+
+    let input_vc_bytes = input_vc.to_bytes().0;
+    let output_vc_bytes = output_vc.to_bytes().0;
+
+    // Build the turn with committed note effects.
+    let nullifier = pyana_cell::Nullifier([0xEE; 32]);
+    let commitment = pyana_cell::NoteCommitment([0xFF; 32]);
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = builder.action(agent_id, "inflated_transfer");
+        action.effect(Effect::NoteSpend {
+            nullifier,
+            note_tree_root: [0xFFu8; 32],
+            value: 500,
+            asset_type: 1,
+            spending_proof: vec![0x01],
+            value_commitment: Some(input_vc_bytes),
+        });
+        action.effect(Effect::NoteCreate {
+            commitment,
+            value: 600, // INFLATED
+            asset_type: 1,
+            encrypted_note: vec![],
+            value_commitment: Some(output_vc_bytes),
+            range_proof: Some(vec![0x01]), // placeholder range proof
+        });
+    }
+    let mut turn = builder.fee(10000).build();
+
+    // Try to forge a proof -- use the blinding difference as excess, but since
+    // values don't balance, the Schnorr verification will fail.
+    let blinding_diff = r_in - r_out;
+    let turn_hash = turn.hash();
+    let conservation_proof = prove_conservation(
+        &[input_vc.clone()],
+        &[output_vc.clone()],
+        &blinding_diff,
+        &turn_hash,
+    );
+    let proof_bytes = postcard::to_allocvec(&conservation_proof).unwrap();
+    turn.conservation_proof = Some(proof_bytes);
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_rejected(),
+        "committed conservation with inflated output should be rejected"
+    );
 }

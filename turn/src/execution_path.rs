@@ -87,7 +87,7 @@ mod tests {
     use super::*;
     use crate::action::{Action, Authorization, DelegationMode, Effect};
     use crate::forest::{CallForest, CallTree};
-    use pyana_cell::{Cell, Preconditions};
+    use pyana_cell::{Cell, CellId, Preconditions};
 
     fn insert_cell(ledger: &mut Ledger, public_key: [u8; 32], balance: u64) -> CellId {
         let token_id = [0u8; 32];
@@ -187,6 +187,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![[0xaa; 32]],
+            conservation_proof: None,
         };
 
         assert_eq!(
