@@ -522,6 +522,7 @@ fn test_real_signature_verification() {
         valid_until: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -648,6 +649,7 @@ fn test_wrong_key_signature_rejected() {
         valid_until: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -1218,6 +1220,7 @@ fn test_empty_forest_rejected() {
         valid_until: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -4003,18 +4006,23 @@ fn test_note_spend_and_create_conservation() {
             value: 100,
             asset_type: 1,
             spending_proof: vec![0x01],
+            value_commitment: None,
         });
         action.effect(Effect::NoteCreate {
             commitment: commitment1,
             value: 60,
             asset_type: 1,
             encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
         });
         action.effect(Effect::NoteCreate {
             commitment: commitment2,
             value: 40,
             asset_type: 1,
             encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
         });
     }
     let turn = builder.fee(10000).build();
@@ -4050,12 +4058,15 @@ fn test_note_conservation_violated() {
             value: 100,
             asset_type: 1,
             spending_proof: vec![0x01],
+            value_commitment: None,
         });
         action.effect(Effect::NoteCreate {
             commitment,
             value: 200,
             asset_type: 1,
             encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
         });
     }
     let turn = builder.fee(10000).build();
@@ -4106,6 +4117,7 @@ fn test_note_nft_transfer() {
             value: 0,
             asset_type: unique_asset_id,
             spending_proof: vec![0x01],
+            value_commitment: None,
         });
         // Create a new note for the recipient (same asset_type, value=0).
         action.effect(Effect::NoteCreate {
@@ -4147,6 +4159,7 @@ fn test_note_multiple_asset_types_conservation() {
             value: 100,
             asset_type: 1,
             spending_proof: vec![0x01],
+            value_commitment: None,
         });
         action.effect(Effect::NoteSpend {
             nullifier: pyana_cell::Nullifier([2u8; 32]),
@@ -4154,18 +4167,23 @@ fn test_note_multiple_asset_types_conservation() {
             value: 50,
             asset_type: 2,
             spending_proof: vec![0x01],
+            value_commitment: None,
         });
         action.effect(Effect::NoteCreate {
             commitment: pyana_cell::NoteCommitment([3u8; 32]),
             value: 100,
             asset_type: 1,
             encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
         });
         action.effect(Effect::NoteCreate {
             commitment: pyana_cell::NoteCommitment([4u8; 32]),
             value: 50,
             asset_type: 2,
             encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
         });
     }
     let turn = builder.fee(10000).build();
@@ -4199,12 +4217,15 @@ fn test_note_cross_asset_conservation_fails() {
             value: 100,
             asset_type: 1,
             spending_proof: vec![0x01],
+            value_commitment: None,
         });
         action.effect(Effect::NoteCreate {
             commitment: pyana_cell::NoteCommitment([2u8; 32]),
             value: 100,
             asset_type: 2, // different asset type!
             encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
         });
     }
     let turn = builder.fee(10000).build();
@@ -4253,6 +4274,8 @@ fn test_note_spend_rejected_without_proof() {
             value: 100,
             asset_type: 1,
             encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
         });
     }
     let turn = builder.fee(10000).build();
@@ -4296,6 +4319,8 @@ fn test_note_spend_rejected_with_invalid_proof() {
             value: 100,
             asset_type: 1,
             encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
         });
     }
     let turn = builder.fee(10000).build();
@@ -4333,12 +4358,15 @@ fn test_note_spend_rejected_without_verifier() {
             value: 100,
             asset_type: 1,
             spending_proof: vec![0x01, 0x02, 0x03],
+            value_commitment: None,
         });
         action.effect(Effect::NoteCreate {
             commitment: pyana_cell::NoteCommitment([0xBB; 32]),
             value: 100,
             asset_type: 1,
             encrypted_note: vec![],
+            value_commitment: None,
+            range_proof: None,
         });
     }
     let turn = builder.fee(10000).build();
@@ -4667,6 +4695,7 @@ fn test_budget_gate_refund_on_turn_failure() {
         memo: None,
         valid_until: None,
         depends_on: vec![],
+        conservation_proof: None,
         previous_receipt_hash: None,
     };
 
@@ -4796,6 +4825,7 @@ fn test_spawn_with_delegation_child_gets_parent_caps() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
 
     let result = executor.execute(&turn, &mut ledger);
@@ -4870,6 +4900,7 @@ fn test_child_acts_via_delegated_caps() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
     let result = executor.execute(&turn1, &mut ledger);
     assert!(result.is_committed());
@@ -4907,6 +4938,7 @@ fn test_child_acts_via_delegated_caps() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(
@@ -4970,6 +5002,7 @@ fn test_refresh_delegation_updates_snapshot() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5022,6 +5055,7 @@ fn test_refresh_delegation_updates_snapshot() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(result.is_committed(), "refresh should work: {:?}", result);
@@ -5085,6 +5119,7 @@ fn test_revoke_delegation_bumps_epoch_and_clears_child() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5125,6 +5160,7 @@ fn test_revoke_delegation_bumps_epoch_and_clears_child() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(result.is_committed(), "revoke should work: {:?}", result);
@@ -5185,6 +5221,7 @@ fn test_parent_new_cap_invisible_until_refresh() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5226,6 +5263,7 @@ fn test_parent_new_cap_invisible_until_refresh() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(
@@ -5287,6 +5325,7 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
     executor.execute(&turn1, &mut ledger);
 
@@ -5330,6 +5369,7 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
         memo: None,
         previous_receipt_hash: None,
         depends_on: vec![],
+        conservation_proof: None,
     };
     let result = executor.execute(&turn2, &mut ledger);
     assert!(

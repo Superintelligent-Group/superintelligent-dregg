@@ -920,6 +920,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1057,6 +1058,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1080,6 +1082,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1105,6 +1108,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1532,6 +1536,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1557,6 +1562,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1591,6 +1597,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
         let ct = ConditionalTurn {
             turn,
@@ -1615,6 +1622,7 @@ mod tests {
             valid_until: None,
             previous_receipt_hash: None,
             depends_on: vec![],
+        conservation_proof: None,
         };
         let ct = ConditionalTurn {
             turn,

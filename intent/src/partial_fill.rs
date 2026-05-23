@@ -56,6 +56,10 @@ pub enum PartialFillError {
     InvalidConstraints(String),
     /// Underlying fulfillment error.
     Fulfillment(FulfillmentError),
+    /// The residual chain has reached the maximum depth (DoS prevention).
+    MaxResidualDepth { generation: u16, max: u16 },
+    /// The residual requires a fresh stake proof (anti-free-riding after generation threshold).
+    RequiresFreshStake { generation: u16 },
 }
 
 impl std::fmt::Display for PartialFillError {
@@ -85,6 +89,20 @@ impl std::fmt::Display for PartialFillError {
                 write!(f, "invalid fill constraints: {}", msg)
             }
             Self::Fulfillment(e) => write!(f, "fulfillment error: {}", e),
+            Self::MaxResidualDepth { generation, max } => {
+                write!(
+                    f,
+                    "residual chain depth {} exceeds maximum {} (DoS prevention)",
+                    generation, max
+                )
+            }
+            Self::RequiresFreshStake { generation } => {
+                write!(
+                    f,
+                    "residual at generation {} requires a fresh stake proof",
+                    generation
+                )
+            }
         }
     }
 }
@@ -159,7 +177,11 @@ pub fn fill_score(constraints: &FillConstraints, fill_amount: u64) -> f64 {
 /// The residual intent:
 /// - Has the same MatchSpec and constraints as the original
 /// - Has a new content-addressed ID (different fill constraints)
-/// - Has `min_fill_amount` clamped to not exceed the remaining amount
+/// - Has `min_fill_amount` geometrically degraded (doubled each generation) to make
+///   griefing via repeated tiny fills increasingly expensive
+/// - Increments `generation` to track residual chain depth
+/// - Rejects creation if `generation >= MAX_RESIDUAL_DEPTH` (DoS prevention)
+/// - Requires fresh stake proof after `FRESH_STAKE_GENERATION` (anti-free-riding)
 /// - Links back to the original via `remaining_after_fill`
 pub fn create_residual_intent(original: &Intent, filled_amount: u64) -> Option<Intent> {
     let constraints = original.fill_constraints.as_ref()?;
@@ -169,19 +191,43 @@ pub fn create_residual_intent(original: &Intent, filled_amount: u64) -> Option<I
         return None;
     }
 
+    let next_generation = constraints.generation.saturating_add(1);
+
+    // SECURITY: Reject if the residual chain has reached the maximum depth.
+    // This prevents an attacker from spawning unbounded residuals by filling
+    // for min_fill_amount each time.
+    if next_generation > MAX_RESIDUAL_DEPTH {
+        return None;
+    }
+
     let remaining = constraints.max_fill_amount.saturating_sub(filled_amount);
     if remaining == 0 {
         return None;
     }
 
+    // SECURITY: Geometric degradation of min_fill_amount.
+    // Each generation doubles the minimum, making repeated tiny fills exponentially
+    // more expensive. Original min=1 -> gen1 min=2 -> gen2 min=4 -> ... gen10 min=1024.
+    let degraded_min = constraints.min_fill_amount.saturating_mul(2);
+
     // The residual's min_fill_amount should not exceed the remaining amount
-    let residual_min = constraints.min_fill_amount.min(remaining);
+    let residual_min = degraded_min.min(remaining);
+
+    // SECURITY: After FRESH_STAKE_GENERATION, residuals require a fresh stake proof
+    // to prevent unlimited free riding on the original stake.
+    let residual_stake = if next_generation > FRESH_STAKE_GENERATION {
+        // Residual does NOT inherit the original stake -- requires fresh stake
+        None
+    } else {
+        original.stake_proof.clone()
+    };
 
     let residual_constraints = FillConstraints {
         min_fill_amount: residual_min,
         max_fill_amount: remaining,
         fill_or_kill: false,
         remaining_after_fill: None, // will be set if this residual is also partially filled
+        generation: next_generation,
     };
 
     let residual = Intent::new_with_fill(
@@ -189,7 +235,7 @@ pub fn create_residual_intent(original: &Intent, filled_amount: u64) -> Option<I
         original.matcher.clone(),
         original.creator,
         original.expiry,
-        original.stake_proof.clone(),
+        residual_stake,
         residual_constraints,
     );
 
@@ -332,6 +378,7 @@ mod tests {
             max_fill_amount: max,
             fill_or_kill,
             remaining_after_fill: None,
+            generation: 0,
         };
         Intent::new_with_fill(
             IntentKind::Need,
@@ -387,6 +434,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         // Available == max: full fill
         let result = check_fill_amount(&constraints, 100);
@@ -400,6 +448,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         // Available > max: clamped to max
         let result = check_fill_amount(&constraints, 200);
@@ -413,6 +462,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         // Available between min and max: partial fill accepted
         let result = check_fill_amount(&constraints, 50);
@@ -426,6 +476,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         // Available < min: rejected
         let result = check_fill_amount(&constraints, 5);
@@ -445,6 +496,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: true,
             remaining_after_fill: None,
+            generation: 0,
         };
         // Fill-or-kill with full amount: accepted
         let result = check_fill_amount(&constraints, 100);
@@ -458,6 +510,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: true,
             remaining_after_fill: None,
+            generation: 0,
         };
         // Fill-or-kill with partial: rejected even if above min
         let result = check_fill_amount(&constraints, 50);
@@ -477,6 +530,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: true,
             remaining_after_fill: None,
+            generation: 0,
         };
         // Fill-or-kill with more than enough: accepted at max
         let result = check_fill_amount(&constraints, 200);
@@ -494,6 +548,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         let score = fill_score(&constraints, 100);
         assert!((score - 1.0).abs() < f64::EPSILON);
@@ -506,6 +561,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         let score = fill_score(&constraints, 50);
         assert!((score - 0.5).abs() < f64::EPSILON);
@@ -524,14 +580,15 @@ mod tests {
         let r = residual.unwrap();
         let rc = r.fill_constraints.as_ref().unwrap();
         assert_eq!(rc.max_fill_amount, 60); // 100 - 40
-        assert_eq!(rc.min_fill_amount, 10); // same as original (still fits)
+        assert_eq!(rc.min_fill_amount, 20); // geometric degradation: 10 * 2 = 20
+        assert_eq!(rc.generation, 1); // incremented from 0
         assert!(!rc.fill_or_kill);
         assert_ne!(r.id, intent.id); // different intent
     }
 
     #[test]
     fn test_partial_fill_residual_min_clamped() {
-        // If remaining < original min, clamp min to remaining
+        // If remaining < degraded min, clamp min to remaining
         let intent = make_fill_intent(50, 100, false);
         let residual = create_residual_intent(&intent, 70);
         assert!(residual.is_some());
@@ -539,7 +596,9 @@ mod tests {
         let r = residual.unwrap();
         let rc = r.fill_constraints.as_ref().unwrap();
         assert_eq!(rc.max_fill_amount, 30); // 100 - 70
-        assert_eq!(rc.min_fill_amount, 30); // clamped: min(50, 30) = 30
+        // degraded_min = 50 * 2 = 100, clamped to remaining (30)
+        assert_eq!(rc.min_fill_amount, 30); // clamped: min(100, 30) = 30
+        assert_eq!(rc.generation, 1);
     }
 
     #[test]
@@ -596,6 +655,8 @@ mod tests {
         let residual = pf.residual_intent.unwrap();
         let rc = residual.fill_constraints.as_ref().unwrap();
         assert_eq!(rc.max_fill_amount, 60);
+        assert_eq!(rc.min_fill_amount, 20); // geometric: 10 * 2
+        assert_eq!(rc.generation, 1);
     }
 
     #[test]
@@ -747,6 +808,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         let result = check_fill_amount(&constraints, 50);
         assert!(
@@ -764,6 +826,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         let result = check_fill_amount(&constraints, 150);
         assert!(
@@ -794,6 +857,7 @@ mod tests {
             max_fill_amount: 100,
             fill_or_kill: false,
             remaining_after_fill: None,
+            generation: 0,
         };
         let intent = Intent::new_with_fill(
             IntentKind::Need,

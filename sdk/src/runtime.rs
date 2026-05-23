@@ -278,6 +278,7 @@ impl AgentRuntime {
             valid_until: None,
             previous_receipt_hash,
             depends_on: Vec::new(),
+            conservation_proof: None,
         };
 
         // Execute against the local ledger.
@@ -540,6 +541,7 @@ impl SubAgent {
             valid_until: None,
             previous_receipt_hash,
             depends_on: Vec::new(),
+            conservation_proof: None,
         };
 
         let mut ledger = self.ledger.lock().unwrap();

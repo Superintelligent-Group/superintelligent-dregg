@@ -940,7 +940,7 @@ impl Effect {
             } => {
                 hasher.update(&[33u8]);
                 hasher.update(escrow_id);
-                hasher.update(&claim_auth.public_key);
+                hasher.update(claim_auth.cell_id.as_bytes());
                 hasher.update(&claim_auth.blinding);
                 hasher.update(&claim_auth.signature);
                 hasher.update(recipient.as_bytes());
@@ -952,7 +952,7 @@ impl Effect {
             } => {
                 hasher.update(&[34u8]);
                 hasher.update(escrow_id);
-                hasher.update(&claim_auth.public_key);
+                hasher.update(claim_auth.cell_id.as_bytes());
                 hasher.update(&claim_auth.blinding);
                 hasher.update(&claim_auth.signature);
                 hasher.update(creator.as_bytes());

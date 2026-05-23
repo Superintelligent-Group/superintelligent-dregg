@@ -241,9 +241,14 @@ pub struct IntentPool {
     used_stake_nullifiers: HashSet<[u8; 32]>,
     /// The current block height, used to determine epoch for nullifier computation.
     current_block_height: u64,
-    /// Set of intent IDs that have been fulfilled (replay protection).
-    fulfilled_intents: HashSet<[u8; 32]>,
+    /// Map of intent IDs that have been fulfilled to the block height at fulfillment time.
+    /// Used for replay protection with bounded retention (GC prunes old entries).
+    fulfilled_intents: HashMap<[u8; 32], u64>,
 }
+
+/// Number of blocks to retain fulfilled intent entries before GC can prune them.
+/// After this many blocks, the fulfilled entry is considered stale and can be removed.
+pub const FULFILLED_RETENTION_BLOCKS: u64 = 10_000;
 
 impl IntentPool {
     /// Create a new intent pool.
@@ -270,7 +275,7 @@ impl IntentPool {
             known_note_root,
             used_stake_nullifiers: HashSet::new(),
             current_block_height: 0,
-            fulfilled_intents: HashSet::new(),
+            fulfilled_intents: HashMap::new(),
         }
     }
 
@@ -383,7 +388,7 @@ impl IntentPool {
         }
 
         // Don't accept intents that have already been fulfilled (replay protection, issue #13)
-        if self.fulfilled_intents.contains(&intent.id) {
+        if self.fulfilled_intents.contains_key(&intent.id) {
             return Err(ReceiveError::AlreadyFulfilled);
         }
 
@@ -504,7 +509,8 @@ impl IntentPool {
     /// Mark an intent as fulfilled. Subsequent attempts to re-submit or re-fulfill
     /// this intent will be rejected with `AlreadyFulfilled`.
     pub fn mark_fulfilled(&mut self, intent_id: [u8; 32]) {
-        self.fulfilled_intents.insert(intent_id);
+        self.fulfilled_intents
+            .insert(intent_id, self.current_block_height);
         // Remove from active pool
         self.intents.remove(&intent_id);
     }
@@ -530,6 +536,13 @@ impl IntentPool {
         // Clean pending_commitments: remove commitments older than max age
         self.pending_commitments.retain(|_, commitment| {
             now.saturating_sub(commitment.timestamp) < MAX_COMMITMENT_AGE_SECS
+        });
+
+        // SECURITY: Prune fulfilled_intents entries older than retention period.
+        // Without this, the fulfilled set grows unboundedly (memory leak / DoS vector).
+        let current_height = self.current_block_height;
+        self.fulfilled_intents.retain(|_, fulfillment_height| {
+            current_height.saturating_sub(*fulfillment_height) <= FULFILLED_RETENTION_BLOCKS
         });
     }
 

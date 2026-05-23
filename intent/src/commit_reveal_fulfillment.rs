@@ -53,6 +53,9 @@ pub enum CommitRevealFulfillmentError {
     FulfillmentFailed(FulfillmentError),
     /// The intent has already been fulfilled via commit-reveal.
     AlreadyFulfilled,
+    /// The commitment ID has been blocked due to too many abandoned commitments
+    /// (commits without reveals) in this epoch.
+    AbandonPenalty { abandons: u8, max: u8 },
 }
 
 impl std::fmt::Display for CommitRevealFulfillmentError {
@@ -77,11 +80,23 @@ impl std::fmt::Display for CommitRevealFulfillmentError {
             }
             Self::FulfillmentFailed(e) => write!(f, "fulfillment failed: {}", e),
             Self::AlreadyFulfilled => write!(f, "intent already fulfilled via commit-reveal"),
+            Self::AbandonPenalty { abandons, max } => {
+                write!(
+                    f,
+                    "commitment ID blocked: {} abandoned commits (max {} per epoch)",
+                    abandons, max
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for CommitRevealFulfillmentError {}
+
+/// Maximum number of abandoned commitments (commit without reveal) allowed per
+/// commitment hash per epoch. After this many abandons, the commitment ID is
+/// blocked from future commits for the rest of the epoch.
+pub const MAX_ABANDONS_PER_EPOCH: u8 = 3;
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -132,6 +147,14 @@ pub struct FulfillmentRegistry {
     fulfilled: std::collections::HashSet<[u8; 32]>,
     /// Current block height (for epoch computation).
     current_block_height: u64,
+    /// Tracks abandoned commitment counts per commitment_hash per epoch.
+    /// Key is the commitment_hash from the FulfillmentCommitment (identifies the committer).
+    /// Value is the number of times that committer has abandoned (committed without revealing).
+    /// Reset when the epoch advances.
+    abandoned_count: HashMap<[u8; 32], u8>,
+    /// The epoch in which the abandoned_count was last relevant.
+    /// When the current epoch advances past this, abandoned_count is cleared.
+    abandon_epoch: u64,
 }
 
 impl FulfillmentRegistry {
@@ -141,11 +164,21 @@ impl FulfillmentRegistry {
             commitments: HashMap::new(),
             fulfilled: std::collections::HashSet::new(),
             current_block_height: 0,
+            abandoned_count: HashMap::new(),
+            abandon_epoch: 0,
         }
     }
 
     /// Update the current block height.
+    ///
+    /// When the epoch advances, the abandon penalty counters are cleared
+    /// (fresh epoch = fresh slate for all committers).
     pub fn update_block_height(&mut self, height: u64) {
+        let new_epoch = current_epoch(height);
+        if new_epoch > self.abandon_epoch {
+            self.abandoned_count.clear();
+            self.abandon_epoch = new_epoch;
+        }
         self.current_block_height = height;
     }
 
@@ -157,7 +190,7 @@ impl FulfillmentRegistry {
     /// Register a commitment to fulfill an intent.
     ///
     /// Returns the commitment on success, or an error if the intent is already
-    /// fulfilled.
+    /// fulfilled or if the committer has been blocked due to abandon penalties.
     pub fn register_commitment(
         &mut self,
         intent_id: [u8; 32],
@@ -170,6 +203,17 @@ impl FulfillmentRegistry {
 
         let epoch = current_epoch(self.current_block_height);
         let commitment_hash = compute_commitment_hash(&intent_id, fulfiller_secret, epoch);
+
+        // SECURITY: Check if this commitment ID has been penalized for too many
+        // abandoned commitments in this epoch.
+        if let Some(&count) = self.abandoned_count.get(&commitment_hash) {
+            if count >= MAX_ABANDONS_PER_EPOCH {
+                return Err(CommitRevealFulfillmentError::AbandonPenalty {
+                    abandons: count,
+                    max: MAX_ABANDONS_PER_EPOCH,
+                });
+            }
+        }
 
         let commitment = FulfillmentCommitment {
             intent_id,
@@ -255,8 +299,21 @@ impl FulfillmentRegistry {
     }
 
     /// Garbage-collect expired commitments.
+    ///
+    /// Commitments that expire without being revealed are considered "abandoned."
+    /// The committer's abandon count is incremented as a penalty. After
+    /// `MAX_ABANDONS_PER_EPOCH` abandons, the commitment ID is blocked for
+    /// the rest of the epoch.
     pub fn gc(&mut self, now: u64) {
         for commitments in self.commitments.values_mut() {
+            // Track which commitments are being removed as abandoned (expired without reveal)
+            for c in commitments.iter() {
+                if now.saturating_sub(c.committed_at) > COMMITMENT_EXPIRY_SECS {
+                    // This commitment expired without reveal -> count as abandon
+                    let count = self.abandoned_count.entry(c.commitment_hash).or_insert(0);
+                    *count = count.saturating_add(1);
+                }
+            }
             commitments.retain(|c| now.saturating_sub(c.committed_at) <= COMMITMENT_EXPIRY_SECS);
         }
         // Remove entries with no remaining commitments
@@ -284,6 +341,14 @@ impl FulfillmentRegistry {
         self.commitments
             .get(intent_id)
             .map(|cs| cs.len())
+            .unwrap_or(0)
+    }
+
+    /// Get the abandon count for a given commitment hash in the current epoch.
+    pub fn abandon_count_for(&self, commitment_hash: &[u8; 32]) -> u8 {
+        self.abandoned_count
+            .get(commitment_hash)
+            .copied()
             .unwrap_or(0)
     }
 }
