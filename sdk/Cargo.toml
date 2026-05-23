@@ -30,6 +30,7 @@ getrandom = { workspace = true }
 hmac = { workspace = true }
 pbkdf2 = "0.12"
 postcard = { version = "1", features = ["use-std"] }
+rmp-serde = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

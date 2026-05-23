@@ -2,8 +2,9 @@
 //!
 //! Generates:
 //! - `genesis.json` — initial federation state
-//! - `node-N.key` — per-node signing keys (hex-encoded)
+//! - `devnet-node-N.key` — per-node signing keys (hex-encoded, devnet-prefixed)
 //! - `node-N.env` — per-node environment variable files
+//! - `.devnet` — marker file indicating devnet data directory
 
 use std::path::Path;
 
@@ -156,12 +157,19 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
 
     // Write `.devnet` marker so the runtime can detect devnet data directories.
     let devnet_marker_path = output.join(".devnet");
-    std::fs::write(&devnet_marker_path, "# This directory contains devnet configuration.\n# Keys here are NOT production-grade.\n").unwrap_or_else(|e| {
+    std::fs::write(
+        &devnet_marker_path,
+        "# This directory contains devnet configuration.\n# Keys here are NOT production-grade.\n",
+    )
+    .unwrap_or_else(|e| {
         eprintln!("error: failed to write .devnet marker: {e}");
         std::process::exit(1);
     });
 
-    println!("Devnet genesis configuration generated in {}", output.display());
+    println!(
+        "Devnet genesis configuration generated in {}",
+        output.display()
+    );
     println!("  Federation ID: {}", genesis.federation_id);
     println!("  Validators: {validators}");
     println!("  Threshold: {threshold}");
@@ -172,7 +180,10 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     println!("  {}", genesis_path.display());
     println!("  {}", devnet_marker_path.display());
     for i in 0..validators {
-        println!("  {}", output.join(format!("devnet-node-{i}.key")).display());
+        println!(
+            "  {}",
+            output.join(format!("devnet-node-{i}.key")).display()
+        );
         println!("  {}", output.join(format!("node-{i}.env")).display());
     }
     println!();

@@ -6160,6 +6160,7 @@ dependencies = [
  "pyana-turn",
  "pyana-types",
  "pyana-wire",
+ "rmp-serde",
  "serde",
  "serde_json",
  "sha2 0.10.9",

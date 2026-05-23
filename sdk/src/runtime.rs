@@ -395,6 +395,7 @@ impl AgentRuntime {
             restrictions: restrictions.clone(),
             proof_key,
             membership_proof: None,
+            caveat_chain_hash: None,
         })?;
 
         // Create the sub-agent's cell in the ledger.

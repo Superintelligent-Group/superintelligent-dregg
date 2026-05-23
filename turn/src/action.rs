@@ -103,6 +103,7 @@ pub enum Authorization {
     ///
     /// Named `Unchecked` rather than `None` to make it grep-able and ensure
     /// code review flags its usage. Previously called `None`.
+    #[serde(alias = "None")]
     Unchecked,
 }
 

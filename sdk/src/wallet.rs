@@ -368,6 +368,7 @@ impl HeldToken {
             id,
             verified,
             membership_proof: None,
+            caveat_chain_hash: None,
         }
     }
 
@@ -394,6 +395,7 @@ impl HeldToken {
             id,
             verified: true, // Locally-attenuated from a verified parent
             membership_proof: None,
+            caveat_chain_hash: None,
         }
     }
 
@@ -882,6 +884,14 @@ impl AgentWallet {
             None
         };
 
+        // Compute the caveat chain hash from the HMAC-verified attenuated token.
+        // The delegator holds the root key and can verify the chain; the delegatee
+        // will use this commitment to detect any post-delegation caveat tampering.
+        let caveat_chain_hash = {
+            let decoded = attenuated.decode()?;
+            Some(Self::compute_caveat_chain_hash(&decoded))
+        };
+
         Ok(DelegatedToken {
             token_bytes: attenuated.encoded.clone(),
             service: attenuated.service.clone(),
@@ -891,6 +901,7 @@ impl AgentWallet {
             restrictions: restrictions.clone(),
             proof_key,
             membership_proof: None,
+            caveat_chain_hash,
         })
     }
 
@@ -942,6 +953,12 @@ impl AgentWallet {
             None
         };
 
+        // Compute the caveat chain hash from the HMAC-verified attenuated token.
+        let caveat_chain_hash = {
+            let decoded = attenuated.decode()?;
+            Some(Self::compute_caveat_chain_hash(&decoded))
+        };
+
         Ok(DelegatedToken {
             token_bytes: attenuated.encoded.clone(),
             service: attenuated.service.clone(),
@@ -951,6 +968,7 @@ impl AgentWallet {
             restrictions: restrictions.clone(),
             proof_key,
             membership_proof,
+            caveat_chain_hash,
         })
     }
 
@@ -1058,6 +1076,9 @@ impl AgentWallet {
         // The delegatee uses it directly during proof generation, bypassing the lookup
         // that would fail for the BLAKE3-derived proof_key.
         held.membership_proof = delegated.membership_proof;
+
+        // Store the caveat chain hash for integrity verification at proof time.
+        held.caveat_chain_hash = delegated.caveat_chain_hash;
 
         self.tokens.push(held);
         Ok(())
@@ -1774,7 +1795,28 @@ impl AgentWallet {
             ));
         }
 
-        let federation_root_bb = Self::compute_federation_root_bb(issuer_key);
+        // P0-1: Verify caveat chain integrity before proof generation.
+        // If the delegator provided a caveat_chain_hash, check that the decoded token's
+        // caveats match. This prevents a delegate holding the proof_key from mutating
+        // caveats and generating proofs over fabricated authorization facts.
+        let actual_token = MacaroonToken::from_encoded(&token.encoded, *issuer_key)?;
+        if let Some(expected_hash) = token.caveat_chain_hash {
+            let computed_hash = Self::compute_caveat_chain_hash(&actual_token);
+            if computed_hash != expected_hash {
+                return Err(SdkError::CaveatIntegrityViolation);
+            }
+        }
+
+        // P0-2: Use the federation root from the pre-generated membership proof when
+        // available. The proof was generated against the REAL tree root (which contains
+        // the real issuer key, not the BLAKE3-derived proof_key). Using
+        // compute_federation_root_bb(issuer_key) would produce a synthetic root that
+        // does not match the proof's path.
+        let federation_root_bb = if let Some(ref mp) = token.membership_proof {
+            Self::compute_root_from_membership_proof(mp)
+        } else {
+            Self::compute_federation_root_bb(issuer_key)
+        };
         let federation_root = Self::bb_to_bytes(federation_root_bb);
 
         let mut builder = pyana_bridge::BridgePresentationBuilder::new_with_root_bb(
@@ -1791,11 +1833,6 @@ impl AgentWallet {
             builder.with_pre_generated_membership_proof(membership_proof.clone());
         }
 
-        // Decode the attenuated token. For attenuated tokens the internal root_key is
-        // zeroed, but we can still decode the macaroon structure (caveats, identifiers).
-        // The STARK proof will commit to the issuer's federation membership via the
-        // provided issuer_key, while the token's caveat chain binds the authorization.
-        let actual_token = MacaroonToken::from_encoded(&token.encoded, *issuer_key)?;
         builder.set_root_token(actual_token);
 
         let proof = builder.prove(request)?;
@@ -1864,7 +1901,22 @@ impl AgentWallet {
             ));
         }
 
-        let federation_root_bb = Self::compute_federation_root_bb(issuer_key);
+        // P0-1: Verify caveat chain integrity before proof generation.
+        let actual_token = MacaroonToken::from_encoded(&token.encoded, *issuer_key)?;
+        if let Some(expected_hash) = token.caveat_chain_hash {
+            let computed_hash = Self::compute_caveat_chain_hash(&actual_token);
+            if computed_hash != expected_hash {
+                return Err(SdkError::CaveatIntegrityViolation);
+            }
+        }
+
+        // P0-2: Use the federation root from the pre-generated membership proof when
+        // available, rather than the synthetic root derived from the proof_key.
+        let federation_root_bb = if let Some(ref mp) = token.membership_proof {
+            Self::compute_root_from_membership_proof(mp)
+        } else {
+            Self::compute_federation_root_bb(issuer_key)
+        };
         let federation_root = Self::bb_to_bytes(federation_root_bb);
 
         let mut builder = pyana_bridge::BridgePresentationBuilder::new_with_root_bb(
@@ -1881,7 +1933,6 @@ impl AgentWallet {
         // Set the revealed facts commitment before proving.
         builder.set_revealed_facts_commitment(commitment);
 
-        let actual_token = MacaroonToken::from_encoded(&token.encoded, *issuer_key)?;
         builder.set_root_token(actual_token);
 
         let proof = builder.prove(request)?;
