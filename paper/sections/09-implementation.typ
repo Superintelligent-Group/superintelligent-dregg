@@ -37,7 +37,7 @@ The system is implemented in approximately 355k lines of Rust across 41 workspac
     [`intent`], [Intent engine, matching, delay pool, gossip], [token, commit],
     [`net`], [QUIC P2P, topic gossip, Plumtree, Dandelion++], [quinn],
     [`chain`], [EVM on-chain verification via SP1/Groth16], [sp1-sdk],
-    [`pyana-dsl`], [Constraint DSL proc macros (8 backends)], [syn, quote],
+    [`pyana-dsl`], [Constraint DSL proc macros (multi-backend)], [syn, quote],
     [`pyana-dsl-runtime`], [DSL runtime: composition, verification], [circuit],
     [`pyana-dsl-tests`], [DSL integration tests and examples], [pyana-dsl],
     [`app-framework`], [Shared framework for Pyana applications], [sdk, node],
@@ -100,7 +100,7 @@ The test suite includes 4,046 test functions covering:
 - Integration tests spanning the full pipeline (token creation through STARK verification through turn execution through EVM wrapping)
 - Property-based tests via proptest (conservation invariant, attenuation monotonicity, nullifier uniqueness, EffectMask narrowing)
 - End-to-end demo scenarios (20+) covering delegation, revocation, multi-party turns, intent fulfillment, pipeline execution, cross-federation swaps, wallet interactions, factory spawning, and sovereign cell transitions
-- DSL code generation tests (all 8 backends produce correct output for a common test suite)
+- DSL code generation tests (all backends produce correct output for a common test suite)
 - Effect VM soundness tests (conservation violation detection, authority bypass attempts, state continuity breaks)
 - Consensus correctness tests (Blocklace + Cordial Miners under 3--7 node simulated network conditions)
 - Security regression tests for all audit findings

@@ -420,6 +420,7 @@ impl KimchiArithmeticPredicateCircuit {
             return Err("Arithmetic predicate is not satisfiable".into());
         }
         let (gates, pc) = self.build_circuit();
+        let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
         let wit = self.generate_witness();
         let index =
             kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
@@ -440,6 +441,8 @@ impl KimchiArithmeticPredicateCircuit {
             proof_bytes: pb,
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::ArithmeticPredicate,
+            circuit_gates_bytes,
+            public_count: pc,
         })
     }
 }
@@ -719,6 +722,7 @@ impl KimchiRelationalPredicateCircuit {
             return Err("Relational predicate is not satisfiable".into());
         }
         let (gates, pc) = self.build_circuit();
+        let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
         let wit = self.generate_witness();
         let w = &self.witness;
         let index =
@@ -740,6 +744,8 @@ impl KimchiRelationalPredicateCircuit {
             proof_bytes: pb,
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::RelationalPredicate,
+            circuit_gates_bytes,
+            public_count: pc,
         })
     }
 }
@@ -924,6 +930,7 @@ impl KimchiTemporalPredicateCircuit {
             return Err("Temporal predicate is not satisfiable: attribute did not meet threshold at all blocks".into());
         }
         let (gates, pc) = self.build_circuit();
+        let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
         let wit = self.generate_witness();
         let w = &self.witness;
         let index =
@@ -948,6 +955,8 @@ impl KimchiTemporalPredicateCircuit {
             proof_bytes: pb,
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::TemporalPredicate,
+            circuit_gates_bytes,
+            public_count: pc,
         })
     }
 }
@@ -1148,6 +1157,7 @@ impl KimchiCompoundPredicateCircuit {
             return Err("Compound predicate is not satisfiable".into());
         }
         let (gates, pc) = self.build_circuit();
+        let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
         let wit = self.generate_witness();
         let w = &self.witness;
         let index =
@@ -1170,6 +1180,8 @@ impl KimchiCompoundPredicateCircuit {
             proof_bytes: pb,
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::CompoundPredicate,
+            circuit_gates_bytes,
+            public_count: pc,
         })
     }
 }

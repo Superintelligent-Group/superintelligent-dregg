@@ -324,6 +324,7 @@ impl KimchiNonMembershipCircuit {
     /// Create a proof of non-membership for all elements.
     pub fn prove(&self) -> Result<KimchiNativeProof, String> {
         let (gates, pc) = self.build_circuit();
+        let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
         let wit = self.generate_witness();
 
         let index =
@@ -357,6 +358,8 @@ impl KimchiNonMembershipCircuit {
             proof_bytes: pb,
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::NonMembership,
+            circuit_gates_bytes,
+            public_count: pc,
         })
     }
 

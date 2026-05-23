@@ -1480,6 +1480,7 @@ pub fn prove_dsl_kimchi(
     }
 
     // Create prover index
+    let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
     let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
 
     // Create proof
@@ -1506,6 +1507,8 @@ pub fn prove_dsl_kimchi(
         proof_bytes,
         public_input_bytes,
         circuit_type: KimchiNativeCircuitType::Dsl,
+        circuit_gates_bytes,
+        public_count: pc,
     })
 }
 

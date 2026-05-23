@@ -121,6 +121,18 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
 /// Reads the 4-byte length prefix, validates it, then reads exactly that many
 /// bytes of payload and deserializes the message.
 pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<WireMessage, CodecError> {
+    read_message_with_limit(reader, MAX_MESSAGE_SIZE as usize).await
+}
+
+/// Read a framed message with a configurable size limit.
+///
+/// Like [`read_message`] but allows specifying a tighter maximum message size
+/// than the protocol-level `MAX_MESSAGE_SIZE`. The frame length is checked
+/// BEFORE allocating memory, preventing OOM from oversized messages.
+pub async fn read_message_with_limit<R: AsyncRead + Unpin>(
+    reader: &mut R,
+    max_size: usize,
+) -> Result<WireMessage, CodecError> {
     // Read the 4-byte length header
     let mut header = [0u8; HEADER_SIZE];
     match reader.read_exact(&mut header).await {
@@ -133,11 +145,12 @@ pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<WireMe
 
     let payload_len = u32::from_le_bytes(header);
 
-    // Validate size
-    if payload_len > MAX_MESSAGE_SIZE {
+    // Validate size against the configured limit (not just the protocol max)
+    let effective_max = (max_size as u32).min(MAX_MESSAGE_SIZE);
+    if payload_len > effective_max {
         return Err(CodecError::MessageTooLarge {
             size: payload_len,
-            max: MAX_MESSAGE_SIZE,
+            max: effective_max,
         });
     }
 

@@ -273,6 +273,7 @@ pub fn prove_dsl_circuit(
     witness: [Vec<Fp>; COLUMNS],
 ) -> Result<KimchiNativeProof, String> {
     let (gates, pc) = dsl_to_kimchi_gates(descriptor);
+    let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
 
     let index =
         kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates.clone(), pc);
@@ -297,6 +298,8 @@ pub fn prove_dsl_circuit(
         proof_bytes,
         public_input_bytes,
         circuit_type: KimchiNativeCircuitType::Dsl,
+        circuit_gates_bytes,
+        public_count: pc,
     })
 }
 

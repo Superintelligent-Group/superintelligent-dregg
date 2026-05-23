@@ -1,5 +1,25 @@
 //! `pyana-turn`: Call-forest transaction model for atomic agent execution turns.
 //!
+//! # Trust Model
+//!
+//! This crate spans TWO trust levels with a clear boundary:
+//!
+//! ## Executor-Trusted (classical path)
+//! - Modules: [`executor`], [`forest`], [`action`], [`journal`], [`escrow`], [`obligation`]
+//! - The executor walks the call forest, checks authorization, and applies effects.
+//! - Soundness depends on honest federation execution (BFT replication).
+//! - External parties trust the federation's attested state root.
+//!
+//! ## Trustless (proof-carrying path)
+//! - Modules: [`verify`], sovereign cell proof verification in [`executor::verify_and_commit_proof`]
+//! - Proof-carrying sovereign turns (Phase 3) are independently verifiable via STARK.
+//! - The executor only checks the proof and updates a commitment -- no state interpretation.
+//!
+//! ## Trust Boundary
+//! The boundary lives inside `executor.rs` at the `execution_proof` branch:
+//! - If `turn.execution_proof` is `Some`: **TRUSTLESS** path (verify proof, update commitment)
+//! - If `turn.execution_proof` is `None`: **EXECUTOR-TRUSTED** path (classical execution)
+//!
 //! A Turn is an atomic unit of agent execution, modeled after Mina's zkApp command structure.
 //! It contains a *call forest* — a tree of actions that either all commit or all rollback.
 //!
@@ -54,6 +74,7 @@ pub(crate) mod journal;
 pub mod obligation;
 pub mod pending;
 pub mod presence_discharge;
+pub mod queue_programs;
 pub mod routing;
 pub mod turn;
 pub mod verify;

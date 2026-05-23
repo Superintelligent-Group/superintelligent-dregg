@@ -48,7 +48,7 @@ pub struct IntentNode {
 }
 
 /// A discovered ring trade.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RingTrade {
     /// The participating intents in cycle order.
     pub participants: Vec<crate::IntentId>,
@@ -59,7 +59,7 @@ pub struct RingTrade {
 }
 
 /// A single transfer within a ring trade settlement.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Settlement {
     /// Sender's commitment ID.
     pub from: CommitmentId,

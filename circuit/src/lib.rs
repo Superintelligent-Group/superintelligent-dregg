@@ -1,5 +1,24 @@
 //! `pyana-circuit`: Zero-knowledge proof circuits for pyana authorization token chains.
 //!
+//! # Trust Model
+//!
+//! This crate operates at the **TRUSTLESS** trust level.
+//!
+//! - **Soundness**: All proofs are independently verifiable by any party with access to
+//!   the public inputs and verification key. A valid proof guarantees that the prover
+//!   knows a witness satisfying the circuit constraints, with negligible soundness error
+//!   (2^{-128} for STARK, conjectured for Plonky3).
+//! - **Assumptions**: Cryptographic hardness of the hash function (BLAKE3/Poseidon2),
+//!   correct circuit constraint encoding, and honest verifier randomness (Fiat-Shamir).
+//!   No trust in any federation member, operator, or third party.
+//! - **Verifiable by**: Anyone. Proofs are publicly verifiable with O(log n) verification
+//!   time. Light clients, external auditors, and cross-federation peers can all verify
+//!   independently.
+//!
+//! All code in this crate MUST maintain the property that a valid proof implies a valid
+//! witness. Bugs here break the entire trust model -- a soundness bug allows forged
+//! authorization tokens.
+//!
 //! This crate implements the circuit layer for the pyana ZK token system,
 //! proving: "I hold a valid attenuated token chain whose final state authorizes
 //! action X" without revealing the chain or capabilities.

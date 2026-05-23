@@ -1,5 +1,33 @@
 //! # pyana-blocklace
 //!
+//! # Trust Model
+//!
+//! This crate operates at the **CONSENSUS-TRUSTLESS** trust level.
+//!
+//! - **Soundness**: Finality is verified by ALL participants. Once a block reaches
+//!   finality (via the constitution's supermajority rule), it cannot be reverted without
+//!   violating the BFT assumption (>1/3 Byzantine). The DAG structure is self-validating:
+//!   hash links make it impossible to rewrite history without detection.
+//! - **Assumptions**: Honest supermajority (2f+1 of 3f+1 nodes). Network eventually
+//!   delivers messages (partial synchrony). Block creators sign their blocks (Ed25519).
+//!   BLAKE3 is collision-resistant (for content addressing).
+//! - **Verifiable by**: Every participant independently. Any node can verify:
+//!   - Block integrity (hash matches content)
+//!   - Block authenticity (signature matches creator)
+//!   - Causal ordering (all predecessors exist and are valid)
+//!   - Finality (supermajority acknowledgment per the constitution)
+//!
+//! ## Trust Boundaries
+//! - The blocklace does NOT verify payload semantics (that is the executor's job)
+//! - The blocklace DOES guarantee total ordering and finality
+//! - Dissemination is best-effort (liveness) but does not affect safety
+//!
+//! ## Key Invariants
+//! 1. A block's ID is a deterministic function of its content (content-addressed)
+//! 2. Blocks are inserted only if all predecessors are present (causal closure)
+//! 3. Finalized blocks form an immutable prefix of the DAG
+//! 4. The topological order is a valid linearization of the causal DAG
+//!
 //! Blocklace: a DAG-based data structure for Byzantine fault-tolerant consensus.
 //!
 //! This crate implements:

@@ -1,6 +1,30 @@
 //! pyana-wire: Network wire protocol for cross-silo token presentation and
 //! federation synchronization.
 //!
+//! # Trust Model
+//!
+//! This crate is a **TRANSPORT** layer — it is NOT a trust boundary itself.
+//!
+//! - **Soundness**: The wire protocol provides authenticated channels (via TLS + PeerRole)
+//!   and message integrity (length-prefixed framing with nonce-based replay protection).
+//!   It does NOT independently verify the semantic content of messages.
+//! - **Assumptions**: TLS provides confidentiality and authentication of the transport.
+//!   `PeerRole` classification is correct (configured at the federation level). Nonce
+//!   caches prevent replay within the configured window.
+//! - **Verifiable by**: Connection peers (via TLS certificate validation). The protocol
+//!   itself is transparent to inspection by federation operators.
+//!
+//! ## What Crosses This Layer
+//! - STARK proofs (verified by the receiving silo's verifier, NOT by the wire layer)
+//! - Revocation attestations (verified against federation root, NOT by wire)
+//! - Federation sync messages (applied by the executor, NOT by wire)
+//!
+//! The wire layer's security properties are:
+//! 1. Authentication: PeerRole ensures only authorized peers can connect.
+//! 2. Integrity: Length-prefixed framing detects truncation/corruption.
+//! 3. Replay protection: Nonce cache + timestamp window rejects replayed messages.
+//! 4. DoS resistance: MAX_MESSAGE_SIZE bounds memory consumption.
+//!
 //! This crate implements the binary wire protocol used between organizational silos
 //! in the Pyana federation. It handles:
 //!
@@ -50,9 +74,11 @@
 //! }
 //! ```
 
+pub mod auth;
 pub mod codec;
 pub mod connection;
 pub mod dfa_router;
+pub mod hardening;
 pub mod message;
 pub mod server;
 
@@ -61,8 +87,17 @@ pub mod federation_bridge;
 
 /// Convenience re-exports for common usage.
 pub mod prelude {
+    pub use crate::auth::{
+        AuthConfig, BanConfig, BanList, BanReason, GossipFilter, RateLimitConfig,
+        RateLimiter as AuthRateLimiter, SharedBanList, new_shared_ban_list,
+    };
     pub use crate::codec::{CodecError, FrameStats, MAX_MESSAGE_SIZE};
     pub use crate::connection::{ConnectionError, ConnectionPool, ConnectionStats, PeerConnection};
+    pub use crate::hardening::{
+        ConnectionMetrics, DEFAULT_MAX_MESSAGE_SIZE, HEARTBEAT_INTERVAL, HEARTBEAT_TIMEOUT,
+        HardeningConfig, OUTGOING_CHANNEL_CAPACITY, OutgoingMessage, RateLimiter,
+        ShutdownCoordinator, message_cost, outgoing_channel,
+    };
     pub use crate::message::{
         AuthorizationRequest, Envelope, MAX_NONCE_CACHE_SIZE, MAX_REQUEST_AGE_SECS,
         PROTOCOL_VERSION, PublicKey, Signature, ThresholdQC, WireMessage, error_codes,

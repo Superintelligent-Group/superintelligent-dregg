@@ -7,7 +7,12 @@
 //! - Serve the current attested root and non-membership proofs
 //! - Initiate outgoing connections for cross-silo token presentation
 
+use crate::auth::{AuthConfig, GossipFilter, RateLimiter as AuthRateLimiter, SharedBanList};
 use crate::connection::{ConnectionError, PeerConnection};
+use crate::hardening::{
+    ConnectionMetrics, HardeningConfig, OutgoingMessage, RateLimiter, ShutdownCoordinator,
+    message_cost, outgoing_channel,
+};
 use crate::message::{
     AuthorizationRequest, MAX_NONCE_CACHE_SIZE, MAX_REQUEST_AGE_SECS, PROTOCOL_VERSION, PublicKey,
     Signature, ThresholdQC, WireMessage,
@@ -20,7 +25,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_rustls::TlsAcceptor;
 
 use pyana_captp::{
@@ -204,6 +209,8 @@ pub struct SiloConfig {
     /// (backward compatible default). When set, if the root has not been updated
     /// within this window, all presentations are rejected with a clear error.
     pub max_root_age_secs: Option<u64>,
+    /// Production hardening configuration (rate limits, heartbeat, backpressure, etc.).
+    pub hardening: HardeningConfig,
 }
 
 impl SiloConfig {
@@ -227,6 +234,7 @@ impl SiloConfig {
             tls: TlsConfig::default(),
             nonce_cache_capacity: MAX_NONCE_CACHE_SIZE,
             max_root_age_secs: None,
+            hardening: HardeningConfig::default(),
         }
     }
 
@@ -275,6 +283,14 @@ impl SiloConfig {
     /// cost of availability during consensus downtime.
     pub fn with_max_root_age(mut self, secs: u64) -> Self {
         self.max_root_age_secs = Some(secs);
+        self
+    }
+
+    /// Set the production hardening configuration.
+    ///
+    /// Controls rate limiting, heartbeat, backpressure, and message size limits.
+    pub fn with_hardening(mut self, hardening: HardeningConfig) -> Self {
+        self.hardening = hardening;
         self
     }
 }
@@ -979,6 +995,12 @@ pub struct SiloServer {
     /// When set, enables challenge-response handshake. When None, all peers
     /// remain Anonymous (backward-compatible with existing deployments).
     participant_source: Option<Arc<dyn ParticipantSource>>,
+    /// Extended auth configuration (require_auth, rate limits, ban config).
+    auth_config: AuthConfig,
+    /// Shared ban list for tracking and enforcing IP bans.
+    ban_list: SharedBanList,
+    /// Graceful shutdown coordinator.
+    shutdown: Arc<ShutdownCoordinator>,
 }
 
 /// Events logged by the server for diagnostics.
@@ -1027,6 +1049,8 @@ impl SiloServer {
             );
         }
         let nonce_cap = config.nonce_cache_capacity;
+        let node_id = config.node_id;
+        let grace_period = config.hardening.shutdown_grace_period;
         Self {
             addr,
             config: Arc::new(config),
@@ -1039,6 +1063,9 @@ impl SiloServer {
             tls_acceptor,
             captp_state: Arc::new(RwLock::new(CapTpState::new())),
             participant_source: None,
+            auth_config: AuthConfig::default(),
+            ban_list: crate::auth::new_shared_ban_list(),
+            shutdown: Arc::new(ShutdownCoordinator::new(node_id, grace_period)),
         }
     }
 
@@ -1054,6 +1081,8 @@ impl SiloServer {
             );
         }
         let nonce_cap = config.nonce_cache_capacity;
+        let node_id = config.node_id;
+        let grace_period = config.hardening.shutdown_grace_period;
         Self {
             addr,
             config: Arc::new(config),
@@ -1066,6 +1095,9 @@ impl SiloServer {
             tls_acceptor,
             captp_state: Arc::new(RwLock::new(CapTpState::new())),
             participant_source: None,
+            auth_config: AuthConfig::default(),
+            ban_list: crate::auth::new_shared_ban_list(),
+            shutdown: Arc::new(ShutdownCoordinator::new(node_id, grace_period)),
         }
     }
 
@@ -1130,6 +1162,22 @@ impl SiloServer {
         self
     }
 
+    /// Set the extended authentication configuration.
+    ///
+    /// Controls `require_auth` (drop failed-auth connections), rate limiting
+    /// differentiated by role, and ban list parameters.
+    pub fn with_auth_config(mut self, auth_config: AuthConfig) -> Self {
+        self.ban_list =
+            crate::auth::new_shared_ban_list_with_config(auth_config.ban_config.clone());
+        self.auth_config = auth_config;
+        self
+    }
+
+    /// Get a reference to the shared ban list (for external monitoring/management).
+    pub fn ban_list(&self) -> &SharedBanList {
+        &self.ban_list
+    }
+
     /// Get a reference to the shared CapTP state.
     pub fn captp_state(&self) -> &Arc<RwLock<CapTpState>> {
         &self.captp_state
@@ -1153,6 +1201,28 @@ impl SiloServer {
     /// Get the event log.
     pub async fn events(&self) -> Vec<ServerEvent> {
         self.event_log.lock().await.clone()
+    }
+
+    /// Get a reference to the shutdown coordinator.
+    ///
+    /// Use this to initiate graceful shutdown from outside the server task.
+    pub fn shutdown_coordinator(&self) -> &Arc<ShutdownCoordinator> {
+        &self.shutdown
+    }
+
+    /// Initiate graceful shutdown of the server.
+    ///
+    /// This signals the accept loop to stop accepting new connections and
+    /// notifies all active connection handlers to begin draining. Returns
+    /// the number of active connections that will be drained.
+    ///
+    /// The shutdown sequence:
+    /// 1. Stop accepting new connections
+    /// 2. Send CapGoodbye to all active CapTP sessions
+    /// 3. Wait up to `shutdown_grace_period` for in-flight messages
+    /// 4. Force-close remaining connections
+    pub fn initiate_shutdown(&self) -> u64 {
+        self.shutdown.initiate_shutdown()
     }
 
     /// Run the server, accepting and handling connections.
@@ -1183,10 +1253,34 @@ impl SiloServer {
 
     /// Core accept loop shared by `run` and `run_with_addr`.
     ///
-    /// Enforces max_connections (P0-3), applies TLS (P0-1), and spawns handlers.
+    /// Enforces max_connections (P0-3), ban list, applies TLS (P0-1), and spawns handlers.
     async fn accept_loop(&self, listener: TcpListener) -> Result<(), std::io::Error> {
         loop {
-            let (stream, remote_addr) = listener.accept().await?;
+            // --- Graceful shutdown check ---
+            if self.shutdown.is_shutting_down() {
+                return Ok(());
+            }
+
+            let (stream, remote_addr) = tokio::select! {
+                result = listener.accept() => result?,
+                _ = async {
+                    // Poll shutdown signal
+                    let mut rx = self.shutdown.subscribe();
+                    let _ = rx.recv().await;
+                } => {
+                    return Ok(());
+                }
+            };
+
+            // --- Ban list check: reject banned IPs immediately ---
+            {
+                let ban_list = self.ban_list.lock().await;
+                if ban_list.is_banned(&remote_addr.ip()) {
+                    eprintln!("pyana-wire: rejecting connection from {remote_addr}: IP is banned");
+                    drop(stream);
+                    continue;
+                }
+            }
 
             // --- P0-3: Enforce max_connections ---
             let current = self.active_connections.fetch_add(1, Ordering::SeqCst);
@@ -1212,6 +1306,9 @@ impl SiloServer {
             let tls_acceptor = self.tls_acceptor.clone();
             let captp_state = Arc::clone(&self.captp_state);
             let participant_source = self.participant_source.clone();
+            let auth_config = self.auth_config.clone();
+            let ban_list = Arc::clone(&self.ban_list);
+            let shutdown = Arc::clone(&self.shutdown);
 
             tokio::spawn(async move {
                 // ConnectionGuard decrements the counter when this task exits.
@@ -1236,6 +1333,8 @@ impl SiloServer {
                                 revocation_nonces,
                                 captp_state,
                                 participant_source,
+                                auth_config,
+                                ban_list,
                             )
                             .await;
                         }
@@ -1258,6 +1357,8 @@ impl SiloServer {
                         revocation_nonces,
                         captp_state,
                         participant_source,
+                        auth_config,
+                        ban_list,
                     )
                     .await;
                 }
@@ -1278,6 +1379,8 @@ impl SiloServer {
         revocation_nonces: Arc<Mutex<NonceCache>>,
         captp_state: Arc<RwLock<CapTpState>>,
         participant_source: Option<Arc<dyn ParticipantSource>>,
+        auth_config: AuthConfig,
+        ban_list: SharedBanList,
     ) {
         let (reader, writer) = tokio::io::split(stream);
         Self::handle_connection_generic(
@@ -1292,6 +1395,8 @@ impl SiloServer {
             revocation_nonces,
             captp_state,
             participant_source,
+            auth_config,
+            ban_list,
         )
         .await;
     }
@@ -1301,6 +1406,9 @@ impl SiloServer {
     /// Enforces:
     /// - P0-2: Handshake state machine (must receive Hello first)
     /// - P0-4: Handshake timeout (first message must arrive within config.handshake_timeout)
+    /// - Rate limiting per role (stricter for Anonymous)
+    /// - require_auth: drops connections that fail authentication
+    /// - Ban list: records auth failures and enforces temporary bans
     async fn handle_connection_generic<R, W>(
         mut reader: R,
         mut writer: W,
@@ -1313,6 +1421,9 @@ impl SiloServer {
         revocation_nonces: Arc<Mutex<NonceCache>>,
         captp_state: Arc<RwLock<CapTpState>>,
         participant_source: Option<Arc<dyn ParticipantSource>>,
+        auth_config: AuthConfig,
+        ban_list: SharedBanList,
+        shutdown: Arc<ShutdownCoordinator>,
     ) where
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
@@ -1403,8 +1514,10 @@ impl SiloServer {
         // If a participant_source is configured, issue a challenge after
         // Hello/Welcome. The peer has one chance to prove membership. If
         // they respond correctly, they are upgraded to Member. If they
-        // don't respond or fail, they remain Anonymous.
+        // don't respond or fail, they remain Anonymous (or are dropped if
+        // require_auth is true).
         let mut conn_auth = ConnectionAuth::anonymous();
+        let mut auth_failed = false;
 
         if let Some(ref source) = participant_source {
             // Generate challenge nonce
@@ -1449,6 +1562,12 @@ impl SiloServer {
                     // Authentication successful
                     conn_auth.authenticate_as_member(participant_key);
 
+                    // Record success in ban list (resets failure counter)
+                    {
+                        let mut bl = ban_list.lock().await;
+                        bl.record_auth_success(&remote_addr.ip());
+                    }
+
                     let ack = WireMessage::PeerAuthenticated {
                         role_tag: conn_auth.role.tag(),
                         authenticated_key: participant_key,
@@ -1460,8 +1579,20 @@ impl SiloServer {
                         return;
                     }
                 } else {
-                    // Authentication failed: remain Anonymous, notify peer
+                    // Authentication failed
+                    auth_failed = true;
                     conn_auth.handshake_complete = true;
+
+                    // Record failure in ban list
+                    let now_banned = {
+                        let mut bl = ban_list.lock().await;
+                        bl.record_auth_failure(&remote_addr.ip())
+                    };
+                    if now_banned {
+                        eprintln!(
+                            "pyana-wire: peer {remote_addr} banned after repeated auth failures"
+                        );
+                    }
 
                     let ack = WireMessage::PeerAuthenticated {
                         role_tag: PeerRole::Anonymous.tag(),
@@ -1476,21 +1607,94 @@ impl SiloServer {
                 }
             } else {
                 // Peer sent something other than PeerAuthResponse, or timed out.
-                // They stay Anonymous. Mark handshake as complete.
+                auth_failed = true;
                 conn_auth.handshake_complete = true;
+
+                // Record as auth failure
+                {
+                    let mut bl = ban_list.lock().await;
+                    bl.record_auth_failure(&remote_addr.ip());
+                }
             }
         }
 
+        // --- require_auth enforcement ---
+        if auth_config.require_auth && participant_source.is_some() && auth_failed {
+            let err_msg = WireMessage::Error {
+                code: crate::message::error_codes::PEER_AUTH_FAILED,
+                message: "authentication required but failed; connection terminated".to_string(),
+            };
+            let _ = crate::codec::write_message(&mut writer, &err_msg).await;
+            event_log.lock().await.push(ServerEvent::ConnectionError {
+                error: "require_auth: dropping unauthenticated connection".to_string(),
+                remote: remote_addr,
+            });
+            return;
+        }
+
+        // --- Rate limiter: initialize based on the peer's authenticated role ---
+        let mut rate_limiter = AuthRateLimiter::for_role(&conn_auth.role, &auth_config.rate_limits);
+
+        // --- Hardening: per-peer token bucket rate limiter ---
+        let mut hardening_rl = config.hardening.new_rate_limiter();
+
+        // --- Heartbeat state ---
+        let heartbeat_interval = config.hardening.heartbeat_interval;
+        let heartbeat_timeout = config.hardening.heartbeat_timeout;
+        let max_msg_size = config.hardening.max_message_size;
+        let mut _last_activity = std::time::Instant::now();
+        let mut ping_seq: u64 = 0;
+        let mut awaiting_pong = false;
+        let mut ping_sent_at = std::time::Instant::now();
+
+        // --- Connection metrics ---
+        let mut metrics =
+            ConnectionMetrics::new(conn_auth.role.clone(), config.hardening.new_rate_limiter());
+
+        // --- Shutdown receiver ---
+        let mut shutdown_rx = shutdown.subscribe();
+
         // Process subsequent messages (connection is now Active, with role filtering)
         loop {
-            let msg = match tokio::time::timeout(
-                Duration::from_secs(60),
-                crate::codec::read_message(&mut reader),
-            )
-            .await
-            {
-                Ok(Ok(msg)) => msg,
+            // Use heartbeat_interval as the read timeout so we can send pings
+            let read_result = tokio::select! {
+                result = tokio::time::timeout(
+                    heartbeat_interval,
+                    crate::codec::read_message_with_limit(&mut reader, max_msg_size),
+                ) => result,
+                _ = shutdown_rx.recv() => {
+                    // Server is shutting down: send CapGoodbye and close
+                    let goodbye = WireMessage::CapGoodbye {
+                        federation_id: config.node_id,
+                        reason: Some("server shutting down".to_string()),
+                    };
+                    let _ = crate::codec::write_message(&mut writer, &goodbye).await;
+                    break;
+                }
+            };
+
+            let msg = match read_result {
+                Ok(Ok(msg)) => {
+                    _last_activity = std::time::Instant::now();
+                    awaiting_pong = false;
+                    msg
+                }
                 Ok(Err(crate::codec::CodecError::ConnectionClosed)) => break,
+                Ok(Err(crate::codec::CodecError::MessageTooLarge { size, max })) => {
+                    // Message exceeds configured size limit — reject and disconnect
+                    let err_msg = WireMessage::Error {
+                        code: crate::hardening::ERROR_MESSAGE_TOO_LARGE,
+                        message: format!(
+                            "message too large: {size} bytes exceeds limit of {max} bytes"
+                        ),
+                    };
+                    let _ = crate::codec::write_message(&mut writer, &err_msg).await;
+                    event_log.lock().await.push(ServerEvent::ConnectionError {
+                        error: format!("message too large: {size} > {max}"),
+                        remote: remote_addr,
+                    });
+                    break;
+                }
                 Ok(Err(e)) => {
                     event_log.lock().await.push(ServerEvent::ConnectionError {
                         error: e.to_string(),
@@ -1499,9 +1703,28 @@ impl SiloServer {
                     break;
                 }
                 Err(_) => {
-                    // Idle timeout: send a ping to check liveness
+                    // Timeout: check heartbeat state
+                    if awaiting_pong {
+                        // We already sent a ping — check if heartbeat_timeout exceeded
+                        if ping_sent_at.elapsed() >= heartbeat_timeout {
+                            event_log.lock().await.push(ServerEvent::ConnectionError {
+                                error: "heartbeat timeout: no pong received".to_string(),
+                                remote: remote_addr,
+                            });
+                            let err_msg = WireMessage::Error {
+                                code: crate::hardening::ERROR_HEARTBEAT_TIMEOUT,
+                                message: "heartbeat timeout".to_string(),
+                            };
+                            let _ = crate::codec::write_message(&mut writer, &err_msg).await;
+                            break;
+                        }
+                        // Not timed out yet; keep waiting
+                        continue;
+                    }
+                    // No message received within heartbeat_interval: send a ping
+                    ping_seq += 1;
                     let ping = WireMessage::Ping {
-                        seq: 0,
+                        seq: ping_seq,
                         timestamp: current_timestamp(),
                     };
                     if crate::codec::write_message(&mut writer, &ping)
@@ -1510,9 +1733,35 @@ impl SiloServer {
                     {
                         break;
                     }
+                    awaiting_pong = true;
+                    ping_sent_at = std::time::Instant::now();
                     continue;
                 }
             };
+
+            // --- Track metrics ---
+            metrics.record_receive(msg.estimated_size() as u64);
+
+            // --- Hardening: token bucket rate limiting ---
+            let cost = message_cost(&msg);
+            if !hardening_rl.try_consume(cost) {
+                let err_msg = WireMessage::Error {
+                    code: crate::hardening::ERROR_RATE_LIMITED,
+                    message: "rate limited: too many messages, try again later".to_string(),
+                };
+                let _ = crate::codec::write_message(&mut writer, &err_msg).await;
+                continue;
+            }
+
+            // --- Auth rate limiter (sliding window, role-based) ---
+            if !rate_limiter.check() {
+                let err_msg = WireMessage::Error {
+                    code: crate::hardening::ERROR_RATE_LIMITED,
+                    message: "rate limited: message window exceeded for your role".to_string(),
+                };
+                let _ = crate::codec::write_message(&mut writer, &err_msg).await;
+                continue;
+            }
 
             // --- Federation Boundary: Message filtering by role ---
             //
@@ -1535,7 +1784,12 @@ impl SiloServer {
             // when auth is NOT enforced, since with auth the check_role_permission
             // blocks CapTP for Anonymous).
             if let WireMessage::CapHello { federation_id, .. } = &msg {
+                let was_anonymous = matches!(conn_auth.role, PeerRole::Anonymous);
                 conn_auth.authenticate_as_captp_peer(*federation_id);
+                if was_anonymous && matches!(conn_auth.role, PeerRole::CapTpPeer { .. }) {
+                    rate_limiter
+                        .update_limit(auth_config.rate_limits.limit_for_role(&conn_auth.role));
+                }
             }
 
             let response = Self::process_message(
@@ -1552,6 +1806,7 @@ impl SiloServer {
             .await;
 
             if let Some(response) = response {
+                metrics.record_send(response.estimated_size() as u64);
                 if crate::codec::write_message(&mut writer, &response)
                     .await
                     .is_err()
@@ -1560,6 +1815,9 @@ impl SiloServer {
                 }
             }
         }
+
+        // Connection cleanup
+        shutdown.unregister_connection();
     }
 
     /// Check whether a message is permitted given the connection's authenticated role.

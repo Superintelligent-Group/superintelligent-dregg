@@ -1,5 +1,38 @@
 //! Distributed Intent Engine for Pyana.
 //!
+//! # Trust Model
+//!
+//! This crate is **TRANSITIONING** from executor-trusted to trustless.
+//!
+//! ## Current State: Executor-Trusted
+//! - **Matching** ([`matcher`]): The executor currently evaluates intent matches. A
+//!   compromised executor could suppress valid matches or forge fake ones.
+//! - **Solver** ([`solver`]): Ring trade discovery runs on the executor. A malicious
+//!   executor could front-run, censor, or produce suboptimal solutions.
+//! - **Fulfillment** ([`fulfillment`]): Match proofs are verified by the executor.
+//!
+//! ## Target State: Trustless (see [`trustless`])
+//! The [`trustless`] module implements the 7-layer protocol that removes executor trust:
+//! 1. Intents are threshold-encrypted (no party can read before collective decryption)
+//! 2. Batch boundaries determined by consensus (no manipulation of intent ordering)
+//! 3. Solvers produce STARK proofs of solution validity (verifiable by anyone)
+//! 4. Challenge windows with bond slashing enforce optimal solutions
+//! 5. Atomic settlement via compound turns
+//!
+//! ## Soundness
+//! - Privacy: Intent matching is local (wallet-side Datalog evaluation reveals nothing)
+//! - Anti-censorship: Gossip propagation with stake proofs prevents suppression
+//! - Fair ordering: (trustless path) threshold encryption prevents front-running
+//!
+//! ## Assumptions
+//! - (Current) Federation executor honestly evaluates matches and solves rings
+//! - (Trustless) Threshold t-of-n assumption for decryption ceremony
+//! - Stake proofs bind to real notes (Poseidon2 Merkle inclusion)
+//!
+//! ## Verifiable by
+//! - (Current) Federation members via replication
+//! - (Trustless) Anyone, via STARK proof of solution validity
+//!
 //! The intent engine inverts the capability discovery model. Instead of pages/services
 //! needing to know exactly what capability to request, they broadcast what they NEED
 //! or OFFER, and wallets privately match against held capabilities.
@@ -38,6 +71,7 @@ pub mod partial_fill;
 pub mod pir;
 pub mod solver;
 pub mod sse;
+pub mod trustless;
 pub mod validation;
 
 use serde::{Deserialize, Serialize};

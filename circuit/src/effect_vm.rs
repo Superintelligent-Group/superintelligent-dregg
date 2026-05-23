@@ -305,6 +305,10 @@ pub mod param {
     pub const ENQUEUE_SENDER: usize = 2;
     /// Current queue length (pre-enqueue, for capacity check).
     pub const ENQUEUE_QUEUE_LEN: usize = 3;
+    /// Queue program VK hash as a BabyBear field element.
+    /// ZERO if the queue has no attached program (permissionless enqueue).
+    /// Non-zero activates program validation hash constraint in aux[2].
+    pub const ENQUEUE_PROGRAM_VK: usize = 4;
     // DequeueMessage params.
     /// Expected message hash at head of queue.
     pub const DEQUEUE_EXPECTED_HASH: usize = 0;
@@ -506,6 +510,8 @@ pub enum Effect {
     /// EnqueueMessage: append a message hash to a queue.
     /// Proves: deposit >= min_deposit, queue is not full (queue_len < capacity).
     /// State transition: queue_root changes via hash chain (old_root -> new_root).
+    /// If the queue has an attached program, the program validation hash is bound
+    /// to the proof via aux[2].
     EnqueueMessage {
         /// Hash of the message being enqueued.
         message_hash: BabyBear,
@@ -515,6 +521,10 @@ pub enum Effect {
         sender_id: BabyBear,
         /// Current queue length (pre-enqueue, must be < capacity for not-full check).
         queue_len: u32,
+        /// Queue program VK hash as a BabyBear field element.
+        /// ZERO if the queue has no attached program (backward compatible).
+        /// Non-zero activates the program validation constraint.
+        program_vk: BabyBear,
     },
     /// DequeueMessage: advance queue head, reveal expected message.
     /// Proves: message_hash matches head of queue (hash equality via aux).
@@ -821,12 +831,14 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 deposit_amount,
                 sender_id,
                 queue_len,
+                program_vk,
             } => {
                 hasher_inputs.push(BabyBear::new(19));
                 hasher_inputs.push(*message_hash);
                 hasher_inputs.push(BabyBear::new(*deposit_amount));
                 hasher_inputs.push(*sender_id);
                 hasher_inputs.push(BabyBear::new(*queue_len));
+                hasher_inputs.push(*program_vk);
             }
             Effect::DequeueMessage {
                 expected_message_hash,
@@ -1694,11 +1706,13 @@ impl StarkAir for EffectVmAir {
             }
         }
 
-        // -- EnqueueMessage: queue root hash chain, balance debit (deposit) --
+        // -- EnqueueMessage: queue root hash chain, balance debit (deposit),
+        //    and optional program validation hash binding --
         let s_enqueue = local[sel::ENQUEUE_MESSAGE];
         {
             let message_hash = local[PARAM_BASE + param::ENQUEUE_MSG_HASH];
             let deposit = local[PARAM_BASE + param::ENQUEUE_DEPOSIT];
+            let sender_id = local[PARAM_BASE + param::ENQUEUE_SENDER];
 
             // Queue root transition: new_root = hash(old_root, message_hash).
             let old_queue_root = local[STATE_BEFORE_BASE + state::FIELD_BASE + 4];
@@ -1736,6 +1750,45 @@ impl StarkAir for EffectVmAir {
                 combined = combined + alpha_pow * c;
                 alpha_pow = alpha_pow * alpha;
             }
+
+            // ================================================================
+            // Queue program validation hash binding.
+            //
+            // param[4] = ENQUEUE_PROGRAM_VK: the queue's program VK hash as a
+            //   BabyBear field element. ZERO if the queue has no program.
+            // aux[2] = program_validation_hash: the hash binding program
+            //   validation to the proof. Must be correctly computed when
+            //   param[4] is non-zero.
+            //
+            // Constraint: when param[4] != 0 (queue has a program):
+            //   aux[2] must equal hash(param[4], hash(sender_id, msg_hash))
+            //
+            // Implementation: s_enqueue * param[4] * (aux[2] - expected) == 0
+            //   - If param[4] == 0 (no program): trivially satisfied.
+            //   - If param[4] != 0 (has program): aux[2] must match.
+            //
+            // Additionally: when param[4] == 0, aux[2] must be zero.
+            //   s_enqueue * (1 - param[4] * aux[3]) * aux[2] == 0
+            //   where aux[3] = inverse(param[4]) when param[4] != 0, else 0.
+            //   - If param[4] != 0: (1 - param[4] * inv(param[4])) = 0, trivially satisfied.
+            //   - If param[4] == 0: (1 - 0) * aux[2] = aux[2] must be 0.
+            // ================================================================
+            let program_vk = local[PARAM_BASE + param::ENQUEUE_PROGRAM_VK];
+            let validation_hash = local[AUX_BASE + 2];
+            let program_vk_inv = local[AUX_BASE + 3];
+
+            // When program_vk != 0: validation_hash must equal expected.
+            let inner_hash = hash_2_to_1(sender_id, message_hash);
+            let expected_validation = hash_2_to_1(program_vk, inner_hash);
+            let c_prog_valid = s_enqueue * program_vk * (validation_hash - expected_validation);
+            combined = combined + alpha_pow * c_prog_valid;
+            alpha_pow = alpha_pow * alpha;
+
+            // When program_vk == 0: validation_hash must be zero.
+            let c_prog_zero =
+                s_enqueue * (BabyBear::ONE - program_vk * program_vk_inv) * validation_hash;
+            combined = combined + alpha_pow * c_prog_zero;
+            alpha_pow = alpha_pow * alpha;
         }
 
         // -- DequeueMessage: queue root hash chain advance, balance credit (deposit refund) --
@@ -2571,11 +2624,13 @@ pub fn generate_effect_vm_trace(
                 deposit_amount,
                 sender_id,
                 queue_len,
+                program_vk,
             } => {
                 row[PARAM_BASE + param::ENQUEUE_MSG_HASH] = *message_hash;
                 row[PARAM_BASE + param::ENQUEUE_DEPOSIT] = BabyBear::new(*deposit_amount);
                 row[PARAM_BASE + param::ENQUEUE_SENDER] = *sender_id;
                 row[PARAM_BASE + param::ENQUEUE_QUEUE_LEN] = BabyBear::new(*queue_len);
+                row[PARAM_BASE + param::ENQUEUE_PROGRAM_VK] = *program_vk;
 
                 // Queue root transition: new_root = hash(old_root, message_hash).
                 let old_queue_root = new_state.fields[4];
@@ -2588,6 +2643,18 @@ pub fn generate_effect_vm_trace(
 
                 // Store new queue root in aux[0] for constraint verification.
                 row[AUX_BASE + 0] = new_queue_root;
+
+                // Program validation hash binding (aux[2] and aux[3]).
+                // When program_vk != 0, compute and store the validation hash.
+                // When program_vk == 0, both are zero (backward compatible).
+                if *program_vk != BabyBear::ZERO {
+                    let inner = hash_2_to_1(*sender_id, *message_hash);
+                    let validation_hash = hash_2_to_1(*program_vk, inner);
+                    row[AUX_BASE + 2] = validation_hash;
+                    // aux[3] = inverse of program_vk (for the zero-check constraint).
+                    row[AUX_BASE + 3] = program_vk.inverse().expect("program_vk is non-zero");
+                }
+                // else: aux[2] and aux[3] remain ZERO (default).
 
                 new_state.nonce += 1;
             }
@@ -4543,6 +4610,7 @@ mod tests {
             deposit_amount: 50,
             sender_id: BabyBear::new(0x5E),
             queue_len: 0,
+            program_vk: BabyBear::ZERO, // no program (backward compat)
         }];
 
         let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
@@ -4664,6 +4732,7 @@ mod tests {
                 deposit_amount: 100,
                 sender_id: BabyBear::new(0xAA),
                 queue_len: 0,
+                program_vk: BabyBear::ZERO,
             },
             // Enqueue second message (deposit 100).
             Effect::EnqueueMessage {
@@ -4671,6 +4740,7 @@ mod tests {
                 deposit_amount: 100,
                 sender_id: BabyBear::new(0xBB),
                 queue_len: 1,
+                program_vk: BabyBear::ZERO,
             },
             // Dequeue first message (refund 80).
             Effect::DequeueMessage {

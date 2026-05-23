@@ -132,6 +132,27 @@ pub struct KimchiNativeProof {
     pub proof_bytes: Vec<u8>,
     pub public_input_bytes: Vec<u8>,
     pub circuit_type: KimchiNativeCircuitType,
+    /// Serialized circuit gates used during proving, needed for verification.
+    /// The verifier must reconstruct an identical circuit index to check the proof.
+    #[serde(default)]
+    pub circuit_gates_bytes: Vec<u8>,
+    /// Number of public inputs (gate count for public wire).
+    #[serde(default = "default_public_count")]
+    pub public_count: usize,
+}
+
+fn default_public_count() -> usize {
+    3
+}
+
+/// Serialize a circuit (gates + public count) into compact bytes for embedding in proofs.
+pub fn serialize_circuit_gates(gates: &[CircuitGate<Fp>], pc: usize) -> Vec<u8> {
+    rmp_serde::to_vec(&(gates, pc)).unwrap_or_default()
+}
+
+/// Deserialize circuit gates from proof metadata.
+pub fn deserialize_circuit_gates(bytes: &[u8]) -> Option<(Vec<CircuitGate<Fp>>, usize)> {
+    rmp_serde::from_slice(bytes).ok()
 }
 
 pub struct KimchiNativeBackend;
@@ -169,32 +190,37 @@ impl KimchiNativeBackend {
         }
         let rule_hash = bytes32_to_fp(&rh);
         // Deserialize and verify with the real Kimchi verifier.
-        // We rebuild a minimal derivation circuit with a template witness to get
-        // matching gate structure (public input count = 3, same gate layout).
         let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
             rmp_serde::from_slice(&proof.proof_bytes)
                 .map_err(|e| format!("Proof deserialization failed: {}", e))?;
-        let template_witness = derivation::KimchiDerivationWitness {
-            rule: derivation::KimchiRule {
-                id: 0,
-                num_body_atoms: 1,
-                num_variables: 0,
-                head_predicate: *edh,
-                head_terms: [(false, Fp::zero()); 4],
-                equal_checks: Vec::new(),
-                memberof_checks: Vec::new(),
-                gte_check: None,
-                lt_check: None,
-            },
-            state_root: *esr,
-            body_fact_hashes: vec![Fp::zero()],
-            body_merkle_proofs: vec![],
-            substitution: Vec::new(),
-            derived_predicate: *edh,
-            derived_terms: [Fp::zero(); 4],
+        // Use embedded circuit gates if available (correct approach),
+        // otherwise fall back to template (only works for matching circuit shapes).
+        let (gates, pc) = if !proof.circuit_gates_bytes.is_empty() {
+            deserialize_circuit_gates(&proof.circuit_gates_bytes)
+                .ok_or_else(|| "Failed to deserialize embedded circuit gates".to_string())?
+        } else {
+            let template_witness = derivation::KimchiDerivationWitness {
+                rule: derivation::KimchiRule {
+                    id: 0,
+                    num_body_atoms: 1,
+                    num_variables: 0,
+                    head_predicate: *edh,
+                    head_terms: [(false, Fp::zero()); 4],
+                    equal_checks: Vec::new(),
+                    memberof_checks: Vec::new(),
+                    gte_check: None,
+                    lt_check: None,
+                },
+                state_root: *esr,
+                body_fact_hashes: vec![Fp::zero()],
+                body_merkle_proofs: vec![],
+                substitution: Vec::new(),
+                derived_predicate: *edh,
+                derived_terms: [Fp::zero(); 4],
+            };
+            let circuit = derivation::KimchiDerivationCircuit::new(template_witness);
+            circuit.build_circuit()
         };
-        let circuit = derivation::KimchiDerivationCircuit::new(template_witness);
-        let (gates, pc) = circuit.build_circuit();
         let public_inputs = vec![*esr, *edh, rule_hash];
         verify_kimchi_proof(&kimchi_proof, gates, &public_inputs, pc)
     }
@@ -312,27 +338,32 @@ impl KimchiNativeBackend {
         let transition_hash = bytes32_to_fp(&rthb);
         let checks_commitment = bytes32_to_fp(&ccb);
         // Deserialize and verify with the real Kimchi verifier.
-        // Rebuild a minimal fold circuit with 1 removal to get matching gate structure.
         let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
             rmp_serde::from_slice(&proof.proof_bytes).map_err(|e| format!("{}", e))?;
-        let witness = fold::KimchiFoldWitness {
-            old_root: *eor,
-            new_root: *enr,
-            removals: vec![fold::KimchiFoldRemoval {
-                fact_hash: Fp::zero(),
-                membership_proof: fold::FpMerkleWitness {
-                    leaf_hash: Fp::zero(),
-                    levels: vec![fold::FpMerkleLevelWitness {
-                        position: 0,
-                        siblings: [Fp::zero(); 3],
-                    }],
-                    expected_root: *eor,
-                },
-            }],
-            checks_commitment,
+        let (gates, pc) = if !proof.circuit_gates_bytes.is_empty() {
+            deserialize_circuit_gates(&proof.circuit_gates_bytes)
+                .ok_or_else(|| "Failed to deserialize embedded circuit gates".to_string())?
+        } else {
+            // Fallback: rebuild a minimal fold circuit with 1 removal
+            let witness = fold::KimchiFoldWitness {
+                old_root: *eor,
+                new_root: *enr,
+                removals: vec![fold::KimchiFoldRemoval {
+                    fact_hash: Fp::zero(),
+                    membership_proof: fold::FpMerkleWitness {
+                        leaf_hash: Fp::zero(),
+                        levels: vec![fold::FpMerkleLevelWitness {
+                            position: 0,
+                            siblings: [Fp::zero(); 3],
+                        }],
+                        expected_root: *eor,
+                    },
+                }],
+                checks_commitment,
+            };
+            let circuit = fold::KimchiFoldCircuit::new(witness);
+            circuit.build_circuit()
         };
-        let circuit = fold::KimchiFoldCircuit::new(witness);
-        let (gates, pc) = circuit.build_circuit();
         let public_inputs = vec![*eor, *enr, num_removals, transition_hash, checks_commitment];
         verify_kimchi_proof(&kimchi_proof, gates, &public_inputs, pc)
     }
@@ -374,16 +405,22 @@ impl KimchiNativeBackend {
         // Deserialize and verify with the real Kimchi verifier.
         let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
             rmp_serde::from_slice(&proof.proof_bytes).map_err(|e| format!("{}", e))?;
-        let witness = predicates::KimchiArithmeticPredicateWitness {
-            inputs: vec![Fp::zero()],
-            ops: vec![predicates::KimchiArithOp::Input(0)],
-            result_slot: 0,
-            comparison_value: *ev,
-            comparison_op: eo,
-            result_commitment: *ec,
+        // Use embedded circuit gates if available, otherwise fall back to template.
+        let (gates, pc) = if !proof.circuit_gates_bytes.is_empty() {
+            deserialize_circuit_gates(&proof.circuit_gates_bytes)
+                .ok_or_else(|| "Failed to deserialize embedded circuit gates".to_string())?
+        } else {
+            let witness = predicates::KimchiArithmeticPredicateWitness {
+                inputs: vec![Fp::zero()],
+                ops: vec![predicates::KimchiArithOp::Input(0)],
+                result_slot: 0,
+                comparison_value: *ev,
+                comparison_op: eo,
+                result_commitment: *ec,
+            };
+            let circuit = predicates::KimchiArithmeticPredicateCircuit::new(witness);
+            circuit.build_circuit()
         };
-        let circuit = predicates::KimchiArithmeticPredicateCircuit::new(witness);
-        let (gates, pc) = circuit.build_circuit();
         let public_inputs = vec![*ec, *ev, eo.to_fp()];
         verify_kimchi_proof(&kimchi_proof, gates, &public_inputs, pc)
     }
@@ -425,15 +462,20 @@ impl KimchiNativeBackend {
         // Deserialize and verify with the real Kimchi verifier.
         let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
             rmp_serde::from_slice(&proof.proof_bytes).map_err(|e| format!("{}", e))?;
-        let witness = predicates::KimchiRelationalPredicateWitness {
-            value_a: Fp::zero(),
-            blinding_a: Fp::zero(),
-            value_b: Fp::zero(),
-            blinding_b: Fp::zero(),
-            relation: er,
+        let (gates, pc) = if !proof.circuit_gates_bytes.is_empty() {
+            deserialize_circuit_gates(&proof.circuit_gates_bytes)
+                .ok_or_else(|| "Failed to deserialize embedded circuit gates".to_string())?
+        } else {
+            let witness = predicates::KimchiRelationalPredicateWitness {
+                value_a: Fp::zero(),
+                blinding_a: Fp::zero(),
+                value_b: Fp::zero(),
+                blinding_b: Fp::zero(),
+                relation: er,
+            };
+            let circuit = predicates::KimchiRelationalPredicateCircuit::new(witness);
+            circuit.build_circuit()
         };
-        let circuit = predicates::KimchiRelationalPredicateCircuit::new(witness);
-        let (gates, pc) = circuit.build_circuit();
         let public_inputs = vec![*eca, *ecb, er.to_fp()];
         verify_kimchi_proof(&kimchi_proof, gates, &public_inputs, pc)
     }
@@ -482,15 +524,20 @@ impl KimchiNativeBackend {
         // Deserialize and verify with the real Kimchi verifier.
         let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
             rmp_serde::from_slice(&proof.proof_bytes).map_err(|e| format!("{}", e))?;
-        let witness = predicates::KimchiTemporalPredicateWitness {
-            values: vec![Fp::zero(); enb as usize],
-            state_roots: vec![Fp::zero(); enb as usize],
-            attribute_hash: *eah,
-            threshold: Fp::zero(),
-            initial_block_height: eibh,
+        let (gates, pc) = if !proof.circuit_gates_bytes.is_empty() {
+            deserialize_circuit_gates(&proof.circuit_gates_bytes)
+                .ok_or_else(|| "Failed to deserialize embedded circuit gates".to_string())?
+        } else {
+            let witness = predicates::KimchiTemporalPredicateWitness {
+                values: vec![Fp::zero(); enb as usize],
+                state_roots: vec![Fp::zero(); enb as usize],
+                attribute_hash: *eah,
+                threshold: Fp::zero(),
+                initial_block_height: eibh,
+            };
+            let circuit = predicates::KimchiTemporalPredicateCircuit::new(witness);
+            circuit.build_circuit()
         };
-        let circuit = predicates::KimchiTemporalPredicateCircuit::new(witness);
-        let (gates, pc) = circuit.build_circuit();
         let public_inputs = vec![*eah, Fp::from(enb), *efsr, Fp::from(eibh)];
         verify_kimchi_proof(&kimchi_proof, gates, &public_inputs, pc)
     }

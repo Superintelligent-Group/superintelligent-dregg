@@ -55,7 +55,7 @@
       Pyana's proof system is built on the Effect VM and the constraint DSL. The Effect VM
       proves arbitrary turns in a single STARK (14 effects per turn, Custom dispatch for
       application-defined logic). The constraint DSL compiles <code>CircuitDescriptor</code>
-      definitions to 8 proof backends from a single source. The primary proof path uses
+      definitions to multiple proof systems from a single source. The primary proof path uses
       BabyBear-field STARKs with Poseidon2 as the in-circuit hash function, achieving
       post-quantum security (hash-based, no elliptic curve assumptions). Additional backends
       include Plonky3, Kimchi (Mina/Pasta), SP1 (EVM via Groth16), and Midnight (ZKIR).
@@ -135,7 +135,7 @@
       All proof logic is defined through the constraint DSL (<code>circuit/src/dsl/</code>).
       The former standalone <code>_air.rs</code> files have been deleted -- the DSL is the
       single source of truth. Each <code>CircuitDescriptor</code> compiles to trace generators
-      and constraint evaluators for all 8 backends.
+      and constraint evaluators for all supported backends.
     </p>
 
     <p>Key circuit descriptors:</p>

@@ -1,5 +1,31 @@
 //! # pyana-storage
 //!
+//! # Trust Model
+//!
+//! This crate operates at the **OPERATOR-TRUSTED** trust level.
+//!
+//! - **Soundness**: Storage operators (relay nodes) are bonded and subject to dispute
+//!   resolution. Content-addressing (BLAKE3 hashes) provides integrity -- any corruption
+//!   is detectable. Erasure coding provides availability even if some operators are offline.
+//! - **Assumptions**: Relay operators honestly store data for the rental period. They are
+//!   economically incentivized (bond slashing on proven data withholding). Operators cannot
+//!   forge content (content-addressed), but CAN withhold it (availability fault).
+//! - **Verifiable by**: Anyone can verify content integrity via BLAKE3 hash. Data
+//!   availability is verified via erasure sampling (probabilistic guarantee). Quota
+//!   accounting is verified by the federation executor during turn execution.
+//!
+//! ## Dispute Path
+//! If an operator withholds data:
+//! 1. Client requests erasure-coded chunks from multiple operators
+//! 2. If insufficient chunks are returned, client files a dispute
+//! 3. Federation slashes the operator's bond and redistributes
+//! 4. Client can reconstruct from remaining honest operators
+//!
+//! ## Path to Trustless
+//! Full trustlessness requires data availability sampling (DAS) at the consensus layer,
+//! where the blocklace participants collectively guarantee availability without trusting
+//! any individual operator.
+//!
 //! Resource-accountable, quota-bounded, computron-metered storage.
 //!
 //! Design principles:

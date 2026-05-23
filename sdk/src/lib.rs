@@ -1,5 +1,31 @@
 //! # pyana-sdk
 //!
+//! # Trust Model
+//!
+//! This crate operates at the **CLIENT-LOCAL** trust level.
+//!
+//! - **Soundness**: The SDK runs entirely on the user's device. It manages private keys,
+//!   token chains, and proof generation locally. The user trusts their own device and
+//!   the SDK's correct implementation. No other party can observe or interfere with
+//!   SDK operations (assuming a secure device).
+//! - **Assumptions**: The user's device is not compromised. Private keys remain in local
+//!   memory/storage. The SDK correctly implements proof generation, token attenuation,
+//!   and turn signing. Network interactions are authenticated (TLS to silos).
+//! - **Verifiable by**: Only the user. The SDK's outputs (signed turns, proofs,
+//!   presentations) are verified by the federation, but the SDK's internal state
+//!   (held tokens, wallet contents) is private to the user.
+//!
+//! ## Security Properties
+//! - Key material never leaves the device (unless explicitly exported)
+//! - Proof generation is local (witness data stays on-device)
+//! - Token attenuation preserves the narrowing invariant (cannot escalate)
+//! - Selective disclosure reveals only chosen facts
+//!
+//! ## What the SDK Does NOT Trust
+//! - Remote silos (verified via TLS + receipt chains)
+//! - Federation state (verified via attested roots + STARK proofs)
+//! - Other agents (interactions mediated by capabilities)
+//!
 //! The unified agent SDK for the pyana federation protocol.
 //!
 //! This crate provides a single ergonomic entry point for agents that need to:

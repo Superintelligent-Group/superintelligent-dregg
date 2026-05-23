@@ -10,7 +10,7 @@ The Capability Derivation Tree duality (kernel-enforced vs. proof-carried) sugge
 
 Sovereign cells extend this principle to state ownership: agents are not tenants of a federation but autonomous entities that use the federation as a notary. The 32-byte commitment model means cells can exist, transact, and prove their history without the federation ever observing their state---the federation witnesses validity, not content.
 
-The constraint DSL demonstrates that proof system diversity need not fragment the ecosystem. A single specification compiles to 8 backends; the choice between post-quantum STARKs, Mina-compatible Pickles recursion, EVM-verifiable Groth16, or Midnight-native ZKIR is made at prove-time based on the verification context. EROS-style factories and the Effect VM extend this flexibility to cell construction and turn execution: constrained creation with machine-auditable transparency, and arbitrary-length turns proven in constant-size proofs.
+The constraint DSL demonstrates that proof system diversity need not fragment the ecosystem. A single specification targets the appropriate proof system; the choice between post-quantum STARKs, Mina-compatible Pickles recursion, EVM-verifiable Groth16, or Midnight-native ZKIR is made at prove-time based on the verification context. EROS-style factories and the Effect VM extend this flexibility to cell construction and turn execution: constrained creation with machine-auditable transparency, and arbitrary-length turns proven in constant-size proofs.
 
 The economic model demonstrates that federated validation is viable without inflation: small purpose-built committees earn directly from fee distribution, with privacy-compatible staking via range proofs and slashing enforced at spend-time through encumbrance.
 
@@ -29,7 +29,7 @@ The system is operational: 355k lines of Rust across 41 crates, 4,046 tests, rea
 - Sovereign cells with 32-byte commitments, TTL-based registration, on-demand federation interaction
 - EROS-style factories with derived VKs, provenance tracking, flash-loan-style atomic spawning
 - Faceted capabilities (EffectMask with monotonic narrowing) and bearer capabilities
-- Constraint DSL compiling to 8 backends (Rust, AIR, Datalog, Kimchi, STARK, Midnight/ZKIR, Plonky3, SP1)
+- Backend-agnostic constraint DSL compiling to multiple proof systems (STARKs, recursive SNARKs, ZKIR, zkVMs)
 - Three production provers (custom STARK, Plonky3, Kimchi/Pickles) with STARK-in-Pickles wrapping
 - Composition operators (`compose_and`, `compose_or`, `compose_chain`, `compose_aggregate`) with cryptographic binding
 - Effect VM (14 effects) proving arbitrary turns in a single STARK (conservation + state continuity + authority operational)

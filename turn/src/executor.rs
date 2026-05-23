@@ -1,5 +1,36 @@
 //! TurnExecutor: applies a turn to a ledger with full atomicity.
 //!
+//! # Trust Model
+//!
+//! This module operates at the **EXECUTOR-TRUSTED** trust level.
+//!
+//! - **Soundness**: Correct state transitions are guaranteed IF all federation members
+//!   execute the same turns in the same order and reach consensus on the resulting state.
+//!   A compromised executor can produce incorrect state that other honest members will
+//!   reject during replication.
+//! - **Assumptions**: At least 2f+1 honest federation members (BFT assumption). The
+//!   executor correctly implements the turn semantics, precondition checks, and effect
+//!   application. External parties trust the federation as a whole.
+//! - **Verifiable by**: Other federation members via state replication. External parties
+//!   trust the federation's attested root (not individually verifiable without re-execution).
+//!
+//! ## Trust-Critical Functions
+//!
+//! The following functions are trust-critical and are annotated individually:
+//! - `execute()` — atomically applies a turn; if compromised, state diverges from consensus
+//! - `verify_authorization()` — gates all state mutations; bypass = unauthorized writes
+//! - `apply_effect()` — mutates ledger state; incorrect application = balance corruption
+//! - `verify_and_commit_proof()` — bridges trustless (STARK) to executor; bypass = forged sovereign state
+//! - `check_preconditions()` — temporal and state guards; bypass = expired/invalid actions succeed
+//!
+//! ## Path to Trustless
+//!
+//! Phase 3 (proof-carrying sovereign turns) already moves sovereign cells to the
+//! trustless level: the executor merely verifies a STARK proof and updates a commitment.
+//! The remaining executor-trusted path (Phase 2: classical call-forest execution) will
+//! transition to trustless once the Effect VM circuit covers all effect types, allowing
+//! every turn to carry a proof.
+//!
 //! The executor walks the call forest depth-first, checking preconditions,
 //! verifying authorization, applying effects, and metering computrons at each step.
 //! If any action fails, ALL effects are rolled back via journal replay (atomicity guarantee).
@@ -546,6 +577,11 @@ pub struct TurnExecutor {
     /// Uses `RefCell` for interior mutability since minting is called from
     /// within the execute path which takes `&self`.
     pub epoch_minter: Option<std::cell::RefCell<crate::economics::EpochMinter>>,
+    /// Queue program registry: maps queue IDs to their attached validation programs.
+    /// When an `EnqueueMessage` effect targets a queue with a registered program,
+    /// the executor validates the enqueue against the program's constraints before
+    /// accepting the effect. The validation result hash is bound to the STARK proof.
+    pub queue_program_registry: crate::queue_programs::QueueProgramRegistry,
 }
 
 impl TurnExecutor {
@@ -574,6 +610,7 @@ impl TurnExecutor {
             cell_migrations: Mutex::new(CellMigrationManager::new()),
             factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
             epoch_minter: None,
+            queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
         }
     }
 
@@ -606,6 +643,7 @@ impl TurnExecutor {
             cell_migrations: Mutex::new(CellMigrationManager::new()),
             factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
             epoch_minter: None,
+            queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
         }
     }
 
@@ -634,6 +672,7 @@ impl TurnExecutor {
             cell_migrations: Mutex::new(CellMigrationManager::new()),
             factory_registry: std::cell::RefCell::new(pyana_cell::FactoryRegistry::new()),
             epoch_minter: None,
+            queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
         }
     }
 
@@ -816,6 +855,25 @@ impl TurnExecutor {
         &mut self.program_registry
     }
 
+    /// Set the queue program registry for enqueue validation.
+    ///
+    /// When an `EnqueueMessage` effect targets a queue with a registered program,
+    /// the executor validates the enqueue against the program's constraints before
+    /// accepting the effect. Invalid enqueues are rejected.
+    pub fn set_queue_program_registry(
+        &mut self,
+        registry: crate::queue_programs::QueueProgramRegistry,
+    ) {
+        self.queue_program_registry = registry;
+    }
+
+    /// Get a mutable reference to the queue program registry.
+    pub fn queue_program_registry_mut(
+        &mut self,
+    ) -> &mut crate::queue_programs::QueueProgramRegistry {
+        &mut self.queue_program_registry
+    }
+
     /// Get a mutable reference to the factory registry (for deploying factories).
     pub fn factory_registry_mut(&mut self) -> std::cell::RefMut<'_, pyana_cell::FactoryRegistry> {
         self.factory_registry.borrow_mut()
@@ -826,6 +884,13 @@ impl TurnExecutor {
         self.factory_registry.borrow_mut().deploy(descriptor)
     }
 
+    /// TRUST-CRITICAL: This function bridges the TRUSTLESS layer (STARK proofs) into the
+    /// executor. If compromised: forged sovereign state could be committed without valid proofs.
+    /// However, this function is ALREADY close to trustless — it only verifies a proof and
+    /// updates a commitment. The proof itself is independently verifiable.
+    /// Future: expose proof verification as a standalone function that light clients can call
+    /// directly, removing the executor from the trust path for sovereign cells entirely.
+    ///
     /// Verify a STARK execution proof for a sovereign cell and update its commitment.
     ///
     /// This is the core of Phase 3: proof-carrying sovereign turns. The executor
@@ -1329,6 +1394,12 @@ impl TurnExecutor {
     /// 5. Meters computrons at each step.
     /// 6. If any action fails: replays journal in reverse to roll back ALL effects.
     /// 7. If successful: produces a TurnReceipt with Merkle hashes.
+    /// TRUST-CRITICAL: This function is the sole entry point for all ledger state mutations.
+    /// If compromised: arbitrary state changes bypass authorization, preconditions, and fee metering.
+    /// The federation's replicated execution ensures all members execute identically; divergence
+    /// triggers consensus failure and halts the federation.
+    /// Future: once Effect VM covers all effect types, every turn will carry a STARK proof,
+    /// making this function a thin verify-and-commit wrapper (trustless).
     pub fn execute(&self, turn: &Turn, ledger: &mut Ledger) -> TurnResult {
         // Phase 0: basic validation.
         if turn.call_forest.is_empty() {
@@ -2318,6 +2389,11 @@ impl TurnExecutor {
     }
 
     /// Check preconditions against the target cell's state.
+    /// TRUST-CRITICAL: This function enforces temporal and state-based guards on actions.
+    /// If compromised: expired turns could execute, balance thresholds could be bypassed,
+    /// and block-height-locked actions could fire prematurely.
+    /// Future: precondition evaluation will be proven inside the Effect VM circuit,
+    /// allowing verifiers to confirm guards were checked without trusting the executor.
     fn check_preconditions(
         &self,
         preconditions: &Preconditions,
@@ -2341,6 +2417,12 @@ impl TurnExecutor {
             })
     }
 
+    /// TRUST-CRITICAL: This function gates ALL state mutations behind authorization checks.
+    /// If compromised: unauthorized parties can modify any cell's state, transfer balances,
+    /// or forge delegations. This is the primary access control enforcement point.
+    /// Future: move to trustless by requiring all authorizations to be STARK-proven
+    /// (currently signature auth is verified classically by the executor).
+    ///
     /// Verify that the action's authorization satisfies the target cell's permission requirements.
     ///
     /// This checks ALL required permissions for ALL effects in the action independently.
@@ -3235,6 +3317,11 @@ impl TurnExecutor {
     /// SECURITY: For any effect that names a cell other than `action_target`,
     /// we verify that the actor holds a capability to that cell AND that the
     /// relevant permission on that cell allows the operation.
+    /// TRUST-CRITICAL: This function directly mutates ledger state (balances, fields, cells).
+    /// If compromised: balance inflation/deflation, unauthorized state overwrites, or
+    /// cell creation without proper authorization. All mutations are journaled for rollback.
+    /// Future: replace with verified effect application via Effect VM STARK proof for all
+    /// effect types (currently only sovereign cells use proof-carrying effects).
     fn apply_effect(
         &self,
         effect: &Effect,

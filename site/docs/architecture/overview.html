@@ -58,7 +58,7 @@
       transitions locally. The federation verifies proofs and provides ordering --
       it does not store or execute on behalf of agents (in sovereign mode). The Effect VM
       proves arbitrary turns in a single STARK (14 effects, Custom dispatch for CellPrograms).
-      A constraint DSL compiles to 8 proof backends from a single source definition.
+      A backend-agnostic constraint DSL compiles circuit specifications to any target proof system from a single source.
     </p>
 
     <h2 id="layers">Layer Architecture</h2>
@@ -73,7 +73,7 @@ Browser Extension (wallet UI)
 SDK Layer              Rust SDK (86 fns) | TypeScript SDK | WASM (20 exports)
                        Extension (14 methods) | MCP (37 tools for AI assistants)
   ---------------------------------------------------------------
-DSL                    #[pyana_caveat] | #[pyana_effect] | write once, 8 backends
+DSL                    #[pyana_caveat] | #[pyana_effect] | write once, backend-portable
   Backends:            Rust | AIR | Datalog | Kimchi | Midnight | Plonky3 | SP1 | STARK
   Composition:         compose_and | compose_or | compose_chain | compose_aggregate
   ---------------------------------------------------------------
@@ -100,7 +100,7 @@ Privacy                Stealth addresses | Pedersen commitments | Dandelion++
                        Encrypted turns | Sealer/Unsealer | Private predicates (3 tiers)
   ---------------------------------------------------------------
 Proof                  Effect VM (one STARK per turn, 14 effects)
-                       DSL circuits: CircuitDescriptor --> 8 backends
+                       DSL circuits: CircuitDescriptor --> multi-backend
                        STARK-in-Pickles (recursive, constant-size)
                        Kimchi (Mina) | SP1 zkVM | Plonky3 native | IVC compression
   ---------------------------------------------------------------
@@ -135,7 +135,7 @@ Persistence            redb (ACID, WAL, crash-safe)
     <table class="comparison">
       <thead><tr><th>Crate</th><th>Role</th></tr></thead>
       <tbody>
-        <tr><td><code>pyana-dsl</code></td><td>Proc-macro DSL: #[pyana_caveat] / #[pyana_effect] compiles to 8 backends</td></tr>
+        <tr><td><code>pyana-dsl</code></td><td>Proc-macro DSL: #[pyana_caveat] / #[pyana_effect] compiles to all supported proof systems</td></tr>
         <tr><td><code>pyana-dsl-runtime</code></td><td>Runtime support types for DSL-generated code</td></tr>
         <tr><td><code>pyana-dsl-tests</code></td><td>Integration tests for DSL compilation and execution</td></tr>
       </tbody>

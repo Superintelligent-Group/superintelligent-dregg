@@ -37,8 +37,8 @@
     <h1>Your agents prove what they can do &mdash; without revealing <em>how they got there.</em></h1>
     <p class="hero__sub">
       Pyana is a sovereign capability runtime. Agents own their state, prove authorization
-      with ZK STARKs, and interact peer-to-peer. Write constraints once in the DSL; compile to
-      8 proof backends. The federation is a notary -- used for ordering, double-spend prevention,
+      with ZK STARKs, and interact peer-to-peer. Write constraints once in the DSL; target any
+      proof system from a single source. The federation is a notary -- used for ordering, double-spend prevention,
       and discovery. Between known parties, it is just signed proofs exchanged directly.
     </p>
     <div class="hero__cta">
@@ -135,7 +135,7 @@
   <h2 class="section__title">Write once, prove everywhere</h2>
   <p class="section__intro">
     The <code>#[pyana_caveat]</code> and <code>#[pyana_effect]</code> macros compile constraint
-    functions into 8 proof backends from a single source. No manual circuit writing required.
+    functions into any target proof system from a single source. No manual circuit writing required.
   </p>
   <div class="flow">
     <div class="flow__step">
@@ -284,7 +284,7 @@ Browser Extension (wallet)
   ────────────────────────────────────────────────────────────────────
 SDK Layer                AgentWallet | AgentRuntime | SiloClient
   ────────────────────────────────────────────────────────────────────
-DSL                      #[pyana_caveat] | #[pyana_effect] | write once, 8 backends
+DSL                      #[pyana_caveat] | #[pyana_effect] | write once, backend-portable
   Backends:              Rust | AIR | Datalog | Kimchi | Midnight | Plonky3 | SP1 | STARK
   ────────────────────────────────────────────────────────────────────
 Intent Engine            Gossip broadcast | local Datalog matching | STARK fulfillment

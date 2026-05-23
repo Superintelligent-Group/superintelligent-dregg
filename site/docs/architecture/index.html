@@ -62,7 +62,7 @@
       own machines. The federation is a notary -- used for ordering, double-spend prevention,
       discovery, and proving to strangers. Between known parties, it is just signed proofs
       exchanged directly. The system spans ~355k lines of Rust across 44 crates, with a
-      constraint DSL that compiles to 8 proof backends, an Effect VM (14 effects, one STARK
+      backend-agnostic constraint DSL, an Effect VM (14 effects, one STARK
       per turn), and 8 complete applications (DeFi suite, identity, gallery, compute exchange).
     </p>
 
@@ -128,8 +128,8 @@
           to strangers or resolve disputes. Not for every operation.</li>
       <li><strong>Progressive privacy.</strong> Three modes (trusted, selective, private) let
           developers choose the right tradeoff per interaction.</li>
-      <li><strong>Write once, prove everywhere.</strong> The constraint DSL compiles to 8 backends
-          (Rust, AIR, Datalog, Kimchi, Midnight, Plonky3, SP1, STARK). Same semantics, different
+      <li><strong>Write once, prove everywhere.</strong> The constraint DSL compiles to multiple
+          proof systems (STARKs, recursive SNARKs, ZKIR) from a single source. Same semantics, different
           verification venues.</li>
       <li><strong>EVM bridge via SP1.</strong> Wrap STARK proofs in Groth16 for ~200k gas
           verification on Base/Ethereum. Deposit/withdraw cycle for cross-chain value transfer.</li>

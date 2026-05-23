@@ -1,5 +1,41 @@
 //! CapTP: Capability Transport Protocol for the Pyana federation.
 //!
+//! # Trust Model
+//!
+//! This crate operates at **MIXED** trust levels:
+//!
+//! ## Executor-Trusted Components
+//! - **Session management** ([`session`]): CapTP sessions track import/export state between
+//!   peers. Session correctness relies on the federation executor maintaining accurate
+//!   reference counts and routing tables.
+//! - **Swiss table** ([`sturdy`]): Maps swiss numbers to live capabilities. The swiss
+//!   number is a bearer secret -- possession IS authorization. The executor must faithfully
+//!   maintain the mapping.
+//! - **Distributed GC** ([`gc`]): Reference counting across federations. Incorrect GC
+//!   could leak capabilities (not release them) or prematurely revoke them.
+//!
+//! ## Trustless Components (when proven)
+//! - **Handoff protocol** ([`handoff`]): The `HandoffCertificate` is cryptographically
+//!   signed by the introducer. Validation (`validate_handoff`) is independently verifiable --
+//!   any party can check the certificate's Ed25519 signature without trusting the executor.
+//! - **Store-and-forward** ([`store_forward`]): Messages are encrypted to the recipient's
+//!   X25519 key. The relay cannot read or forge messages (only delay or drop them).
+//!
+//! ## Soundness
+//! - Capability confinement: a capability cannot be accessed without knowledge of its swiss number.
+//! - Handoff integrity: a handoff certificate cannot be forged without the introducer's private key.
+//! - Forward secrecy: store-and-forward messages are encrypted; relay operators see only ciphertext.
+//!
+//! ## Assumptions
+//! - Federation executor honestly maintains swiss table and session state.
+//! - Ed25519 signature scheme is secure (for handoff certificates).
+//! - X25519 key exchange is secure (for store-and-forward encryption).
+//!
+//! ## Verifiable by
+//! - Handoff certificates: anyone with the introducer's public key.
+//! - Session state: federation members via replication.
+//! - Store-and-forward integrity: recipient (via authenticated decryption).
+//!
 //! This crate implements sturdy references — durable, serializable capability URIs
 //! that survive disconnection and enable offline sharing. A sturdy ref is a `pyana://`
 //! URI containing a federation ID, cell ID, and swiss number (a random secret that
