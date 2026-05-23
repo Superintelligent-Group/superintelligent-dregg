@@ -225,26 +225,40 @@ pub fn compute_condition_commitment(condition_bytes: &[u8], nonce: &[u8; 32]) ->
     *hasher.finalize().as_bytes()
 }
 
-/// Verify an [`EscrowClaimAuth`] against an identity commitment and escrow_id.
+/// Verify the commitment opening in an [`EscrowClaimAuth`].
+///
+/// Returns `true` if the recomputed commitment from (cell_id, blinding) matches
+/// `expected_commitment`. Signature verification against the cell's public key
+/// must be done separately by the executor (which has access to the ledger).
+pub fn verify_escrow_claim_commitment(
+    claim: &EscrowClaimAuth,
+    expected_commitment: &[u8; 32],
+) -> bool {
+    let recomputed = compute_identity_commitment(&claim.cell_id, &claim.blinding);
+    recomputed == *expected_commitment
+}
+
+/// Verify the full claim: commitment opening + Ed25519 signature.
 ///
 /// Returns `true` if:
-/// 1. Recomputed commitment from (public_key, blinding) matches `expected_commitment`.
+/// 1. Recomputed commitment from (cell_id, blinding) matches `expected_commitment`.
 /// 2. The signature over `escrow_id` verifies against `public_key`.
+///
+/// The `public_key` should be obtained from the ledger cell matching `claim.cell_id`.
 pub fn verify_escrow_claim(
     claim: &EscrowClaimAuth,
     expected_commitment: &[u8; 32],
     escrow_id: &[u8; 32],
+    public_key: &[u8; 32],
 ) -> bool {
     // Step 1: Recompute the identity commitment from the revealed opening.
-    let cell_id = CellId::from_bytes(claim.public_key);
-    let recomputed = compute_identity_commitment(&cell_id, &claim.blinding);
-    if recomputed != *expected_commitment {
+    if !verify_escrow_claim_commitment(claim, expected_commitment) {
         return false;
     }
 
     // Step 2: Verify the Ed25519 signature over the escrow_id.
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-    let verifying_key = match VerifyingKey::from_bytes(&claim.public_key) {
+    let verifying_key = match VerifyingKey::from_bytes(public_key) {
         Ok(k) => k,
         Err(_) => return false,
     };

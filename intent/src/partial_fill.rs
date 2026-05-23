@@ -21,7 +21,7 @@
 use crate::fulfillment::{FulfillOptions, Fulfillment, FulfillmentError, fulfill};
 use crate::matcher::HeldCapability;
 use crate::{
-    CommitmentId, FillConstraints, Intent, Match,
+    CommitmentId, FRESH_STAKE_GENERATION, FillConstraints, Intent, MAX_RESIDUAL_DEPTH, Match,
 };
 
 // ---------------------------------------------------------------------------

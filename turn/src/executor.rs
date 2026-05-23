@@ -3031,29 +3031,33 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
-                // Verify the claim_auth against the recipient_commitment.
-                if !verify_escrow_claim(claim_auth, &record.recipient_commitment, escrow_id) {
+                // Verify the recipient cell matches the claim and exists in ledger.
+                if *recipient != claim_auth.cell_id {
                     return Err((
                         TurnError::InvalidEffect {
-                            reason: "committed escrow release: claim authorization failed".into(),
+                            reason: "committed escrow release: recipient does not match claim cell_id"
+                                .into(),
                         },
                         path.to_vec(),
                     ));
                 }
-                // Verify the recipient cell exists and matches the claim.
-                if ledger.get(recipient).is_none() {
-                    return Err((
+                let recipient_cell_ref = ledger.get(recipient).ok_or_else(|| {
+                    (
                         TurnError::CellNotFound { id: *recipient },
                         path.to_vec(),
-                    ));
-                }
-                // Verify that the claimed recipient CellId matches the public_key in claim_auth.
-                let expected_recipient = CellId::from_bytes(claim_auth.public_key);
-                if *recipient != expected_recipient {
+                    )
+                })?;
+                let recipient_pubkey = recipient_cell_ref.public_key;
+                // Verify the claim_auth against the recipient_commitment.
+                if !verify_escrow_claim(
+                    claim_auth,
+                    &record.recipient_commitment,
+                    escrow_id,
+                    &recipient_pubkey,
+                ) {
                     return Err((
                         TurnError::InvalidEffect {
-                            reason: "committed escrow release: recipient does not match claim key"
-                                .into(),
+                            reason: "committed escrow release: claim authorization failed".into(),
                         },
                         path.to_vec(),
                     ));
@@ -3132,28 +3136,33 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
-                // Verify the claim_auth against the creator_commitment.
-                if !verify_escrow_claim(claim_auth, &record.creator_commitment, escrow_id) {
+                // Verify the creator cell matches the claim and exists in ledger.
+                if *creator != claim_auth.cell_id {
                     return Err((
                         TurnError::InvalidEffect {
-                            reason: "committed escrow refund: claim authorization failed".into(),
+                            reason: "committed escrow refund: creator does not match claim cell_id"
+                                .into(),
                         },
                         path.to_vec(),
                     ));
                 }
-                // Verify the creator cell exists and matches the claim.
-                if ledger.get(creator).is_none() {
-                    return Err((
+                let creator_cell_ref = ledger.get(creator).ok_or_else(|| {
+                    (
                         TurnError::CellNotFound { id: *creator },
                         path.to_vec(),
-                    ));
-                }
-                let expected_creator = CellId::from_bytes(claim_auth.public_key);
-                if *creator != expected_creator {
+                    )
+                })?;
+                let creator_pubkey = creator_cell_ref.public_key;
+                // Verify the claim_auth against the creator_commitment.
+                if !verify_escrow_claim(
+                    claim_auth,
+                    &record.creator_commitment,
+                    escrow_id,
+                    &creator_pubkey,
+                ) {
                     return Err((
                         TurnError::InvalidEffect {
-                            reason: "committed escrow refund: creator does not match claim key"
-                                .into(),
+                            reason: "committed escrow refund: claim authorization failed".into(),
                         },
                         path.to_vec(),
                     ));
@@ -4393,7 +4402,11 @@ impl TurnExecutor {
                 | JournalEntry::EscrowRefunded { .. }
                 | JournalEntry::ObligationInserted { .. }
                 | JournalEntry::EscrowInserted { .. }
-                | JournalEntry::BridgedNullifierInserted { .. } => {}
+                | JournalEntry::BridgedNullifierInserted { .. }
+                | JournalEntry::CommittedEscrowCreated { .. }
+                | JournalEntry::CommittedEscrowReleased { .. }
+                | JournalEntry::CommittedEscrowRefunded { .. }
+                | JournalEntry::CommittedEscrowInserted { .. } => {}
             }
         }
 

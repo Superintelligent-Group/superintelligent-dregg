@@ -66,7 +66,20 @@ pub struct FillConstraints {
     /// After a partial fill, this is set to the ID of the residual intent that
     /// tracks the remaining unfilled quantity. `None` before first partial fill.
     pub remaining_after_fill: Option<IntentId>,
+    /// Tracks how many times this intent has been split via residual creation.
+    /// Incremented each time a residual is spawned. Used to bound the residual
+    /// chain depth and prevent unbounded DoS via repeated 1-unit fills.
+    #[serde(default)]
+    pub generation: u16,
 }
+
+/// Maximum depth of the residual chain. After this many splits, no further
+/// residuals are created (preventing unbounded chain DoS).
+pub const MAX_RESIDUAL_DEPTH: u16 = 10;
+
+/// After this generation, residuals require a fresh stake proof (preventing
+/// unlimited free riding on the original stake).
+pub const FRESH_STAKE_GENERATION: u16 = 3;
 
 /// Error returned when constructing `FillConstraints` with invalid parameters.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,6 +125,7 @@ impl FillConstraints {
             max_fill_amount: max,
             fill_or_kill,
             remaining_after_fill: None,
+            generation: 0,
         })
     }
 }
