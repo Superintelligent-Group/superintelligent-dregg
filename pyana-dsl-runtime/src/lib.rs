@@ -19,8 +19,8 @@ pub mod circuit;
 
 // Re-export primary smart contract runtime types.
 pub use circuit::{
-    CellProgram, CircuitDescriptor, DslCircuit, ProgramError, ProgramRegistry,
-    ProgramValidationError,
+    BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
+    ConstraintExpr, DslCircuit, PolyTerm, ProgramError, ProgramRegistry, ProgramValidationError,
 };
 
 /// Error returned when a caveat constraint is violated at runtime.

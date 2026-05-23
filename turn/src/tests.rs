@@ -7387,3 +7387,272 @@ fn hash_tree_effects_test(tree: &crate::forest::CallTree, hasher: &mut blake3::H
         hash_tree_effects_test(child, hasher);
     }
 }
+
+// =============================================================================
+// Tests: Custom program registry integration
+// =============================================================================
+
+/// End-to-end test: deploy a custom program to the registry, register a
+/// sovereign cell with that program's VK hash, then submit a proof-carrying
+/// turn that the executor verifies via the custom program (not the default
+/// SovereignTransitionAir).
+#[test]
+fn test_custom_program_proof_carrying_turn() {
+    use pyana_circuit::field::BabyBear;
+    use pyana_circuit::sovereign_transition_air::bytes32_to_babybear;
+    use pyana_dsl_runtime::{
+        BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
+        ConstraintExpr, PolyTerm, ProgramRegistry,
+    };
+    use std::collections::HashMap;
+
+    // === Step 1: Build a custom program descriptor ===
+    // This is a simple "identity transition" circuit: new_balance == old_balance
+    // (no transfers allowed, just a state acknowledgement).
+    // Trace width = 4 (old_balance, new_balance, pad0, pad1), degree = 2.
+    // Constraint: col[0] - col[1] == 0 (old_balance == new_balance)
+    // Boundaries bind col[0] to pi[0] at row 0.
+    let descriptor = CircuitDescriptor {
+        name: "test-identity-transition".to_string(),
+        trace_width: 4,
+        max_degree: 2,
+        columns: vec![
+            ColumnDef { name: "old_balance".to_string(), index: 0, kind: ColumnKind::Value },
+            ColumnDef { name: "new_balance".to_string(), index: 1, kind: ColumnKind::Value },
+            ColumnDef { name: "pad0".to_string(), index: 2, kind: ColumnKind::Value },
+            ColumnDef { name: "pad1".to_string(), index: 3, kind: ColumnKind::Value },
+        ],
+        constraints: vec![
+            // old_balance == new_balance
+            ConstraintExpr::Equality { col_a: 0, col_b: 1 },
+        ],
+        boundaries: vec![],
+        public_input_count: 32,
+    };
+
+    let program = CellProgram::new(descriptor, 1);
+    let vk_hash = program.vk_hash;
+
+    // === Step 2: Deploy the program to a registry ===
+    let mut registry = ProgramRegistry::new();
+    let deployed_vk = registry.deploy(program.clone()).unwrap();
+    assert_eq!(deployed_vk, vk_hash);
+
+    // === Step 3: Create executor with the registry ===
+    let mut executor = zero_cost_executor();
+    executor.set_program_registry(registry);
+
+    // === Step 4: Set up the ledger with an agent and a sovereign cell ===
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 10000);
+    let agent_id = agent.id;
+    ledger.insert_cell(agent).unwrap();
+
+    // Register a sovereign cell with the custom program's VK hash.
+    let sovereign_pk = [50u8; 32];
+    let sovereign_id = pyana_cell::CellId::derive_raw(&sovereign_pk, &[0u8; 32]);
+    let old_commitment = [10u8; 32];
+
+    ledger
+        .register_sovereign_cell_with_vk(
+            sovereign_id,
+            old_commitment,
+            0,    // current_height
+            1000, // ttl
+            Some(vk_hash),
+        )
+        .unwrap();
+
+    // === Step 5: Build a proof-carrying turn ===
+    let new_commitment = [20u8; 32];
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let _action = builder.action(agent_id, "noop");
+    }
+    let mut turn = builder.fee(100).build();
+
+    // Compute effects hash (same way the executor does).
+    let effects_hash = {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"pyana-sovereign-effects-v1:");
+        for root in &turn.call_forest.roots {
+            hash_tree_effects_test(root, &mut hasher);
+        }
+        *hasher.finalize().as_bytes()
+    };
+
+    // Build public inputs: 32 BabyBear elements
+    // [old_commitment(8), new_commitment(8), effects_hash(8), cell_id_hash(8)]
+    let cell_id_hash = *blake3::hash(sovereign_id.as_bytes()).as_bytes();
+    let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(32);
+    public_inputs.extend(bytes32_to_babybear(&old_commitment));
+    public_inputs.extend(bytes32_to_babybear(&new_commitment));
+    public_inputs.extend(bytes32_to_babybear(&effects_hash));
+    public_inputs.extend(bytes32_to_babybear(&cell_id_hash));
+
+    // Build witness for the custom program (identity: old == new balance).
+    let balance_val = BabyBear::from_u64(42);
+    let num_rows = 2;
+    let mut witness = HashMap::new();
+    witness.insert("old_balance".to_string(), vec![balance_val; num_rows]);
+    witness.insert("new_balance".to_string(), vec![balance_val; num_rows]);
+
+    // Generate the STARK proof using the custom program.
+    let proof_bytes = program
+        .prove_transition(&witness, num_rows, &public_inputs)
+        .unwrap();
+
+    // Attach proof to turn.
+    turn.execution_proof = Some(proof_bytes);
+    turn.execution_proof_cell = Some(sovereign_id);
+    turn.execution_proof_new_commitment = Some(new_commitment);
+
+    // === Step 6: Execute the turn ===
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "custom program proof-carrying turn should be committed, got: {:?}",
+        match &result {
+            crate::turn::TurnResult::Rejected { reason, .. } => format!("{}", reason),
+            _ => "non-rejected".to_string(),
+        }
+    );
+
+    // Verify the sovereign commitment was updated.
+    let reg = ledger.get_sovereign_registration(&sovereign_id).unwrap();
+    assert_eq!(reg.commitment, new_commitment);
+}
+
+/// Test that a cell with a VK hash but no matching program in the registry
+/// is rejected (not silently falling through to the default AIR).
+#[test]
+fn test_custom_program_missing_from_registry_rejected() {
+    use pyana_circuit::field::BabyBear;
+    use pyana_circuit::sovereign_transition_air::bytes32_to_babybear;
+    use pyana_dsl_runtime::ProgramRegistry;
+
+    let mut executor = zero_cost_executor();
+    // Empty registry — no programs deployed.
+    executor.set_program_registry(ProgramRegistry::new());
+
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 10000);
+    let agent_id = agent.id;
+    ledger.insert_cell(agent).unwrap();
+
+    // Register a sovereign cell with a VK hash that doesn't exist in the registry.
+    let sovereign_pk = [60u8; 32];
+    let sovereign_id = pyana_cell::CellId::derive_raw(&sovereign_pk, &[0u8; 32]);
+    let old_commitment = [11u8; 32];
+    let fake_vk_hash = [0xABu8; 32];
+
+    ledger
+        .register_sovereign_cell_with_vk(
+            sovereign_id,
+            old_commitment,
+            0,
+            1000,
+            Some(fake_vk_hash),
+        )
+        .unwrap();
+
+    let new_commitment = [22u8; 32];
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let _action = builder.action(agent_id, "noop");
+    }
+    let mut turn = builder.fee(100).build();
+
+    // Compute effects hash.
+    let effects_hash = {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"pyana-sovereign-effects-v1:");
+        for root in &turn.call_forest.roots {
+            hash_tree_effects_test(root, &mut hasher);
+        }
+        *hasher.finalize().as_bytes()
+    };
+
+    let cell_id_hash = *blake3::hash(sovereign_id.as_bytes()).as_bytes();
+    let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(32);
+    public_inputs.extend(bytes32_to_babybear(&old_commitment));
+    public_inputs.extend(bytes32_to_babybear(&new_commitment));
+    public_inputs.extend(bytes32_to_babybear(&effects_hash));
+    public_inputs.extend(bytes32_to_babybear(&cell_id_hash));
+
+    // Use dummy proof bytes (won't matter — should fail at lookup stage).
+    // We need proof bytes that at least pass deserialization to reach the VK lookup.
+    // Use a real proof from the default AIR (will fail at the custom program lookup).
+    let proof_bytes = generate_valid_sovereign_proof(
+        &old_commitment,
+        &new_commitment,
+        &sovereign_id,
+        &effects_hash,
+    );
+
+    turn.execution_proof = Some(proof_bytes);
+    turn.execution_proof_cell = Some(sovereign_id);
+    turn.execution_proof_new_commitment = Some(new_commitment);
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_rejected(), "should reject: program not in registry");
+    let (err, _) = result.unwrap_rejected();
+    assert!(
+        matches!(err, TurnError::ProofVerificationFailed(ref msg) if msg.contains("no matching program")),
+        "expected ProofVerificationFailed about missing program, got: {}",
+        err
+    );
+}
+
+/// Test that a sovereign cell WITHOUT a VK hash still uses the default
+/// SovereignTransitionAir (backward compatibility).
+#[test]
+fn test_default_air_still_works_without_vk_hash() {
+    // This is effectively the same as test_proof_carrying_turn_accepted but
+    // with the program_registry set (to confirm no regression).
+    let (mut ledger, agent_id, sovereign_id, old_commitment) =
+        setup_sovereign_cell_for_proof_test();
+
+    let mut executor = zero_cost_executor();
+    executor.set_program_registry(pyana_dsl_runtime::ProgramRegistry::new());
+
+    let new_commitment = [42u8; 32];
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let _action = builder.action(agent_id, "noop");
+    }
+    let mut turn = builder.fee(100).build();
+
+    let effects_hash = {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"pyana-sovereign-effects-v1:");
+        for root in &turn.call_forest.roots {
+            hash_tree_effects_test(root, &mut hasher);
+        }
+        *hasher.finalize().as_bytes()
+    };
+
+    let proof_bytes = generate_valid_sovereign_proof(
+        &old_commitment,
+        &new_commitment,
+        &sovereign_id,
+        &effects_hash,
+    );
+
+    turn.execution_proof = Some(proof_bytes);
+    turn.execution_proof_cell = Some(sovereign_id);
+    turn.execution_proof_new_commitment = Some(new_commitment);
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "default AIR should still work without VK hash, got: {:?}",
+        match &result {
+            crate::turn::TurnResult::Rejected { reason, .. } => format!("{}", reason),
+            _ => "non-rejected".to_string(),
+        }
+    );
+}
