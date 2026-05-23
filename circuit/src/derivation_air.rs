@@ -360,6 +360,11 @@ impl DerivationAir {
     pub fn new(witness: DerivationWitness) -> Self {
         Self { witness }
     }
+
+    /// Generate trace and public inputs (delegates to DSL).
+    pub fn generate_trace(&self) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
+        crate::dsl::derivation::generate_derivation_trace_dsl(&self.witness)
+    }
 }
 
 /// Legacy StarkAir struct for derivation.
@@ -370,6 +375,33 @@ pub struct DerivationStarkAir {
 impl DerivationStarkAir {
     pub fn new(witness: DerivationWitness) -> Self {
         Self { witness }
+    }
+}
+
+impl crate::stark::StarkAir for DerivationStarkAir {
+    fn width(&self) -> usize {
+        DERIVATION_AIR_WIDTH
+    }
+    fn constraint_degree(&self) -> usize {
+        2
+    }
+    fn air_name(&self) -> &'static str {
+        "pyana-derivation-v1"
+    }
+    fn has_chain_continuity(&self) -> bool {
+        false
+    }
+    fn eval_constraints(
+        &self,
+        _local: &[BabyBear],
+        _next: &[BabyBear],
+        _public_inputs: &[BabyBear],
+        _alpha: BabyBear,
+    ) -> BabyBear {
+        BabyBear::ZERO
+    }
+    fn boundary_constraints(&self) -> Vec<crate::stark::BoundaryConstraint> {
+        vec![]
     }
 }
 

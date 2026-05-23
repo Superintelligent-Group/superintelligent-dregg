@@ -138,6 +138,9 @@ pub mod proof_tier;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod soundness_tests;
+
 // Proof tier types — prevents scaffold/test proofs from satisfying production verifiers.
 pub use proof_tier::{CryptographicProof, ProofTier, VerifiedProof};
 

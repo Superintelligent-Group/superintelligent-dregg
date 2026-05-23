@@ -2828,27 +2828,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "env_filter"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32e90c2accc4b07a8456ea0debdc2e7587bdd890680d71173a15d4ae604f6eef"
-dependencies = [
- "log",
-]
-
-[[package]]
-name = "env_logger"
-version = "0.11.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0621c04f2196ac3f488dd583365b9c09be011a4ab8b9f37248ffcc8f6198b56a"
-dependencies = [
- "anstream",
- "anstyle",
- "env_filter",
- "log",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6544,7 +6523,6 @@ dependencies = [
  "hints",
  "postcard",
  "pyana-commit",
- "pyana-morpheus",
  "pyana-turn",
  "pyana-types",
  "serde",
@@ -6627,22 +6605,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-morpheus"
-version = "0.1.0"
-dependencies = [
- "ark-serialize 0.5.0",
- "ark-serialize-derive",
- "ark-std 0.5.0",
- "hints",
- "serde",
- "serde_json",
- "serde_json_any_key",
- "test-log",
- "time",
- "tracing",
-]
-
-[[package]]
 name = "pyana-net"
 version = "0.1.0"
 dependencies = [
@@ -6676,7 +6638,6 @@ dependencies = [
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.3.4",
- "hints",
  "macaroon",
  "metrics",
  "metrics-exporter-prometheus",
@@ -6689,7 +6650,6 @@ dependencies = [
  "pyana-dsl-runtime",
  "pyana-federation",
  "pyana-intent",
- "pyana-morpheus",
  "pyana-net",
  "pyana-sdk",
  "pyana-store",
@@ -6851,7 +6811,6 @@ dependencies = [
  "pyana-dsl-runtime",
  "pyana-federation",
  "pyana-intent",
- "pyana-morpheus",
  "pyana-net",
  "pyana-sdk",
  "pyana-store",
@@ -8041,16 +8000,6 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
-]
-
-[[package]]
-name = "serde_json_any_key"
-version = "2.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b82e4b1d3a2cb67817b8c403eac7b98225c2e1c855a13ef9b80b9bac63a06c20"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -9828,38 +9777,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "test-log"
-version = "0.2.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f46bf474f0a4afebf92f076d54fd5e63423d9438b8c278a3d2ccb0f47f7cdb3"
-dependencies = [
- "env_logger",
- "test-log-macros",
- "tracing-subscriber 0.3.23",
-]
-
-[[package]]
-name = "test-log-core"
-version = "0.2.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37d4d41320b48bc4a211a9021678fcc0c99569b594ea31c93735b8e517102b4c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "test-log-macros"
-version = "0.2.20"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9beb9249a81e430dffd42400a49019bcf548444f1968ff23080a625de0d4d320"
-dependencies = [
- "syn 2.0.117",
- "test-log-core",
 ]
 
 [[package]]

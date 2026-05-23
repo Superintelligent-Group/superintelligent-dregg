@@ -192,9 +192,9 @@ The Blocklace itself provides causal ordering as a structural property: the DAG'
 
 Pyana provides three interop bridges, each using proof translation rather than consensus bridging:
 
-=== EVM Bridge (Ethereum/Base)
+=== EVM Bridge (Base Sepolia)
 
-SP1 wraps Pyana STARK proofs in Groth16 for on-chain verification at ~200K gas. The bridge includes an incremental Merkle tree for deposits ($O(log n)$ insertions), a VK registry with governance-controlled parameter updates, and commit-reveal frontrunning protection. *Status:* Architecture complete; guest program regeneration against Plonky3 backend in progress.
+SP1 wraps Pyana STARK proofs in Groth16 for on-chain verification at ~200K gas. The bridge includes Foundry deployment scripts for Base Sepolia, an incremental Merkle tree for deposits ($O(log n)$ insertions), a VK registry with governance-controlled parameter updates, and commit-reveal frontrunning protection. *Status:* Foundry scripts deployed to Base Sepolia; guest program regeneration against Plonky3 backend in progress.
 
 === Mina Bridge
 
@@ -202,7 +202,11 @@ Native Pickles recursion via the STARK-in-Pickles pipeline. A Pyana STARK proof 
 
 === Midnight/Cardano Bridge
 
-Observation-based bridging using the same pattern as Midnight's Cardano bridge. The DSL's ZKIR v3 backend compiles Pyana constraint programs directly into Midnight-compatible contracts, enabling a Midnight validator to verify Pyana proofs without a trust bridge. This is a proof-translation layer, not a consensus bridge.
+Two-level bridge architecture:
+
+*Level 1 (implemented):* Attestation bridge. Pyana state roots are attested on Midnight as observation-based data, following the same pattern as Midnight's Cardano bridge. Midnight validators can verify that a Pyana state existed at a given height.
+
+*Level 2 (designed):* Proof-carrying bridge. The DSL's ZKIR v3 backend compiles Pyana constraint programs directly into Midnight-compatible contracts, enabling a Midnight validator to verify Pyana proofs natively via a FRI verifier in ZKIR. This is a proof-translation layer, not a consensus bridge.
 
 == Network Layer
 
