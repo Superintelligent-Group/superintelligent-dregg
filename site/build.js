@@ -232,6 +232,34 @@ function build() {
   console.log('  Build: assets/style.css');
   buildCss();
 
+  // Copy public _includes assets (design tokens + runtime) to dist/_includes/.
+  // The walker skips _-prefixed directories, but these few files need to be
+  // reachable at page time via `<link>` / `<script type="module">`.
+  const PUBLIC_INCLUDES = [
+    'design-tokens.css',
+    'runtime-bootstrap.js',
+    'visualizer-base.js',
+  ];
+  for (const f of PUBLIC_INCLUDES) {
+    const src = path.join(SRC, '_includes', f);
+    if (fs.existsSync(src)) {
+      const dst = path.join(DIST, '_includes', f);
+      ensureDir(path.dirname(dst));
+      if (f.endsWith('.css')) {
+        // Minify on the way through, matching how other CSS is handled.
+        const result = transform({
+          filename: f,
+          code: fs.readFileSync(src),
+          minify: true,
+        });
+        fs.writeFileSync(dst, result.code);
+      } else {
+        fs.copyFileSync(src, dst);
+      }
+      console.log(`  Copy: _includes/${f}`);
+    }
+  }
+
   console.log('\nDone.');
 }
 

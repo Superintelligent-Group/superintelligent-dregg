@@ -6547,6 +6547,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyana-dao-treasury"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.9",
+ "blake3",
+ "http-body-util",
+ "pyana-app-framework",
+ "pyana-storage",
+ "pyana-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower 0.5.3",
+]
+
+[[package]]
 name = "pyana-demo"
 version = "0.1.0"
 dependencies = [
@@ -6850,6 +6867,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyana-prediction-market"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.9",
+ "blake3",
+ "ed25519-dalek",
+ "http-body-util",
+ "pyana-app-framework",
+ "pyana-cell",
+ "pyana-circuit",
+ "pyana-intent",
+ "pyana-storage",
+ "pyana-turn",
+ "pyana-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower 0.5.3",
+]
+
+[[package]]
 name = "pyana-preflight"
 version = "0.1.0"
 dependencies = [
@@ -6881,6 +6920,26 @@ dependencies = [
  "token",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "pyana-privacy-voting"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.9",
+ "blake3",
+ "ed25519-dalek",
+ "http-body-util",
+ "pyana-app-framework",
+ "pyana-sdk",
+ "pyana-storage",
+ "pyana-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "token",
+ "tokio",
+ "tower 0.5.3",
 ]
 
 [[package]]
@@ -6970,6 +7029,28 @@ dependencies = [
  "serde",
  "subtle",
  "tempfile",
+]
+
+[[package]]
+name = "pyana-subscription"
+version = "0.1.0"
+dependencies = [
+ "axum 0.8.9",
+ "blake3",
+ "chacha20poly1305",
+ "ed25519-dalek",
+ "getrandom 0.3.4",
+ "pyana-app-framework",
+ "pyana-sdk",
+ "pyana-storage",
+ "pyana-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "token",
+ "tokio",
+ "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

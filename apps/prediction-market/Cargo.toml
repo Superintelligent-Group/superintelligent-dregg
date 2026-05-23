@@ -1,0 +1,32 @@
+[package]
+name = "pyana-prediction-market"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pyana-app-framework = { path = "../../app-framework" }
+pyana-circuit = { path = "../../circuit", default-features = false, features = ["mock"] }
+pyana-intent = { path = "../../intent" }
+pyana-turn = { path = "../../turn" }
+pyana-cell = { path = "../../cell", default-features = false }
+pyana-types = { path = "../../types" }
+pyana-storage = { path = "../../storage" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["std"] }
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+
+[dev-dependencies]
+tower = "0.5"
+http-body-util = "0.1"
+
+[[bin]]
+name = "pyana-prediction-market"
+path = "src/bin/pyana_prediction_market.rs"
+
+[lints]
+workspace = true
