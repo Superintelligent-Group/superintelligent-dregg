@@ -3562,6 +3562,37 @@ impl StarkAir for EffectVmAir {
         });
 
         // ====================================================================
+        // Stage 7 / §B: trace-side boundary for γ.0a turn-identity PI.
+        //
+        // Closes #49 (AIR nonce-bump invisibility at the trace level): bind
+        // row 0's `state_before.nonce` column to PI[ACTOR_NONCE]. Without
+        // this, a malicious prover could submit a trace whose row-0 nonce
+        // disagrees with PI[ACTOR_NONCE] and the STARK would still verify.
+        //
+        // Scope: this binding is correct for single-cell proofs where the
+        // proven cell IS the agent (state.nonce() == turn.nonce). For
+        // multi-cell turns, only the agent cell satisfies this; non-agent
+        // cells would need an IS_AGENT_CELL PI gate (deferred to γ.2 /
+        // STAGE-7-GAMMA-AGGREGATION-DESIGN.md). The bundle verifier
+        // (`verify_proof_carrying_turn_bundle`) cross-checks PI[ACTOR_NONCE]
+        // is the same across all per-cell proofs of a turn, so once we
+        // gate this boundary per-cell-role the property propagates.
+        //
+        // EFFECTS_HASH_GLOBAL_BASE: not boundary-bound here. Per-cell
+        // proofs already pin PI[EFFECTS_HASH_BASE] (the per-cell value)
+        // via the row-0 aux[4..5] binding above. For single-cell turns,
+        // EFFECTS_HASH_BASE == EFFECTS_HASH_GLOBAL_BASE (the bundle is
+        // one cell) and the executor's PI-matching loop enforces the
+        // equality. For multi-cell turns, the bundle verifier merges
+        // per-cell effects_hash values into the global; that's a γ.1+
+        // aggregation concern, not an AIR-local one.
+        constraints.push(BoundaryConstraint {
+            row: 0,
+            col: STATE_BEFORE_BASE + state::NONCE,
+            value: public_inputs[pi::ACTOR_NONCE],
+        });
+
+        // ====================================================================
         // SOUNDNESS FIX (Gap 1): Net delta range check via balance binding.
         //
         // The net_delta public input MUST reflect the actual balance change.
@@ -3614,11 +3645,15 @@ pub fn generate_effect_vm_trace(
     initial_state: &CellState,
     effects: &[Effect],
 ) -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
-    generate_effect_vm_trace_ext(
-        initial_state,
-        effects,
-        EffectVmContext::default(),
-    )
+    // Stage 7 / §B: for the default-context wrapper, set actor_nonce
+    // from the initial cell nonce. This is the natural invariant for
+    // single-cell proofs (the cell IS the agent), and it preserves
+    // backwards-compat with the dozens of tests that pass a non-zero
+    // initial nonce to CellState::new and rely on the row-0 boundary
+    // (state_before.nonce == PI[ACTOR_NONCE]) holding.
+    let mut ctx = EffectVmContext::default();
+    ctx.actor_nonce = initial_state.nonce as u64;
+    generate_effect_vm_trace_ext(initial_state, effects, ctx)
 }
 
 /// Extra context that goes into the widened PI layout (Stage 1 + 7-γ.0a).
@@ -8707,6 +8742,91 @@ mod tests {
             &public_inputs,
             0,
             "ValidateHandoff prover-chosen root",
+        );
+    }
+
+    // ========================================================================
+    // Stage 7 / §B: trace-side ACTOR_NONCE boundary tests.
+    //
+    // Positive: a trace whose row-0 state_before.nonce matches
+    // PI[ACTOR_NONCE] verifies end-to-end.
+    //
+    // Adversarial: a trace where PI[ACTOR_NONCE] disagrees with
+    // row-0 state_before.nonce must be rejected by the STARK
+    // boundary check.
+    // ========================================================================
+
+    #[test]
+    fn test_stage7_actor_nonce_boundary_positive() {
+        // Cell with nonce=5. The default-wrapper sets
+        // ctx.actor_nonce = initial_nonce, so the boundary holds.
+        let state = CellState::new(10_000, 5);
+        let effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        assert_eq!(
+            public_inputs[pi::ACTOR_NONCE],
+            BabyBear::new(5),
+            "default-wrapper should populate PI[ACTOR_NONCE] from initial_state.nonce",
+        );
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "honest actor_nonce binding should verify: {:?}",
+            result.err(),
+        );
+    }
+
+    #[test]
+    fn test_stage7_actor_nonce_pi_mismatch_rejected() {
+        // Cell with nonce=3, but we forge PI[ACTOR_NONCE]=99. The
+        // STARK boundary check must reject.
+        let state = CellState::new(10_000, 3);
+        let effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+        let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
+        assert_eq!(
+            trace[0][STATE_BEFORE_BASE + state::NONCE],
+            BabyBear::new(3)
+        );
+        // Forge PI: claim actor_nonce = 99.
+        public_inputs[pi::ACTOR_NONCE] = BabyBear::new(99);
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "PI[ACTOR_NONCE] disagreeing with trace row-0 nonce must be rejected",
+        );
+    }
+
+    #[test]
+    fn test_stage7_actor_nonce_trace_mismatch_rejected() {
+        // Conversely: PI says nonce=5, trace forges nonce=99 in row 0.
+        // The boundary check must reject.
+        let state = CellState::new(10_000, 5);
+        let effects = vec![Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }];
+        let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        // Forge the trace: row-0 state_before.nonce = 99.
+        // This also requires breaking the state-commitment hash chain,
+        // which the STARK separately catches, but the boundary fires
+        // first and is what we're testing here.
+        trace[0][STATE_BEFORE_BASE + state::NONCE] = BabyBear::new(99);
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "trace row-0 nonce disagreeing with PI[ACTOR_NONCE] must be rejected",
         );
     }
 }
