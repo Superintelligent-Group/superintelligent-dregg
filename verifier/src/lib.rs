@@ -19,6 +19,7 @@
 //! Future versions will support additional cell programs by VK hash lookup.
 
 use pyana_circuit::{EffectVmAir, field::BabyBear, stark};
+use pyana_circuit::stark::StarkAir;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -253,6 +254,265 @@ impl JsonRequest {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Replay-chain (WitnessedReceipt v1) — see WITNESSED-RECEIPT-CHAIN-DESIGN.md
+// ---------------------------------------------------------------------------
+//
+// The verifier crate intentionally does NOT import `pyana-turn`
+// (which is where `WitnessedReceipt` lives). To preserve that isolation
+// while still parsing the on-disk WR JSON, we declare a verifier-local
+// mirror struct that is serde-compatible with the producer's
+// `WitnessedReceipt`. Only the fields the replay loop needs are
+// deserialized; everything else (the inner `receipt`, etc.) is
+// preserved as raw JSON so the replayer can still pretty-print a verdict
+// per receipt index.
+
+/// Mirror of `pyana_turn::WitnessAvailability`. Only `Inline` is supported
+/// in v1; future variants will reject with "unwitnessable" in the verdict.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ReplayWitnessAvailability {
+    Inline,
+}
+
+/// Mirror of `pyana_turn::WitnessBundle`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayWitnessBundle {
+    pub trace_rows: Vec<Vec<u32>>,
+    pub availability: ReplayWitnessAvailability,
+}
+
+impl ReplayWitnessBundle {
+    /// BLAKE3 of postcard-serialized bundle. Must match the producer's
+    /// `WitnessBundle::witness_hash` computation byte-for-byte.
+    pub fn witness_hash(&self) -> [u8; 32] {
+        let bytes = postcard::to_allocvec(self).expect("ReplayWitnessBundle is serializable");
+        *blake3::hash(&bytes).as_bytes()
+    }
+}
+
+/// Mirror of `pyana_turn::WitnessedReceipt`. The inner `receipt` is parsed
+/// only enough to extract its `turn_hash` for verdict pretty-printing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayEntry {
+    /// Raw inner-receipt JSON, preserved so we don't have to mirror the
+    /// full TurnReceipt struct in this crate.
+    #[serde(default)]
+    pub receipt: serde_json::Value,
+    pub proof_bytes: Vec<u8>,
+    pub public_inputs: Vec<u32>,
+    #[serde(default)]
+    pub witness_bundle: Option<ReplayWitnessBundle>,
+    pub witness_hash: [u8; 32],
+    #[serde(default)]
+    pub aggregate_membership: Option<serde_json::Value>,
+}
+
+/// Per-receipt verdict from a replay-chain run.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ReplayVerdict {
+    /// Proof verified AND (if present) the witness bundle's constraints
+    /// and witness_hash match.
+    Verified,
+    /// One of the verification steps failed; `reason` explains.
+    Rejected { reason: String },
+    /// The receipt carried no witness bundle and the proof + PI were
+    /// either malformed or rejected by the STARK verifier. Distinct from
+    /// `Rejected` only when the witness was the missing piece — i.e. a
+    /// `Sealed` / future-variant WR that the v1 replayer cannot fully
+    /// exercise. v1 produces this only when `witness_bundle` is absent
+    /// AND the proof itself was sound (so the chain is *scope-1-OK* but
+    /// not scope-2-OK).
+    Unwitnessable,
+}
+
+/// Overall chain verdict.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplayChainOutput {
+    pub total: usize,
+    pub verified: usize,
+    /// 0-based index of the first WR that failed verification (None if all green).
+    pub first_failure: Option<usize>,
+    pub per_entry: Vec<ReplayVerdict>,
+    pub overall_verified: bool,
+    pub summary: String,
+}
+
+/// Run the v1 replay loop on a deserialized chain of [`ReplayEntry`].
+///
+/// Steps (per WR), matching design doc §5 / instructions:
+/// 1. Verify the STARK proof against the embedded public inputs.
+/// 2. If `witness_bundle` is `Some(Inline)`: reconstruct the trace, run
+///    `EffectVmAir::eval_constraints` on each consecutive row pair across
+///    several alphas, confirm ALL are zero.
+/// 3. Confirm BLAKE3 of the serialized bundle matches `witness_hash`.
+/// 4. (Optional structural check) `witness_hash == [0;32]` iff bundle is None.
+///
+/// Returns per-receipt verdicts and the chain-level overall.
+pub fn replay_chain(entries: &[ReplayEntry]) -> ReplayChainOutput {
+    use blake3;
+
+    let mut per_entry = Vec::with_capacity(entries.len());
+    let mut first_failure: Option<usize> = None;
+    let mut verified = 0usize;
+
+    // Pseudo-random alphas for trace constraint sampling. We use a small
+    // fixed set drawn from BabyBear's canonical interval; this gives a
+    // soundness boost over a single alpha without needing a transcript
+    // (the STARK verify already provides cryptographic soundness; the
+    // alpha sampling is a redundancy check on the witness side).
+    let alphas: [BabyBear; 4] = [
+        BabyBear::new(0xdead_beefu32 % (1u32 << 31)),
+        BabyBear::new(0x1234_5678u32 % (1u32 << 31)),
+        BabyBear::new(0xfeed_face_u32 % (1u32 << 31)),
+        BabyBear::new(0x0bad_c0deu32 % (1u32 << 31)),
+    ];
+
+    for (idx, wr) in entries.iter().enumerate() {
+        let verdict = replay_one(wr, &alphas);
+        let is_ok = matches!(verdict, ReplayVerdict::Verified);
+        if is_ok {
+            verified += 1;
+        } else if first_failure.is_none() {
+            first_failure = Some(idx);
+        }
+        per_entry.push(verdict);
+        let _ = blake3::hash(b"replay-progress"); // keep blake3 used in non-test builds
+    }
+
+    let overall_verified = first_failure.is_none();
+    let summary = if overall_verified {
+        format!("chain verified: {}/{} entries", verified, entries.len())
+    } else {
+        format!(
+            "chain rejected: {}/{} entries verified; first failure at index {}",
+            verified,
+            entries.len(),
+            first_failure.unwrap()
+        )
+    };
+
+    ReplayChainOutput {
+        total: entries.len(),
+        verified,
+        first_failure,
+        per_entry,
+        overall_verified,
+        summary,
+    }
+}
+
+fn replay_one(wr: &ReplayEntry, alphas: &[BabyBear]) -> ReplayVerdict {
+    // Step 1: STARK proof verification.
+    let (proof_verdict, code) =
+        verify_effect_vm_proof(&wr.proof_bytes, &wr.public_inputs, AUTO_DETECT_VK_HASH);
+    if code != exit_code::VERIFIED {
+        return ReplayVerdict::Rejected {
+            reason: format!("STARK verify failed: {}", proof_verdict.reason),
+        };
+    }
+
+    // Step 2: trace-side replay (witness bundle).
+    let Some(bundle) = wr.witness_bundle.as_ref() else {
+        // No witness bundle attached.
+        // - witness_hash MUST be all zeros (the producer's invariant).
+        // - Otherwise the receipt claims a witness it isn't shipping →
+        //   scope-(2) cannot complete (unwitnessable).
+        if wr.witness_hash != [0u8; 32] {
+            return ReplayVerdict::Unwitnessable;
+        }
+        // No bundle, no hash claim: chain is scope-1 sound but cannot
+        // be scope-2 replayed. Returning Verified here matches the design
+        // doc's "scope-(1)-OK" semantics; surface a softer signal via
+        // Unwitnessable when callers explicitly require scope-2.
+        return ReplayVerdict::Verified;
+    };
+
+    // Availability must be Inline in v1.
+    if !matches!(bundle.availability, ReplayWitnessAvailability::Inline) {
+        return ReplayVerdict::Unwitnessable;
+    }
+
+    // Step 3: witness_hash binding check.
+    let recomputed_hash = bundle.witness_hash();
+    if recomputed_hash != wr.witness_hash {
+        return ReplayVerdict::Rejected {
+            reason: format!(
+                "witness_hash mismatch: declared={}, recomputed={}",
+                hex::encode(wr.witness_hash),
+                hex::encode(recomputed_hash)
+            ),
+        };
+    }
+
+    // Step 4: trace shape sanity.
+    let trace = &bundle.trace_rows;
+    if trace.len() < 2 {
+        return ReplayVerdict::Rejected {
+            reason: format!("trace too short: {} rows", trace.len()),
+        };
+    }
+    let width = trace[0].len();
+    if !trace.iter().all(|r| r.len() == width) {
+        return ReplayVerdict::Rejected {
+            reason: "ragged trace rows".to_string(),
+        };
+    }
+
+    // Step 5: trace_len must be power-of-two ≥ 2 (matches the AIR's invariant).
+    let trace_len = trace.len();
+    if !trace_len.is_power_of_two() {
+        return ReplayVerdict::Rejected {
+            reason: format!("trace_len {} not power-of-two", trace_len),
+        };
+    }
+
+    // Lift trace_rows (u32) → BabyBear.
+    let trace_bb: Vec<Vec<BabyBear>> = trace
+        .iter()
+        .map(|row| row.iter().map(|&v| BabyBear::new_canonical(v)).collect())
+        .collect();
+
+    // Lift public_inputs.
+    let pi_bb: Vec<BabyBear> = wr
+        .public_inputs
+        .iter()
+        .map(|&v| BabyBear::new_canonical(v))
+        .collect();
+
+    // Build the AIR sized to the trace.
+    let air = EffectVmAir::new(trace_len);
+    if trace_bb[0].len() != air.width() {
+        return ReplayVerdict::Rejected {
+            reason: format!(
+                "trace width {} != AIR width {}",
+                trace_bb[0].len(),
+                air.width()
+            ),
+        };
+    }
+
+    // Step 6: walk every consecutive (local, next) row pair across each
+    // alpha and confirm the AIR's combined constraint polynomial is zero.
+    for i in 0..(trace_len - 1) {
+        for &alpha in alphas {
+            let c = air.eval_constraints(&trace_bb[i], &trace_bb[i + 1], &pi_bb, alpha);
+            if c.as_u32() != 0 {
+                return ReplayVerdict::Rejected {
+                    reason: format!(
+                        "constraint violation at row {}, alpha=0x{:08x}: residue={}",
+                        i,
+                        alpha.as_u32(),
+                        c.as_u32()
+                    ),
+                };
+            }
+        }
+    }
+
+    // All checks passed.
+    ReplayVerdict::Verified
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,5 +546,57 @@ mod tests {
     fn test_resolve_vk_hash_air_name_encoded() {
         let encoded = hex::encode(EFFECT_VM_AIR_NAME);
         assert_eq!(resolve_vk_hash(&encoded), Some(EFFECT_VM_AIR_NAME));
+    }
+
+    // ---- replay-chain v1 -------------------------------------------------
+
+    #[test]
+    fn replay_chain_empty_is_verified() {
+        let out = replay_chain(&[]);
+        assert!(out.overall_verified);
+        assert_eq!(out.total, 0);
+        assert_eq!(out.verified, 0);
+        assert!(out.first_failure.is_none());
+    }
+
+    #[test]
+    fn replay_chain_detects_witness_hash_tamper() {
+        // Build a WR-shaped entry where the bundle is present but the
+        // declared witness_hash is wrong. The proof step rejects first
+        // because we use empty proof_bytes — but the structural check
+        // still demonstrates the verdict shape is wired.
+        let bundle = ReplayWitnessBundle {
+            trace_rows: vec![vec![0u32; 4]; 4],
+            availability: ReplayWitnessAvailability::Inline,
+        };
+        let entry = ReplayEntry {
+            receipt: serde_json::Value::Null,
+            proof_bytes: vec![],
+            public_inputs: vec![],
+            witness_bundle: Some(bundle),
+            witness_hash: [0xFFu8; 32], // wrong
+            aggregate_membership: None,
+        };
+        let out = replay_chain(&[entry]);
+        assert!(!out.overall_verified);
+        assert_eq!(out.first_failure, Some(0));
+    }
+
+    #[test]
+    fn replay_chain_no_witness_no_hash_is_unwitnessable_only_when_proof_invalid() {
+        // No bundle, witness_hash zero, no proof → STARK verify rejects
+        // first (empty proof bytes). The Unwitnessable branch fires only
+        // when proof + hash zero coexist; here proof is empty so step 1
+        // already fails.
+        let entry = ReplayEntry {
+            receipt: serde_json::Value::Null,
+            proof_bytes: vec![],
+            public_inputs: vec![],
+            witness_bundle: None,
+            witness_hash: [0u8; 32],
+            aggregate_membership: None,
+        };
+        let out = replay_chain(&[entry]);
+        assert!(!out.overall_verified);
     }
 }

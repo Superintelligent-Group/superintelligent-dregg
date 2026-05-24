@@ -26,7 +26,8 @@
 //! dependencies on shared context are the bytes it reads from disk / stdin.
 
 use pyana_verifier::{
-    JsonRequest, VerifierOutput, exit_code, parse_public_inputs_json, verify_effect_vm_proof,
+    JsonRequest, ReplayEntry, VerifierOutput, exit_code, parse_public_inputs_json, replay_chain,
+    verify_effect_vm_proof,
 };
 use std::{
     env,
@@ -36,6 +37,11 @@ use std::{
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
+    // Subcommand dispatch.
+    if args.len() >= 2 && args[1] == "replay-chain" {
+        run_replay_chain(&args[2..]);
+    }
 
     // Detect JSON-stdin mode: no args, or stdin is not a tty.
     // We use the simple heuristic: if no flags given, read stdin.
@@ -124,4 +130,54 @@ fn read_json_stdin() -> Result<(Vec<u8>, Vec<u32>, String), String> {
     let req = JsonRequest::parse(&buf)?;
     let proof_bytes = req.proof_bytes()?;
     Ok((proof_bytes, req.public_inputs, req.vk_hash))
+}
+
+// ---------------------------------------------------------------------------
+// replay-chain subcommand
+// ---------------------------------------------------------------------------
+
+/// `pyana-verifier replay-chain <path-to-chain.json>`
+///
+/// Reads a JSON array of `WitnessedReceipt` entries (the on-disk shape
+/// produced by `pyana_turn::WitnessedReceipt::chain_to_json`), runs the
+/// v1 replay loop (proof verify + trace re-check + witness_hash binding),
+/// and prints a JSON verdict object. Exit code matches the chain-level
+/// verdict (0 = all verified, 1 = at least one rejection, 2 = read/parse error).
+fn run_replay_chain(args: &[String]) -> ! {
+    let path = match args.first() {
+        Some(p) => p,
+        None => {
+            eprintln!("Usage: pyana-verifier replay-chain <path-to-chain.json>");
+            process::exit(exit_code::ERROR);
+        }
+    };
+
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("cannot read {}: {}", path, e);
+            process::exit(exit_code::ERROR);
+        }
+    };
+
+    let entries: Vec<ReplayEntry> = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("cannot parse chain JSON: {}", e);
+            process::exit(exit_code::ERROR);
+        }
+    };
+
+    let output = replay_chain(&entries);
+    let json = serde_json::to_string_pretty(&output).unwrap_or_else(|_| {
+        r#"{"overall_verified":false,"summary":"serialisation error"}"#.to_string()
+    });
+    println!("{}", json);
+
+    let code = if output.overall_verified {
+        exit_code::VERIFIED
+    } else {
+        exit_code::REJECTED
+    };
+    process::exit(code);
 }
