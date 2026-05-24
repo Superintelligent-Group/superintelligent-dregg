@@ -741,6 +741,7 @@ mod inbox_delivery_tests {
 #[cfg(test)]
 mod blinded_credential_tests {
     use pyana_storage::blinded::{BlindedQueue, ConsumeResult, ConsumptionProof};
+    use pyana_storage::commitment::BlindedItemCommitment;
 
     // ----------------------------------------------------------------
     // Local Merkle helper (replicates the private `generate_merkle_proof`
@@ -775,12 +776,18 @@ mod blinded_credential_tests {
 
     /// Build a valid [`ConsumptionProof`] for commitment at `position` in `all_commitments`.
     fn make_proof(
-        all_commitments: &[[u8; 32]],
+        all_commitments: &[BlindedItemCommitment],
         position: usize,
         secret: &[u8; 32],
     ) -> ConsumptionProof {
         let commitment = all_commitments[position];
-        let siblings = merkle_siblings(all_commitments, position);
+        // The local Merkle helper operates on the BLAKE3 leaves; the
+        // dual-form Commitment4 carries `.blake3` for this exact purpose.
+        let blake_leaves: Vec<[u8; 32]> =
+            all_commitments.iter().map(|c| c.blake3).collect();
+        let sibling_bytes = merkle_siblings(&blake_leaves, position);
+        let siblings: Vec<BlindedItemCommitment> =
+            sibling_bytes.into_iter().map(Into::into).collect();
         let nullifier = pyana_storage::blinded::crypto::derive_nullifier(
             &commitment,
             secret,
@@ -874,8 +881,8 @@ mod blinded_credential_tests {
 
         // (N+1)th attempt with out-of-bounds position → InvalidProof.
         let out_of_bounds = ConsumptionProof {
-            nullifier: [0xFF; 32],
-            commitment: [0xAA; 32],
+            nullifier: [0xFFu8; 32].into(),
+            commitment: [0xAAu8; 32].into(),
             position: N + 1, // beyond committed items
             membership_proof: vec![],
         };

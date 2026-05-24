@@ -82,7 +82,7 @@ impl OrderBlindedQueue {
     /// `commitment` = `blake3("pyana-orderbook-blinded-v1" || order_bytes || secret)`.
     pub fn commit(&mut self, commitment: [u8; 32]) -> Result<[u8; 32], BlindedOrderError> {
         self.inner
-            .commit(commitment)
+            .commit(commitment.into())
             .map_err(|_| BlindedOrderError::QueueFull)?;
         Ok(self.inner.commitment_root())
     }
@@ -98,14 +98,16 @@ impl OrderBlindedQueue {
         secret: [u8; 32],
         proof: ConsumptionProof,
     ) -> Result<(), BlindedOrderError> {
-        // 1. Verify commitment hash.
+        // 1. Verify commitment hash (compare on the BLAKE3 form: the
+        // dual-form `proof.commitment` carries both, and the wire-side
+        // commitment hash we computed locally is BLAKE3 only).
         let expected_commitment = compute_blinded_order_commitment(&order, &secret);
-        if expected_commitment != proof.commitment {
+        if expected_commitment != proof.commitment.blake3 {
             return Err(BlindedOrderError::CommitmentMismatch);
         }
 
         // 2. Check for double-consume (by commitment hash).
-        if self.spent_commitments.contains(&proof.commitment) {
+        if self.spent_commitments.contains(&proof.commitment.blake3) {
             return Err(BlindedOrderError::AlreadyConsumed);
         }
 
@@ -122,7 +124,7 @@ impl OrderBlindedQueue {
         }
 
         // 4. Record spent commitment and enqueue order.
-        self.spent_commitments.insert(proof.commitment);
+        self.spent_commitments.insert(proof.commitment.blake3);
         self.consumed_orders.push(order);
 
         Ok(())

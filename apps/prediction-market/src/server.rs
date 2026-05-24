@@ -332,7 +332,7 @@ async fn commit_bet(
         api_error(StatusCode::UNPROCESSABLE_ENTITY, format!("commit failed: {e:?}"))
     })?;
     let position = commitments.len();
-    commitments.push(commitment);
+    commitments.push(commitment.blake3);
     let root_hex = hex_id(&queue.commitment_root());
     drop(queue);
     drop(commitments);
@@ -350,10 +350,10 @@ async fn commit_bet(
         secret,
         position,
     };
-    state.pending_bets.write().await.insert(commitment, pending);
+    state.pending_bets.write().await.insert(commitment.blake3, pending);
 
     Ok(Json(PlaceBetResponse {
-        commitment_hex: hex_id(&commitment),
+        commitment_hex: hex_id(&commitment.blake3),
         position,
         queue_root_hex: root_hex,
         escrowed: req.stake,
@@ -387,11 +387,12 @@ async fn reveal_bet(
         pending.commitment,
         pending.secret,
         pending.position,
-        merkle_proof,
+        merkle_proof.into_iter().map(Into::into).collect(),
     );
 
-    // Consume against the live queue.
-    let nullifier_bytes = proof.nullifier;
+    // Consume against the live queue. Keep the BLAKE3 bytes for error-path
+    // responses; the dual-form Commitment4 carries `.blake3` as the wire id.
+    let nullifier_bytes = proof.nullifier.blake3;
     let result = {
         let mut queue = state.blinded_queue.lock().await;
         queue.consume(&proof)

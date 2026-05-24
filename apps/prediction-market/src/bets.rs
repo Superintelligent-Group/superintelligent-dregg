@@ -16,6 +16,7 @@
 //! a real cipher.
 
 use pyana_storage::blinded::crypto as blinded_crypto;
+use pyana_storage::commitment::BlindedItemCommitment;
 use serde::{Deserialize, Serialize};
 
 use crate::market::{MarketId, OutcomeId};
@@ -51,7 +52,7 @@ impl BetPayload {
 #[derive(Clone, Debug)]
 pub struct PendingBet {
     pub payload: BetPayload,
-    pub commitment: [u8; 32],
+    pub commitment: BlindedItemCommitment,
     pub secret: [u8; 32],
     /// Position in the blinded queue (assigned when committed).
     pub position: usize,
@@ -63,7 +64,7 @@ pub struct PendingBet {
 /// [`pyana_storage::blinded::crypto::create_commitment`], so the resulting
 /// hash is what the queue will store. The "randomness" input is the bettor's
 /// `secret`, which they will reveal at consume time.
-pub fn create_bet_commitment(payload: &BetPayload, secret: &[u8; 32]) -> [u8; 32] {
+pub fn create_bet_commitment(payload: &BetPayload, secret: &[u8; 32]) -> BlindedItemCommitment {
     blinded_crypto::create_commitment(&payload.canonical_bytes(), secret)
 }
 
@@ -77,7 +78,7 @@ pub fn build_consumption_proof(
         pending.commitment,
         pending.secret,
         pending.position,
-        merkle_siblings,
+        merkle_siblings.into_iter().map(Into::into).collect(),
     )
 }
 

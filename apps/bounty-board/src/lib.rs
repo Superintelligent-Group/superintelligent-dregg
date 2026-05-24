@@ -373,7 +373,7 @@ mod tests {
         let item_data = b"claim-slot-1";
         let randomness = [0x42u8; 32];
         let commitment = crypto::create_commitment(item_data, &randomness);
-        let commitment_hex = hex_encode(&commitment);
+        let commitment_hex = hex_encode(&commitment.blake3);
 
         // Step 1: commit.
         let commit_resp = client
@@ -387,7 +387,7 @@ mod tests {
         // Step 2: consume (public proof — single commitment, no siblings needed).
         let secret = [0xABu8; 32];
         let nullifier = crypto::derive_nullifier(&commitment, &secret, 0);
-        let nullifier_hex = hex_encode(&nullifier);
+        let nullifier_hex = hex_encode(&nullifier.blake3);
 
         let empty_proof: Vec<String> = vec![];
         let consume_body = serde_json::json!({
@@ -434,7 +434,7 @@ mod tests {
             let c = crypto::create_commitment(&[i], &[i + 1; 32]);
             let resp = client
                 .post(format!("{base}/queue/claims/commit"))
-                .json(&serde_json::json!({ "commitment_hex": hex_encode(&c) }))
+                .json(&serde_json::json!({ "commitment_hex": hex_encode(&c.blake3) }))
                 .send()
                 .await
                 .unwrap();
@@ -459,10 +459,10 @@ mod tests {
         // Compute sibling (commitment at position 1).
         let c1 = crypto::create_commitment(&[1u8], &[2u8; 32]);
         let consume_body = serde_json::json!({
-            "nullifier_hex": hex_encode(&nullifier),
-            "commitment_hex": hex_encode(&c0),
+            "nullifier_hex": hex_encode(&nullifier.blake3),
+            "commitment_hex": hex_encode(&c0.blake3),
             "position": 0usize,
-            "membership_proof": [hex_encode(&c1)]
+            "membership_proof": [hex_encode(&c1.blake3)]
         });
         let consume_resp = client
             .post(format!("{base}/queue/claims/consume"))

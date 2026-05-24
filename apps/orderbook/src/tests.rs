@@ -1524,9 +1524,9 @@ mod tests {
         let nullifier = *hasher.finalize().as_bytes();
 
         pyana_storage::blinded::ConsumptionProof {
-            nullifier,
+            nullifier: nullifier.into(),
             membership_proof: vec![], // empty path for single-leaf tree
-            commitment,
+            commitment: commitment.into(),
             position: 0,
         }
     }

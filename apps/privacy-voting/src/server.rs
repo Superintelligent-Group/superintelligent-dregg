@@ -350,7 +350,7 @@ async fn submit_ballot(
     }
 
     ps.queue
-        .commit(commitment)
+        .commit(commitment.into())
         .map_err(|e| api_error(StatusCode::UNPROCESSABLE_ENTITY, format!("queue: {e:?}")))?;
     ps.committed.insert(commitment);
     ps.voted.insert(voter_pk);

@@ -270,8 +270,8 @@ async fn double_reveal_is_rejected() {
     use pyana_storage::blinded::{ConsumeResult, ConsumptionProof};
     let nullifier_bytes = pyana_app_framework::hex::hex_to_bytes32(&first_nullifier).unwrap();
     let bogus_proof = ConsumptionProof {
-        nullifier: nullifier_bytes,
-        commitment: [0u8; 32],
+        nullifier: nullifier_bytes.into(),
+        commitment: [0u8; 32].into(),
         position: 0,
         membership_proof: vec![],
     };
