@@ -62,6 +62,7 @@ pub mod epoch;
 #[cfg(feature = "morpheus")]
 pub mod network;
 pub mod node;
+pub mod receipt;
 pub mod revocation;
 pub mod solo;
 pub mod threshold;
@@ -78,6 +79,7 @@ pub use node::{
     ConsensusConfig, ConsensusError, ConsensusOrchestrator, ConsensusState, Federation,
     FederationNode, PendingStateRoots, ReconfigurationProposal, ReconfigurationVotes,
 };
+pub use receipt::{FederationReceipt, FederationReceiptBody, ReceiptQc};
 pub use revocation::{RevocationTree, RevocationVerification, RevocationVerifier};
 pub use solo::{
     FederationMode, NullifierConflict, NullifierLog, NullifierLogEntry, SoloConsensusState,
