@@ -128,11 +128,18 @@ impl LiveRef {
         &self.permissions
     }
 
-    /// Send an action to the remote cell.
+    /// Allocate an [`EventualRef`] for an action to-be-sent to the remote
+    /// cell.
     ///
-    /// Returns an [`EventualRef`] representing the async result. The action is
-    /// queued for delivery to the remote cell; the result promise will be
-    /// resolved when the action completes.
+    /// **Current status (audit finding C-2):** this method allocates a
+    /// promise id in the local pipeline registry but does *not* yet
+    /// enqueue the `action` argument for wire delivery. The
+    /// argument is reserved in the signature so this becomes a no-op
+    /// rename once the wire-delivery path is wired through; until then,
+    /// callers that need actual remote dispatch must use the
+    /// `CapTpClient::pipeline` / `pipeline_to` methods (which route
+    /// through the pipeline registry) and/or submit a real `Turn` via the
+    /// node HTTP path.
     pub fn send(&self, _action: PipelinedAction) -> EventualRef {
         let promise_id = {
             let mut registry = self.pipeline_registry.lock().expect("pipeline lock");
@@ -146,9 +153,12 @@ impl LiveRef {
 
     /// Pipeline an action onto this reference.
     ///
-    /// Similar to [`send`](Self::send), but intended for chaining: the result
-    /// can be used as the target for further pipelined actions without waiting
-    /// for resolution. This eliminates round trips in multi-step operations.
+    /// **Current status:** identical to [`send`](Self::send) — the
+    /// remote-delivery seam is not yet implemented, so both methods
+    /// allocate a fresh promise without enqueuing the action. The
+    /// distinction is preserved at the type level because pipelined
+    /// chains will eventually want a different routing decision
+    /// (resolve-and-forward vs. resolve-and-collect).
     pub fn pipeline(&self, action: PipelinedAction) -> EventualRef {
         // For pipelining, we create a promise and the action targets the cell.
         // The difference from send is semantic: pipeline signals intent to chain.
