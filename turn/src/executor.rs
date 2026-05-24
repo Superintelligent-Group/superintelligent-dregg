@@ -1195,6 +1195,24 @@ impl TurnExecutor {
             public_inputs[effect_vm::pi::APPROVED_HANDOFFS_BASE + i] = approved_handoffs_root[i];
         }
 
+        // Stage 7-γ.0c: populate the four turn-identity PI slots from the
+        // canonical Turn. These are the same values every per-cell proof
+        // of this turn must carry; the verifier rejects any mismatch.
+        let (turn_hash_4, effects_hash_global_4, actor_nonce, prev_receipt_4) =
+            Self::compute_turn_identity_pi(turn);
+        for i in 0..effect_vm::pi::TURN_HASH_LEN {
+            public_inputs[effect_vm::pi::TURN_HASH_BASE + i] = turn_hash_4[i];
+        }
+        for i in 0..effect_vm::pi::EFFECTS_HASH_GLOBAL_LEN {
+            public_inputs[effect_vm::pi::EFFECTS_HASH_GLOBAL_BASE + i] =
+                effects_hash_global_4[i];
+        }
+        public_inputs[effect_vm::pi::ACTOR_NONCE] =
+            BabyBear::new((actor_nonce & 0x7FFF_FFFF) as u32);
+        for i in 0..effect_vm::pi::PREVIOUS_RECEIPT_HASH_LEN {
+            public_inputs[effect_vm::pi::PREVIOUS_RECEIPT_HASH_BASE + i] = prev_receipt_4[i];
+        }
+
         // Append custom proof entries (vk_hash + proof_commitment per custom effect).
         let mut custom_idx = 0;
         for effect in &vm_effects {
@@ -1539,6 +1557,94 @@ impl TurnExecutor {
         result[..4].copy_from_slice(&lo.0.to_le_bytes());
         result[4..8].copy_from_slice(&hi.0.to_le_bytes());
         result
+    }
+
+    /// Stage 7-γ.0c: compute the four shared "turn-identity" PI values that
+    /// every per-cell proof of `turn` must agree on.
+    ///
+    /// Returns `(turn_hash[4], effects_hash_global[4], actor_nonce,
+    /// previous_receipt_hash[4])` where:
+    ///
+    /// - `turn_hash` is `canonical_32_to_felts_4(Turn::hash())` (v3, post-α.1).
+    /// - `effects_hash_global` is a Poseidon2 absorption chain over the
+    ///   canonical-DFS-order traversal of *every* Effect in the call_forest
+    ///   (not per-cell). Order: pre-order DFS, root-list order at the top,
+    ///   children-list order at each node, action.effects-list order at each
+    ///   action. Each Effect contributes its `Effect::hash()` -> 4 felts via
+    ///   `canonical_32_to_felts_4`, absorbed into the running 4-felt
+    ///   accumulator by element-wise composition with `hash_4_to_1`. The
+    ///   empty-forest sentinel is `[BabyBear::ZERO; 4]`.
+    /// - `actor_nonce` is `turn.nonce` (closes #49 differential-test gap).
+    /// - `previous_receipt_hash` is `canonical_32_to_felts_4` of
+    ///   `turn.previous_receipt_hash`, or `[ZERO; 4]` when None.
+    ///
+    /// The canonical DFS order is the same one a Stage 7-γ.1 aggregation
+    /// micro-AIR will replay when checking
+    /// `Poseidon2-merge(effects_local[c1..]) == effects_hash_global`, so
+    /// any future cross-cell aggregator must match this traversal exactly.
+    pub fn compute_turn_identity_pi(
+        turn: &Turn,
+    ) -> (
+        [pyana_circuit::field::BabyBear; 4],
+        [pyana_circuit::field::BabyBear; 4],
+        u64,
+        [pyana_circuit::field::BabyBear; 4],
+    ) {
+        use pyana_circuit::field::BabyBear;
+        use pyana_circuit::poseidon2::hash_4_to_1;
+        use pyana_commit::typed::canonical_32_to_felts_4;
+
+        let turn_hash_4 = canonical_32_to_felts_4(&turn.hash());
+
+        // Canonical-DFS-order collection of the WHOLE call_forest's effects.
+        // The order must match what a future cross-cell aggregator (γ.1)
+        // computes; document it here in one place and keep this helper as
+        // the source of truth.
+        fn dfs_collect(tree: &CallTree, out: &mut Vec<[u8; 32]>) {
+            for effect in &tree.action.effects {
+                out.push(effect.hash());
+            }
+            for child in &tree.children {
+                dfs_collect(child, out);
+            }
+        }
+        let mut effect_hashes: Vec<[u8; 32]> = Vec::new();
+        for root in &turn.call_forest.roots {
+            dfs_collect(root, &mut effect_hashes);
+        }
+
+        // Absorb each 32-byte effect hash into a running 4-felt accumulator.
+        // The empty-forest case yields the zero sentinel. The absorption rule
+        // for one block is acc' = elementwise hash_4_to_1 of [acc[i], blk[i]
+        // mixed with index salts]. We use a simple feistel-flavoured pattern:
+        //   for each i in 0..4:
+        //     acc[i] = hash_4_to_1(&[acc[i], blk[i], acc[(i+1)%4], blk[(i+1)%4]])
+        // — distinct salts per position via the rotation, so the four output
+        // limbs depend on all eight input limbs. Deterministic and trivially
+        // re-implementable in a future aggregation AIR.
+        let mut acc: [BabyBear; 4] = [BabyBear::ZERO; 4];
+        for h in &effect_hashes {
+            let blk = canonical_32_to_felts_4(h);
+            let mut next = [BabyBear::ZERO; 4];
+            for i in 0..4 {
+                let j = (i + 1) % 4;
+                next[i] = hash_4_to_1(&[acc[i], blk[i], acc[j], blk[j]]);
+            }
+            acc = next;
+        }
+        let effects_hash_global_4 = acc;
+
+        let previous_receipt_hash_4 = match &turn.previous_receipt_hash {
+            Some(h) => canonical_32_to_felts_4(h),
+            None => [BabyBear::ZERO; 4],
+        };
+
+        (
+            turn_hash_4,
+            effects_hash_global_4,
+            turn.nonce,
+            previous_receipt_hash_4,
+        )
     }
 
     /// Convert turn-level effects from the call forest into circuit-level Effect VM effects.
