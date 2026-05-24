@@ -2074,6 +2074,21 @@ impl TurnExecutor {
                     Effect::NoteCreate { value, .. } => {
                         *net -= *value as i64;
                     }
+                    // Stage 3 honest projections: AIR enforces balance changes
+                    // for these variants, so they must contribute to net_delta
+                    // for the PI-to-trace consistency constraint to hold.
+                    Effect::CreateEscrow { cell, amount, .. } => {
+                        if cell == cell_id {
+                            *net -= *amount as i64;
+                        }
+                    }
+                    Effect::BridgeLock { value, .. } => {
+                        // BridgeLock is always emitted by the actor cell, so
+                        // it always debits the actor's balance. (Unlike
+                        // Transfer, there's no separate `from` field — the
+                        // turn's agent is the locker.)
+                        *net -= *value as i64;
+                    }
                     _ => {}
                 }
             }
