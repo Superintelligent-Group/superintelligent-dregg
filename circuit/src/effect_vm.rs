@@ -99,17 +99,17 @@ use crate::stark::{BoundaryConstraint, StarkAir};
 // ============================================================================
 
 /// Total trace width.
-/// Layout: 26 selectors + 14 state_before + 8 params + 14 state_after + 23 aux = 85.
+/// Layout: 27 selectors + 14 state_before + 8 params + 14 state_after + 23 aux = 86.
 /// (aux[8..10] = state commitment intermediates;
 ///  aux[11] = cumulative custom-effect count (sum-check, Stage 1);
 ///  aux[12..20] = old_reserved bit-decomposition for sealing honesty (Stage 2);
 ///  aux[20] = mode_flag bit;
 ///  aux[21] = ResizeQueue delta sign (Stage 2: 0=grow, 1=shrink);
 ///  aux[22] = ResizeQueue |delta| magnitude (Stage 2))
-pub const EFFECT_VM_WIDTH: usize = 85;
+pub const EFFECT_VM_WIDTH: usize = 86;
 
 /// Number of effect types (selectors).
-pub const NUM_EFFECTS: usize = 26;
+pub const NUM_EFFECTS: usize = 27;
 
 /// Selector column indices.
 pub mod sel {
@@ -162,6 +162,11 @@ pub mod sel {
     /// but does not modify any state column (balance, fields, cap_root all
     /// pass through unchanged; nonce increments like any non-NoOp effect).
     pub const EMIT_EVENT: usize = 25;
+    /// SetPermissions: update the cell's permission table. The VM doesn't
+    /// model permissions in its state columns (they live in the cell's
+    /// off-trace manifest), so the AIR enforces state-passthrough and binds
+    /// a hash of the new permissions into effects_hash.
+    pub const SET_PERMISSIONS: usize = 26;
 }
 
 /// State column offsets (relative to state start).
@@ -533,6 +538,12 @@ pub enum Effect {
     /// the AIR constraint enforces full state passthrough — no balance,
     /// field, or cap_root change. Nonce increments by 1 like any non-NoOp effect.
     EmitEvent { event_hash: BabyBear },
+    /// SetPermissions: update a cell's permission table. Permissions live
+    /// outside the VM's tracked state, so the AIR enforces full state
+    /// passthrough (balance / fields / cap_root unchanged) and the
+    /// `permissions_hash` parameter binds the new permissions into
+    /// effects_hash so the prover commits to the specific update.
+    SetPermissions { permissions_hash: BabyBear },
     /// Spend a note (reveal nullifier, credit balance).
     NoteSpend { nullifier: BabyBear, value: u64 },
     /// Create a note (create commitment, debit balance).
@@ -947,6 +958,10 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
             Effect::EmitEvent { event_hash } => {
                 hasher_inputs.push(BabyBear::new(25));
                 hasher_inputs.push(*event_hash);
+            }
+            Effect::SetPermissions { permissions_hash } => {
+                hasher_inputs.push(BabyBear::new(26));
+                hasher_inputs.push(*permissions_hash);
             }
             Effect::NoteSpend { nullifier, value } => {
                 hasher_inputs.push(BabyBear::new(4));
@@ -1647,6 +1662,28 @@ impl StarkAir for EffectVmAir {
         alpha_pow = alpha_pow * alpha;
         for i in 0..8 {
             let c = s_emitevent
+                * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
+                    - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
+            combined = combined + alpha_pow * c;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // -- SetPermissions: same shape as EmitEvent (state passthrough) --
+        // Permissions live outside the VM trace (they're part of the cell's
+        // off-chain manifest). The AIR's job is to bind permissions_hash
+        // into effects_hash and forbid state column drift.
+        let s_setperms = local[sel::SET_PERMISSIONS];
+        let c_sp_bal_lo = s_setperms * (new_bal_lo - old_bal_lo);
+        combined = combined + alpha_pow * c_sp_bal_lo;
+        alpha_pow = alpha_pow * alpha;
+        let c_sp_bal_hi = s_setperms * (new_bal_hi - old_bal_hi);
+        combined = combined + alpha_pow * c_sp_bal_hi;
+        alpha_pow = alpha_pow * alpha;
+        let c_sp_cap = s_setperms * (new_cap_root - old_cap_root);
+        combined = combined + alpha_pow * c_sp_cap;
+        alpha_pow = alpha_pow * alpha;
+        for i in 0..8 {
+            let c = s_setperms
                 * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
                     - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
             combined = combined + alpha_pow * c;
@@ -3299,6 +3336,7 @@ pub fn generate_effect_vm_trace_ext(
             Effect::PipelineStep { .. } => sel::PIPELINE_STEP,
             Effect::RevokeCapability { .. } => sel::REVOKE_CAPABILITY,
             Effect::EmitEvent { .. } => sel::EMIT_EVENT,
+            Effect::SetPermissions { .. } => sel::SET_PERMISSIONS,
         };
         row[sel_idx] = BabyBear::ONE;
 
@@ -3362,6 +3400,12 @@ pub fn generate_effect_vm_trace_ext(
                 // Park the event hash in param 0 so the AIR can bind it into
                 // effects_hash. No state column changes.
                 row[PARAM_BASE + 0] = *event_hash;
+                new_state.nonce += 1;
+            }
+            Effect::SetPermissions { permissions_hash } => {
+                // Same shape as EmitEvent: hash in param 0; AIR forbids any
+                // state column change; nonce ticks.
+                row[PARAM_BASE + 0] = *permissions_hash;
                 new_state.nonce += 1;
             }
             Effect::NoteSpend { nullifier, value } => {
@@ -4505,6 +4549,38 @@ mod tests {
                 c,
                 BabyBear::ZERO,
                 "SetField constraints non-zero with alpha={}: c={}",
+                alpha_val,
+                c.0
+            );
+        }
+    }
+
+    #[test]
+    fn test_set_permissions_constraint() {
+        // SetPermissions: same shape as EmitEvent — state passthrough,
+        // permissions_hash bound via effects_hash.
+        let state = make_initial_state(200);
+        let effects = vec![Effect::SetPermissions {
+            permissions_hash: BabyBear::new(0xDEAD),
+        }];
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        let air = EffectVmAir::new(trace.len());
+
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "SetPermissions proof should verify: {:?}",
+            result.err()
+        );
+
+        for alpha_val in [7, 13, 17, 101] {
+            let alpha = BabyBear::new(alpha_val);
+            let c = air.eval_constraints(&trace[0], &trace[1], &public_inputs, alpha);
+            assert_eq!(
+                c,
+                BabyBear::ZERO,
+                "SetPermissions constraint non-zero with alpha={}: c={}",
                 alpha_val,
                 c.0
             );

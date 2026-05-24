@@ -1766,8 +1766,15 @@ impl TurnExecutor {
                     // temporary scaffolding until Stages 3–6 land
                     // per-variant AIRs.
                     // ====================================================
-                    Effect::SetPermissions { cell, .. } if cell == cell_id => {
-                        push_pending_shim(vm_effects, 0x101u32);
+                    Effect::SetPermissions { cell, new_permissions } if cell == cell_id => {
+                        // Stage 3: real AIR coverage. Permissions aren't in
+                        // VM state; bind their hash into effects_hash.
+                        let perm_bytes = postcard::to_allocvec(new_permissions)
+                            .unwrap_or_default();
+                        let perm_hash_bytes = blake3::hash(&perm_bytes);
+                        vm_effects.push(VmEffect::SetPermissions {
+                            permissions_hash: hash_to_bb(perm_hash_bytes.as_bytes()),
+                        });
                     }
                     Effect::SetVerificationKey { cell, .. } if cell == cell_id => {
                         push_pending_shim(vm_effects, 0x102u32);
