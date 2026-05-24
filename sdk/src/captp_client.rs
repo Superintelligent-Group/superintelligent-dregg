@@ -1403,7 +1403,7 @@ mod tests {
     fn create_handoff_for_remote_supports_three_party() {
         let alice_fed = GroupId([0xAA; 32]);
         let carol_fed = GroupId([0xCC; 32]); // remote target
-        let mut alice = CapTpClient::new(CapTpConfig {
+        let alice = CapTpClient::new(CapTpConfig {
             federation_id: alice_fed,
             current_height: 100,
         });
