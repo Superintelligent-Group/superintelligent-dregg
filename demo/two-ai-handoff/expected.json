@@ -1,0 +1,42 @@
+{
+  "//": "Post-conditions the run.sh harness asserts after the 10-step flow.",
+  "//": "Any field set to null means 'don't enforce this yet — blocker exists'.",
+
+  "transfer_amount": 100,
+
+  "alice_balance_delta": -100,
+  "bob_cell_credited":   100,
+
+  "grant_turn": {
+    "must_commit": true,
+    "must_have_effect_vm_proof": true,
+    "verifier_accepts": true
+  },
+
+  "exercise_turn": {
+    "must_commit": true,
+    "must_have_bearer_authorization": true,
+    "must_have_effect_vm_proof": true,
+    "verifier_accepts": true
+  },
+
+  "receipt_chain": {
+    "grant_then_exercise_linked": true,
+    "exportable": true
+  },
+
+  "verifier_independence": {
+    "//": "Charlie must be a separate OS process from the prover node.",
+    "different_pid":    true,
+    "different_binary": "TBD-once-pyana-verifier-extracted"
+  },
+
+  "handoff": {
+    "//": "True three-party handoff: swiss entry registered, certificate signed,",
+    "//": "presented by recipient, swiss consumed (not replayable).",
+    "swiss_registered":     "TBD-blocker-2",
+    "certificate_signed":   true,
+    "recipient_signed":     true,
+    "swiss_consumed_once":  "TBD-blocker-2"
+  }
+}
