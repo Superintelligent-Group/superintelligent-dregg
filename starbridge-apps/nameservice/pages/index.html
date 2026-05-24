@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Starbridge — Nameservice</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      starbridge-app fragment for the nameservice. Mounts under
+      /starbridge-apps/nameservice/ on the site build.
+
+      Bootstraps the same <pyana-app> context the Studio uses (see
+      site/STUDIO.md §6) and the same URI-addressable inspectors.
+      The page itself is intentionally thin: shared inspectors do
+      the rendering; this fragment just configures which factory_vk
+      to load and which registry cell to target.
+
+      Wired-in JS:
+        - /pkg/pyana_wasm.js                       — the in-browser node
+        - /_includes/studio/runtimes.js            — runtime registry
+        - /starbridge-apps/shared/inspectors/      — shared inspector registry
+        - (future) /starbridge-apps/nameservice/inspectors.js
+                                                  — <pyana-name>, <pyana-name-registry>
+        - (future) /starbridge-apps/nameservice/turn-builders.js
+                                                  — register_name / renew / transfer
+                                                    presets that wrap window.pyana.signTurn
+
+      The factory_vk hex below mirrors NAME_FACTORY_VK from src/lib.rs.
+      Keep these two in sync; the build script in a real deployment
+      would lift the constant from the Rust crate at build time.
+    -->
+    <link rel="stylesheet" href="/_includes/studio/styles.css" />
+  </head>
+  <body>
+    <header class="starbridge-nameservice-chrome">
+      <h1>Pyana Nameservice</h1>
+      <p>Register, renew, transfer federation names — composed of
+         pyana-native primitives only. Backed by the
+         <code>name_factory_descriptor()</code> in
+         <code>starbridge-apps/nameservice/src/lib.rs</code>.</p>
+    </header>
+    <main>
+      <pyana-app
+        runtime="in-memory"
+        factory-vk="73746172627269646765-6e616d65736572766963652d666163746f7279"
+        registry-uri="pyana://cell/registry-default"
+      >
+        <pyana-name-registry slot="primary"></pyana-name-registry>
+        <pyana-name-inspector slot="detail"></pyana-name-inspector>
+      </pyana-app>
+    </main>
+    <script type="module" src="/pkg/pyana_wasm.js"></script>
+    <script type="module" src="/_includes/studio/runtimes.js"></script>
+    <script type="module" src="/starbridge-apps/shared/inspectors/index.js"></script>
+    <!-- Inspector + turn-builder modules land under shared/ as the JS
+         side of this starbridge-app is fleshed out. -->
+  </body>
+</html>
