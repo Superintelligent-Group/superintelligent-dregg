@@ -192,17 +192,21 @@ export function initGallery(wasm) {
 
   aucSettleBtn.addEventListener('click', async () => {
     const winner = aucState.bids[aucState.winner];
-    const sellerKey = randomHex(32);
+    // WASM-side audit fix: `create_bearer_cap` now takes the delegator's
+    // *signing seed* (used to produce a real Ed25519 signature), not a
+    // public key. We synthesize a demo seed here.
+    const sellerSigningSeed = randomHex(32);
     const nftCellId = randomHex(32);
 
     let bearerResult;
     try {
-      bearerResult = wasm.create_bearer_cap(sellerKey, nftCellId, 'transfer', BigInt(0));
+      bearerResult = wasm.create_bearer_cap(sellerSigningSeed, nftCellId, 'transfer', BigInt(0));
     } catch {
-      bearerResult = { bearer_token_hex: randomHex(32) };
+      bearerResult = { bearer_token_hex: randomHex(64), delegator_pubkey_hex: randomHex(32) };
     }
 
     aucState.bearerCap = bearerResult.bearer_token_hex;
+    aucState.bearerDelegatorPubkey = bearerResult.delegator_pubkey_hex;
     aucState.phase = 'settled';
     state.proofCount++;
     notifyStateChange();
@@ -330,7 +334,10 @@ export function initGallery(wasm) {
     const currentK = p.reserveA * p.reserveB;
     const invariantHolds = currentK >= p.initialK;
 
-    // Generate conservation proof
+    // Generate conservation proof.
+    // WASM-side audit fix: verify_conservation_proof now fails closed and
+    // returns `{ valid: false, not_implemented: true }`. Display the stub
+    // status instead of treating non-empty input as "verified".
     let conservResult;
     try {
       const inputCommit = randomHex(32);
@@ -340,10 +347,13 @@ export function initGallery(wasm) {
         JSON.stringify([outputCommit])
       );
     } catch {
-      conservResult = { valid: true };
+      conservResult = { valid: false, not_implemented: true };
     }
 
-    // Generate composed proof
+    // Generate composed proof.
+    // WASM-side audit fix: compose_proofs no longer asserts `valid: true`; it
+    // emits the BLAKE3 binding only as an opaque content-addressable
+    // identifier. The UI now labels it as such.
     let compResult;
     try {
       compResult = wasm.compose_proofs(JSON.stringify([
@@ -351,22 +361,25 @@ export function initGallery(wasm) {
         { proof_json: JSON.stringify({ type: 'invariant', k: p.initialK }), public_inputs: [p.reserveA % 256, p.reserveB % 256] },
       ]), 'and');
     } catch {
-      compResult = { composed_proof: randomHex(32), valid: true, mode: 'and', input_count: 2 };
+      compResult = { composed_proof: randomHex(32), valid: false, mode: 'and', input_count: 2 };
     }
 
     state.proofCount++;
     notifyStateChange();
 
+    const conservStatusLabel = conservResult.not_implemented
+      ? 'STUB (not yet implemented in WASM)'
+      : (conservResult.valid ? 'VALID' : 'INVALID');
     ammDisplay.innerHTML += `<div class="result-panel" style="margin-top:12px;"><div class="result-panel__header"><span class="result-panel__title">Verification</span></div><div class="result-panel__body">
       <div class="output-entry ${invariantHolds ? 'success' : 'error'}">
         Invariant check: current k (${currentK}) >= initial k (${p.initialK}): ${invariantHolds ? 'VALID' : 'VIOLATED'}
       </div>
-      <div class="output-entry ${conservResult.valid ? 'success' : 'error'}">
-        Conservation: ${conservResult.valid ? 'VALID' : 'INVALID'} (no tokens created or destroyed)
+      <div class="output-entry ${conservResult.valid ? 'success' : 'warning'}">
+        Conservation: ${conservStatusLabel}
       </div>
-      <div class="output-entry success">
-        Composed proof (AND): ${compResult.composed_proof.slice(0, 24)}...
-        <br>Both conservation AND invariant verified in single proof
+      <div class="output-entry warning">
+        Composed proof identifier (AND, stub): ${compResult.composed_proof.slice(0, 24)}...
+        <br>compose_proofs does not actually verify input proofs yet; this is a content hash only.
       </div>
     </div></div>`;
 

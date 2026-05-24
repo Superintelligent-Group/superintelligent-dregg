@@ -373,11 +373,13 @@ pub fn generate_predicate_proof(
     let state_root_bb = BabyBear::new(state_root);
 
     // Generate a random blinding factor for unlinkable proofs.
-    // This prevents cross-session correlation via deterministic fact_commitment.
-    let mut blinding_bytes = [0u8; 4];
-    getrandom::fill(&mut blinding_bytes).unwrap_or_default();
-    // BabyBear::new already reduces mod p, so just use the raw u32.
-    let blinding = BabyBear::new(u32::from_le_bytes(blinding_bytes));
+    // P2 audit fix: was 4 bytes with silent zeroing on getrandom failure
+    // (`unwrap_or_default()`). Now: 8 bytes, reduced into the field, and
+    // any getrandom failure is propagated to the caller as a JsError.
+    let mut blinding_bytes = [0u8; 8];
+    getrandom::fill(&mut blinding_bytes)
+        .map_err(|e| JsError::new(&format!("getrandom failed: {e}")))?;
+    let blinding = BabyBear::from_u64(u64::from_le_bytes(blinding_bytes));
 
     let fact_commitment = pyana_circuit::predicate_types::compute_blinded_fact_commitment(
         fact_hash,
@@ -976,12 +978,18 @@ pub fn compute_intent_id(intent_json: &str) -> Result<String, JsError> {
 
     // stake_commitment: matches IntentBody in intent/src/lib.rs which hashes
     // the commitment bytes from the stake proof (if present).
-    let stake_commitment: Option<[u8; 32]> = input.stake_commitment.map(|bytes| {
-        bytes
-            .try_into()
-            .map_err(|_| JsError::new("stake_commitment must be exactly 32 bytes"))
-            .unwrap()
-    });
+    // P1 audit fix: propagate length errors instead of panicking on
+    // attacker-controlled input (the previous `.map_err(...).unwrap()` was
+    // structurally wrong; it called `unwrap` on a `Result<JsError, _>` whose
+    // `Err` arm was the constructed error, so any wrong-length input panicked).
+    let stake_commitment: Option<[u8; 32]> = match input.stake_commitment {
+        Some(bytes) => Some(
+            bytes
+                .try_into()
+                .map_err(|_| JsError::new("stake_commitment must be exactly 32 bytes"))?,
+        ),
+        None => None,
+    };
 
     // Build the body struct that matches IntentBody in intent/src/lib.rs
     let body = CanonicalIntentBody {
@@ -1546,19 +1554,41 @@ pub fn prove_anonymous_membership(
     }
 
     // Generate a blinding factor for unlinkability.
-    let mut blinding_bytes = [0u8; 4];
+    // P2 audit fix: 4 bytes -> 8 bytes, propagate getrandom errors instead of
+    // silently zeroing. The BabyBear field reduction still limits the effective
+    // entropy at the leaf, but blinded-leaf collisions across calls now require
+    // ~2^31 work to enumerate AND the presentation_tag_full_hex below provides a
+    // separate 256-bit unlinkability binding that doesn't fit in a field
+    // element.
+    let mut blinding_bytes = [0u8; 8];
     getrandom::fill(&mut blinding_bytes).map_err(|e| JsError::new(&e.to_string()))?;
-    let blinding = BabyBear::new(u32::from_le_bytes(blinding_bytes));
+    let blinding = BabyBear::from_u64(u64::from_le_bytes(blinding_bytes));
 
     // Compute the blinded leaf: Poseidon2(agent_id_hash, blinding)
     let agent_id_hash = poseidon2::hash_bytes(&agent_id_bytes);
     let blinded_leaf = poseidon2::hash_2_to_1(agent_id_hash, blinding);
 
     // Compute a presentation tag (one-time, prevents cross-session correlation).
-    let mut tag_bytes = [0u8; 4];
+    // P2 audit fix: was a 4-byte BabyBear-truncated tag. Now: an 8-byte field
+    // sample for the legacy `presentation_tag` field (unchanged contract for
+    // existing consumers) PLUS a 256-bit BLAKE3 binding emitted as
+    // `presentation_tag_full_hex` so callers that want true unlinkability have
+    // a tag with a 2^128 birthday bound rather than a ~2^16 birthday bound.
+    let mut tag_bytes = [0u8; 8];
     getrandom::fill(&mut tag_bytes).map_err(|e| JsError::new(&e.to_string()))?;
-    let presentation_tag =
-        poseidon2::hash_2_to_1(blinded_leaf, BabyBear::new(u32::from_le_bytes(tag_bytes)));
+    let tag_scalar = BabyBear::from_u64(u64::from_le_bytes(tag_bytes));
+    let presentation_tag = poseidon2::hash_2_to_1(blinded_leaf, tag_scalar);
+
+    // 256-bit presentation tag: BLAKE3-bind blinded_leaf, tag scalar bytes, and
+    // 32 fresh random bytes so two calls with the same ring + same agent emit
+    // distinct tags with overwhelming probability.
+    let mut full_tag_nonce = [0u8; 32];
+    getrandom::fill(&mut full_tag_nonce).map_err(|e| JsError::new(&e.to_string()))?;
+    let mut tag_hasher = blake3::Hasher::new_derive_key("pyana-ring-presentation-tag-v1");
+    tag_hasher.update(&blinded_leaf.as_u32().to_le_bytes());
+    tag_hasher.update(&tag_bytes);
+    tag_hasher.update(&full_tag_nonce);
+    let presentation_tag_full = *tag_hasher.finalize().as_bytes();
 
     // Compute the Merkle root of the agent set (hash all member IDs together).
     let member_hashes: Vec<BabyBear> = ring_members
@@ -1576,6 +1606,7 @@ pub fn prove_anonymous_membership(
     struct MembershipResult {
         blinded_leaf: u32,
         presentation_tag: u32,
+        presentation_tag_full_hex: String,
         set_root: u32,
         ring_size: usize,
         proof_size_bytes: usize,
@@ -1585,6 +1616,7 @@ pub fn prove_anonymous_membership(
     let result = MembershipResult {
         blinded_leaf: blinded_leaf.as_u32(),
         presentation_tag: presentation_tag.as_u32(),
+        presentation_tag_full_hex: hex_encode(&presentation_tag_full),
         set_root: set_root.as_u32(),
         ring_size: ring_members.len(),
         proof_size_bytes: proof_size,
@@ -1600,10 +1632,9 @@ pub fn prove_anonymous_membership(
 /// Derive an Ed25519 keypair from a BIP39 mnemonic using the pyana BLAKE3 derivation path.
 ///
 /// This uses the same BLAKE3-based derivation as `pyana-sdk`'s `mnemonic_to_seed` +
-/// `derive_keypair`. When this WASM module is loaded, the browser extension should
-/// use this function instead of falling back to PBKDF2-HMAC-SHA512.
+/// `derive_keypair`. The Ed25519 public key is computed in-WASM via ed25519-dalek.
 ///
-/// Returns a 64-byte Vec: first 32 bytes = public key, last 32 bytes = secret key.
+/// Returns an object `{ public_key: Vec<u8>(32), secret_key: Vec<u8>(32) }`.
 ///
 /// # Arguments
 /// * `mnemonic` - A 24-word BIP39 mnemonic string.
@@ -1611,9 +1642,20 @@ pub fn prove_anonymous_membership(
 ///
 /// # Errors
 /// Returns an error if the mnemonic is invalid.
+///
+/// # Security
+/// Intermediate seed material is wrapped in `Zeroizing` to scrub linear-memory
+/// residues on drop. The returned secret/public key bytes are necessarily
+/// copied into a JS object by `serde_wasm_bindgen`; callers in background
+/// workers should overwrite or drop those buffers when done.
 #[wasm_bindgen]
-pub fn derive_keypair_from_mnemonic(mnemonic: &str, passphrase: &str) -> Result<Vec<u8>, JsError> {
-    // Validate: 24 words, all in BIP39 wordlist.
+pub fn derive_keypair_from_mnemonic(
+    mnemonic: &str,
+    passphrase: &str,
+) -> Result<JsValue, JsError> {
+    use zeroize::Zeroizing;
+
+    // Validate: 24 words.
     let words: Vec<&str> = mnemonic.split_whitespace().collect();
     if words.len() != 24 {
         return Err(JsError::new(&format!(
@@ -1622,18 +1664,10 @@ pub fn derive_keypair_from_mnemonic(mnemonic: &str, passphrase: &str) -> Result<
         )));
     }
 
-    // Reconstruct entropy from the mnemonic (same as pyana-sdk mnemonic module).
-    // BIP39 wordlist is standard 2048 words, but we use a lightweight check here.
-    // The full validation (checksum) is done via BLAKE3 derivation being deterministic.
-
     // BLAKE3 seed derivation (matches pyana-sdk's seed_from_entropy path).
-    // We derive the seed from the mnemonic string directly using BLAKE3,
-    // which is equivalent to: validate -> extract entropy -> blake3_derive.
     let context_a = format!("pyana mnemonic seed v1 {}", passphrase);
     let context_b = format!("pyana mnemonic seed v1 extend {}", passphrase);
 
-    // For the WASM path, derive directly from the mnemonic bytes
-    // (this matches the SDK when entropy is re-derived from valid mnemonics).
     let mnemonic_bytes = mnemonic.as_bytes();
     let entropy_hash = blake3::hash(mnemonic_bytes);
     let entropy = entropy_hash.as_bytes();
@@ -1641,25 +1675,33 @@ pub fn derive_keypair_from_mnemonic(mnemonic: &str, passphrase: &str) -> Result<
     let first_half = blake3::derive_key(&context_a, entropy);
     let second_half = blake3::derive_key(&context_b, entropy);
 
-    let mut seed = [0u8; 64];
-    seed[..32].copy_from_slice(&first_half);
-    seed[32..].copy_from_slice(&second_half);
+    // Hold the seed in zeroizing memory.
+    let seed: Zeroizing<[u8; 64]> = {
+        let mut s = Zeroizing::new([0u8; 64]);
+        s[..32].copy_from_slice(&first_half);
+        s[32..].copy_from_slice(&second_half);
+        s
+    };
 
     // Derive keypair at "pyana/0" path (main agent identity).
-    let derived = blake3::derive_key("pyana/0", &seed);
+    // The derived 32 bytes are the Ed25519 secret-key seed.
+    let secret_seed: Zeroizing<[u8; 32]> = Zeroizing::new(blake3::derive_key("pyana/0", &seed[..]));
 
-    // Ed25519: The derived 32 bytes are the secret key seed.
-    // Public key = secret key seed -> SHA-512 -> clamp -> scalar mult.
-    // Without ed25519-dalek in WASM deps, return the raw derived bytes.
-    // The extension can compute the public key from the 32-byte secret.
-    let mut result = Vec::with_capacity(64);
-    // For now, output just the 32-byte secret key seed.
-    // The extension uses this with its own Ed25519 library to get the public key.
-    result.extend_from_slice(&derived);
-    // Also output a placeholder for public key (extension computes from secret).
-    result.extend_from_slice(&[0u8; 32]);
+    // Compute the Ed25519 public key from the secret seed.
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_seed);
+    let public_key = signing_key.verifying_key().to_bytes();
 
-    Ok(result)
+    #[derive(Serialize)]
+    struct KeypairResult {
+        public_key: Vec<u8>,
+        secret_key: Vec<u8>,
+    }
+
+    let result = KeypairResult {
+        public_key: public_key.to_vec(),
+        secret_key: secret_seed.to_vec(),
+    };
+    Ok(serde_wasm_bindgen::to_value(&result)?)
 }
 
 // ============================================================================
@@ -1726,4 +1768,150 @@ struct RawRequest {
     features: Option<Vec<String>>,
     user_id: Option<String>,
     now: Option<i64>,
+}
+
+// ============================================================================
+// Adversarial tests for the audit fixes.
+// ============================================================================
+//
+// These run on the host target (`cargo test -p pyana-wasm`). They exercise the
+// `#[wasm_bindgen]`-exported public surface to lock in the audit fixes against
+// regression.
+
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod audit_tests {
+    use super::*;
+    use serde::Deserialize;
+
+    fn test_mnemonic() -> String {
+        // 24 arbitrary words — the derivation is BLAKE3-based and doesn't
+        // verify the BIP39 wordlist, only the word count.
+        (0..24)
+            .map(|i| format!("word{}", i))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[derive(Deserialize)]
+    struct KeypairOut {
+        public_key: Vec<u8>,
+        secret_key: Vec<u8>,
+    }
+
+    #[test]
+    fn adversarial_derive_keypair_emits_valid_ed25519_pubkey_and_roundtrips() {
+        // P0 audit fix: previously the function returned a flat 64-byte Vec
+        // with [secret | zeros] — the "public key" was all-zeros, which any
+        // consumer slicing the first 32 bytes would silently treat as a real
+        // identity. We now compute the real Ed25519 pubkey.
+        let result = derive_keypair_from_mnemonic(&test_mnemonic(), "")
+            .expect("derive should succeed for 24-word mnemonic");
+        let kp: KeypairOut =
+            serde_wasm_bindgen::from_value(result).expect("output is a struct, not a flat Vec");
+
+        assert_eq!(kp.public_key.len(), 32, "pubkey must be 32 bytes");
+        assert_eq!(kp.secret_key.len(), 32, "secret seed must be 32 bytes");
+        assert_ne!(kp.public_key, vec![0u8; 32], "pubkey must not be all-zero");
+
+        // Pubkey must be a valid Ed25519 curve point.
+        let mut pk_arr = [0u8; 32];
+        pk_arr.copy_from_slice(&kp.public_key);
+        let verifying = ed25519_dalek::VerifyingKey::from_bytes(&pk_arr)
+            .expect("derived pubkey must decompress to a valid Ed25519 point");
+
+        // Sign/verify roundtrip — secret + claimed public actually agree.
+        let mut sk_arr = [0u8; 32];
+        sk_arr.copy_from_slice(&kp.secret_key);
+        let signing = ed25519_dalek::SigningKey::from_bytes(&sk_arr);
+        assert_eq!(
+            signing.verifying_key().to_bytes(),
+            verifying.to_bytes(),
+            "secret seed and returned public key must agree"
+        );
+        let msg = b"audit roundtrip";
+        let sig = ed25519_dalek::Signer::sign(&signing, msg);
+        ed25519_dalek::Verifier::verify(&verifying, msg, &sig)
+            .expect("sign/verify roundtrip must succeed");
+    }
+
+    #[test]
+    fn adversarial_derive_keypair_shape_is_struct_not_flat_vec() {
+        // The old shape was `Vec<u8>` of length 64. After the fix it's an
+        // object `{public_key, secret_key}`. A consumer that tries to read it
+        // as a flat Vec<u8> would now fail to deserialize.
+        let result = derive_keypair_from_mnemonic(&test_mnemonic(), "")
+            .expect("derive should succeed");
+        let flat: Result<Vec<u8>, _> = serde_wasm_bindgen::from_value(result);
+        assert!(
+            flat.is_err(),
+            "output must NOT deserialize as flat Vec<u8> (would be the old broken shape)"
+        );
+    }
+
+    #[test]
+    fn adversarial_derive_keypair_rejects_wrong_word_count() {
+        let too_short = "one two three";
+        let err = derive_keypair_from_mnemonic(too_short, "").unwrap_err();
+        let msg = format!("{:?}", err);
+        assert!(msg.to_lowercase().contains("word"), "{msg}");
+    }
+
+    #[test]
+    fn adversarial_compute_intent_id_rejects_short_stake_commitment_without_panic() {
+        // P1 audit fix: previously this panicked (workspace `panic = unwind`
+        // would leave linear memory in an undefined state). Now it returns
+        // `Err(JsError)`.
+        let bad_intent = serde_json::json!({
+            "kind": "Need",
+            "expiry": 0_i64,
+            "creator": vec![0u8; 32],
+            "stake_commitment": vec![1u8, 2u8, 3u8], // only 3 bytes — wrong
+        });
+        let result = compute_intent_id(&bad_intent.to_string());
+        assert!(
+            result.is_err(),
+            "wrong-length stake_commitment must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn adversarial_compute_intent_id_accepts_valid_input() {
+        let good_intent = serde_json::json!({
+            "kind": "Need",
+            "expiry": 0_i64,
+            "creator": vec![0u8; 32],
+            "stake_commitment": vec![7u8; 32],
+        });
+        let id = compute_intent_id(&good_intent.to_string()).expect("32-byte commitment OK");
+        assert_eq!(id.len(), 64, "intent id is 32 bytes hex-encoded");
+    }
+
+    #[derive(Deserialize)]
+    struct MembershipOut {
+        presentation_tag_full_hex: String,
+        ring_size: usize,
+    }
+
+    #[test]
+    fn adversarial_ring_membership_presentation_tags_are_distinct() {
+        // P2 audit fix: the legacy `presentation_tag` field is a BabyBear
+        // truncation (~31 bits) and collides too cheaply. We added a full
+        // 256-bit `presentation_tag_full_hex` so two calls with the same
+        // (agent, ring) emit distinct unlinkable tags.
+        let agent = "aa".repeat(32);
+        let ring = serde_json::json!([agent, "bb".repeat(32), "cc".repeat(32)]).to_string();
+
+        let r1 = prove_anonymous_membership(&agent, &ring).expect("ok");
+        let r2 = prove_anonymous_membership(&agent, &ring).expect("ok");
+        let o1: MembershipOut = serde_wasm_bindgen::from_value(r1).unwrap();
+        let o2: MembershipOut = serde_wasm_bindgen::from_value(r2).unwrap();
+
+        assert_eq!(o1.ring_size, 3);
+        assert_eq!(o1.presentation_tag_full_hex.len(), 64); // 32 bytes hex
+        assert_ne!(
+            o1.presentation_tag_full_hex, o2.presentation_tag_full_hex,
+            "presentation_tag_full_hex must differ between calls (256-bit unlinkability)"
+        );
+    }
 }

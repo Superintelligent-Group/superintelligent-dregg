@@ -115,10 +115,16 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
     buildCommittedTurn: (paramsJson) => wasm.build_committed_turn(paramsJson),
     generateRangeProof: (amount, blinding, commitment) =>
       wasm.generate_range_proof(amount, blinding, commitment),
-    createBearerCap: (delegatorHex, targetHex, action, expiry) =>
-      wasm.create_bearer_cap(delegatorHex, targetHex, action, expiry),
-    verifyBearerCap: (tokenHex, delegatorHex, targetHex, action, expiry, currentTime) =>
-      wasm.verify_bearer_cap(tokenHex, delegatorHex, targetHex, action, expiry, currentTime),
+    // WASM-side audit fix: create_bearer_cap now takes a delegator *signing
+    // seed* (32-byte Ed25519 secret) and returns `{ bearer_token_hex (64-byte
+    // signature), delegator_pubkey_hex, binding_hex, ... }`. verify_bearer_cap
+    // takes the delegator *public* key. The sandbox surface keeps the
+    // arg-name aliases for backward compat but the consumer is expected to
+    // pass the correct key kind in each slot.
+    createBearerCap: (delegatorSigningSeedHex, targetHex, action, expiry) =>
+      wasm.create_bearer_cap(delegatorSigningSeedHex, targetHex, action, expiry),
+    verifyBearerCap: (tokenHex, delegatorPubkeyHex, targetHex, action, expiry, currentTime) =>
+      wasm.verify_bearer_cap(tokenHex, delegatorPubkeyHex, targetHex, action, expiry, currentTime),
     createFromFactory: (factoryVkHex, ownerHex, balance) =>
       wasm.create_from_factory(factoryVkHex, ownerHex, balance),
     verifyProvenance: (cellVkHex, factoryVksJson) =>
@@ -130,8 +136,17 @@ console.log('Token:', minted.token.slice(0, 40) + '...');
     composeProofs: (proofsJson, mode) => wasm.compose_proofs(proofsJson, mode),
     buildFacetMask: (effectsJson) => wasm.build_facet_mask(effectsJson),
     generateSseTokens: (keywordsJson) => wasm.generate_sse_tokens(keywordsJson),
-    sealIntentBody: (plaintextJson, recipientPubkey) =>
-      wasm.seal_intent_body(plaintextJson, recipientPubkey),
+    // WASM-side audit fix: seal_intent_body now REQUIRES a 32-byte recipient
+    // X25519 pubkey. Calling with null/undefined throws.
+    sealIntentBody: (plaintextJson, recipientPubkey) => {
+      if (!recipientPubkey) {
+        throw new Error(
+          'seal_intent_body: recipientPubkey is required (broadcast mode was removed; ' +
+          'it derived the recipient key from the plaintext, which was not encryption).'
+        );
+      }
+      return wasm.seal_intent_body(plaintextJson, recipientPubkey);
+    },
     unsealIntentBody: (ciphertext, ephPub, nonce, privkey) =>
       wasm.unseal_intent_body(ciphertext, ephPub, nonce, privkey),
   };

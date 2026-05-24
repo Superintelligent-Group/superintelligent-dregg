@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+use zeroize::Zeroizing;
 
 use pyana_cell::facet::{FacetBuilder, describe_mask};
 use pyana_cell::factory::FactoryCreationParams;
@@ -38,20 +39,33 @@ pub fn derive_stealth_keys(mnemonic: &str, passphrase: &str) -> Result<JsValue, 
         entropy,
     ));
 
-    // Derive stealth keys using same context strings as SDK wallet
-    let signing_key_bytes = blake3::derive_key("pyana/0", &seed);
-    let view_private_key = blake3::derive_key("pyana-stealth-view-key-v1", &signing_key_bytes);
-    let spend_private_key = blake3::derive_key("pyana-stealth-spend-key-v1", &signing_key_bytes);
+    // Derive stealth keys using same context strings as SDK wallet.
+    // P2 audit fix: hold intermediate private-key material in Zeroizing so the
+    // linear-memory residue is scrubbed on drop. The final Vec<u8> copies that
+    // serde-wasm-bindgen hands to JS are unavoidable but at least the stack
+    // arrays don't linger after this function returns.
+    // SAFETY: The Zeroizing guard scrubs the array on drop; do not extract the
+    // raw 32-byte slices into longer-lived owners.
+    let signing_key_bytes: Zeroizing<[u8; 32]> =
+        Zeroizing::new(blake3::derive_key("pyana/0", &seed));
+    let view_private_key: Zeroizing<[u8; 32]> = Zeroizing::new(blake3::derive_key(
+        "pyana-stealth-view-key-v1",
+        &signing_key_bytes[..],
+    ));
+    let spend_private_key: Zeroizing<[u8; 32]> = Zeroizing::new(blake3::derive_key(
+        "pyana-stealth-spend-key-v1",
+        &signing_key_bytes[..],
+    ));
 
     // Derive public keys via X25519 scalar clamping + base point multiplication.
     // For the WASM module we use x25519-dalek to compute view_pubkey (X25519)
     // and BLAKE3 derivation for spend_pubkey (Ed25519 derivation is done by extension).
-    let view_secret = x25519_dalek::StaticSecret::from(view_private_key);
+    let view_secret = x25519_dalek::StaticSecret::from(*view_private_key);
     let view_pubkey = x25519_dalek::PublicKey::from(&view_secret);
 
     // Spend public key: the extension computes Ed25519 pubkey from this seed.
     // We provide the raw secret; the extension derives the Ed25519 public key.
-    let spend_pubkey = *blake3::hash(&spend_private_key).as_bytes();
+    let spend_pubkey = *blake3::hash(&spend_private_key[..]).as_bytes();
 
     #[derive(Serialize)]
     struct StealthKeysResult {
@@ -299,20 +313,28 @@ pub fn verify_conservation_proof(
     let outputs: Vec<String> =
         serde_json::from_str(output_commitments_json).map_err(|e| JsError::new(&e.to_string()))?;
 
-    // In a full implementation, this verifies that sum(inputs) == sum(outputs)
-    // using the homomorphic property of Pedersen commitments.
-    // For now, verify structural validity (same count as a basic check).
-    let valid = !inputs.is_empty() && !outputs.is_empty();
-
+    // P1 audit fix: a full implementation needs to verify
+    // sum(inputs) == sum(outputs) using the homomorphic property of Pedersen
+    // commitments + an excess signature. None of that is wired up here. The
+    // previous version returned `valid: true` whenever both lists were
+    // non-empty, which is silently authorizing every call. We now fail closed:
+    // `valid: false` with `not_implemented: true` so callers can surface a
+    // "stub" indicator rather than treating non-empty lists as a verified
+    // conservation proof.
     #[derive(Serialize)]
     struct ConservationResult {
         valid: bool,
+        not_implemented: bool,
+        message: &'static str,
         input_count: usize,
         output_count: usize,
     }
 
     let result = ConservationResult {
-        valid,
+        valid: false,
+        not_implemented: true,
+        message: "verify_conservation_proof is unimplemented; this binding only \
+                  parses inputs and refuses to assert any conservation property.",
         input_count: inputs.len(),
         output_count: outputs.len(),
     };
@@ -426,27 +448,44 @@ pub fn generate_sse_tokens(keywords_json: &str) -> Result<Vec<u8>, JsError> {
 
 /// Seal (encrypt) an intent body for a recipient.
 ///
-/// If `recipient_pubkey` is null/empty, generates a fresh keypair and encrypts
-/// to that (broadcast mode — anyone with the SSE-derived key can decrypt).
+/// A 32-byte recipient X25519 public key is **required**. The previous
+/// "broadcast mode" path derived the recipient key as a deterministic BLAKE3
+/// of the plaintext, which provided no confidentiality (identical plaintexts
+/// produced identical ciphertexts and anyone who could guess the plaintext
+/// could decrypt it). That mode has been removed.
 ///
-/// Returns JSON: { ciphertext, ephemeral_pubkey, nonce }
+/// To send a publicly-decryptable envelope, generate a fresh ephemeral
+/// X25519 keypair, encrypt to its public key, and publish the corresponding
+/// private key out-of-band (or alongside the ciphertext with a clear
+/// "broadcast" label).
+///
+/// Returns JSON: { ciphertext, ephemeral_pubkey }
 #[wasm_bindgen]
 pub fn seal_intent_body(
     plaintext_json: &str,
     recipient_pubkey: Option<Vec<u8>>,
 ) -> Result<JsValue, JsError> {
-    let recipient = match recipient_pubkey {
-        Some(ref pk) if pk.len() == 32 => {
-            let mut key = [0u8; 32];
-            key.copy_from_slice(pk);
-            key
-        }
-        _ => {
-            // Generate a broadcast key from the plaintext hash (deterministic for dedup).
-            let hash = blake3::derive_key("pyana-broadcast-seal-key", plaintext_json.as_bytes());
-            hash
-        }
-    };
+    // P0 audit fix: require a real recipient pubkey. The previous fallback
+    // was a no-op encryption: recipient_secret = BLAKE3("...", plaintext)
+    // makes the ciphertext recoverable from the plaintext.
+    let recipient_bytes = recipient_pubkey.ok_or_else(|| {
+        JsError::new(
+            "seal_intent_body requires an explicit 32-byte recipient X25519 pubkey; \
+             broadcast mode has been removed because the previous implementation \
+             derived the recipient key deterministically from the plaintext, which \
+             provided no confidentiality. For public-broadcast use cases, generate \
+             a fresh ephemeral X25519 keypair, encrypt to it, and publish the \
+             private key out-of-band.",
+        )
+    })?;
+    if recipient_bytes.len() != 32 {
+        return Err(JsError::new(&format!(
+            "recipient_pubkey must be exactly 32 bytes, got {}",
+            recipient_bytes.len()
+        )));
+    }
+    let mut recipient = [0u8; 32];
+    recipient.copy_from_slice(&recipient_bytes);
 
     let sealed = seal_encrypt(plaintext_json.as_bytes(), &recipient);
 
@@ -503,44 +542,65 @@ pub fn unseal_intent_body(
 
 /// Create a bearer capability proof.
 ///
-/// A bearer cap is a proof-carrying authorization token: whoever holds the proof
-/// can exercise the capability. It contains a delegation chain hash and a BLAKE3
-/// binding to the target action.
+/// P1 audit fix: the previous version produced
+/// `BLAKE3("pyana-bearer-cap-v1", delegator_pubkey || target || action || expiry)`,
+/// which used **public** material only — anyone could forge a "bearer token"
+/// by recomputing the same hash. This was not a bearer capability; it was a
+/// content-addressable label.
 ///
-/// `delegator_key_hex`: 32-byte hex key of the delegating cell
-/// `target_cell_hex`: 32-byte hex ID of the cell being targeted
-/// `action_name`: the action to authorize (e.g., "transfer", "read")
-/// `expiry`: Unix timestamp after which the cap expires (0 = no expiry)
+/// The new bearer cap is an Ed25519 signature by the delegator over a binding
+/// hash over `(delegator_pubkey, target_cell, action, expiry)`. Only the
+/// delegator can issue (they hold the signing key); anyone with the delegator
+/// pubkey can verify.
 ///
-/// Returns JSON: { bearer_token_hex, target_cell, action, expiry }
+/// `delegator_signing_key_hex`: 32-byte Ed25519 secret seed (held in
+///   `Zeroizing`; do not pass material you don't control).
+/// `target_cell_hex`: 32-byte hex ID of the cell being targeted.
+/// `action_name`: the action to authorize (e.g., "transfer", "read").
+/// `expiry`: Unix timestamp after which the cap expires (0 = no expiry).
+///
+/// Returns JSON: `{ bearer_token_hex (64-byte Ed25519 sig), delegator_pubkey_hex,
+/// binding_hex, target_cell, action, expiry }`
 #[wasm_bindgen]
 pub fn create_bearer_cap(
-    delegator_key_hex: &str,
+    delegator_signing_key_hex: &str,
     target_cell_hex: &str,
     action_name: &str,
     expiry: u64,
 ) -> Result<JsValue, JsError> {
-    let delegator_key = hex_decode_32(delegator_key_hex)?;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    // Hold the signing seed in Zeroizing so the linear-memory copy is scrubbed.
+    let signing_seed: Zeroizing<[u8; 32]> = Zeroizing::new(hex_decode_32(delegator_signing_key_hex)?);
     let target_cell = hex_decode_32(target_cell_hex)?;
 
-    // Build the bearer token: BLAKE3 binding over (delegator, target, action, expiry).
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-bearer-cap-v1");
-    hasher.update(&delegator_key);
+    let signing_key = SigningKey::from_bytes(&signing_seed);
+    let delegator_pubkey = signing_key.verifying_key().to_bytes();
+
+    // Build the canonical binding over (pubkey, target, action, expiry).
+    let mut hasher = blake3::Hasher::new_derive_key("pyana-bearer-cap-v2");
+    hasher.update(&delegator_pubkey);
     hasher.update(&target_cell);
     hasher.update(action_name.as_bytes());
     hasher.update(&expiry.to_le_bytes());
-    let bearer_token = *hasher.finalize().as_bytes();
+    let binding = *hasher.finalize().as_bytes();
+
+    let signature = signing_key.sign(&binding);
 
     #[derive(Serialize)]
     struct BearerCapResult {
         bearer_token_hex: String,
+        delegator_pubkey_hex: String,
+        binding_hex: String,
         target_cell: String,
         action: String,
         expiry: u64,
     }
 
     let result = BearerCapResult {
-        bearer_token_hex: hex_encode(&bearer_token),
+        bearer_token_hex: hex_encode(&signature.to_bytes()),
+        delegator_pubkey_hex: hex_encode(&delegator_pubkey),
+        binding_hex: hex_encode(&binding),
         target_cell: hex_encode(&target_cell),
         action: action_name.to_string(),
         expiry,
@@ -550,41 +610,69 @@ pub fn create_bearer_cap(
 
 /// Verify a bearer capability proof.
 ///
-/// Recomputes the expected token from the claimed parameters and checks if it
-/// matches the presented bearer_token_hex.
+/// Decodes the 64-byte Ed25519 signature from `bearer_token_hex`, recomputes
+/// the binding from the claimed parameters, and checks the signature against
+/// `delegator_pubkey_hex`.
 ///
-/// Returns JSON: { valid: bool, expired: bool }
+/// Returns JSON: `{ valid: bool, signature_valid: bool, expired: bool }`
 #[wasm_bindgen]
 pub fn verify_bearer_cap(
     bearer_token_hex: &str,
-    delegator_key_hex: &str,
+    delegator_pubkey_hex: &str,
     target_cell_hex: &str,
     action_name: &str,
     expiry: u64,
     current_time: u64,
 ) -> Result<JsValue, JsError> {
-    let presented = hex_decode_32(bearer_token_hex)?;
-    let delegator_key = hex_decode_32(delegator_key_hex)?;
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    // Signature is 64 bytes (128 hex chars).
+    if bearer_token_hex.len() != 128 {
+        return Err(JsError::new(&format!(
+            "bearer_token_hex must be 128 hex chars (64-byte Ed25519 sig), got {}",
+            bearer_token_hex.len()
+        )));
+    }
+    let sig_bytes = (0..64)
+        .map(|i| {
+            u8::from_str_radix(&bearer_token_hex[i * 2..i * 2 + 2], 16)
+                .map_err(|e| JsError::new(&format!("invalid hex at byte {i}: {e}")))
+        })
+        .collect::<Result<Vec<u8>, _>>()?;
+    let mut sig_arr = [0u8; 64];
+    sig_arr.copy_from_slice(&sig_bytes);
+    let signature = Signature::from_bytes(&sig_arr);
+
+    let delegator_pubkey = hex_decode_32(delegator_pubkey_hex)?;
     let target_cell = hex_decode_32(target_cell_hex)?;
 
-    // Recompute expected token.
-    let mut hasher = blake3::Hasher::new_derive_key("pyana-bearer-cap-v1");
-    hasher.update(&delegator_key);
+    let verifying_key = VerifyingKey::from_bytes(&delegator_pubkey)
+        .map_err(|e| JsError::new(&format!("invalid delegator pubkey: {e}")))?;
+
+    // Recompute binding.
+    let mut hasher = blake3::Hasher::new_derive_key("pyana-bearer-cap-v2");
+    hasher.update(&delegator_pubkey);
     hasher.update(&target_cell);
     hasher.update(action_name.as_bytes());
     hasher.update(&expiry.to_le_bytes());
-    let expected = *hasher.finalize().as_bytes();
+    let binding = *hasher.finalize().as_bytes();
 
-    let valid = presented == expected;
+    let signature_valid = verifying_key.verify(&binding, &signature).is_ok();
     let expired = expiry > 0 && current_time > expiry;
+    let valid = signature_valid && !expired;
 
     #[derive(Serialize)]
     struct VerifyBearerResult {
         valid: bool,
+        signature_valid: bool,
         expired: bool,
     }
 
-    let result = VerifyBearerResult { valid, expired };
+    let result = VerifyBearerResult {
+        valid,
+        signature_valid,
+        expired,
+    };
     Ok(serde_wasm_bindgen::to_value(&result)?)
 }
 
@@ -807,11 +895,17 @@ pub fn compose_proofs(proofs_json: &str, mode: &str) -> Result<JsValue, JsError>
         valid: bool,
     }
 
+    // P1 audit fix: this function never deserialized or verified the input
+    // proofs; it just BLAKE3-hashed their JSON together. Returning
+    // `valid: true` would let callers trust a composition that was never
+    // performed. We now return `valid: false` and emit the BLAKE3 hash only
+    // as an opaque content-addressable identifier (`composed_proof`) — not as
+    // a verifiable proof.
     let result = ComposedResult {
         composed_proof: hex_encode(&composed_commitment),
         mode: composition_mode.to_string(),
         input_count: proofs.len(),
-        valid: true,
+        valid: false,
     };
     Ok(serde_wasm_bindgen::to_value(&result)?)
 }
@@ -888,4 +982,227 @@ fn hex_decode_32(hex: &str) -> Result<[u8; 32], JsError> {
             .map_err(|e| JsError::new(&format!("invalid hex at byte {i}: {e}")))?;
     }
     Ok(result)
+}
+
+// ============================================================================
+// Adversarial tests for the audit fixes.
+// ============================================================================
+
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod audit_tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+
+    fn hex_of(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn adversarial_seal_intent_body_refuses_broadcast_mode_without_recipient() {
+        // P0 audit fix: the previous broadcast mode derived the recipient key
+        // as BLAKE3(plaintext), so the ciphertext was decryptable from the
+        // plaintext. The fix removes that mode entirely; a `None` recipient
+        // now returns an error.
+        let result = seal_intent_body(r#"{"kind":"need"}"#, None);
+        assert!(
+            result.is_err(),
+            "seal_intent_body must reject missing recipient pubkey (no broadcast mode)"
+        );
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_msg.to_lowercase().contains("recipient") || err_msg.to_lowercase().contains("pubkey"),
+            "error message must explain recipient requirement: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn adversarial_seal_intent_body_rejects_wrong_length_recipient() {
+        let bad = vec![0u8; 16];
+        let result = seal_intent_body(r#"{"kind":"need"}"#, Some(bad));
+        assert!(result.is_err(), "wrong-length recipient must error");
+    }
+
+    #[test]
+    fn signed_bearer_cap_roundtrips() {
+        // Real Ed25519 signing key.
+        let seed = [42u8; 32];
+        let seed_hex = hex_of(&seed);
+        let target_hex = hex_of(&[7u8; 32]);
+
+        let created = create_bearer_cap(&seed_hex, &target_hex, "transfer", 0)
+            .expect("create should succeed");
+
+        #[derive(serde::Deserialize)]
+        struct Created {
+            bearer_token_hex: String,
+            delegator_pubkey_hex: String,
+        }
+        let c: Created = serde_wasm_bindgen::from_value(created).unwrap();
+        assert_eq!(c.bearer_token_hex.len(), 128, "Ed25519 sig is 64 bytes");
+
+        let verified = verify_bearer_cap(
+            &c.bearer_token_hex,
+            &c.delegator_pubkey_hex,
+            &target_hex,
+            "transfer",
+            0,
+            0,
+        )
+        .expect("verify should succeed");
+
+        #[derive(serde::Deserialize)]
+        struct Verified {
+            valid: bool,
+            signature_valid: bool,
+            expired: bool,
+        }
+        let v: Verified = serde_wasm_bindgen::from_value(verified).unwrap();
+        assert!(v.signature_valid, "real signature must verify");
+        assert!(v.valid);
+        assert!(!v.expired);
+    }
+
+    #[test]
+    fn adversarial_unsigned_bearer_cap_is_rejected() {
+        // P1 audit fix: the old "bearer token" was
+        // BLAKE3(delegator_pubkey || target || action || expiry) — anyone who
+        // knew the public parameters could forge it. The new token is a real
+        // Ed25519 signature, so an attacker who only knows the public params
+        // cannot produce a verifying token.
+        let seed = [42u8; 32];
+        let signing = SigningKey::from_bytes(&seed);
+        let delegator_pubkey = signing.verifying_key().to_bytes();
+        let target = [7u8; 32];
+
+        // Forge the OLD style token (BLAKE3 of public params).
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-bearer-cap-v2");
+        hasher.update(&delegator_pubkey);
+        hasher.update(&target);
+        hasher.update(b"transfer");
+        hasher.update(&0u64.to_le_bytes());
+        let forged_32 = hasher.finalize();
+        // Pad to 64 bytes to fit the new signature shape, then verify must
+        // still reject (it's not a valid Ed25519 signature).
+        let mut forged_64 = [0u8; 64];
+        forged_64[..32].copy_from_slice(forged_32.as_bytes());
+        forged_64[32..].copy_from_slice(forged_32.as_bytes());
+        let forged_hex = hex_of(&forged_64);
+
+        let verified = verify_bearer_cap(
+            &forged_hex,
+            &hex_of(&delegator_pubkey),
+            &hex_of(&target),
+            "transfer",
+            0,
+            0,
+        )
+        .expect("verify shape OK");
+
+        #[derive(serde::Deserialize)]
+        struct Verified {
+            valid: bool,
+            signature_valid: bool,
+        }
+        let v: Verified = serde_wasm_bindgen::from_value(verified).unwrap();
+        assert!(!v.signature_valid, "forged BLAKE3-only token must NOT verify");
+        assert!(!v.valid);
+    }
+
+    #[test]
+    fn adversarial_bearer_cap_wrong_pubkey_fails() {
+        let seed_a = [1u8; 32];
+        let seed_b = [2u8; 32];
+        let target_hex = hex_of(&[7u8; 32]);
+
+        let created = create_bearer_cap(&hex_of(&seed_a), &target_hex, "read", 0).unwrap();
+        #[derive(serde::Deserialize)]
+        struct Created {
+            bearer_token_hex: String,
+        }
+        let c: Created = serde_wasm_bindgen::from_value(created).unwrap();
+
+        // Verify with the WRONG delegator pubkey (from seed_b).
+        let wrong_pub = SigningKey::from_bytes(&seed_b).verifying_key().to_bytes();
+        let verified =
+            verify_bearer_cap(&c.bearer_token_hex, &hex_of(&wrong_pub), &target_hex, "read", 0, 0)
+                .unwrap();
+        #[derive(serde::Deserialize)]
+        struct Verified {
+            signature_valid: bool,
+        }
+        let v: Verified = serde_wasm_bindgen::from_value(verified).unwrap();
+        assert!(!v.signature_valid, "wrong pubkey must reject");
+    }
+
+    #[test]
+    fn adversarial_verify_conservation_proof_fails_closed() {
+        // P1 audit fix: previously returned `valid: true` for any non-empty
+        // input/output lists. Now fails closed with `not_implemented: true`.
+        let inputs = serde_json::json!(["aa".repeat(32)]).to_string();
+        let outputs = serde_json::json!(["bb".repeat(32)]).to_string();
+        let result = verify_conservation_proof(&inputs, &outputs).expect("parse ok");
+
+        #[derive(serde::Deserialize)]
+        struct Out {
+            valid: bool,
+            not_implemented: bool,
+        }
+        let o: Out = serde_wasm_bindgen::from_value(result).unwrap();
+        assert!(!o.valid, "stub must fail closed");
+        assert!(o.not_implemented, "must flag not_implemented");
+    }
+
+    #[test]
+    fn adversarial_compose_proofs_fails_closed() {
+        // P1 audit fix: previously returned `valid: true` without ever
+        // deserializing or verifying any input proof.
+        let proofs = serde_json::json!([
+            {"proof_json": "garbage", "public_inputs": [1u32, 2u32]},
+        ])
+        .to_string();
+        let result = compose_proofs(&proofs, "and").expect("parse ok");
+
+        #[derive(serde::Deserialize)]
+        struct Out {
+            valid: bool,
+            composed_proof: String,
+        }
+        let o: Out = serde_wasm_bindgen::from_value(result).unwrap();
+        assert!(!o.valid, "compose_proofs must NOT claim valid for garbage inputs");
+        assert!(!o.composed_proof.is_empty(), "still emits an opaque identifier");
+    }
+
+    #[test]
+    fn adversarial_seal_intent_body_wrong_privkey_fails_to_decrypt() {
+        // Encrypt to recipient A's pubkey. Wrong privkey (B) must NOT recover
+        // the plaintext.
+        let recip_a_secret = x25519_dalek::StaticSecret::from([3u8; 32]);
+        let recip_a_pub = x25519_dalek::PublicKey::from(&recip_a_secret);
+        let recip_b_secret_bytes = [9u8; 32];
+
+        let plaintext = r#"{"kind":"need","value":42}"#;
+        let sealed = seal_intent_body(plaintext, Some(recip_a_pub.as_bytes().to_vec()))
+            .expect("seal ok");
+
+        #[derive(serde::Deserialize)]
+        struct Sealed {
+            ciphertext: Vec<u8>,
+            ephemeral_pubkey: Vec<u8>,
+        }
+        let s: Sealed = serde_wasm_bindgen::from_value(sealed).unwrap();
+
+        // Wrong privkey path: unseal returns Err or non-plaintext.
+        let wrong = unseal_intent_body(&s.ciphertext, &s.ephemeral_pubkey, &recip_b_secret_bytes);
+        match wrong {
+            Err(_) => {} // expected: AEAD reject
+            Ok(s) => assert_ne!(s, plaintext, "wrong key must not recover plaintext"),
+        }
+
+        // Right privkey path: recovers plaintext.
+        let right_secret = recip_a_secret.to_bytes();
+        let right = unseal_intent_body(&s.ciphertext, &s.ephemeral_pubkey, &right_secret)
+            .expect("right key decrypts");
+        assert_eq!(right, plaintext);
+    }
 }

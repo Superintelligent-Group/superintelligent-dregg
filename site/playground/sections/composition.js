@@ -165,6 +165,9 @@ export function initComposition(wasm) {
     const outputCommit1 = randomHex(32);
     const outputCommit2 = randomHex(32);
 
+    // WASM-side audit fix: verify_conservation_proof now returns
+    // `{ valid: false, not_implemented: true }`. We still capture the
+    // (currently stub) result as the proof body for composition demos.
     let proofJson;
     try {
       const result = wasm.verify_conservation_proof(
@@ -173,7 +176,7 @@ export function initComposition(wasm) {
       );
       proofJson = JSON.stringify({ ...result, type: 'conservation' });
     } catch (e) {
-      proofJson = JSON.stringify({ type: 'conservation', valid: true, inputs: 1, outputs: 2 });
+      proofJson = JSON.stringify({ type: 'conservation', valid: false, not_implemented: true, inputs: 1, outputs: 2 });
     }
     const elapsed = (performance.now() - t0).toFixed(2);
 
@@ -203,16 +206,19 @@ export function initComposition(wasm) {
       public_inputs: p.public_inputs,
     }));
 
+    // WASM-side audit fix: compose_proofs returns `valid: false` because it
+    // doesn't actually verify input proofs (just BLAKE3-hashes their JSON).
+    // The `composed_proof` field is an opaque content-addressable identifier,
+    // not a verifiable proof.
     let result;
     try {
       result = wasm.compose_proofs(JSON.stringify(proofsInput), mode);
     } catch (e) {
-      // Fallback
       result = {
         composed_proof: randomHex(32),
         mode,
         input_count: proofs.length,
-        valid: true,
+        valid: false,
       };
     }
     const elapsed = (performance.now() - t0).toFixed(2);
@@ -229,10 +235,13 @@ export function initComposition(wasm) {
       aggregate: 'All proofs are batch-verified in a single pass (amortized cost)',
     };
 
+    const validityLabel = result.valid
+      ? 'VALID'
+      : 'STUB (compose_proofs does not yet verify input proofs)';
     showExplainer(explainerDiv, {
-      prover: `Composed ${proofs.length} proofs in "${mode}" mode:\n${proofs.map((p, i) => `  ${i + 1}. ${p.type}`).join('\n')}\n\nSingle composed commitment: ${result.composed_proof.slice(0, 24)}...`,
-      verifier: `Verification mode: ${mode.toUpperCase()}\n${modeDescriptions[mode]}\n\nResult: ${result.valid ? 'VALID' : 'INVALID'}\nInput proofs: ${result.input_count}\n\nA single verification replaces ${proofs.length} individual checks.`,
-      delta: `Proof composition reduces verification cost from O(n) separate verifications to a single composed check.\n\nAND: Transaction needs membership + range + conservation.\nOR: Accept any of several credential types.\nChain: Multi-step workflow (prove A, then B given A).\nAggregate: Batch all proofs from a block.`,
+      prover: `Composed ${proofs.length} proofs in "${mode}" mode:\n${proofs.map((p, i) => `  ${i + 1}. ${p.type}`).join('\n')}\n\nContent identifier: ${result.composed_proof.slice(0, 24)}...`,
+      verifier: `Verification mode: ${mode.toUpperCase()}\n${modeDescriptions[mode]}\n\nResult: ${validityLabel}\nInput proofs: ${result.input_count}`,
+      delta: `Composition target: O(1) verification of the conjunction. Current WASM implementation only emits a content-addressable identifier; real composition (deserialize each proof, verify, return conjunction) is pending.`,
       timing: elapsed,
     });
   });

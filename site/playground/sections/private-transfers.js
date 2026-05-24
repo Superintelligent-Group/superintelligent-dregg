@@ -255,6 +255,9 @@ export function initPrivateTransfers(wasm) {
     const outputCommitHex1 = bytesToHex(commitment);
     const outputCommitHex2 = bytesToHex(changeCommitment);
 
+    // WASM-side audit fix: verify_conservation_proof is now a fail-closed
+    // stub (returns `valid: false, not_implemented: true`). Surface that
+    // explicitly instead of pretending the check passed.
     let conservResult;
     try {
       conservResult = wasm.verify_conservation_proof(
@@ -262,13 +265,16 @@ export function initPrivateTransfers(wasm) {
         JSON.stringify([outputCommitHex1, outputCommitHex2])
       );
     } catch (e) {
-      conservResult = { valid: true, input_count: 1, output_count: 2 };
+      conservResult = { valid: false, not_implemented: true, input_count: 1, output_count: 2 };
     }
     const elapsed = (performance.now() - t0).toFixed(2);
 
     state.proofCount++;
     notifyStateChange();
 
+    const conservLabel = conservResult.not_implemented
+      ? 'STUB (verify_conservation_proof is not yet implemented in WASM)'
+      : (conservResult.valid ? 'VALID' : 'INVALID');
     addTimelineEntry([
       { text: `[Recipient] Derived stealth keys`, type: 'info' },
       { text: `[Sender] Created stealth transfer (${transferAmount} committed)`, type: 'info' },
@@ -276,7 +282,7 @@ export function initPrivateTransfers(wasm) {
       { text: `[Verifier] Checking conservation proof...`, type: 'info' },
       { text: `  Input: 1 commitment (original 1000)`, type: 'info' },
       { text: `  Output: ${transferAmount} to recipient + ${changeAmount} change`, type: 'info' },
-      { text: `  Conservation: ${conservResult.valid ? 'VALID' : 'INVALID'} (${conservResult.input_count} in -> ${conservResult.output_count} out)`, type: conservResult.valid ? 'success' : 'error' },
+      { text: `  Conservation: ${conservLabel} (${conservResult.input_count} in -> ${conservResult.output_count} out)`, type: conservResult.valid ? 'success' : 'warning' },
     ]);
 
     showExplainer(explainerDiv, {

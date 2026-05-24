@@ -50,7 +50,7 @@ export function initBearer(wasm) {
 
   if (!wasm) return;
 
-  let caps = []; // { token_hex, delegator_key, target_cell, action, expiry, exercised, expired }
+  let caps = []; // { token_hex, delegator_pubkey, target_cell, action, expiry, exercised, expired }
   const capsDiv = container.querySelector('#bc-caps-display');
   const resultDiv = container.querySelector('#bc-result');
   const explainerDiv = container.querySelector('#bc-explainer');
@@ -104,7 +104,11 @@ export function initBearer(wasm) {
     const targetCell = targetInput.length === 64 ? targetInput : randomHex(32);
     const action = container.querySelector('#bc-action').value;
     const expiry = parseInt(container.querySelector('#bc-expiry').value) || 0;
-    const delegatorKey = randomHex(32);
+    // WASM-side audit fix: `create_bearer_cap` now takes the delegator
+    // *signing seed* (the 32-byte Ed25519 secret seed), not a public key. For
+    // the demo we generate a fresh seed; the returned `delegator_pubkey_hex`
+    // is what the verifier needs.
+    const delegatorSigningSeed = randomHex(32);
 
     // Update the input to show the generated target
     if (targetInput.length !== 64) {
@@ -114,11 +118,12 @@ export function initBearer(wasm) {
     const t0 = performance.now();
     let result;
     try {
-      result = wasm.create_bearer_cap(delegatorKey, targetCell, action, BigInt(expiry));
+      result = wasm.create_bearer_cap(delegatorSigningSeed, targetCell, action, BigInt(expiry));
     } catch (e) {
-      // Fallback
+      // Fallback (no real signature — for demo display only).
       result = {
-        bearer_token_hex: randomHex(32),
+        bearer_token_hex: randomHex(64), // 64-byte sig in fallback
+        delegator_pubkey_hex: randomHex(32),
         target_cell: targetCell,
         action,
         expiry,
@@ -128,7 +133,8 @@ export function initBearer(wasm) {
 
     caps.push({
       token_hex: result.bearer_token_hex,
-      delegator_key: delegatorKey,
+      // Persist the PUBLIC key for verification (no longer the raw seed).
+      delegator_pubkey: result.delegator_pubkey_hex,
       target_cell: result.target_cell,
       action: result.action,
       expiry: result.expiry,
@@ -140,9 +146,9 @@ export function initBearer(wasm) {
     updateButtons();
 
     showExplainer(explainerDiv, {
-      prover: `Created bearer cap\nDelegator: ${delegatorKey.slice(0, 16)}...\nTarget: ${result.target_cell.slice(0, 16)}...\nAction: ${result.action}\nToken: ${result.bearer_token_hex.slice(0, 20)}...`,
-      verifier: `Bearer token is a BLAKE3 binding of:\n- Delegator key\n- Target cell\n- Action name\n- Expiry timestamp\n\nAnyone holding this token can exercise the action.`,
-      delta: `Unlike delegation chains (which are on-chain and require state updates), bearer caps are off-chain. They can be passed via any channel — QR code, email, NFC tap. The holder IS the authorized party. No revocation list needed until expiry.`,
+      prover: `Created bearer cap (Ed25519-signed)\nDelegator pubkey: ${result.delegator_pubkey_hex.slice(0, 16)}...\nTarget: ${result.target_cell.slice(0, 16)}...\nAction: ${result.action}\nSignature: ${result.bearer_token_hex.slice(0, 20)}...`,
+      verifier: `Bearer token is an Ed25519 signature by the delegator over BLAKE3(delegator_pubkey || target || action || expiry). Only the delegator (who holds the signing seed) can issue; anyone with the public key can verify.`,
+      delta: `Earlier versions used a BLAKE3-hash-of-public-params as the "token" — anyone could forge it. The token is now a real signature, so only the delegator can mint a verifying cap.`,
       timing: elapsed,
     });
   });
@@ -156,13 +162,14 @@ export function initBearer(wasm) {
     let result;
     try {
       result = wasm.verify_bearer_cap(
-        cap.token_hex, cap.delegator_key, cap.target_cell,
+        cap.token_hex, cap.delegator_pubkey, cap.target_cell,
         cap.action, BigInt(cap.expiry), BigInt(currentTime)
       );
     } catch (e) {
       // Fallback
       result = {
         valid: !cap.expired,
+        signature_valid: !cap.expired,
         expired: cap.expired || (cap.expiry > 0 && currentTime > cap.expiry),
       };
     }
@@ -170,12 +177,12 @@ export function initBearer(wasm) {
 
     const status = result.valid && !result.expired ? 'VALID' : (result.expired ? 'EXPIRED' : 'INVALID');
     showResult(resultDiv, result.valid && !result.expired ? 'success' : 'error',
-      `Verification: ${status}\nToken: ${cap.token_hex.slice(0, 20)}...\nValid signature: ${result.valid}\nExpired: ${result.expired}`);
+      `Verification: ${status}\nToken: ${cap.token_hex.slice(0, 20)}...\nSignature valid: ${result.signature_valid}\nExpired: ${result.expired}`);
 
     showExplainer(explainerDiv, {
-      prover: `Presented bearer token for verification\nToken: ${cap.token_hex.slice(0, 20)}...\nClaimed action: ${cap.action} on ${cap.target_cell.slice(0, 12)}...`,
-      verifier: `Recomputed expected token from parameters\nCompared against presented token\nChecked expiry against current time (${currentTime})\nResult: ${status}`,
-      delta: `Verification is O(1) — a single BLAKE3 hash comparison. No chain traversal, no database lookup, no network call. This makes bearer caps ideal for high-frequency authorization checks.`,
+      prover: `Presented bearer cap (Ed25519 signature) for verification\nSignature: ${cap.token_hex.slice(0, 20)}...\nClaimed action: ${cap.action} on ${cap.target_cell.slice(0, 12)}...`,
+      verifier: `Recomputed the binding hash, then ran Ed25519 verify against the delegator pubkey. Checked expiry against current time (${currentTime}). Result: ${status}`,
+      delta: `One Ed25519 verify (~150us) — still O(1), now cryptographically meaningful: a forgery requires the delegator's secret signing seed.`,
       timing: elapsed,
     });
   });
