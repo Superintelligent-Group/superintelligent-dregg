@@ -7010,6 +7010,7 @@ mod tests {
             siblings: vec![[[0u8; 32]; 3]; depth],
             path_indices: vec![0; depth],
             leaf_hash: [0u8; 32],
+            bucket_siblings: vec![],
         };
         let result = AgentWallet::compute_root_from_membership_proof(&proof);
         assert!(result.is_err(), "depth-exceeding proof must be rejected");
@@ -7029,6 +7030,7 @@ mod tests {
             siblings: vec![[[0u8; 32]; 3]; 4],
             path_indices: vec![0; 3], // shorter on purpose
             leaf_hash: [0u8; 32],
+            bucket_siblings: vec![],
         };
         let result = AgentWallet::compute_root_from_membership_proof(&proof);
         assert!(result.is_err(), "mismatched lengths must be rejected");
@@ -7058,13 +7060,16 @@ mod tests {
             siblings: vec![[[0u8; 32]; 3]; oversized_depth],
             path_indices: vec![0; oversized_depth],
             leaf_hash: [7u8; 32],
+            bucket_siblings: vec![],
         };
 
+        // AUDIT[*]: Previously used `applications: Some(vec![AppRestriction { id: "x", actions: vec![] }])`.
+        // `AppRestriction` was removed; `Attenuation.applications` became `apps: Vec<(String, String)>`
+        // where the tuple is (app_id, action_mask). Empty actions → empty action mask string.
+        // The test only needs a non-empty Attenuation to produce a valid delegation envelope;
+        // the restriction semantics are not under test here.
         let restrictions = Attenuation {
-            applications: Some(vec![pyana_token::AppRestriction {
-                id: "x".into(),
-                actions: vec![],
-            }]),
+            apps: vec![("x".to_string(), "".to_string())],
             ..Default::default()
         };
 
