@@ -1,7 +1,10 @@
 //! `pyana-federation`: Multi-node federated revocation attestation.
 //!
-//! This crate integrates the Morpheus consensus protocol with the pyana token
-//! system to provide real multi-node federated revocation attestation.
+//! Historically this crate hosted a Morpheus-shaped BFT consensus simulation;
+//! the live consensus engine is now `pyana-blocklace` (Cordial Miners DAG +
+//! tau ordering). What remains here are the federated revocation primitives
+//! (Merkle accumulator, attested roots, quorum signatures) plus the solo /
+//! threshold / checkpoint utilities the live node consumes.
 //!
 //! # Architecture
 //!
@@ -21,7 +24,7 @@
 //! │       │              │              │              │            │
 //! │       └──────────────┴──────────────┴──────────────┘            │
 //! │                         │                                        │
-//! │              Morpheus Consensus Protocol                         │
+//! │              BFT Consensus (blocklace, see pyana-blocklace)      │
 //! │              (Propose -> Vote -> Finalize)                       │
 //! │                         │                                        │
 //! │                    Attested Root                                  │
@@ -34,9 +37,9 @@
 //! 1. **Revocation submission**: An authority node creates a signed revocation
 //!    event for a token ID.
 //!
-//! 2. **Consensus**: The Morpheus-shaped protocol (propose/vote/finalize)
-//!    agrees on a block of revocations. A quorum (n - f) of nodes must vote
-//!    for the block to be finalized.
+//! 2. **Consensus**: The BFT protocol (propose/vote/finalize, as implemented
+//!    by `pyana-blocklace`) agrees on a block of revocations. A quorum (n - f)
+//!    of nodes must vote for the block to be finalized.
 //!
 //! 3. **State update**: After finalization, all nodes apply the revocations
 //!    to their local Merkle trees. Since the tree is deterministic and
@@ -54,13 +57,10 @@
 //!
 //! - [`types`]: Core data types (AttestedRoot, RevocationProof, messages, crypto)
 //! - [`revocation`]: Revocation Merkle tree + non-membership proofs
-//! - [`network`]: Channel-based networking between nodes
 //! - [`node`]: Federation node implementation (includes BFT consensus simulation)
 
 pub mod checkpoint;
 pub mod epoch;
-#[cfg(feature = "morpheus")]
-pub mod network;
 pub mod node;
 pub mod receipt;
 pub mod revocation;

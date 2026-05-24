@@ -81,8 +81,8 @@ pub struct NodeStateInner {
     pub intent_pool: HashMap<[u8; 32], pyana_intent::Intent>,
     /// Queue of signed turns ready for consensus ordering.
     /// Turns are added here when they require multi-party agreement (e.g.,
-    /// fulfillment turns, cross-cell operations). The Morpheus consensus driver
-    /// drains this queue each tick.
+    /// fulfillment turns, cross-cell operations). The blocklace sync driver
+    /// drains this queue when assembling new blocks.
     pub consensus_queue: Vec<pyana_sdk::SignedTurn>,
     /// Pending conditional turns awaiting proof resolution.
     /// Garbage-collected on access when timeout_height is exceeded.

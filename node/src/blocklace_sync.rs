@@ -1,7 +1,8 @@
 //! Federation sync via the blocklace (Cordial Miners) consensus layer.
 //!
-//! Replaces the Morpheus BFT consensus with the blocklace DAG structure from the
-//! Cordial Miners paper. The blocklace provides:
+//! Implements the live BFT consensus using the blocklace DAG structure from the
+//! Cordial Miners paper (this superseded an earlier propose/vote/finalize BFT
+//! simulation in `pyana_federation::node`). The blocklace provides:
 //! - Quiescent operation (no messages when idle)
 //! - Efficient cordial dissemination (send peers blocks you think they need)
 //! - Leaderless total ordering via the tau function
@@ -61,7 +62,7 @@ const DEFAULT_CONSTITUTION_TIMEOUT_MS: u64 = 10_000;
 
 /// Wire-format message for blocklace gossip.
 ///
-/// These replace the Morpheus consensus messages on the gossip network.
+/// These are the only consensus messages on the gossip network.
 /// The protocol is quiescent: messages are only sent when a turn is submitted
 /// or a new block arrives from a peer.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -431,8 +432,8 @@ fn build_ordering_blocklace(
 /// This is the replacement for `federation_sync::run_federation_sync` when
 /// `--consensus blocklace` is specified.
 ///
-/// Key difference from Morpheus: QUIESCENT operation. No periodic timers for
-/// consensus. Activity only when a turn is submitted or blocks arrive from peers.
+/// Key property: QUIESCENT operation. No periodic timers for consensus.
+/// Activity only when a turn is submitted or blocks arrive from peers.
 pub async fn run_blocklace_sync(
     state: NodeState,
     gossip_port: u16,

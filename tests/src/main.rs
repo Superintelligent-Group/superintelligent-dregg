@@ -10,8 +10,6 @@
 #[cfg(feature = "__legacy_tests")]
 mod budget;
 #[cfg(feature = "__legacy_tests")]
-mod byzantine;
-#[cfg(feature = "__legacy_tests")]
 mod commitment;
 #[cfg(feature = "__legacy_tests")]
 mod fuzz;

@@ -52,9 +52,6 @@ name = "multi_silo_budget"
 name = "causal_ordering"
 
 [[example]]
-name = "federation_bootstrap"
-
-[[example]]
 name = "offline_verification"
 
 [[example]]
@@ -89,9 +86,6 @@ name = "note_privacy"
 
 [[example]]
 name = "pipeline_demo"
-
-[[example]]
-name = "federation_exit"
 
 [[example]]
 name = "unified_harness"

@@ -18,7 +18,7 @@ Cell identity is content-addressed: `id = BLAKE3(public_key || token_id)`.
 ## 2. Actors
 
 - **Agent**: owns a cell, submits turns (signed action forests). Pays fees in computrons.
-- **Federation node**: participates in Morpheus consensus. Proposes/votes/finalizes blocks of state transitions. Maintains local ledger replica.
+- **Federation node**: participates in blocklace (Cordial Miners) BFT consensus. Proposes/votes/finalizes blocks of state transitions. Maintains local ledger replica.
 - **Verifier**: checks attested roots, non-membership proofs, and ZK proofs without full state.
 - **Coordinator**: orchestrates multi-party atomic turns (2PC). Assembles partial forests, collects votes, issues commit/abort.
 
@@ -119,7 +119,7 @@ All-or-nothing: the combined forest executes atomically or not at all. Partial s
 
 ## 6. Federation Protocol
 
-Morpheus-shaped BFT consensus with `n` nodes, tolerating `f = floor((n-1)/3)` faults. Threshold = `n - f`.
+Blocklace (Cordial Miners) BFT consensus with `n` nodes, tolerating `f = floor((n-1)/3)` faults. Threshold = `n - f`.
 
 ```
 1. PROPOSE: rotating leader proposes a block (set of turns/revocations)
