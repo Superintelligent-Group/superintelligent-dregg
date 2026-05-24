@@ -7250,7 +7250,6 @@ dependencies = [
  "pyana-circuit",
  "pyana-commit",
  "pyana-dsl-runtime",
- "pyana-federation",
  "pyana-store",
  "pyana-turn",
  "pyana-types",

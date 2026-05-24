@@ -4,9 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["stark-verifier", "federation", "bridge"]
+default = ["stark-verifier", "bridge"]
 stark-verifier = ["pyana-circuit"]
-federation = ["pyana-federation"]
 bridge = ["pyana-bridge", "pyana-commit", "stark-verifier"]
 dev = []
 
@@ -21,7 +20,6 @@ ed25519-dalek = { version = "2", features = ["std"] }
 getrandom = { workspace = true }
 pyana-circuit = { path = "../circuit", optional = true }
 pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
-pyana-federation = { path = "../federation", optional = true }
 pyana-bridge = { path = "../bridge", optional = true, features = ["test-utils"] }
 token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 pyana-commit = { path = "../commit", optional = true }
@@ -40,14 +38,9 @@ path = "src/bin/demo.rs"
 required-features = ["stark-verifier"]
 
 [[bin]]
-name = "multi_node"
-path = "src/bin/multi_node.rs"
-required-features = ["stark-verifier", "federation"]
-
-[[bin]]
 name = "cross_node_auth"
 path = "src/bin/cross_node_auth.rs"
-required-features = ["bridge", "federation"]
+required-features = ["bridge"]
 
 [[bench]]
 name = "wire_bench"

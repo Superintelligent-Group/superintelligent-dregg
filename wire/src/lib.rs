@@ -82,9 +82,6 @@ pub mod hardening;
 pub mod message;
 pub mod server;
 
-#[cfg(feature = "federation")]
-pub mod federation_bridge;
-
 // =============================================================================
 // Unified Lace Compatibility
 // =============================================================================

@@ -369,8 +369,8 @@ pub trait RevocationHandler: Send + Sync {
 /// non-membership proof generation via a sorted revocation tree.
 ///
 /// For federation-connected deployments that need consensus-attested roots,
-/// use [`FederationBridge`](crate::federation_bridge::FederationBridge) as the
-/// `RevocationHandler` instead.
+/// the node crate plugs a blocklace-backed `RevocationHandler` into the
+/// `SiloServer` instead.
 #[derive(Clone, Debug)]
 pub struct DefaultRevocationHandler {
     /// The underlying revocation registry (exact set + Merkle tree).

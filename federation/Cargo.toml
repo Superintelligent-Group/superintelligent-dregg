@@ -24,14 +24,6 @@ ark-std = "0.5.0"
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 
-[[bin]]
-name = "pyana-federation-demo"
-path = "src/bin/demo.rs"
-
-[[bin]]
-name = "pyana-federation-node"
-path = "src/bin/node.rs"
-
 [[bench]]
 name = "consensus_bench"
 harness = false
