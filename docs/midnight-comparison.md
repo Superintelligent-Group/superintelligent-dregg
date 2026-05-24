@@ -9,7 +9,7 @@ Based on code review of midnightntwrk repos (midnight-zk, midnight-ledger, midni
 | Proof system | Plonk (Halo2 fork) over Pluto/Eris with KZG commitments | STARK (BabyBear, FRI-based) + Kimchi/Pickles for recursion |
 | Privacy model | Zerocash-style shielded pool (Zswap) + unshielded UTXO | Credential privacy: prove authorization without revealing delegation chain |
 | Smart contracts | Compact (custom DSL) compiled to ZKIR, run on onchain VM (Impact) | Cell programs (Rust predicates + ZK circuits), Datalog policy |
-| Consensus | Substrate-based: AURA block production + GRANDPA finality | Morpheus adaptive BFT (Lewis-Pye & Shapiro, 2-QC finality) |
+| Consensus | Substrate-based: AURA block production + GRANDPA finality | Blocklace BFT (Cordial Miners DAG + tau ordering, quiescent) |
 | Token model | NIGHT (native unshielded), DUST (fee token), Zswap shielded coins, user-defined types | Macaroon/Biscuit capability tokens, attenuate-only delegation |
 | Settlement | Cardano L1 (partner chain architecture, observes Cardano state) | Federation + optional EVM bridge (SP1 wraps STARK in Groth16) |
 | State model | Global ledger: commitment Merkle tree + nullifier set + contract state | Sovereign cells: agents own state, can exit federation with full history |

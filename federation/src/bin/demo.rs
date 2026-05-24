@@ -140,7 +140,7 @@ fn step_3_revoke_token(fed: &mut Federation, token_id: &str) {
             let _ = voters;
 
             println!(
-                "  {} Morpheus: block finalized in view {} ({}/{} nodes voted)",
+                "  {} BFT: block finalized in view {} ({}/{} nodes voted)",
                 arrow(),
                 block.view,
                 qc.votes.len(),
@@ -250,7 +250,7 @@ fn step_5_byzantine_fault(fed: &mut Federation, token_id: &str) {
     match result {
         Some((block, qc)) => {
             println!(
-                "  {} Morpheus: block finalized with {}/{} nodes (1 offline tolerated)",
+                "  {} BFT: block finalized with {}/{} nodes (1 offline tolerated)",
                 arrow(),
                 qc.votes.len(),
                 fed.config.num_nodes

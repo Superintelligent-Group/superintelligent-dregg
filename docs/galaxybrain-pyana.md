@@ -211,7 +211,7 @@ The `Ledger` type becomes optional infrastructure, not a requirement. The core p
 - `Signature` (authentication)
 - `PeerStateTransition` (the wire format between agents)
 
-The federation crates (federation, morpheus, coord) become a LAYER on top — used when needed, not for everything.
+The federation crates (federation, blocklace, coord) become a LAYER on top — used when needed, not for everything.
 
 ## Open Questions
 

@@ -3,7 +3,7 @@
 //! A federation node is a process that:
 //! - Holds an authority keypair
 //! - Maintains a local revocation accumulator (Merkle tree of revoked token IDs)
-//! - Participates in Morpheus consensus to agree on the current revocation root
+//! - Participates in BFT consensus to agree on the current revocation root
 //! - Exposes an API for: `revoke(token_id)`, `get_attested_root()`,
 //!   `verify_non_membership(token_id)`
 //!

@@ -741,8 +741,8 @@ impl FederationTransport for TcpFederationTransport {
 /// the node initiates a view change.
 pub const PROPOSAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// An async consensus node that drives the Morpheus-shaped protocol over a
-/// [`FederationTransport`].
+/// An async consensus node that drives a BFT propose/vote/finalize protocol
+/// over a [`FederationTransport`].
 ///
 /// Each `NetworkConsensusNode` runs the propose/vote/finalize loop for one
 /// federation member using real (or simulated) network I/O.

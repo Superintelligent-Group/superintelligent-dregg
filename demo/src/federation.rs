@@ -10,10 +10,10 @@
 //! with the issuing silo.
 //!
 //! NOTE: This module is standalone for membership tracking and role-based access.
-//! The real `pyana_federation` crate provides multi-node consensus (Morpheus protocol),
-//! attested roots with quorum certificates, and Merkle-based revocation -- those
-//! features are exercised via `revocation.rs` (RevocationTree) and `main.rs`
-//! (STARK proof of issuer membership).
+//! The real `pyana_federation` crate provides attested roots with quorum
+//! certificates and Merkle-based revocation (live BFT consensus itself lives
+//! in `pyana_blocklace`); those features are exercised via `revocation.rs`
+//! (RevocationTree) and `main.rs` (STARK proof of issuer membership).
 //!
 //! // TODO: integrate with real pyana_federation::node::Federation for full consensus-
 //! // based membership attestation (AttestedRoot with quorum signatures over the
