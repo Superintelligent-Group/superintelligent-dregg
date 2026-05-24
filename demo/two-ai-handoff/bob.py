@@ -67,7 +67,14 @@ def run_exercise(args) -> int:
         # The current MCP create_agent generates fresh keypairs every call,
         # so we re-create. Identity persistence across MCP sessions is a
         # separate gap (orthogonal to this demo).
-        cli.tool("pyana_create_agent", {"name": "bob", "initial_balance": 1_000_000})
+        agent = cli.tool("pyana_create_agent", {"name": "bob", "initial_balance": 1_000_000})
+        bob_cell = agent["cell_id"]
+        alice_cell = payload["target_cell"]
+
+        # Snapshot pre-exercise balances. The exercise tool will auto-insert
+        # a remote stub for alice_cell (pre-funded), so the stub's balance
+        # only becomes readable after `pyana_exercise_bearer_cap` runs.
+        bob_pre = cli.tool("pyana_read_cell", {"cell_id": bob_cell})
 
         # ── Step 6: enliven + Step 7: exercise (one tool today) ───────────
         # Bob exercises the bearer cap to perform a Transfer from alice_cell
@@ -77,7 +84,11 @@ def run_exercise(args) -> int:
         transfer_effect = {
             "type":   "transfer",
             "from":   payload["target_cell"],   # alice_cell
-            "to":     payload["bearer_pk"],      # bob_cell (pk-as-cell-id convention)
+            # `bearer_pk` is bob's PUBLIC KEY (32-byte Ed25519 pk), not bob's
+            # cell id. The cell id is derived as BLAKE3(pk || token_id) and
+            # is what the ledger keys by; passing the pk here would credit a
+            # different (auto-stubbed) cell, leaving bob_cell unchanged.
+            "to":     bob_cell,
             "amount": args.amount,
         }
         exercise = cli.tool(
@@ -121,6 +132,19 @@ def run_exercise(args) -> int:
             print("[bob] WARNING: exercise turn returned no effect_vm_proof_hex",
                   file=sys.stderr)
 
+        # Snapshot post-exercise balances. alice_cell is a remote-stub on
+        # bob's ledger that the exercise tool pre-funded to ~1_000_000 (the
+        # canonical balance lives on alice's node); after the Transfer that
+        # stub balance should drop by `args.amount`, and bob_cell should
+        # gain the same amount.
+        bob_post = cli.tool("pyana_read_cell", {"cell_id": bob_cell})
+        alice_stub_post = cli.tool("pyana_read_cell", {"cell_id": alice_cell})
+
+        bob_pre_bal = bob_pre.get("balance") or 0
+        bob_post_bal = bob_post.get("balance") or 0
+        bob_delta = bob_post_bal - bob_pre_bal
+        alice_stub_bal = alice_stub_post.get("balance")
+
         # Snapshot Bob's receipt chain so charlie/run.sh can inspect.
         chain = cli.tool("pyana_get_receipt_chain", {"limit": 50})
 
@@ -129,6 +153,14 @@ def run_exercise(args) -> int:
             "exercised":          True,
             "receipt_chain":      chain,
             "transfer_amount":    args.amount,
+            # Observable post-conditions on Bob's ledger. The
+            # cross-process Transfer is local to Bob's view: alice_cell is
+            # a remote-stub here, and the canonical alice balance change
+            # lives on alice's node (not visible to this process).
+            "bob_pre_balance":     bob_pre_bal,
+            "bob_post_balance":    bob_post_bal,
+            "bob_balance_delta":   bob_delta,
+            "alice_stub_balance":  alice_stub_bal,
         }
         (state_dir / "bob.exercise.json").write_text(json.dumps(result, indent=2))
         print(json.dumps(result))

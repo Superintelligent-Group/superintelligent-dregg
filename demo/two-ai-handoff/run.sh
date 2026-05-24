@@ -203,6 +203,20 @@ EXERCISE_VER_OK=0; [ "$EXERCISE_VERIFIED" = "True" ] && EXERCISE_VER_OK=1
 add_check "step 4/8 (charlie verifies grant proof)"          "$GRANT_VER_OK"
 add_check "step 4/8 (charlie verifies exercise proof)"       "$EXERCISE_VER_OK"
 
+# Observable balance deltas on Bob's ledger (expected.json transfer_amount=100).
+#
+# Net bob delta = +100 (Transfer credit) - 10_000 (turn fee paid by bob's
+# cell as the agent of the turn). Net = -9900. The Transfer effect actually
+# moved 100 from alice to bob; the fee is a separate executor charge.
+BOB_DELTA=$(echo "$BOB_OUT" | "$PY" -c 'import json,sys;print(json.load(sys.stdin).get("bob_balance_delta", 0))' 2>/dev/null || echo 0)
+ALICE_STUB_BAL=$(echo "$BOB_OUT" | "$PY" -c 'import json,sys;print(json.load(sys.stdin).get("alice_stub_balance", 0))' 2>/dev/null || echo 0)
+BOB_DELTA_OK=0; [ "$BOB_DELTA" = "-9900" ] && BOB_DELTA_OK=1
+# The remote-stub for alice is pre-funded to 1_000_000 in the exercise tool;
+# after the Transfer 100 we expect 999_900.
+ALICE_STUB_OK=0; [ "$ALICE_STUB_BAL" = "999900" ] && ALICE_STUB_OK=1
+add_check "Transfer effect credited bob (net delta -9900 = +100 - 10000 fee)"  "$BOB_DELTA_OK"
+add_check "Transfer effect debited alice stub (1_000_000 -> 999_900)"           "$ALICE_STUB_OK"
+
 PASS=1
 for i in "${!CHECKS_LABEL[@]}"; do
     if [ "${CHECKS_OK[$i]}" = "1" ]; then
