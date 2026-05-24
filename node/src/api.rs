@@ -1291,8 +1291,8 @@ async fn get_all_cells(State(state): State<NodeState>) -> Json<Vec<CellListEntry
         .iter()
         .map(|(id, cell)| CellListEntry {
             id: hex_encode(&id.0),
-            balance: cell.state.balance,
-            nonce: cell.state.nonce,
+            balance: cell.state.balance(),
+            nonce: cell.state.nonce(),
             capability_count: cell.capabilities.len(),
             has_delegate: cell.delegate.is_some(),
             has_program: !matches!(cell.program, pyana_cell::CellProgram::None),
@@ -1316,15 +1316,15 @@ async fn get_cell_detail(
         Some(cell) => Ok(Json(CellDetailResponse {
             id: id.clone(),
             found: true,
-            balance: cell.state.balance,
-            nonce: cell.state.nonce,
+            balance: cell.state.balance(),
+            nonce: cell.state.nonce(),
             capability_count: cell.capabilities.len(),
             has_delegate: cell.delegate.is_some(),
             delegate: cell.delegate.as_ref().map(|d| hex_encode(&d.0)),
             has_program: !matches!(cell.program, pyana_cell::CellProgram::None),
-            public_key: hex_encode(&cell.public_key),
-            token_id: hex_encode(&cell.token_id),
-            proved_state: cell.state.proved_state,
+            public_key: hex_encode(&cell.public_key()),
+            token_id: hex_encode(&cell.token_id()),
+            proved_state: cell.state.proved_state(),
         })),
         None => Ok(Json(CellDetailResponse {
             id,

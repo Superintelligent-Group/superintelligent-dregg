@@ -46,13 +46,13 @@ fn check_clist_grant_exercise() -> Result<(), String> {
     let owner_key = test_key("owner-clist");
     let mut owner = Cell::with_balance(owner_key, token_id, 50000);
     owner.permissions = open_permissions();
-    let owner_id = owner.id;
+    let owner_id = owner.id();
     ledger.insert_cell(owner).map_err(|e| format!("{e:?}"))?;
 
     let target_key = test_key("target-clist");
     let mut target = Cell::with_balance(target_key, token_id, 0);
     target.permissions = open_permissions();
-    let target_id = target.id;
+    let target_id = target.id();
     ledger.insert_cell(target).map_err(|e| format!("{e:?}"))?;
 
     // Grant capability via c-list
@@ -151,13 +151,13 @@ fn check_revocation() -> Result<(), String> {
     let granter_key = test_key("granter-rev");
     let mut granter = Cell::with_balance(granter_key, token_id, 50000);
     granter.permissions = open_permissions();
-    let granter_id = granter.id;
+    let granter_id = granter.id();
     ledger.insert_cell(granter).map_err(|e| format!("{e:?}"))?;
 
     let target_key = test_key("target-rev");
     let mut target = Cell::with_balance(target_key, token_id, 0);
     target.permissions = open_permissions();
-    let target_id = target.id;
+    let target_id = target.id();
     ledger.insert_cell(target).map_err(|e| format!("{e:?}"))?;
 
     // Grant capability
@@ -213,13 +213,13 @@ fn check_bearer_cap_through_executor() -> Result<(), String> {
     let sender_key = test_key("sender-bearer");
     let mut sender = Cell::with_balance(sender_key, token_id, 50000);
     sender.permissions = open_permissions();
-    let sender_id = sender.id;
+    let sender_id = sender.id();
     ledger.insert_cell(sender).map_err(|e| format!("{e:?}"))?;
 
     let target_key = test_key("target-bearer");
     let mut target = Cell::with_balance(target_key, token_id, 0);
     target.permissions = open_permissions();
-    let target_id = target.id;
+    let target_id = target.id();
     ledger.insert_cell(target).map_err(|e| format!("{e:?}"))?;
 
     // Grant sender bearer-style capability to target with specific permissions.
@@ -252,10 +252,10 @@ fn check_bearer_cap_through_executor() -> Result<(), String> {
     }
 
     let t = ledger.get(&target_id).ok_or("target not found")?;
-    if t.state.balance != 500 {
+    if t.state.balance() != 500 {
         return Err(format!(
             "target should have 500 after bearer transfer, got {}",
-            t.state.balance
+            t.state.balance()
         ));
     }
 
@@ -270,13 +270,13 @@ fn check_unauthorized_rejected() -> Result<(), String> {
     let attacker_key = test_key("attacker");
     let mut attacker = Cell::with_balance(attacker_key, token_id, 50000);
     attacker.permissions = open_permissions();
-    let attacker_id = attacker.id;
+    let attacker_id = attacker.id();
     ledger.insert_cell(attacker).map_err(|e| format!("{e:?}"))?;
 
     let victim_key = test_key("victim");
     let mut victim = Cell::with_balance(victim_key, token_id, 10000);
     victim.permissions = open_permissions();
-    let victim_id = victim.id;
+    let victim_id = victim.id();
     ledger.insert_cell(victim).map_err(|e| format!("{e:?}"))?;
 
     // Attacker does NOT have a capability to victim.

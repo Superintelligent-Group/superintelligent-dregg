@@ -319,7 +319,7 @@ fn test_dsl_pipeline_full_proof_carrying_turn() {
 
     // Create the agent cell (needed for fee/nonce deduction by executor).
     let agent_cell = Cell::with_balance(agent_pub_key, token_id, 100_000);
-    let agent_id = agent_cell.id;
+    let agent_id = agent_cell.id();
 
     let mut ledger = Ledger::new();
     ledger.insert_cell(agent_cell).unwrap();
@@ -577,7 +577,7 @@ fn test_dsl_pipeline_wrong_proof_rejected() {
     let agent_pub_key = *blake3::hash(b"dsl-pipeline-agent-bad-proof").as_bytes();
     let token_id = *blake3::hash(b"dsl-pipeline-domain-bad-proof").as_bytes();
     let agent_cell = Cell::with_balance(agent_pub_key, token_id, 100_000);
-    let agent_id = agent_cell.id;
+    let agent_id = agent_cell.id();
 
     let mut ledger = Ledger::new();
     ledger.insert_cell(agent_cell).unwrap();
@@ -693,7 +693,7 @@ fn test_dsl_pipeline_wrong_vk_rejected() {
     let agent_pub_key = *blake3::hash(b"dsl-pipeline-agent-wrong-vk").as_bytes();
     let token_id = *blake3::hash(b"dsl-pipeline-domain-wrong-vk").as_bytes();
     let agent_cell = Cell::with_balance(agent_pub_key, token_id, 100_000);
-    let agent_id = agent_cell.id;
+    let agent_id = agent_cell.id();
 
     let mut ledger = Ledger::new();
     ledger.insert_cell(agent_cell).unwrap();

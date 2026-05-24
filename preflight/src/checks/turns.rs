@@ -44,13 +44,13 @@ fn check_transfer() -> Result<(), String> {
     let alice_key = test_key("alice");
     let mut alice = Cell::with_balance(alice_key, token_id, 10_000);
     alice.permissions = open_permissions();
-    let alice_id = alice.id;
+    let alice_id = alice.id();
     ledger.insert_cell(alice).map_err(|e| format!("{e:?}"))?;
 
     let bob_key = test_key("bob");
     let mut bob = Cell::with_balance(bob_key, token_id, 0);
     bob.permissions = open_permissions();
-    let bob_id = bob.id;
+    let bob_id = bob.id();
     ledger.insert_cell(bob).map_err(|e| format!("{e:?}"))?;
 
     // Grant alice capability to bob
@@ -82,10 +82,10 @@ fn check_transfer() -> Result<(), String> {
     }
 
     let bob_cell = ledger.get(&bob_id).ok_or("bob not found")?;
-    if bob_cell.state.balance != 200 {
+    if bob_cell.state.balance() != 200 {
         return Err(format!(
             "expected bob balance 200, got {}",
-            bob_cell.state.balance
+            bob_cell.state.balance()
         ));
     }
 
@@ -99,7 +99,7 @@ fn check_set_field() -> Result<(), String> {
     let owner_key = test_key("owner-sf");
     let mut cell = Cell::with_balance(owner_key, token_id, 10000);
     cell.permissions = open_permissions();
-    let cell_id = cell.id;
+    let cell_id = cell.id();
     ledger.insert_cell(cell).map_err(|e| format!("{e:?}"))?;
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
@@ -139,13 +139,13 @@ fn check_grant_capability() -> Result<(), String> {
     let granter_key = test_key("granter");
     let mut granter = Cell::with_balance(granter_key, token_id, 10000);
     granter.permissions = open_permissions();
-    let granter_id = granter.id;
+    let granter_id = granter.id();
     ledger.insert_cell(granter).map_err(|e| format!("{e:?}"))?;
 
     let target_key = test_key("target-gc");
     let mut target = Cell::with_balance(target_key, token_id, 0);
     target.permissions = open_permissions();
-    let target_id = target.id;
+    let target_id = target.id();
     ledger.insert_cell(target).map_err(|e| format!("{e:?}"))?;
 
     // Bootstrap: granter must have existing cap to target in order to grant it.
@@ -200,13 +200,13 @@ fn check_multi_effect() -> Result<(), String> {
     let owner_key = test_key("owner-me");
     let mut owner = Cell::with_balance(owner_key, token_id, 50000);
     owner.permissions = open_permissions();
-    let owner_id = owner.id;
+    let owner_id = owner.id();
     ledger.insert_cell(owner).map_err(|e| format!("{e:?}"))?;
 
     let target_key = test_key("target-me");
     let mut target = Cell::with_balance(target_key, token_id, 0);
     target.permissions = open_permissions();
-    let target_id = target.id;
+    let target_id = target.id();
     ledger.insert_cell(target).map_err(|e| format!("{e:?}"))?;
 
     // Grant owner cap to target
@@ -249,10 +249,10 @@ fn check_multi_effect() -> Result<(), String> {
     }
 
     let t = ledger.get(&target_id).ok_or("target not found")?;
-    if t.state.balance != 100 {
+    if t.state.balance() != 100 {
         return Err(format!(
             "expected target balance 100, got {}",
-            t.state.balance
+            t.state.balance()
         ));
     }
     if t.state.fields[0] != *blake3::hash(b"multi-effect-1").as_bytes() {
@@ -272,7 +272,7 @@ fn check_nonce_increments() -> Result<(), String> {
     let owner_key = test_key("owner-nonce");
     let mut owner = Cell::with_balance(owner_key, token_id, 50000);
     owner.permissions = open_permissions();
-    let owner_id = owner.id;
+    let owner_id = owner.id();
     ledger.insert_cell(owner).map_err(|e| format!("{e:?}"))?;
 
     let executor = TurnExecutor::new(ComputronCosts::zero());
@@ -294,10 +294,10 @@ fn check_nonce_increments() -> Result<(), String> {
     // Phase 1 increments nonce (always), then IncrementNonce effect adds another.
     // So final nonce = 0 + 1 (Phase 1) + 1 (effect) = 2.
     let after = ledger.get(&owner_id).ok_or("cell not found")?;
-    if after.state.nonce != 2 {
+    if after.state.nonce() != 2 {
         return Err(format!(
             "expected nonce=2 after Phase1+effect increment, got {}",
-            after.state.nonce
+            after.state.nonce()
         ));
     }
 
@@ -311,13 +311,13 @@ fn check_conservation_law() -> Result<(), String> {
     let alice_key = test_key("alice-cons");
     let mut alice = Cell::with_balance(alice_key, token_id, 500);
     alice.permissions = open_permissions();
-    let alice_id = alice.id;
+    let alice_id = alice.id();
     ledger.insert_cell(alice).map_err(|e| format!("{e:?}"))?;
 
     let bob_key = test_key("bob-cons");
     let mut bob = Cell::with_balance(bob_key, token_id, 0);
     bob.permissions = open_permissions();
-    let bob_id = bob.id;
+    let bob_id = bob.id();
     ledger.insert_cell(bob).map_err(|e| format!("{e:?}"))?;
 
     {
@@ -358,13 +358,13 @@ fn check_conservation_law() -> Result<(), String> {
     // bob still has 0 (transfer was not executed).
     let a = ledger.get(&alice_id).ok_or("alice not found")?;
     let b = ledger.get(&bob_id).ok_or("bob not found")?;
-    if a.state.balance != 400 {
+    if a.state.balance() != 400 {
         return Err(format!(
             "alice should have 400 (500 - 100 fee), got {}",
-            a.state.balance
+            a.state.balance()
         ));
     }
-    if b.state.balance != 0 {
+    if b.state.balance() != 0 {
         return Err("bob should still have 0 after rejected transfer".into());
     }
 
@@ -380,7 +380,7 @@ fn check_budget_gate() -> Result<(), String> {
     let owner_key = test_key("owner-budget");
     let mut owner = Cell::with_balance(owner_key, token_id, 100_000);
     owner.permissions = open_permissions();
-    let owner_id = owner.id;
+    let owner_id = owner.id();
     ledger.insert_cell(owner).map_err(|e| format!("{e:?}"))?;
 
     // Create a BudgetGate with a ceiling of 600.

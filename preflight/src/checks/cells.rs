@@ -21,7 +21,7 @@ fn check_hosted_cell() -> Result<(), String> {
     let token_id = [0u8; 32];
 
     let cell = Cell::with_balance(key, token_id, 1000);
-    let id = cell.id;
+    let id = cell.id();
 
     // Verify cell starts in hosted mode
     if cell.mode != CellMode::Hosted {
@@ -32,10 +32,10 @@ fn check_hosted_cell() -> Result<(), String> {
 
     // Verify cell is in ledger
     let retrieved = ledger.get(&id).ok_or("cell not found in ledger")?;
-    if retrieved.state.balance != 1000 {
+    if retrieved.state.balance() != 1000 {
         return Err(format!(
             "expected balance 1000, got {}",
-            retrieved.state.balance
+            retrieved.state.balance()
         ));
     }
 

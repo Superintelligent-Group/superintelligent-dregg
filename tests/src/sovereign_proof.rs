@@ -23,12 +23,12 @@ fn setup_sovereign_cell(balance: u64) -> (AgentWallet, CellId, Ledger) {
 
     let mut cell = Cell::with_balance(pub_key, token_id, balance);
     cell.mode = CellMode::Sovereign;
-    let cell_id = cell.id;
+    let cell_id = cell.id();
 
     // Compute the initial state commitment using the Effect VM's Poseidon2 scheme.
     // The executor converts stored commitments to BabyBear for proof verification,
     // so we must store the Poseidon2-based commitment (not blake3).
-    let vm_state = VmCellState::new(balance, cell.state.nonce as u32);
+    let vm_state = VmCellState::new(balance, cell.state.nonce() as u32);
     let commitment = TurnExecutor::babybear_to_commitment(vm_state.state_commitment);
 
     // Store the cell state in the wallet.
@@ -53,7 +53,7 @@ fn test_proof_carrying_sovereign_turn_accepted() {
     let dest_key = [42u8; 32];
     let dest_token_id = *blake3::hash(b"test-domain").as_bytes();
     let dest_cell = Cell::with_balance(dest_key, dest_token_id, 0);
-    let dest_id = dest_cell.id;
+    let dest_id = dest_cell.id();
     let _ = ledger.insert_cell(dest_cell);
 
     // Generate a proof-carrying turn: transfer 100 from our sovereign cell.
@@ -106,7 +106,7 @@ fn test_proof_carrying_turn_tampered_commitment_rejected() {
     let dest_key = [43u8; 32];
     let dest_token_id = *blake3::hash(b"test-domain").as_bytes();
     let dest_cell = Cell::with_balance(dest_key, dest_token_id, 0);
-    let dest_id = dest_cell.id;
+    let dest_id = dest_cell.id();
     let _ = ledger.insert_cell(dest_cell);
 
     let effects = vec![Effect::Transfer {
@@ -159,7 +159,7 @@ fn test_backward_compat_witness_path_still_works() {
     // mechanism, not authorization. Default permissions require Signature which
     // would need a separate authorization test path.
     cell.permissions.send = pyana_cell::AuthRequired::None;
-    let cell_id = cell.id;
+    let cell_id = cell.id();
     let commitment = cell.state_commitment();
 
     let mut wallet = wallet;
@@ -175,7 +175,7 @@ fn test_backward_compat_witness_path_still_works() {
     let dest_key = [44u8; 32];
     let dest_token_id = *blake3::hash(b"test-domain").as_bytes();
     let dest_cell = Cell::with_balance(dest_key, dest_token_id, 0);
-    let dest_id = dest_cell.id;
+    let dest_id = dest_cell.id();
     let _ = ledger.insert_cell(dest_cell);
 
     // Use the Phase 1 witness path (no proof, sovereign_witnesses populated).

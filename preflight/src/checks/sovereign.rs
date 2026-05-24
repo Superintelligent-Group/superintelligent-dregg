@@ -146,13 +146,13 @@ fn check_multi_party_atomic() -> Result<(), String> {
     let alice_key = test_key("atomic-alice");
     let mut alice = Cell::with_balance(alice_key, token_id, 50_000);
     alice.permissions = open_permissions();
-    let alice_id = alice.id;
+    let alice_id = alice.id();
     ledger.insert_cell(alice).map_err(|e| format!("{e:?}"))?;
 
     let bob_key = test_key("atomic-bob");
     let mut bob = Cell::with_balance(bob_key, token_id, 50_000);
     bob.permissions = open_permissions();
-    let bob_id = bob.id;
+    let bob_id = bob.id();
     ledger.insert_cell(bob).map_err(|e| format!("{e:?}"))?;
 
     // Grant mutual capabilities
@@ -185,7 +185,7 @@ fn check_multi_party_atomic() -> Result<(), String> {
     let total_before = {
         let a = ledger.get(&alice_id).unwrap();
         let b = ledger.get(&bob_id).unwrap();
-        a.state.balance + b.state.balance
+        a.state.balance() + b.state.balance()
     };
 
     match executor.execute(&turn, &mut ledger) {
@@ -201,7 +201,7 @@ fn check_multi_party_atomic() -> Result<(), String> {
     let total_after = {
         let a = ledger.get(&alice_id).unwrap();
         let b = ledger.get(&bob_id).unwrap();
-        a.state.balance + b.state.balance
+        a.state.balance() + b.state.balance()
     };
 
     let fee = 1000u64;
