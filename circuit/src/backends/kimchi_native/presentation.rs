@@ -756,6 +756,7 @@ impl KimchiPresentationCircuit {
 
         let (gates, pc) = self.build_circuit();
         let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
+        let circuit_hash = *blake3::hash(&circuit_gates_bytes).as_bytes();
         let wit = self.generate_witness();
         let index =
             kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
@@ -792,6 +793,7 @@ impl KimchiPresentationCircuit {
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::Presentation,
             circuit_gates_bytes,
+            circuit_hash,
             public_count: pc,
         })
     }
@@ -801,44 +803,47 @@ impl KimchiPresentationCircuit {
         Self::verify_with_gates(proof_bytes, public_inputs, &[])
     }
 
-    /// Verify with optional embedded circuit gates.
+    /// Verify with the canonical circuit rebuilt deterministically.
+    ///
+    /// **SOUNDNESS**: This method ignores the `circuit_gates_bytes` parameter
+    /// (kept for ABI compatibility) and ALWAYS rebuilds the circuit from a
+    /// canonical descriptor. The caller is responsible for invoking
+    /// `verify_canonical_circuit_hash` on the proof prior to this call,
+    /// which is done by `KimchiNativeBackend::verify_presentation` upstream.
     pub fn verify_with_gates(
         proof_bytes: &[u8],
         public_inputs: &[Fp],
-        circuit_gates_bytes: &[u8],
+        _circuit_gates_bytes_ignored: &[u8],
     ) -> Result<bool, String> {
         let proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =
             rmp_serde::from_slice(proof_bytes)
                 .map_err(|e| format!("Deserialization error: {}", e))?;
 
-        let (gates, pc) = if !circuit_gates_bytes.is_empty() {
-            super::deserialize_circuit_gates(circuit_gates_bytes)
-                .ok_or_else(|| "Failed to deserialize embedded circuit gates".to_string())?
-        } else {
-            // Fallback: build a dummy witness to get the circuit structure (only works for base case)
-            let dummy = KimchiPresentationWitness {
-                federation_root: Fp::zero(),
-                request_predicate: [Fp::zero(); 4],
-                timestamp: Fp::zero(),
-                verifier_nonce: Fp::zero(),
-                composition_commitment: Fp::one(),
-                presentation_tag: Fp::zero(),
-                issuer_membership_hash: Fp::zero(),
-                fold_chain_hash: Fp::zero(),
-                derivation_hash: Fp::zero(),
-                non_revocation_eval: Fp::one(),
-                final_root: Fp::zero(),
-                randomness: Fp::zero(),
-                verifier_block_height: Fp::zero(),
-                not_after_height: Fp::zero(),
-                revealed_facts: Vec::new(),
-                issuer_key_hash: Fp::zero(),
-                blinding_factor: Fp::zero(),
-                issuer_membership_proof: None,
-            };
-            let circuit = KimchiPresentationCircuit::new(dummy);
-            circuit.build_circuit()
+        // SOUNDNESS: NEVER deserialize prover-supplied gate bytes; rebuild
+        // canonically. The `_circuit_gates_bytes_ignored` parameter is
+        // intentionally unused.
+        let dummy = KimchiPresentationWitness {
+            federation_root: Fp::zero(),
+            request_predicate: [Fp::zero(); 4],
+            timestamp: Fp::zero(),
+            verifier_nonce: Fp::zero(),
+            composition_commitment: Fp::one(),
+            presentation_tag: Fp::zero(),
+            issuer_membership_hash: Fp::zero(),
+            fold_chain_hash: Fp::zero(),
+            derivation_hash: Fp::zero(),
+            non_revocation_eval: Fp::one(),
+            final_root: Fp::zero(),
+            randomness: Fp::zero(),
+            verifier_block_height: Fp::zero(),
+            not_after_height: Fp::zero(),
+            revealed_facts: Vec::new(),
+            issuer_key_hash: Fp::zero(),
+            blinding_factor: Fp::zero(),
+            issuer_membership_proof: None,
         };
+        let circuit = KimchiPresentationCircuit::new(dummy);
+        let (gates, pc) = circuit.build_circuit();
 
         verify_kimchi_proof(&proof, gates, public_inputs, pc)
     }

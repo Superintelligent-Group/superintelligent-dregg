@@ -840,6 +840,7 @@ impl BridgePresentationBuilder {
     #[deprecated(
         note = "prove_linear uses a trivially forgeable AIR (linear sum). NEVER use in production. Use prove() with Poseidon2 instead."
     )]
+    #[allow(deprecated)]
     pub fn prove_linear(
         &mut self,
         request: &AuthRequest,

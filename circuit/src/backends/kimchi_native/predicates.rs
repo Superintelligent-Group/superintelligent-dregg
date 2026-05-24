@@ -421,6 +421,7 @@ impl KimchiArithmeticPredicateCircuit {
         }
         let (gates, pc) = self.build_circuit();
         let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
+        let circuit_hash = *blake3::hash(&circuit_gates_bytes).as_bytes();
         let wit = self.generate_witness();
         let index =
             kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
@@ -442,6 +443,7 @@ impl KimchiArithmeticPredicateCircuit {
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::ArithmeticPredicate,
             circuit_gates_bytes,
+            circuit_hash,
             public_count: pc,
         })
     }
@@ -723,6 +725,7 @@ impl KimchiRelationalPredicateCircuit {
         }
         let (gates, pc) = self.build_circuit();
         let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
+        let circuit_hash = *blake3::hash(&circuit_gates_bytes).as_bytes();
         let wit = self.generate_witness();
         let w = &self.witness;
         let index =
@@ -745,6 +748,7 @@ impl KimchiRelationalPredicateCircuit {
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::RelationalPredicate,
             circuit_gates_bytes,
+            circuit_hash,
             public_count: pc,
         })
     }
@@ -931,6 +935,7 @@ impl KimchiTemporalPredicateCircuit {
         }
         let (gates, pc) = self.build_circuit();
         let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
+        let circuit_hash = *blake3::hash(&circuit_gates_bytes).as_bytes();
         let wit = self.generate_witness();
         let w = &self.witness;
         let index =
@@ -956,6 +961,7 @@ impl KimchiTemporalPredicateCircuit {
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::TemporalPredicate,
             circuit_gates_bytes,
+            circuit_hash,
             public_count: pc,
         })
     }
@@ -1158,6 +1164,7 @@ impl KimchiCompoundPredicateCircuit {
         }
         let (gates, pc) = self.build_circuit();
         let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
+        let circuit_hash = *blake3::hash(&circuit_gates_bytes).as_bytes();
         let wit = self.generate_witness();
         let w = &self.witness;
         let index =
@@ -1181,6 +1188,7 @@ impl KimchiCompoundPredicateCircuit {
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::CompoundPredicate,
             circuit_gates_bytes,
+            circuit_hash,
             public_count: pc,
         })
     }

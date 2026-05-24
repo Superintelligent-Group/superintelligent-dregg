@@ -213,6 +213,7 @@ impl KimchiFoldCircuit {
         let mut gates = Vec::new();
         let pc = 5; // 5 public inputs
 
+        let pi_old_root_row = gates.len(); // row 0
         // Public input rows: c0=1 constrains w[0] as public input
         for _ in 0..pc {
             let r = gates.len();
@@ -220,6 +221,10 @@ impl KimchiFoldCircuit {
             c[0] = Fp::one();
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
         }
+        let pi_transition_hash_row = pi_old_root_row + 3; // row 3
+
+        // Track row positions for P0-2 copy-constraint wiring.
+        let mut root_match_rows: Vec<usize> = Vec::new();
 
         let rc = &Vesta::sponge_params().round_constants;
         let nr = self.witness.removals.len();
@@ -296,6 +301,7 @@ impl KimchiFoldCircuit {
                 c[0] = Fp::one();
                 c[1] = -Fp::one();
                 gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
+                root_match_rows.push(r);
             }
         }
 
@@ -321,6 +327,7 @@ impl KimchiFoldCircuit {
         // For the circuit, each block is one Poseidon gadget.
         let num_transition_elements = 3 + nr; // old_root, new_root, fact_hashes..., checks_commitment
         let num_transition_blocks = num_transition_elements.div_ceil(2); // ceil div by rate=2
+        let mut last_transition_output_row: Option<usize> = None;
         for _ in 0..num_transition_blocks {
             let s = gates.len();
             let (pg, _) = CircuitGate::<Fp>::create_poseidon_gadget(
@@ -329,10 +336,12 @@ impl KimchiFoldCircuit {
                 rc,
             );
             gates.extend(pg);
+            last_transition_output_row = Some(s + POS_ROWS);
         }
 
         // Final binding gate: computed_transition_hash == public transition_hash
         // c0=1, c1=-1: w0 - w1 = 0
+        let final_binding_row = gates.len();
         {
             let r = gates.len();
             let mut c = vec![Fp::zero(); COLUMNS];
@@ -340,6 +349,32 @@ impl KimchiFoldCircuit {
             c[1] = -Fp::one();
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
         }
+
+        // ====================================================================
+        // P0-2 SOUNDNESS FIX: copy constraints linking gadget outputs to
+        // PI/binding cells. Without these, the Generic gate equality only
+        // binds intra-row, letting a malicious prover put arbitrary values
+        // in `final_binding.w[0]` that match `final_binding.w[1]` while the
+        // Poseidon gadget computed something completely different.
+        // ====================================================================
+        if let Some(first_root_match) = root_match_rows.first() {
+            // PI(old_root).w[0]  ↔  root_match[0].w[1]
+            super::link_wires(
+                &mut gates,
+                (pi_old_root_row, 0),
+                (*first_root_match, 1),
+            );
+        }
+        if let Some(out_row) = last_transition_output_row {
+            // last_gadget_output.w[0]  ↔  final_binding.w[0]
+            super::link_wires(&mut gates, (out_row, 0), (final_binding_row, 0));
+        }
+        // PI(transition_hash).w[0]  ↔  final_binding.w[1]
+        super::link_wires(
+            &mut gates,
+            (pi_transition_hash_row, 0),
+            (final_binding_row, 1),
+        );
 
         (gates, pc)
     }
@@ -489,6 +524,7 @@ impl KimchiFoldCircuit {
 
         let (gates, pc) = self.build_circuit();
         let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
+        let circuit_hash = *blake3::hash(&circuit_gates_bytes).as_bytes();
         let wit = self.generate_witness();
 
         let index =
@@ -518,6 +554,7 @@ impl KimchiFoldCircuit {
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::Fold,
             circuit_gates_bytes,
+            circuit_hash,
             public_count: pc,
         })
     }
@@ -561,9 +598,10 @@ impl KimchiFoldCircuit {
             return Ok(false);
         }
 
-        // Rebuild the circuit for verification
+        // Rebuild the circuit for verification (SOUNDNESS: never use prover bytes)
         let circuit = KimchiFoldCircuit::new(witness_for_circuit.clone());
         let (gates, pc) = circuit.build_circuit();
+        super::verify_canonical_circuit_hash(proof, &gates, pc)?;
 
         // Public inputs for the verifier
         let public_inputs = vec![

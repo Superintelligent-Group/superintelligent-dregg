@@ -3,10 +3,18 @@
 //! This module uses the REAL `pyana_circuit::stark` module to generate and verify
 //! a STARK proof that an issuer's public key is a member of the federation.
 //!
-//! The proof demonstrates membership in a Merkle tree using a 4-level algebraic
-//! constraint system (MerkleStarkAir) with FRI-based polynomial commitment.
+//! The proof demonstrates membership in a 4-ary Merkle tree using the
+//! collision-resistant Poseidon2-based DSL circuit
+//! (`pyana_circuit::dsl::descriptors::merkle_poseidon2_circuit`) with FRI-based
+//! polynomial commitment.
+//!
+//! NOTE: This was migrated away from the deprecated `MerkleStarkAir`, which
+//! enforced a linear (trivially invertible) hash binding and was provably unsound.
 
-use pyana_circuit::stark::{self, MerkleStarkAir};
+use pyana_circuit::dsl::descriptors::merkle_poseidon2_circuit;
+use pyana_circuit::dsl::membership::generate_merkle_poseidon2_trace;
+use pyana_circuit::field::BabyBear;
+use pyana_circuit::stark;
 
 /// Result of a STARK-proven issuer membership verification.
 pub struct StarkMembershipResult {
@@ -38,25 +46,33 @@ pub fn prove_issuer_membership(
     // We'll construct a 4-level trace (padded to power-of-2 = 4 rows).
 
     // Hash the issuer key to get a leaf value (reduced to BabyBear field).
-    let leaf_hash = key_to_field_element(issuer_key_bytes);
+    let leaf_hash = BabyBear::new(key_to_field_element(issuer_key_bytes));
 
     // Construct sibling values from the other federation members.
     // For a 4-level tree with 4 siblings per level, we need positions and siblings.
     let (siblings, positions) = build_membership_witness(issuer_key_bytes, federation_member_keys);
 
-    // Generate the STARK trace.
-    let (trace, public_inputs) = stark::generate_merkle_trace(leaf_hash, &siblings, &positions);
+    // Convert raw u32 siblings/positions into BabyBear for the DSL Poseidon2 trace.
+    let siblings_bb: Vec<[BabyBear; 3]> = siblings
+        .iter()
+        .map(|s| [BabyBear::new(s[0]), BabyBear::new(s[1]), BabyBear::new(s[2])])
+        .collect();
+    let positions_u8: Vec<u8> = positions.iter().map(|&p| p as u8).collect();
 
-    // Generate the STARK proof using the REAL prover.
-    let air = MerkleStarkAir;
-    let proof = stark::prove(&air, &trace, &public_inputs);
+    // Generate the STARK trace using the sound Poseidon2-based DSL circuit.
+    let (trace, public_inputs) =
+        generate_merkle_poseidon2_trace(leaf_hash, &siblings_bb, &positions_u8);
+
+    // Generate the STARK proof using the REAL prover with the DSL circuit.
+    let circuit = merkle_poseidon2_circuit();
+    let proof = stark::prove(&circuit, &trace, &public_inputs);
 
     // Serialize to measure proof size.
     let proof_bytes = stark::proof_to_bytes(&proof);
     let proof_size = proof_bytes.len();
 
     // Verify the proof using the REAL verifier.
-    let verified = stark::verify(&air, &proof, &public_inputs).is_ok();
+    let verified = stark::verify(&circuit, &proof, &public_inputs).is_ok();
 
     StarkMembershipResult {
         verified,

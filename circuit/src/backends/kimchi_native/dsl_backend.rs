@@ -1481,6 +1481,7 @@ pub fn prove_dsl_kimchi(
 
     // Create prover index
     let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
+    let circuit_hash = *blake3::hash(&circuit_gates_bytes).as_bytes();
     let index = kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
 
     // Create proof
@@ -1508,6 +1509,7 @@ pub fn prove_dsl_kimchi(
         public_input_bytes,
         circuit_type: KimchiNativeCircuitType::Dsl,
         circuit_gates_bytes,
+        circuit_hash,
         public_count: pc,
     })
 }
@@ -1525,8 +1527,9 @@ pub fn verify_dsl_kimchi(
         return Err("Expected DSL proof type".to_string());
     }
 
-    // Rebuild gates
+    // Rebuild gates from canonical descriptor (SOUNDNESS: never use prover bytes)
     let (gates, pc) = descriptor_to_kimchi_gates(desc)?;
+    super::verify_canonical_circuit_hash(proof, &gates, pc)?;
 
     // Deserialize proof
     let kimchi_proof: ProverProof<Vesta, VestaOpeningProof, FULL_ROUNDS> =

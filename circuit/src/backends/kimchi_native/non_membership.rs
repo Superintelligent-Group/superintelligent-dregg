@@ -151,6 +151,7 @@ impl KimchiNonMembershipCircuit {
         let num_ancestors = self.elements.len();
         let n = self.accumulator_coeffs.len();
 
+        let pi_accumulator_root_row = gates.len(); // row 0
         // Public input rows
         for _ in 0..pc {
             let r = gates.len();
@@ -200,6 +201,7 @@ impl KimchiNonMembershipCircuit {
         let rc = &Vesta::sponge_params().round_constants;
         let pr = FULL_ROUNDS / 5;
         let num_poseidon_calls = n.div_ceil(3);
+        let mut last_poseidon_output_row: Option<usize> = None;
         for _ in 0..num_poseidon_calls {
             let s = gates.len();
             let (pg, _) = CircuitGate::<Fp>::create_poseidon_gadget(
@@ -208,10 +210,12 @@ impl KimchiNonMembershipCircuit {
                 rc,
             );
             gates.extend(pg);
+            last_poseidon_output_row = Some(s + pr);
         }
 
         // Root binding gate: hash_result == public accumulator_root
         // c[0]=1, c[1]=-1
+        let root_binding_row = gates.len();
         {
             let r = gates.len();
             let mut c = vec![Fp::zero(); COLUMNS];
@@ -219,6 +223,19 @@ impl KimchiNonMembershipCircuit {
             c[1] = -Fp::one();
             gates.push(CircuitGate::new(GateType::Generic, Wire::for_row(r), c));
         }
+
+        // ====================================================================
+        // P0-2 SOUNDNESS FIX: copy constraints binding gadget output and PI
+        // to the root_binding cells. See AUDIT-circuit.md P0-2.
+        // ====================================================================
+        if let Some(out_row) = last_poseidon_output_row {
+            super::link_wires(&mut gates, (out_row, 0), (root_binding_row, 0));
+        }
+        super::link_wires(
+            &mut gates,
+            (pi_accumulator_root_row, 0),
+            (root_binding_row, 1),
+        );
 
         (gates, pc)
     }
@@ -325,6 +342,7 @@ impl KimchiNonMembershipCircuit {
     pub fn prove(&self) -> Result<KimchiNativeProof, String> {
         let (gates, pc) = self.build_circuit();
         let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
+        let circuit_hash = *blake3::hash(&circuit_gates_bytes).as_bytes();
         let wit = self.generate_witness();
 
         let index =
@@ -359,6 +377,7 @@ impl KimchiNonMembershipCircuit {
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::NonMembership,
             circuit_gates_bytes,
+            circuit_hash,
             public_count: pc,
         })
     }
@@ -448,6 +467,7 @@ impl KimchiNonMembershipCircuit {
             accumulator_coeffs: coeffs.to_vec(),
         };
         let (gates, pc) = circuit.build_circuit();
+        super::verify_canonical_circuit_hash(proof, &gates, pc)?;
 
         // Build public inputs vector matching circuit layout
         let mut public_inputs = Vec::with_capacity(PUBLIC_INPUT_COUNT);

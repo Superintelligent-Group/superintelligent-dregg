@@ -206,6 +206,7 @@ impl KimchiIvcCircuit {
     pub fn prove(&self) -> Result<KimchiNativeProof, String> {
         let (gates, pc) = self.build_circuit();
         let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
+        let circuit_hash = *blake3::hash(&circuit_gates_bytes).as_bytes();
         let wit = self.generate_witness();
         let index =
             kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates, pc);
@@ -232,6 +233,7 @@ impl KimchiIvcCircuit {
             public_input_bytes: pib,
             circuit_type: KimchiNativeCircuitType::Ivc,
             circuit_gates_bytes,
+            circuit_hash,
             public_count: pc,
         })
     }

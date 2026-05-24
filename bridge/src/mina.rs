@@ -1155,22 +1155,30 @@ mod mina_tests {
     /// 5. Confirm the proven state root matches expectations
     #[test]
     fn test_full_stark_to_pickles_pipeline() {
+        use pyana_circuit::BabyBear;
+        use pyana_circuit::dsl::descriptors::merkle_poseidon2_circuit;
+        use pyana_circuit::dsl::membership::generate_merkle_poseidon2_trace;
         use pyana_circuit::poseidon_stark::prove_poseidon;
-        use pyana_circuit::stark::{MerkleStarkAir, StarkAir, generate_merkle_trace};
+        use pyana_circuit::stark::StarkAir;
 
-        // 1. Create a real STARK proof (MerkleStarkAir with a simple 4-leaf tree)
-        let (trace, pi) = generate_merkle_trace(
-            42,
-            &[
-                [100u32, 200, 300],
-                [400, 500, 600],
-                [700, 800, 900],
-                [1000, 1100, 1200],
+        // 1. Create a real STARK proof using the sound Poseidon2-based DSL circuit
+        // (migrated away from the deprecated linear-binding `MerkleStarkAir`).
+        let leaf_hash = BabyBear::new(42);
+        let siblings = [
+            [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
+            [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
+            [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
+            [
+                BabyBear::new(1000),
+                BabyBear::new(1100),
+                BabyBear::new(1200),
             ],
-            &[0u32, 1, 2, 3],
-        );
-        let air = MerkleStarkAir;
-        let stark_proof = prove_poseidon(&air, &trace, &pi);
+        ];
+        let positions = [0u8, 1, 2, 3];
+
+        let (trace, pi) = generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
+        let circuit = merkle_poseidon2_circuit();
+        let stark_proof = prove_poseidon(&circuit, &trace, &pi);
 
         // 2. Serialize the proof using postcard
         let stark_proof_bytes =

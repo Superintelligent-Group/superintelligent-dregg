@@ -274,6 +274,7 @@ pub fn prove_dsl_circuit(
 ) -> Result<KimchiNativeProof, String> {
     let (gates, pc) = dsl_to_kimchi_gates(descriptor);
     let circuit_gates_bytes = super::serialize_circuit_gates(&gates, pc);
+    let circuit_hash = *blake3::hash(&circuit_gates_bytes).as_bytes();
 
     let index =
         kimchi::prover_index::testing::new_index_for_test::<FULL_ROUNDS, Vesta>(gates.clone(), pc);
@@ -299,6 +300,7 @@ pub fn prove_dsl_circuit(
         public_input_bytes,
         circuit_type: KimchiNativeCircuitType::Dsl,
         circuit_gates_bytes,
+        circuit_hash,
         public_count: pc,
     })
 }
@@ -311,6 +313,7 @@ pub fn verify_dsl_proof(
     proof: &KimchiNativeProof,
 ) -> Result<bool, String> {
     let (gates, pc) = dsl_to_kimchi_gates(descriptor);
+    super::verify_canonical_circuit_hash(proof, &gates, pc)?;
 
     // Extract public inputs from the proof's public_input_bytes
     let mut public_inputs = Vec::with_capacity(pc);

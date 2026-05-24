@@ -26,6 +26,7 @@ use crate::ivc::{FoldDelta, IvcPresentationProof, prove_ivc};
 use crate::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
 use crate::multi_step_air;
 use crate::poseidon2::hash_fact;
+#[allow(deprecated)]
 use crate::stark::{self, MerkleStarkAir, StarkAir, StarkProof};
 use crate::temporal_predicate_dsl::{TemporalPredicateProof, verify_temporal_predicate};
 
@@ -602,12 +603,14 @@ impl PresentationAir {
 
     /// Generate a real STARK-backed presentation proof using linear algebraic binding.
     ///
-    /// This produces actual cryptographic proofs for the Merkle membership sub-AIR
-    /// using the STARK prover (FRI + Merkle commitments + Fiat-Shamir).
-    /// The fold and derivation components use constraint-checked proofs (pending
-    /// future STARK integration once their trace sizes are large enough for FRI).
-    ///
-    /// Returns `None` if any component fails constraint checking.
+    /// **DEPRECATED**: This uses the unsound `MerkleStarkAir` (linear sum binding,
+    /// trivially forgeable). Retained only for tests / `prove_linear` bench paths.
+    /// All production callers MUST use [`prove_stark_poseidon2`](Self::prove_stark_poseidon2)
+    /// which binds the Merkle path with collision-resistant Poseidon2.
+    #[deprecated(
+        note = "Uses linear-binding MerkleStarkAir which is provably unsound. Call prove_stark_poseidon2 instead."
+    )]
+    #[allow(deprecated)]
     pub fn prove_stark(&self) -> Option<RealPresentationProof> {
         let w = &self.witness;
 
@@ -1363,13 +1366,23 @@ impl RealPresentationProof {
 
 /// Generate a real STARK proof for a Merkle membership witness.
 ///
-/// Converts the MerkleWitness into the format expected by the STARK prover
+/// **DEPRECATED**: Uses the unsound `MerkleStarkAir` (linear sum binding,
+/// trivially forgeable). Retained only for test paths that exercise the legacy
+/// linear AIR. New code MUST use `generate_merkle_poseidon2_stark_proof` instead,
+/// which binds via collision-resistant Poseidon2 hashing (the DSL
+/// `merkle_poseidon2_circuit`).
+///
+/// Converts the MerkleWitness into the format expected by the legacy STARK prover
 /// (MerkleStarkAir trace layout: [current, sib0, sib1, sib2, position, parent]).
 ///
 /// The MerkleStarkAir uses an algebraic binding constraint:
 ///   parent = current + sib0 + sib1 + sib2 + position
 /// The witness's `expected_root` must be computed using this algebraic binding
 /// (not Poseidon2). Use `create_stark_compatible_witness()` to build such a witness.
+#[deprecated(
+    note = "Uses linear-binding MerkleStarkAir which is provably unsound. Call generate_merkle_poseidon2_stark_proof instead."
+)]
+#[allow(deprecated)]
 fn generate_merkle_stark_proof(witness: &MerkleWitness) -> Option<StarkProof> {
     let depth = witness.levels.len();
     if depth < 2 {
@@ -1935,8 +1948,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn stark_compatible_witness_generates_valid_proof() {
-        // Isolated test: just the STARK proof generation for Merkle membership
+        // Isolated test: just the STARK proof generation for Merkle membership.
+        // Exercises the (deprecated) linear-binding path; retained for parity.
         let witness = create_stark_compatible_witness(BabyBear::new(42424242), 8);
         let proof = generate_merkle_stark_proof(&witness);
         assert!(
@@ -1985,6 +2000,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn presentation_real_stark_tampered_federation_root_fails() {
         let mut witness = create_test_presentation();
         let stark_issuer = create_stark_compatible_witness(BabyBear::new(42424242), 8);
@@ -2009,6 +2025,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn presentation_real_stark_has_real_proof_bytes() {
         let mut witness = create_test_presentation();
         let stark_issuer = create_stark_compatible_witness(BabyBear::new(42424242), 8);
@@ -2176,6 +2193,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn presentation_zero_composition_commitment_rejected() {
         // A proof with composition_commitment == ZERO must be rejected by verifiers.
         // This prevents sub-proof mix-and-match attacks.
