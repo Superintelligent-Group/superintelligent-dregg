@@ -601,8 +601,8 @@ mod causal_ledger {
         assert!(result.is_committed());
 
         // Verify balances.
-        assert_eq!(cl.ledger().get(&id_a).unwrap().state.balance, 9500);
-        assert_eq!(cl.ledger().get(&id_b).unwrap().state.balance, 5500);
+        assert_eq!(cl.ledger().get(&id_a).unwrap().state.balance(), 9500);
+        assert_eq!(cl.ledger().get(&id_b).unwrap().state.balance(), 5500);
     }
 
     #[test]
@@ -612,7 +612,7 @@ mod causal_ledger {
         pk[0] = 1;
         let token_id = [0u8; 32];
         let cell = Cell::with_balance(pk, token_id, 10000);
-        let id_a = cell.id;
+        let id_a = cell.id();
 
         let turn = make_noop_turn(id_a, 0);
         let mut ct = CausalTurn::new(turn, vec![], node_a, 0);
@@ -640,14 +640,14 @@ mod atomic_forest_tests {
 
         let mut forest = CallForest::new();
         forest.add_root(Action {
-            target: cell_a.id,
+            target: cell_a.id(),
             method: *blake3::hash(b"transfer").as_bytes(),
             args: vec![],
             authorization: Authorization::Unchecked,
             preconditions: Preconditions::default(),
             effects: vec![Effect::Transfer {
-                from: cell_a.id,
-                to: cell_b.id,
+                from: cell_a.id(),
+                to: cell_b.id(),
                 amount: 500,
             }],
             may_delegate: DelegationMode::None,
@@ -659,7 +659,7 @@ mod atomic_forest_tests {
             vec![node_id(1), node_id(2)],
             forest,
             vec![(
-                cell_a.id,
+                cell_a.id(),
                 Preconditions {
                     cell_state: Some(CellStatePrecondition {
                         min_balance: Some(500),
@@ -668,7 +668,7 @@ mod atomic_forest_tests {
                     ..Default::default()
                 },
             )],
-            cell_a.id,
+            cell_a.id(),
             0,
         );
 
@@ -696,18 +696,18 @@ mod atomic_forest_tests {
         let mut forest = CallForest::new();
         let cell_a = make_cell(1, 10000);
         forest.add_root(Action {
-            target: cell_a.id,
+            target: cell_a.id(),
             method: [0u8; 32],
             args: vec![],
             authorization: Authorization::Unchecked,
             preconditions: Preconditions::default(),
-            effects: vec![Effect::IncrementNonce { cell: cell_a.id }],
+            effects: vec![Effect::IncrementNonce { cell: cell_a.id() }],
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
         });
 
-        let af = AtomicForest::new(vec![], forest, vec![], cell_a.id, 0);
+        let af = AtomicForest::new(vec![], forest, vec![], cell_a.id(), 0);
         assert_eq!(af.validate().unwrap_err(), CoordError::NoParticipants);
     }
 
@@ -718,12 +718,12 @@ mod atomic_forest_tests {
 
         let mut forest = CallForest::new();
         forest.add_root(Action {
-            target: cell_a.id,
+            target: cell_a.id(),
             method: [0u8; 32],
             args: vec![],
             authorization: Authorization::Unchecked,
             preconditions: Preconditions::default(),
-            effects: vec![Effect::IncrementNonce { cell: cell_a.id }],
+            effects: vec![Effect::IncrementNonce { cell: cell_a.id() }],
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
@@ -734,10 +734,10 @@ mod atomic_forest_tests {
             .add_participant(node_id(1))
             .add_participant(node_id(2))
             .set_forest(forest)
-            .set_initiator(cell_a.id)
+            .set_initiator(cell_a.id())
             .set_fee(0)
             .add_precondition(
-                cell_a.id,
+                cell_a.id(),
                 Preconditions {
                     cell_state: Some(CellStatePrecondition {
                         min_balance: Some(100),
@@ -927,8 +927,8 @@ mod coordinator_tests {
         assert_eq!(commit_msg.signatures.len(), 2);
 
         // Verify state changes.
-        assert_eq!(ledger.get(&id_a).unwrap().state.balance, 9500);
-        assert_eq!(ledger.get(&id_b).unwrap().state.balance, 5500);
+        assert_eq!(ledger.get(&id_a).unwrap().state.balance(), 9500);
+        assert_eq!(ledger.get(&id_b).unwrap().state.balance(), 5500);
 
         // Coordinator is now Committed.
         assert!(matches!(coord.state, CoordinatorState::Committed { .. }));
@@ -1070,8 +1070,8 @@ mod coordinator_tests {
         let commit_msg = coord.commit(&mut ledger).unwrap();
         assert_eq!(commit_msg.signatures.len(), 1);
 
-        assert_eq!(ledger.get(&id_a).unwrap().state.balance, 9500);
-        assert_eq!(ledger.get(&id_b).unwrap().state.balance, 5500);
+        assert_eq!(ledger.get(&id_a).unwrap().state.balance(), 9500);
+        assert_eq!(ledger.get(&id_b).unwrap().state.balance(), 5500);
     }
 
     #[test]
@@ -1232,7 +1232,7 @@ mod participant_tests {
         let (mut ledger, id_a, _, af, signing_keys, _) = setup_participant_scenario();
 
         // Drain A's balance so precondition (min_balance: 500) fails.
-        ledger.get_mut(&id_a).unwrap().state.balance = 100;
+        ledger.get_mut(&id_a).unwrap().state.set_balance(100);
 
         let mut participant =
             Participant::with_costs(id_a, node_id(1), signing_keys[0], ledger, zero_costs());
@@ -1295,8 +1295,8 @@ mod participant_tests {
         assert_eq!(receipt.action_count, 1);
 
         // Verify local state updated.
-        assert_eq!(participant.ledger.get(&id_a).unwrap().state.balance, 9500);
-        assert_eq!(participant.ledger.get(&id_b).unwrap().state.balance, 5500);
+        assert_eq!(participant.ledger.get(&id_a).unwrap().state.balance(), 9500);
+        assert_eq!(participant.ledger.get(&id_b).unwrap().state.balance(), 5500);
     }
 
     #[test]
@@ -1486,8 +1486,8 @@ mod integration {
         assert_eq!(commit_msg.signatures.len(), 2);
 
         // Verify state changes.
-        assert_eq!(atomic_ledger.get(&alice_id2).unwrap().state.balance, 9500);
-        assert_eq!(atomic_ledger.get(&bob_id2).unwrap().state.balance, 5500);
+        assert_eq!(atomic_ledger.get(&alice_id2).unwrap().state.balance(), 9500);
+        assert_eq!(atomic_ledger.get(&bob_id2).unwrap().state.balance(), 5500);
 
         // [4/4] Failure case: Bob's precondition fails.
         // Create another scenario where Bob needs 99999 balance.
@@ -1573,8 +1573,8 @@ mod integration {
         // Abort — no state changes.
         let abort_msg = coord2.abort("bob rejected").unwrap();
         assert!(abort_msg.rejectors.contains(&node_b));
-        assert_eq!(fail_ledger.get(&alice_id3).unwrap().state.balance, 10000);
-        assert_eq!(fail_ledger.get(&bob_id3).unwrap().state.balance, 5000);
+        assert_eq!(fail_ledger.get(&alice_id3).unwrap().state.balance(), 10000);
+        assert_eq!(fail_ledger.get(&bob_id3).unwrap().state.balance(), 5000);
     }
 
     /// Test that causal turns and atomic turns can coexist on the same ledger.
@@ -1583,7 +1583,7 @@ mod integration {
         let mut ledger = Ledger::new();
         let mut cell_a = make_cell(1, 10000);
         let cell_b = make_cell(2, 5000);
-        let id_b = cell_b.id;
+        let id_b = cell_b.id();
         // Grant cell_a a capability to reach cell_b (needed for cross-cell actions).
         cell_a
             .capabilities
@@ -1603,8 +1603,8 @@ mod integration {
         cl.apply_causal_turn(&ct1).unwrap();
 
         // After causal turn: A=9000, B=6000.
-        assert_eq!(cl.ledger().get(&id_a).unwrap().state.balance, 9000);
-        assert_eq!(cl.ledger().get(&id_b).unwrap().state.balance, 6000);
+        assert_eq!(cl.ledger().get(&id_a).unwrap().state.balance(), 9000);
+        assert_eq!(cl.ledger().get(&id_b).unwrap().state.balance(), 6000);
 
         // Phase 2: Atomic turn on the same ledger state.
         // Get a mutable ledger for the atomic operation.
@@ -1669,8 +1669,8 @@ mod integration {
         coord.commit(atomic_ledger).unwrap();
 
         // Final state: A=9000+2000=11000, B=6000-2000=4000.
-        assert_eq!(cl.ledger().get(&id_a).unwrap().state.balance, 11000);
-        assert_eq!(cl.ledger().get(&id_b).unwrap().state.balance, 4000);
+        assert_eq!(cl.ledger().get(&id_a).unwrap().state.balance(), 11000);
+        assert_eq!(cl.ledger().get(&id_b).unwrap().state.balance(), 4000);
     }
 
     /// Test three-party atomic turn with majority threshold.
@@ -1758,9 +1758,9 @@ mod integration {
         // Commit even though C hasn't voted.
         coord.commit(&mut ledger).unwrap();
 
-        assert_eq!(ledger.get(&id_a).unwrap().state.balance, 9800);
-        assert_eq!(ledger.get(&id_b).unwrap().state.balance, 5100);
-        assert_eq!(ledger.get(&id_c).unwrap().state.balance, 3100);
+        assert_eq!(ledger.get(&id_a).unwrap().state.balance(), 9800);
+        assert_eq!(ledger.get(&id_b).unwrap().state.balance(), 5100);
+        assert_eq!(ledger.get(&id_c).unwrap().state.balance(), 3100);
     }
 
     /// Test early abort: if enough No votes come in that threshold can never be met.

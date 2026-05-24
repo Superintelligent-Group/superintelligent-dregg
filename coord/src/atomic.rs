@@ -579,7 +579,7 @@ impl Coordinator {
                     id: forest.initiator,
                 },
             ))?;
-        let nonce = agent_cell.state.nonce;
+        let nonce = agent_cell.state.nonce();
 
         let turn = Turn {
             agent: forest.initiator,
@@ -980,7 +980,7 @@ impl Participant {
                     id: forest.initiator,
                 },
             ))?;
-        let nonce = agent_cell.state.nonce;
+        let nonce = agent_cell.state.nonce();
 
         let turn = Turn {
             agent: forest.initiator,
