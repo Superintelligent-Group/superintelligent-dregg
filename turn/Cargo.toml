@@ -26,12 +26,5 @@ curve25519-dalek = { version = "4", features = ["alloc"] }
 pyana-captp = { path = "../captp" }
 proptest = { workspace = true }
 
-[features]
-# Stage 1 (D) shim feature: emit tagged `Effect::Custom` for runtime variants
-# without AIR coverage (escrow, bridge, delegation, etc.). Production builds
-# should leave this off — the verifier rejects any turn containing pending
-# variants until Stages 3–6 land per-variant AIRs.
-effect-vm-pending-shim = []
-
 [lints]
 workspace = true

@@ -1750,21 +1750,13 @@ impl TurnExecutor {
                     }
 
                     // ====================================================
-                    // Stage 1 (D): the 23 runtime variants with no AIR
-                    // coverage yet. Per `EFFECT-VM-SHAPE-A.md` Stage 1, we
-                    // emit a tagged "pending" Effect::Custom row whose
-                    // proof commitment carries a discriminant identifying
-                    // the runtime variant. This contributes to
-                    // `effects_hash` so the prover commits to which
-                    // variants the turn intended, while still allowing
-                    // the trace to compile.
-                    //
-                    // GATED: production builds (without the
-                    // `effect-vm-pending-shim` feature) reject these
-                    // variants outright (project to NoOp; verifier must
-                    // reject via PI sum-check + per-cell max). This is
-                    // temporary scaffolding until Stages 3–6 land
-                    // per-variant AIRs.
+                    // Stage 3 complete: the 22 runtime variants below all
+                    // have real per-variant AIR coverage. Each projects to
+                    // a real VmEffect with its own constraint shape
+                    // (passthrough, balance debit/credit, or cap_root
+                    // transition). See STAGE-3-AIR-PLAN.md for the per-
+                    // variant rationale and EFFECT-VM-SHAPE-A.md for the
+                    // master plan context.
                     // ====================================================
                     Effect::SetPermissions { cell, new_permissions } if cell == cell_id => {
                         // Stage 3: real AIR coverage. Permissions aren't in
