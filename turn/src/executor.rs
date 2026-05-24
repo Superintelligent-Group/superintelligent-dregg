@@ -1865,8 +1865,28 @@ impl TurnExecutor {
                         // No AIR effect needed — nonce increments are implicit
                         // in the row-to-row continuity. Skip to avoid a NoOp.
                     }
-                    Effect::BridgeMint { .. } => {
-                        push_pending_shim(vm_effects, 0x201u32);
+                    Effect::BridgeMint { portable_proof } => {
+                        // Stage 3: real AIR coverage. Balance credit by the
+                        // proof's value field. mint_hash binds the proof's
+                        // public-input shape (nullifier, root, dest fed,
+                        // asset_type) so the prover commits to which bridge
+                        // mint event was processed.
+                        let mut hasher = blake3::Hasher::new();
+                        hasher.update(&portable_proof.nullifier);
+                        // AttestedRoot is structured; serialize it for hashing.
+                        let root_bytes = postcard::to_allocvec(&portable_proof.source_root)
+                            .unwrap_or_default();
+                        hasher.update(&root_bytes);
+                        hasher.update(&portable_proof.destination_federation);
+                        hasher.update(&portable_proof.asset_type.to_le_bytes());
+                        let mint_hash_bytes = hasher.finalize();
+                        let value_lo = pyana_circuit::field::BabyBear::new(
+                            (portable_proof.value & ((1u64 << 30) - 1)) as u32,
+                        );
+                        vm_effects.push(VmEffect::BridgeMint {
+                            value_lo,
+                            mint_hash: hash_to_bb(mint_hash_bytes.as_bytes()),
+                        });
                     }
                     Effect::BridgeLock { nullifier, destination, value, asset_type, .. } => {
                         // Stage 3: real AIR coverage. Balance debit.
@@ -1883,8 +1903,18 @@ impl TurnExecutor {
                             lock_hash: hash_to_bb(lock_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::BridgeFinalize { .. } => {
-                        push_pending_shim(vm_effects, 0x203u32);
+                    Effect::BridgeFinalize { nullifier, receipt } => {
+                        // Stage 3: passthrough. Mint vs lock outcome lives
+                        // in the bridge state lookup (executor's job).
+                        let mut hasher = blake3::Hasher::new();
+                        hasher.update(nullifier);
+                        let receipt_bytes = postcard::to_allocvec(receipt)
+                            .unwrap_or_default();
+                        hasher.update(&receipt_bytes);
+                        let finalize_hash_bytes = hasher.finalize();
+                        vm_effects.push(VmEffect::BridgeFinalize {
+                            finalize_hash: hash_to_bb(finalize_hash_bytes.as_bytes()),
+                        });
                     }
                     Effect::BridgeCancel { nullifier } => {
                         // Stage 3: real AIR coverage. Passthrough — bridge
@@ -1946,11 +1976,18 @@ impl TurnExecutor {
                             escrow_hash: hash_to_bb(escrow_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::ReleaseEscrow { .. } => {
-                        push_pending_shim(vm_effects, 0x402u32);
+                    Effect::ReleaseEscrow { escrow_id, .. } => {
+                        // Stage 3: passthrough. Amount resolution requires
+                        // escrow_id lookup in the ledger (out of AIR scope).
+                        vm_effects.push(VmEffect::ReleaseEscrow {
+                            escrow_id_hash: hash_to_bb(escrow_id),
+                        });
                     }
-                    Effect::RefundEscrow { .. } => {
-                        push_pending_shim(vm_effects, 0x403u32);
+                    Effect::RefundEscrow { escrow_id, .. } => {
+                        // Stage 3: passthrough. Same shape as ReleaseEscrow.
+                        vm_effects.push(VmEffect::RefundEscrow {
+                            escrow_id_hash: hash_to_bb(escrow_id),
+                        });
                     }
                     Effect::CreateCommittedEscrow {
                         creator_commitment,
@@ -1972,11 +2009,26 @@ impl TurnExecutor {
                             commit_hash: hash_to_bb(commit_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::ReleaseCommittedEscrow { .. } => {
-                        push_pending_shim(vm_effects, 0x405u32);
+                    Effect::ReleaseCommittedEscrow { escrow_id, recipient, .. } => {
+                        // Stage 3: passthrough. Amount + binding to claim_auth
+                        // is verified separately by executor.
+                        let mut hasher = blake3::Hasher::new();
+                        hasher.update(escrow_id);
+                        hasher.update(recipient.as_bytes());
+                        let commit_hash_bytes = hasher.finalize();
+                        vm_effects.push(VmEffect::ReleaseCommittedEscrow {
+                            commit_hash: hash_to_bb(commit_hash_bytes.as_bytes()),
+                        });
                     }
-                    Effect::RefundCommittedEscrow { .. } => {
-                        push_pending_shim(vm_effects, 0x406u32);
+                    Effect::RefundCommittedEscrow { escrow_id, creator, .. } => {
+                        // Stage 3: passthrough. Same shape with creator.
+                        let mut hasher = blake3::Hasher::new();
+                        hasher.update(escrow_id);
+                        hasher.update(creator.as_bytes());
+                        let commit_hash_bytes = hasher.finalize();
+                        vm_effects.push(VmEffect::RefundCommittedEscrow {
+                            commit_hash: hash_to_bb(commit_hash_bytes.as_bytes()),
+                        });
                     }
                     Effect::ExerciseViaCapability { cap_slot, inner_effects } => {
                         // Stage 3: real AIR coverage. From the actor's POV
@@ -2088,6 +2140,11 @@ impl TurnExecutor {
                         // Transfer, there's no separate `from` field — the
                         // turn's agent is the locker.)
                         *net -= *value as i64;
+                    }
+                    Effect::BridgeMint { portable_proof } => {
+                        // BridgeMint credits the actor's balance with the
+                        // portable proof's declared value.
+                        *net += portable_proof.value as i64;
                     }
                     _ => {}
                 }

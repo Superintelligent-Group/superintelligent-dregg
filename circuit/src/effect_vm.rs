@@ -99,17 +99,17 @@ use crate::stark::{BoundaryConstraint, StarkAir};
 // ============================================================================
 
 /// Total trace width.
-/// Layout: 40 selectors + 14 state_before + 8 params + 14 state_after + 23 aux = 99.
+/// Layout: 46 selectors + 14 state_before + 8 params + 14 state_after + 23 aux = 105.
 /// (aux[8..10] = state commitment intermediates;
 ///  aux[11] = cumulative custom-effect count (sum-check, Stage 1);
 ///  aux[12..20] = old_reserved bit-decomposition for sealing honesty (Stage 2);
 ///  aux[20] = mode_flag bit;
 ///  aux[21] = ResizeQueue delta sign (Stage 2: 0=grow, 1=shrink);
 ///  aux[22] = ResizeQueue |delta| magnitude (Stage 2))
-pub const EFFECT_VM_WIDTH: usize = 99;
+pub const EFFECT_VM_WIDTH: usize = 105;
 
 /// Number of effect types (selectors).
-pub const NUM_EFFECTS: usize = 40;
+pub const NUM_EFFECTS: usize = 46;
 
 /// Selector column indices.
 pub mod sel {
@@ -220,6 +220,27 @@ pub mod sel {
     /// verify the debit amount without opening the commitment, which
     /// requires its own range proof outside the Effect VM scope.
     pub const CREATE_COMMITTED_ESCROW: usize = 39;
+    /// BridgeMint: actor mints tokens carried by a portable proof from
+    /// another federation. Balance credit (mirror NoteSpend).
+    pub const BRIDGE_MINT: usize = 40;
+    /// BridgeFinalize: actor records finalization of a pending bridge.
+    /// Outcome depends on whether the bridge was a mint or lock; balance
+    /// resolution is the executor's responsibility. Passthrough with
+    /// finalize_hash binding the nullifier + receipt.
+    pub const BRIDGE_FINALIZE: usize = 41;
+    /// ReleaseEscrow: actor records release of an escrow to a recipient.
+    /// The recipient's balance change depends on escrow_id lookup; this
+    /// AIR variant is passthrough with escrow_id binding (executor verifies
+    /// the actual transfer).
+    pub const RELEASE_ESCROW: usize = 42;
+    /// RefundEscrow: actor records refund of an escrow back to creator.
+    /// Passthrough with escrow_id binding.
+    pub const REFUND_ESCROW: usize = 43;
+    /// ReleaseCommittedEscrow: same as RELEASE_ESCROW but for the
+    /// committed-value variant.
+    pub const RELEASE_COMMITTED_ESCROW: usize = 44;
+    /// RefundCommittedEscrow: same as REFUND_ESCROW but committed variant.
+    pub const REFUND_COMMITTED_ESCROW: usize = 45;
 }
 
 /// State column offsets (relative to state start).
@@ -641,6 +662,25 @@ pub enum Effect {
     /// Pedersen commitment that's verified outside this AIR.
     /// `commit_hash` = BLAKE3(creator_commit ‖ value_commit ‖ recipient_commit ‖ condition_commit).
     CreateCommittedEscrow { commit_hash: BabyBear },
+    /// BridgeMint: actor mints `value_lo` from a portable proof. Balance
+    /// credit (mirrors NoteSpend). `mint_hash` binds (nullifier, root,
+    /// dest_federation, asset_type).
+    BridgeMint { value_lo: BabyBear, mint_hash: BabyBear },
+    /// BridgeFinalize: actor finalizes a pending bridge. Passthrough.
+    /// `finalize_hash` = BLAKE3(nullifier ‖ receipt_bytes).
+    BridgeFinalize { finalize_hash: BabyBear },
+    /// ReleaseEscrow: passthrough; amount resolution requires escrow_id
+    /// lookup in the ledger (out of AIR scope). `escrow_id_hash` binds
+    /// which escrow was released.
+    ReleaseEscrow { escrow_id_hash: BabyBear },
+    /// RefundEscrow: passthrough; same shape as ReleaseEscrow.
+    RefundEscrow { escrow_id_hash: BabyBear },
+    /// ReleaseCommittedEscrow: passthrough; same shape, but
+    /// `commit_hash` also binds the claim_auth + recipient.
+    ReleaseCommittedEscrow { commit_hash: BabyBear },
+    /// RefundCommittedEscrow: passthrough; same shape, binds claim_auth +
+    /// creator.
+    RefundCommittedEscrow { commit_hash: BabyBear },
     /// Spend a note (reveal nullifier, credit balance).
     NoteSpend { nullifier: BabyBear, value: u64 },
     /// Create a note (create commitment, debit balance).
@@ -1111,6 +1151,31 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
             }
             Effect::CreateCommittedEscrow { commit_hash } => {
                 hasher_inputs.push(BabyBear::new(39));
+                hasher_inputs.push(*commit_hash);
+            }
+            Effect::BridgeMint { value_lo, mint_hash } => {
+                hasher_inputs.push(BabyBear::new(40));
+                hasher_inputs.push(*value_lo);
+                hasher_inputs.push(*mint_hash);
+            }
+            Effect::BridgeFinalize { finalize_hash } => {
+                hasher_inputs.push(BabyBear::new(41));
+                hasher_inputs.push(*finalize_hash);
+            }
+            Effect::ReleaseEscrow { escrow_id_hash } => {
+                hasher_inputs.push(BabyBear::new(42));
+                hasher_inputs.push(*escrow_id_hash);
+            }
+            Effect::RefundEscrow { escrow_id_hash } => {
+                hasher_inputs.push(BabyBear::new(43));
+                hasher_inputs.push(*escrow_id_hash);
+            }
+            Effect::ReleaseCommittedEscrow { commit_hash } => {
+                hasher_inputs.push(BabyBear::new(44));
+                hasher_inputs.push(*commit_hash);
+            }
+            Effect::RefundCommittedEscrow { commit_hash } => {
+                hasher_inputs.push(BabyBear::new(45));
                 hasher_inputs.push(*commit_hash);
             }
             Effect::NoteSpend { nullifier, value } => {
@@ -1873,6 +1938,11 @@ impl StarkAir for EffectVmAir {
             sel::INTRODUCE,
             sel::PIPELINED_SEND,
             sel::CREATE_COMMITTED_ESCROW,
+            sel::BRIDGE_FINALIZE,
+            sel::RELEASE_ESCROW,
+            sel::REFUND_ESCROW,
+            sel::RELEASE_COMMITTED_ESCROW,
+            sel::REFUND_COMMITTED_ESCROW,
         ] {
             let s_v = local[s_sel_idx];
             let c_bal_lo = s_v * (new_bal_lo - old_bal_lo);
@@ -1958,6 +2028,28 @@ impl StarkAir for EffectVmAir {
         alpha_pow = alpha_pow * alpha;
         for i in 0..8 {
             let c = s_notecreate
+                * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
+                    - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
+            combined = combined + alpha_pow * c;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // -- BridgeMint: balance credit (mirror NoteSpend) --
+        // param0 = mint_hash, param1 = value_lo
+        // new_bal_lo = old_bal_lo + value_lo
+        let s_bridgemint = local[sel::BRIDGE_MINT];
+        let bm_val_lo = local[PARAM_BASE + 1];
+        let c_bm_bal = s_bridgemint * (new_bal_lo - old_bal_lo - bm_val_lo);
+        combined = combined + alpha_pow * c_bm_bal;
+        alpha_pow = alpha_pow * alpha;
+        let c_bm_hi = s_bridgemint * (new_bal_hi - old_bal_hi);
+        combined = combined + alpha_pow * c_bm_hi;
+        alpha_pow = alpha_pow * alpha;
+        let c_bm_cap = s_bridgemint * (new_cap_root - old_cap_root);
+        combined = combined + alpha_pow * c_bm_cap;
+        alpha_pow = alpha_pow * alpha;
+        for i in 0..8 {
+            let c = s_bridgemint
                 * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
                     - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
             combined = combined + alpha_pow * c;
@@ -3577,6 +3669,12 @@ pub fn generate_effect_vm_trace_ext(
             Effect::CreateEscrow { .. } => sel::CREATE_ESCROW,
             Effect::BridgeLock { .. } => sel::BRIDGE_LOCK,
             Effect::CreateCommittedEscrow { .. } => sel::CREATE_COMMITTED_ESCROW,
+            Effect::BridgeMint { .. } => sel::BRIDGE_MINT,
+            Effect::BridgeFinalize { .. } => sel::BRIDGE_FINALIZE,
+            Effect::ReleaseEscrow { .. } => sel::RELEASE_ESCROW,
+            Effect::RefundEscrow { .. } => sel::REFUND_ESCROW,
+            Effect::ReleaseCommittedEscrow { .. } => sel::RELEASE_COMMITTED_ESCROW,
+            Effect::RefundCommittedEscrow { .. } => sel::REFUND_COMMITTED_ESCROW,
         };
         row[sel_idx] = BabyBear::ONE;
 
@@ -3708,6 +3806,29 @@ pub fn generate_effect_vm_trace_ext(
                 new_state.nonce += 1;
             }
             Effect::CreateCommittedEscrow { commit_hash } => {
+                row[PARAM_BASE + 0] = *commit_hash;
+                new_state.nonce += 1;
+            }
+            Effect::BridgeMint { value_lo, mint_hash } => {
+                // Mirror NoteSpend: balance credit by value_lo.
+                row[PARAM_BASE + 0] = *mint_hash;
+                row[PARAM_BASE + 1] = *value_lo;
+                let value_u64 = value_lo.as_u32() as u64;
+                new_state.balance = new_state.balance.saturating_add(value_u64);
+                net_delta += value_u64 as i64;
+                new_state.nonce += 1;
+            }
+            Effect::BridgeFinalize { finalize_hash } => {
+                row[PARAM_BASE + 0] = *finalize_hash;
+                new_state.nonce += 1;
+            }
+            Effect::ReleaseEscrow { escrow_id_hash }
+            | Effect::RefundEscrow { escrow_id_hash } => {
+                row[PARAM_BASE + 0] = *escrow_id_hash;
+                new_state.nonce += 1;
+            }
+            Effect::ReleaseCommittedEscrow { commit_hash }
+            | Effect::RefundCommittedEscrow { commit_hash } => {
                 row[PARAM_BASE + 0] = *commit_hash;
                 new_state.nonce += 1;
             }
