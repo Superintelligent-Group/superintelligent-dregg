@@ -86,14 +86,11 @@ pub fn verify_eligibility(
     // (2) Signature verification. `envelope_hash()` returns the canonical
     // 32-byte signing message used at delegation time, so we verify the
     // ed25519 signature directly against it.
-    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(
-        &credential.delegator_public_key.0,
-    )
-    .map_err(|e| EligibilityError::MalformedKey(e.to_string()))?;
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&credential.delegator_public_key.0)
+        .map_err(|e| EligibilityError::MalformedKey(e.to_string()))?;
 
     let signing_message = credential.envelope_hash();
-    let signature =
-        ed25519_dalek::Signature::from_bytes(&credential.delegator_signature.0);
+    let signature = ed25519_dalek::Signature::from_bytes(&credential.delegator_signature.0);
 
     verifying_key
         .verify(&signing_message, &signature)
@@ -143,7 +140,10 @@ mod tests {
         let real_issuer = AgentWallet::new();
         let auth = EligibilityAuthority::Single(real_issuer.public_key());
         let r = verify_eligibility(&auth, &cred);
-        assert!(matches!(r, Err(EligibilityError::UnauthorizedIssuer { .. })));
+        assert!(matches!(
+            r,
+            Err(EligibilityError::UnauthorizedIssuer { .. })
+        ));
     }
 
     #[test]
@@ -208,6 +208,9 @@ mod tests {
         set.insert(iss_b.public_key());
         let auth = EligibilityAuthority::Federation(set);
         let r = verify_eligibility(&auth, &cred);
-        assert!(matches!(r, Err(EligibilityError::UnauthorizedIssuer { .. })));
+        assert!(matches!(
+            r,
+            Err(EligibilityError::UnauthorizedIssuer { .. })
+        ));
     }
 }

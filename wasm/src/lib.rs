@@ -1649,10 +1649,7 @@ pub fn prove_anonymous_membership(
 /// copied into a JS object by `serde_wasm_bindgen`; callers in background
 /// workers should overwrite or drop those buffers when done.
 #[wasm_bindgen]
-pub fn derive_keypair_from_mnemonic(
-    mnemonic: &str,
-    passphrase: &str,
-) -> Result<JsValue, JsError> {
+pub fn derive_keypair_from_mnemonic(mnemonic: &str, passphrase: &str) -> Result<JsValue, JsError> {
     use zeroize::Zeroizing;
 
     // Validate: 24 words.
@@ -1840,8 +1837,8 @@ mod audit_tests {
         // The old shape was `Vec<u8>` of length 64. After the fix it's an
         // object `{public_key, secret_key}`. A consumer that tries to read it
         // as a flat Vec<u8> would now fail to deserialize.
-        let result = derive_keypair_from_mnemonic(&test_mnemonic(), "")
-            .expect("derive should succeed");
+        let result =
+            derive_keypair_from_mnemonic(&test_mnemonic(), "").expect("derive should succeed");
         let flat: Result<Vec<u8>, _> = serde_wasm_bindgen::from_value(result);
         assert!(
             flat.is_err(),

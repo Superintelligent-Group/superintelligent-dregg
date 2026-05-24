@@ -14,11 +14,9 @@ use tokio::sync::Mutex;
 
 use crate::creator::{Creator, Tier};
 use crate::crypto::{decrypt_with, pubkey_from_privkey};
-use crate::delivery::{
-    self, DeliveryLog, new_subscriber_inbox,
-};
+use crate::delivery::{self, DeliveryLog, new_subscriber_inbox};
 use crate::payments::{DebitTurn, PaymentExecutor};
-use crate::subscriber::{deterministic_wallet, SubscriberRegistry};
+use crate::subscriber::{SubscriberRegistry, deterministic_wallet};
 
 fn wallet(seed: u8) -> AgentWallet {
     let mut s = [0u8; 32];
@@ -253,7 +251,10 @@ async fn auto_debit_pinned_to_authorized_asset() {
     );
     assert!(matches!(
         r,
-        Err(crate::payments::PaymentsError::WrongAsset { authorized: 1, requested: 7 })
+        Err(crate::payments::PaymentsError::WrongAsset {
+            authorized: 1,
+            requested: 7
+        })
     ));
 }
 

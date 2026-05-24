@@ -1,0 +1,194 @@
+<layout src="_layouts/default.html">
+<title>Studio — Pyana</title>
+
+<style>
+  .studio { max-width: 1200px; margin: 0 auto; padding: var(--s4); }
+  .studio__intro { color: var(--fg-dim); margin-bottom: var(--s4); }
+  .studio__grid { display: grid; grid-template-columns: 260px 1fr; gap: var(--s4); align-items: start; }
+  .studio__controls { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3); background: var(--bg-raised, #121b16); border: 1px solid var(--line, #2a302d); border-radius: 8px; }
+  .studio__controls button { padding: 8px 12px; font: inherit; cursor: pointer; background: var(--bg, #0a0f0d); color: var(--fg, #e4ddd0); border: 1px solid var(--line, #2a302d); border-radius: 6px; }
+  .studio__controls button:hover { border-color: var(--accent, #5b8a5a); }
+  .studio__controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .studio__controls hr { border: 0; border-top: 1px solid var(--line, #2a302d); margin: 4px 0; }
+  .studio__controls label { font-size: 0.85rem; color: var(--fg-dim, #8a948f); display: block; }
+  .studio__status { padding: var(--s2) var(--s3); margin-bottom: var(--s3); background: var(--bg-raised); border-left: 3px solid var(--accent, #5b8a5a); border-radius: 4px; font-family: var(--mono, ui-monospace, monospace); font-size: 0.9rem; }
+  .studio__status[data-state="err"] { border-left-color: #d4685c; }
+
+  /* Inspector chrome (tiny v0; will move to vizzer.css after Phase 0) */
+  .pyana-inspector { font-family: var(--mono, ui-monospace, monospace); font-size: 0.9rem; }
+  .pyana-inspector--cell { padding: var(--s3); background: var(--bg-raised); border: 1px solid var(--line); border-radius: 6px; margin-bottom: var(--s3); }
+  .pyana-inspector--cell header { display: flex; gap: 8px; align-items: baseline; margin-bottom: var(--s2); padding-bottom: var(--s2); border-bottom: 1px solid var(--line); }
+  .pyana-inspector--cell .pyana-inspector__kind { padding: 2px 8px; background: var(--accent, #5b8a5a); color: #0a0f0d; border-radius: 3px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .pyana-inspector--cell .pyana-inspector__id { color: var(--fg-dim); word-break: break-all; }
+  .pyana-inspector__kv { display: grid; grid-template-columns: 160px 1fr; gap: 6px 16px; margin: 0; }
+  .pyana-inspector__kv dt { color: var(--fg-dim); }
+  .pyana-inspector__kv dd { margin: 0; word-break: break-all; }
+  .pyana-inspector__kv code { font-size: 0.8rem; word-break: break-all; }
+  .pyana-inspector--compact { display: inline-flex; gap: 8px; padding: 4px 8px; background: var(--bg-raised); border-radius: 4px; }
+  .pyana-inspector--cell-list ul { list-style: none; padding: 0; margin: var(--s2) 0 0; display: flex; flex-direction: column; gap: 6px; }
+  .pyana-inspector--cell-list header { color: var(--fg-dim); padding-bottom: var(--s2); border-bottom: 1px solid var(--line); }
+  .pyana-inspector--cell-list li { display: block; }
+  .pyana-inspector--empty { color: var(--fg-dim); padding: var(--s3); border: 1px dashed var(--line); border-radius: 6px; }
+  .pyana-inspector--err { color: #d4685c; padding: var(--s2) var(--s3); border: 1px solid #d4685c; border-radius: 4px; }
+</style>
+
+<main class="studio">
+  <header>
+    <h1>Studio <span style="color:var(--fg-dim);font-size:0.6em;font-weight:normal;">[ Phase 0 spike ]</span></h1>
+    <p class="studio__intro">
+      Vertical slice of the Studio runtime substrate (see
+      <code>site/STUDIO.md</code>). One inspector (<code>&lt;pyana-cell&gt;</code>),
+      one runtime (in-browser sim), live state that reacts to mutations.
+      Open browser devtools to watch the <code>InMemoryRuntime</code> drive
+      the wasm <code>PyanaRuntime</code>.
+    </p>
+  </header>
+
+  <div id="status" class="studio__status">Loading…</div>
+
+  <pyana-app id="app">
+    <div class="studio__grid">
+      <aside class="studio__controls">
+        <label>actions</label>
+        <button id="btn-create-alice">Create agent: Alice (5000)</button>
+        <button id="btn-create-bob">Create agent: Bob (0)</button>
+        <button id="btn-mint" disabled>Mint token for Alice (dns/read)</button>
+        <button id="btn-transfer" disabled>Try transfer 100: Alice → Bob</button>
+        <hr>
+        <label>introspection</label>
+        <button id="btn-advance">Advance height +1</button>
+        <button id="btn-dump">console.log full state</button>
+        <hr>
+        <label>state</label>
+        <div style="font-size:0.85rem;color:var(--fg-dim);">
+          version: <span id="state-version">0</span><br>
+          height:  <span id="state-height">0</span>
+        </div>
+      </aside>
+
+      <section>
+        <h2 style="margin-top:0;">Cells in this runtime</h2>
+        <pyana-cell-list></pyana-cell-list>
+
+        <h2 style="margin-top:var(--s4);">Last turn result</h2>
+        <pre id="turn-result" class="pyana-inspector pyana-inspector--cell" style="margin:0;padding:var(--s3);white-space:pre-wrap;font-size:0.85rem;color:var(--fg-dim);">no turn submitted yet</pre>
+
+        <h2 style="margin-top:var(--s4);">Spike findings</h2>
+        <ul style="font-size:0.9rem;color:var(--fg-dim);line-height:1.6;">
+          <li><strong>Runtime substrate works.</strong> wasm <code>PyanaRuntime</code> creates cells, accepts turns, reports state. Signals propagate mutations to <code>&lt;pyana-cell&gt;</code> live.</li>
+          <li><strong>Mutation gap.</strong> The sim runtime's <code>execute_turn_for_agent</code> doesn't sign turns, so <em>Send</em> / <em>SetState</em> effects are rejected by the executor (<code>permission denied … requires Signature</code>). The <em>fee is still deducted</em> on rejection — observe Alice's balance decreasing on each failed transfer.</li>
+          <li><strong>Read paths fully exercised.</strong> <code>get_all_cells</code>, <code>get_cell_state</code>, version-based invalidation all work.</li>
+          <li><strong>Token mint works.</strong> <code>agent_mint_token</code> attaches a held capability without needing a turn — minted tokens accumulate on the agent record (visible only via state dump for now; needs a <code>&lt;pyana-capability&gt;</code> inspector).</li>
+          <li><strong>Next:</strong> JS-side signing (Ed25519 on the agent's private key), or a wasm-side helper that signs internally using the deterministic sim keys.</li>
+        </ul>
+      </section>
+    </div>
+  </pyana-app>
+</main>
+
+<script type="module" src="/_includes/runtime-bootstrap.js"></script>
+<script type="module">
+  // Wait for the bootstrap to fire pyana:ready, then init wasm and the runtime.
+  function ready() {
+    return new Promise(resolve => {
+      if (window.pyana) return resolve(window.pyana);
+      window.addEventListener('pyana:ready', e => resolve(e.detail), { once: true });
+    });
+  }
+
+  const status = document.getElementById('status');
+  function setStatus(text, state) {
+    status.textContent = text;
+    if (state) status.dataset.state = state; else delete status.dataset.state;
+  }
+
+  (async () => {
+    try {
+      setStatus('Loading Preact + signals…');
+      const api = await ready();
+
+      setStatus('Loading wasm runtime…');
+      const wasmMod = await import('/pkg/pyana_wasm.js');
+      await wasmMod.default();
+
+      setStatus('Creating in-memory runtime…');
+      const { createInMemoryRuntime } = await import('/_includes/studio/runtime-in-memory.js');
+      const runtime = await createInMemoryRuntime({ wasm: wasmMod, signals: api });
+
+      // Inspector custom elements register on import.
+      await import('/_includes/studio/inspectors.js');
+
+      // Attach to context provider.
+      const app = document.getElementById('app');
+      app.runtime = runtime;
+
+      setStatus(`ready — sim runtime handle ${runtime._handle}`);
+
+      // Live status bindings
+      api.effect(() => {
+        document.getElementById('state-version').textContent = String(runtime.version.value);
+        document.getElementById('state-height').textContent = String(runtime.cursor.value);
+      });
+
+      // Wire controls
+      let alice = null;
+      let bob = null;
+      const mintBtn = document.getElementById('btn-mint');
+      const transferBtn = document.getElementById('btn-transfer');
+      const turnResult = document.getElementById('turn-result');
+
+      function showResult(label, value) {
+        turnResult.textContent = `${label}\n${JSON.stringify(value, null, 2)}`;
+      }
+
+      document.getElementById('btn-create-alice').addEventListener('click', () => {
+        alice = runtime.createAgent('alice', 5000);
+        console.log('[studio] alice:', alice);
+        mintBtn.disabled = false;
+        if (alice && bob) transferBtn.disabled = false;
+      });
+      document.getElementById('btn-create-bob').addEventListener('click', () => {
+        bob = runtime.createAgent('bob', 0);
+        console.log('[studio] bob:', bob);
+        if (alice && bob) transferBtn.disabled = false;
+      });
+      document.getElementById('btn-mint').addEventListener('click', () => {
+        const result = runtime.mintToken(alice.agent_index, 'dns', ['read'], 0);
+        console.log('[studio] mint result:', JSON.stringify(result));
+        showResult('agent_mint_token (succeeds — no signing required)', result);
+        api.toast('Token minted for Alice');
+      });
+      document.getElementById('btn-transfer').addEventListener('click', () => {
+        // Fee is the per-turn computron budget AND is deducted from balance.
+        // Transfer uses 100 computrons; 500 leaves headroom. Note: this will
+        // be rejected — the sim runtime doesn't sign turns yet. See findings.
+        const result = runtime.executeTurn(
+          alice.agent_index,
+          [{ type: 'transfer', to: bob.cell_id, amount: 100 }],
+          500,
+        );
+        console.log('[studio] turn result:', JSON.stringify(result));
+        showResult('execute_turn (transfer)', result);
+        api.toast(`Transfer ${result.status}`, result.status === 'committed' ? 'info' : 'err');
+      });
+      document.getElementById('btn-advance').addEventListener('click', () => {
+        runtime.advanceHeight(1);
+        api.toast('Advanced 1 block');
+      });
+      document.getElementById('btn-dump').addEventListener('click', () => {
+        console.group('Runtime state dump');
+        console.log('caps:', runtime.caps);
+        console.log('source:', runtime.source);
+        console.log('cells:', runtime.listCells().value);
+        console.log('version:', runtime.version.value);
+        console.log('cursor:', runtime.cursor.value);
+        console.groupEnd();
+      });
+    } catch (e) {
+      setStatus('boot failed: ' + (e?.message || e), 'err');
+      console.error(e);
+    }
+  })();
+</script>
+
+</layout>

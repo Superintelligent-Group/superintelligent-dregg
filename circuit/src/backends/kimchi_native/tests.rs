@@ -2081,8 +2081,7 @@ fn test_p0_3_zero_circuit_hash_rejected_fold() {
 fn fp_hash_pair_for_test(a: Fp, b: Fp) -> Fp {
     use mina_poseidon::poseidon::{ArithmeticSponge, Sponge};
     let params = Vesta::sponge_params();
-    let mut sponge =
-        ArithmeticSponge::<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>::new(params);
+    let mut sponge = ArithmeticSponge::<Fp, PlonkSpongeConstantsKimchi, FULL_ROUNDS>::new(params);
     sponge.absorb(&[a, b]);
     sponge.squeeze()
 }

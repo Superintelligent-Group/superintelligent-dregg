@@ -500,14 +500,24 @@ impl TurnReceipt {
     /// the executor's monotonic clock at commit time, which is the field
     /// present on `TurnReceipt` and the right binding for the executor's view
     /// of "when did this happen".
+    ///
+    /// **v2 (audit F2 / T6 closed):** the canonical signed message also binds
+    /// `federation_id` and `agent`. Without these, an executor signature is
+    /// recoverable onto a receipt under a different federation_id (because
+    /// the signature does not cover that field). Including them here means
+    /// downstream verifiers can check the signature *alone* — they no longer
+    /// have to independently recompute `receipt_hash` for soundness.
     pub fn canonical_executor_signed_message(&self) -> Vec<u8> {
-        const DOMAIN: &[u8] = b"executor-receipt-sig-v1:";
-        let mut msg = Vec::with_capacity(DOMAIN.len() + 32 + 32 + 32 + 8);
+        const DOMAIN: &[u8] = b"executor-receipt-sig-v2:";
+        let agent_bytes = self.agent.as_bytes();
+        let mut msg = Vec::with_capacity(DOMAIN.len() + 32 + 32 + 32 + 8 + 32 + agent_bytes.len());
         msg.extend_from_slice(DOMAIN);
         msg.extend_from_slice(&self.turn_hash);
         msg.extend_from_slice(&self.pre_state_hash);
         msg.extend_from_slice(&self.post_state_hash);
         msg.extend_from_slice(&self.timestamp.to_le_bytes());
+        msg.extend_from_slice(&self.federation_id);
+        msg.extend_from_slice(agent_bytes);
         msg
     }
 }

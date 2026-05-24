@@ -629,10 +629,10 @@ impl HeldToken {
         };
 
         use ed25519_dalek::Verifier;
-        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&binding.delegator_public_key.0)
-            .map_err(|e| {
-                SdkError::InvalidDelegation(format!("invalid delegator public key: {e}"))
-            })?;
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(
+            &binding.delegator_public_key.0,
+        )
+        .map_err(|e| SdkError::InvalidDelegation(format!("invalid delegator public key: {e}")))?;
         let signature = ed25519_dalek::Signature::from_bytes(&binding.delegator_signature.0);
         verifying_key
             .verify(&signing_message, &signature)
@@ -900,7 +900,9 @@ pub struct AgentWallet {
     /// Optional CapTP client for capability sharing, enlivening, and pipelining.
     ///
     /// Must be set via [`set_captp_client`](Self::set_captp_client) before using
-    /// the CapTP convenience methods.
+    /// the CapTP convenience methods. Gated on the `captp` feature so the
+    /// crate compiles on wasm32 (CapTpClient pulls async-runtime deps).
+    #[cfg(feature = "captp")]
     captp_client: Option<crate::captp_client::CapTpClient>,
 }
 
@@ -959,6 +961,7 @@ impl AgentWallet {
             derivation_path: None,
             stealth_keys,
             sovereign_cells: HashMap::new(),
+            #[cfg(feature = "captp")]
             captp_client: None,
         }
     }
@@ -1009,6 +1012,7 @@ impl AgentWallet {
             derivation_path: Some(path.to_string()),
             stealth_keys,
             sovereign_cells: HashMap::new(),
+            #[cfg(feature = "captp")]
             captp_client: None,
         }
     }
@@ -1606,10 +1610,9 @@ impl AgentWallet {
             }
         }
 
-        let _decoded =
-            MacaroonToken::from_encoded(&local.token_bytes, [0u8; 32]).map_err(|e| {
-                SdkError::InvalidDelegation(format!("token failed to deserialize: {e}"))
-            })?;
+        let _decoded = MacaroonToken::from_encoded(&local.token_bytes, [0u8; 32]).map_err(|e| {
+            SdkError::InvalidDelegation(format!("token failed to deserialize: {e}"))
+        })?;
 
         if local.delegatee != self.public_key {
             return Err(SdkError::InvalidDelegation(format!(
@@ -1639,8 +1642,8 @@ impl AgentWallet {
             &local.delegator_public_key,
         );
         use ed25519_dalek::Verifier;
-        let verifying_key =
-            ed25519_dalek::VerifyingKey::from_bytes(&local.delegator_public_key.0).map_err(|e| {
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&local.delegator_public_key.0)
+            .map_err(|e| {
                 SdkError::InvalidDelegation(format!("invalid delegator public key: {e}"))
             })?;
         let signature = ed25519_dalek::Signature::from_bytes(&local.delegator_signature.0);
@@ -2701,16 +2704,14 @@ impl AgentWallet {
 
         // Optional 32-byte fields use a 1-byte presence tag to disambiguate
         // `Some([0; 32])` from `None`.
-        let write_optional = |hasher: &mut blake3::Hasher, value: Option<&[u8; 32]>| {
-            match value {
-                Some(v) => {
-                    hasher.update(&[1u8]);
-                    hasher.update(v);
-                }
-                None => {
-                    hasher.update(&[0u8]);
-                    hasher.update(&[0u8; 32]);
-                }
+        let write_optional = |hasher: &mut blake3::Hasher, value: Option<&[u8; 32]>| match value {
+            Some(v) => {
+                hasher.update(&[1u8]);
+                hasher.update(v);
+            }
+            None => {
+                hasher.update(&[0u8]);
+                hasher.update(&[0u8; 32]);
             }
         };
         write_optional(&mut hasher, proof_key.as_ref());
@@ -2718,8 +2719,8 @@ impl AgentWallet {
         write_optional(&mut hasher, membership_leaf);
 
         // Restrictions: canonical postcard encoding, length-prefixed.
-        let restrictions_bytes =
-            postcard::to_allocvec(restrictions).expect("restrictions serialization should not fail");
+        let restrictions_bytes = postcard::to_allocvec(restrictions)
+            .expect("restrictions serialization should not fail");
         hasher.update(&(restrictions_bytes.len() as u64).to_le_bytes());
         hasher.update(&restrictions_bytes);
 
@@ -2733,8 +2734,8 @@ impl AgentWallet {
     pub(crate) fn verify_delegation_envelope_v2(env: &DelegatedToken) -> Result<(), SdkError> {
         use ed25519_dalek::Verifier;
 
-        let verifying_key =
-            ed25519_dalek::VerifyingKey::from_bytes(&env.delegator_public_key.0).map_err(|e| {
+        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&env.delegator_public_key.0)
+            .map_err(|e| {
                 SdkError::InvalidDelegation(format!("invalid delegator public key: {e}"))
             })?;
 
@@ -2777,8 +2778,7 @@ impl AgentWallet {
         membership_leaf: Option<&[u8; 32]>,
         delegator_public_key: &PublicKey,
     ) -> [u8; 32] {
-        let mut hasher =
-            blake3::Hasher::new_derive_key(Self::DELEGATION_ENVELOPE_LOCAL_V1_CONTEXT);
+        let mut hasher = blake3::Hasher::new_derive_key(Self::DELEGATION_ENVELOPE_LOCAL_V1_CONTEXT);
         hasher.update(&(token_bytes.len() as u64).to_le_bytes());
         hasher.update(token_bytes.as_bytes());
         hasher.update(&(service.len() as u64).to_le_bytes());
@@ -2788,24 +2788,22 @@ impl AgentWallet {
         hasher.update(&delegatee.0);
         hasher.update(&delegator_public_key.0);
 
-        let write_optional = |hasher: &mut blake3::Hasher, value: Option<&[u8; 32]>| {
-            match value {
-                Some(v) => {
-                    hasher.update(&[1u8]);
-                    hasher.update(v);
-                }
-                None => {
-                    hasher.update(&[0u8]);
-                    hasher.update(&[0u8; 32]);
-                }
+        let write_optional = |hasher: &mut blake3::Hasher, value: Option<&[u8; 32]>| match value {
+            Some(v) => {
+                hasher.update(&[1u8]);
+                hasher.update(v);
+            }
+            None => {
+                hasher.update(&[0u8]);
+                hasher.update(&[0u8; 32]);
             }
         };
         write_optional(&mut hasher, proof_key.as_ref());
         write_optional(&mut hasher, caveat_chain_hash.as_ref());
         write_optional(&mut hasher, membership_leaf);
 
-        let restrictions_bytes =
-            postcard::to_allocvec(restrictions).expect("restrictions serialization should not fail");
+        let restrictions_bytes = postcard::to_allocvec(restrictions)
+            .expect("restrictions serialization should not fail");
         hasher.update(&(restrictions_bytes.len() as u64).to_le_bytes());
         hasher.update(&restrictions_bytes);
 
@@ -4465,8 +4463,10 @@ impl AgentWallet {
 
         // 5. Generate the STARK proof using EffectVmAir (DSL cutover).
         let vm_effects = Self::convert_effects_to_vm(cell_id, &effects);
-        let initial_vm_state =
-            pyana_circuit::CellState::new(cell_state.state.balance(), cell_state.state.nonce() as u32);
+        let initial_vm_state = pyana_circuit::CellState::new(
+            cell_state.state.balance(),
+            cell_state.state.nonce() as u32,
+        );
         let (trace, public_inputs) =
             pyana_circuit::generate_effect_vm_trace(&initial_vm_state, &vm_effects);
 
@@ -5384,7 +5384,7 @@ impl AgentWallet {
     }
 
     // =========================================================================
-    // CapTP Convenience Methods
+    // CapTP Convenience Methods (entire block gated on `captp` feature)
     // =========================================================================
 
     /// Share a cell as a `pyana://` URI (sturdy reference).
@@ -5402,6 +5402,7 @@ impl AgentWallet {
     /// # Returns
     ///
     /// A `pyana://` URI string that can be shared out-of-band.
+    #[cfg(feature = "captp")]
     pub fn share_capability(
         &mut self,
         cell_id: CellId,
@@ -5421,6 +5422,7 @@ impl AgentWallet {
     /// # Arguments
     ///
     /// * `uri` - A `pyana://` URI string.
+    #[cfg(feature = "captp")]
     pub fn accept_capability(
         &mut self,
         uri: &str,
@@ -5441,6 +5443,7 @@ impl AgentWallet {
     ///
     /// * `cell_id` - The cell to delegate.
     /// * `recipient_pk` - The recipient's Ed25519 public key (32 bytes).
+    #[cfg(feature = "captp")]
     pub fn delegate_offline(
         &mut self,
         cell_id: CellId,
@@ -5463,22 +5466,26 @@ impl AgentWallet {
     /// Must be called before using [`share_capability`](Self::share_capability),
     /// [`accept_capability`](Self::accept_capability), or
     /// [`delegate_offline`](Self::delegate_offline).
+    #[cfg(feature = "captp")]
     pub fn set_captp_client(&mut self, client: crate::captp_client::CapTpClient) {
         self.captp_client = Some(client);
     }
 
     /// Get a reference to the CapTP client, if configured.
+    #[cfg(feature = "captp")]
     pub fn captp_client(&self) -> Option<&crate::captp_client::CapTpClient> {
         self.captp_client.as_ref()
     }
 
     /// Get a mutable reference to the CapTP client, if configured.
+    #[cfg(feature = "captp")]
     pub fn captp_client_mut(&mut self) -> Option<&mut crate::captp_client::CapTpClient> {
         self.captp_client.as_mut()
     }
 
     /// Internal helper: get a mutable CapTP client or return
     /// [`SdkError::CapTpNotConfigured`].
+    #[cfg(feature = "captp")]
     fn captp_mut(&mut self) -> Result<&mut crate::captp_client::CapTpClient, SdkError> {
         self.captp_client
             .as_mut()
@@ -6662,10 +6669,8 @@ mod tests {
 
         // Bob receives the forged envelope with a TrustedKey(alice) policy.
         let mut bob = bob;
-        let result = bob.receive_signed_delegation(
-            forged,
-            &DelegationAuthority::TrustedKey(alice_pk),
-        );
+        let result =
+            bob.receive_signed_delegation(forged, &DelegationAuthority::TrustedKey(alice_pk));
         assert!(
             matches!(result, Err(SdkError::InvalidDelegation(_))),
             "envelope signed by wrong key must be rejected; got {:?}",
@@ -6693,10 +6698,8 @@ mod tests {
         // Bob's policy is "TrustedKey(alice_pk)" — Mallory must be rejected
         // even though her envelope is internally well-signed.
         let mut bob = bob;
-        let result = bob.receive_signed_delegation(
-            mallory_env,
-            &DelegationAuthority::TrustedKey(alice_pk),
-        );
+        let result =
+            bob.receive_signed_delegation(mallory_env, &DelegationAuthority::TrustedKey(alice_pk));
         assert!(
             matches!(result, Err(SdkError::InvalidDelegation(_))),
             "envelope from non-authorized delegator must be rejected; got {:?}",
@@ -6732,10 +6735,8 @@ mod tests {
         // covers `delegatee`, so flipping it breaks the signature.
         let mut tampered = env_for_bob.clone();
         tampered.delegatee = carol.public_key();
-        let result2 = carol.receive_signed_delegation(
-            tampered,
-            &DelegationAuthority::TrustedKey(alice_pk),
-        );
+        let result2 =
+            carol.receive_signed_delegation(tampered, &DelegationAuthority::TrustedKey(alice_pk));
         assert!(
             matches!(result2, Err(SdkError::InvalidDelegation(_))),
             "tampered delegatee must invalidate signature; got {:?}",
@@ -6760,37 +6761,22 @@ mod tests {
             services: vec![("svc".to_string(), "rw".to_string())],
             ..Default::default()
         };
-        let mut bob1 = AgentWallet::from_key_bytes(Zeroizing::new(
-            bob.signing_key.to_bytes(),
-        ));
-        let r1 = bob1.receive_signed_delegation(
-            t1,
-            &DelegationAuthority::TrustedKey(alice_pk),
-        );
+        let mut bob1 = AgentWallet::from_key_bytes(Zeroizing::new(bob.signing_key.to_bytes()));
+        let r1 = bob1.receive_signed_delegation(t1, &DelegationAuthority::TrustedKey(alice_pk));
         assert!(matches!(r1, Err(SdkError::InvalidDelegation(_))));
 
         // Tamper with service.
         let mut t2 = env.clone();
         t2.service = "other-svc".to_string();
-        let mut bob2 = AgentWallet::from_key_bytes(Zeroizing::new(
-            bob.signing_key.to_bytes(),
-        ));
-        let r2 = bob2.receive_signed_delegation(
-            t2,
-            &DelegationAuthority::TrustedKey(alice_pk),
-        );
+        let mut bob2 = AgentWallet::from_key_bytes(Zeroizing::new(bob.signing_key.to_bytes()));
+        let r2 = bob2.receive_signed_delegation(t2, &DelegationAuthority::TrustedKey(alice_pk));
         assert!(matches!(r2, Err(SdkError::InvalidDelegation(_))));
 
         // Tamper with id.
         let mut t3 = env.clone();
         t3.id = "different-id".to_string();
-        let mut bob3 = AgentWallet::from_key_bytes(Zeroizing::new(
-            bob.signing_key.to_bytes(),
-        ));
-        let r3 = bob3.receive_signed_delegation(
-            t3,
-            &DelegationAuthority::TrustedKey(alice_pk),
-        );
+        let mut bob3 = AgentWallet::from_key_bytes(Zeroizing::new(bob.signing_key.to_bytes()));
+        let r3 = bob3.receive_signed_delegation(t3, &DelegationAuthority::TrustedKey(alice_pk));
         assert!(matches!(r3, Err(SdkError::InvalidDelegation(_))));
     }
 
@@ -6807,11 +6793,8 @@ mod tests {
         // Alice → Bob.
         let env_ab = mint_delegation(&mut alice, bob_pk, [0x66; 32], "svc");
         let mut bob = bob;
-        bob.receive_signed_delegation(
-            env_ab.clone(),
-            &DelegationAuthority::TrustedKey(alice_pk),
-        )
-        .unwrap();
+        bob.receive_signed_delegation(env_ab.clone(), &DelegationAuthority::TrustedKey(alice_pk))
+            .unwrap();
         let received_hash = env_ab.envelope_hash();
 
         // Bob → Carol, properly chained.
@@ -6897,9 +6880,7 @@ mod tests {
         let env = mint_delegation(&mut alice, bob.public_key(), [0x88; 32], "svc");
 
         // Open policy accepts a legitimate envelope.
-        let mut bob1 = AgentWallet::from_key_bytes(Zeroizing::new(
-            bob.signing_key.to_bytes(),
-        ));
+        let mut bob1 = AgentWallet::from_key_bytes(Zeroizing::new(bob.signing_key.to_bytes()));
         bob1.receive_signed_delegation(env.clone(), &DelegationAuthority::Open { warn: false })
             .unwrap();
 
@@ -6909,9 +6890,7 @@ mod tests {
             services: vec![("svc".to_string(), "rw".to_string())],
             ..Default::default()
         };
-        let mut bob2 = AgentWallet::from_key_bytes(Zeroizing::new(
-            bob.signing_key.to_bytes(),
-        ));
+        let mut bob2 = AgentWallet::from_key_bytes(Zeroizing::new(bob.signing_key.to_bytes()));
         let result =
             bob2.receive_signed_delegation(tampered, &DelegationAuthority::Open { warn: false });
         assert!(matches!(result, Err(SdkError::InvalidDelegation(_))));
@@ -7043,7 +7022,11 @@ mod tests {
             action: Some("r".into()),
             ..Default::default()
         };
-        let auth_result = bob.authorize(&bob.tokens[0].clone(), &request, VerificationMode::FullyPrivate);
+        let auth_result = bob.authorize(
+            &bob.tokens[0].clone(),
+            &request,
+            VerificationMode::FullyPrivate,
+        );
         assert!(
             matches!(auth_result, Err(SdkError::InvalidDelegation(_))),
             "tampered encoded must break authorize; got {:?}",
@@ -7081,7 +7064,11 @@ mod tests {
             action: Some("r".into()),
             ..Default::default()
         };
-        let auth_result = bob.authorize(&bob.tokens[0].clone(), &request, VerificationMode::FullyPrivate);
+        let auth_result = bob.authorize(
+            &bob.tokens[0].clone(),
+            &request,
+            VerificationMode::FullyPrivate,
+        );
         assert!(
             matches!(auth_result, Err(SdkError::InvalidDelegation(_))),
             "tampered caveat_chain_hash must break authorize; got {:?}",

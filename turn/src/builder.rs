@@ -296,11 +296,7 @@ impl TurnBuilder {
     }
 
     /// Add a root-level action plus its (already-built) child actions.
-    pub fn add_action_with_children(
-        &mut self,
-        action: Action,
-        children: Vec<Action>,
-    ) -> &mut Self {
+    pub fn add_action_with_children(&mut self, action: Action, children: Vec<Action>) -> &mut Self {
         let declared = action.balance_change.unwrap_or(0);
         let children = children
             .into_iter()
@@ -326,7 +322,8 @@ impl TurnBuilder {
     /// callers can be staged across commits without an atomic rewrite of
     /// every test. Production paths must not rely on it.
     pub fn action(&mut self, target: CellId, method: &str) -> &mut LegacyActionBuilder {
-        self.legacy_action_builders.push(LegacyActionBuilder::new(target, method));
+        self.legacy_action_builders
+            .push(LegacyActionBuilder::new(target, method));
         self.legacy_action_builders.last_mut().unwrap()
     }
 
@@ -533,7 +530,11 @@ impl ActionBuilder<NeedsAuth> {
     /// Available exclusively for test scaffolding. Production code paths in
     /// `app-framework/src/` are forbidden by CI grep-guard from using this
     /// constructor.
-    pub fn new_unchecked_for_tests(target: CellId, method: &str, caller: CellId) -> ActionBuilder<UncheckedOptIn> {
+    pub fn new_unchecked_for_tests(
+        target: CellId,
+        method: &str,
+        caller: CellId,
+    ) -> ActionBuilder<UncheckedOptIn> {
         let mut next = Self::new(target, method, caller).transition::<UncheckedOptIn>();
         next.authorization = Some(Authorization::Unchecked);
         next
@@ -670,12 +671,7 @@ impl<S> ActionBuilder<S> {
 impl<S> ActionBuilder<S> {
     // §3.1 — Field & balance ---------------------------------------------------
 
-    pub fn effect_set_field(
-        mut self,
-        cell: CellId,
-        index: usize,
-        value: FieldElement,
-    ) -> Self {
+    pub fn effect_set_field(mut self, cell: CellId, index: usize, value: FieldElement) -> Self {
         self.effects.push(Effect::SetField { cell, index, value });
         self
     }
@@ -692,12 +688,7 @@ impl<S> ActionBuilder<S> {
 
     // §3.2 — Capabilities ------------------------------------------------------
 
-    pub fn effect_grant_capability(
-        mut self,
-        from: CellId,
-        to: CellId,
-        cap: CapabilityRef,
-    ) -> Self {
+    pub fn effect_grant_capability(mut self, from: CellId, to: CellId, cap: CapabilityRef) -> Self {
         self.effects.push(Effect::GrantCapability { from, to, cap });
         self
     }
@@ -811,11 +802,7 @@ impl<S> ActionBuilder<S> {
         self
     }
 
-    pub fn effect_unseal(
-        mut self,
-        sealed_box: pyana_cell::SealedBox,
-        recipient: CellId,
-    ) -> Self {
+    pub fn effect_unseal(mut self, sealed_box: pyana_cell::SealedBox, recipient: CellId) -> Self {
         self.effects.push(Effect::Unseal {
             sealed_box,
             recipient,
@@ -1014,11 +1001,7 @@ impl<S> ActionBuilder<S> {
         self
     }
 
-    pub fn effect_release_escrow(
-        mut self,
-        escrow_id: [u8; 32],
-        proof: Option<Vec<u8>>,
-    ) -> Self {
+    pub fn effect_release_escrow(mut self, escrow_id: [u8; 32], proof: Option<Vec<u8>>) -> Self {
         self.effects
             .push(Effect::ReleaseEscrow { escrow_id, proof });
         self
@@ -1084,12 +1067,7 @@ impl<S> ActionBuilder<S> {
 
     // §3.9 — Events ------------------------------------------------------------
 
-    pub fn effect_emit_event(
-        mut self,
-        cell: CellId,
-        topic: &str,
-        data: Vec<FieldElement>,
-    ) -> Self {
+    pub fn effect_emit_event(mut self, cell: CellId, topic: &str, data: Vec<FieldElement>) -> Self {
         self.effects.push(Effect::EmitEvent {
             cell,
             event: Event::new(symbol(topic), data),
@@ -1099,11 +1077,7 @@ impl<S> ActionBuilder<S> {
 
     // §3.10 — Queues -----------------------------------------------------------
 
-    pub fn effect_queue_allocate(
-        mut self,
-        capacity: u64,
-        program_vk: Option<[u8; 32]>,
-    ) -> Self {
+    pub fn effect_queue_allocate(mut self, capacity: u64, program_vk: Option<[u8; 32]>) -> Self {
         self.effects.push(Effect::QueueAllocate {
             capacity,
             program_vk,
@@ -1138,10 +1112,7 @@ impl<S> ActionBuilder<S> {
         self
     }
 
-    pub fn effect_queue_atomic_tx(
-        mut self,
-        operations: Vec<crate::action::QueueTxOp>,
-    ) -> Self {
+    pub fn effect_queue_atomic_tx(mut self, operations: Vec<crate::action::QueueTxOp>) -> Self {
         self.effects.push(Effect::QueueAtomicTx { operations });
         self
     }

@@ -764,8 +764,7 @@ impl TrustlessIntentEngine {
         // pending action's `auth_hint`; tests only need a non-Unchecked
         // value to satisfy the SealedTurn invariant.
         let auth = Authorization::Signature(winner.solver_id, proof_hash);
-        let sealed =
-            lowering::seal_plan_uniform(plan, anchor, self.current_batch.batch_id, auth);
+        let sealed = lowering::seal_plan_uniform(plan, anchor, self.current_batch.batch_id, auth);
 
         let output = SettlementOutput {
             batch_id: self.current_batch.batch_id,

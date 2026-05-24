@@ -41,8 +41,7 @@ pub struct PermissionEnforcement;
 
 impl Invariant for PermissionEnforcement {
     const NAME: &'static str = "permission_enforcement";
-    const DESCRIPTION: &'static str =
-        "executor accepts an action iff cell.permissions for the action's slot is satisfied by the provided authorization";
+    const DESCRIPTION: &'static str = "executor accepts an action iff cell.permissions for the action's slot is satisfied by the provided authorization";
 }
 
 /// Strategy: any `AuthRequired`.

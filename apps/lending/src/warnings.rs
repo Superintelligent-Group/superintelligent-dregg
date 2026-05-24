@@ -16,8 +16,8 @@ use pyana_types::CellId;
 use serde::{Deserialize, Serialize};
 
 use pyana_app_framework::inbox_endpoint::InboxEndpoint;
-use pyana_storage::inbox::{CapInbox, InboxMessage};
 use pyana_storage::QuotaId;
+use pyana_storage::inbox::{CapInbox, InboxMessage};
 
 /// Inbox capacity: up to 64 pending warnings per inbox.
 pub const WARNING_INBOX_CAPACITY: usize = 64;
@@ -130,7 +130,11 @@ mod tests {
     #[test]
     fn test_health_threshold_trigger_creates_inbox_message() {
         let (pool, borrower, pos_id) = setup_at_risk_position();
-        let pos = pool.borrow_positions.iter().find(|p| p.id == pos_id).unwrap();
+        let pos = pool
+            .borrow_positions
+            .iter()
+            .find(|p| p.id == pos_id)
+            .unwrap();
 
         let health = pos.health_factor_bps();
         assert!(
@@ -148,18 +152,29 @@ mod tests {
         };
 
         let result = push_health_warning(&mut inbox, borrower, warning, 0);
-        assert!(result.is_ok(), "push_health_warning should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "push_health_warning should succeed: {:?}",
+            result
+        );
 
         // Confirm the inbox now has a pending message
         let status = inbox.status();
-        assert_eq!(status.pending_messages, 1, "inbox should have 1 pending message");
+        assert_eq!(
+            status.pending_messages, 1,
+            "inbox should have 1 pending message"
+        );
     }
 
     /// Test 2: offline borrower can retrieve the warning when they reconnect.
     #[test]
     fn test_offline_borrower_retrieves_warning_on_reconnect() {
         let (pool, borrower, pos_id) = setup_at_risk_position();
-        let pos = pool.borrow_positions.iter().find(|p| p.id == pos_id).unwrap();
+        let pos = pool
+            .borrow_positions
+            .iter()
+            .find(|p| p.id == pos_id)
+            .unwrap();
 
         let health = pos.health_factor_bps();
         let mut inbox = new_warnings_cap_inbox();
@@ -184,11 +199,17 @@ mod tests {
         let _ = &warning; // payload we *would* check once read returns it
 
         // Proof contains old/new roots
-        assert_ne!(proof.old_root, proof.new_root, "roots should differ after dequeue");
+        assert_ne!(
+            proof.old_root, proof.new_root,
+            "roots should differ after dequeue"
+        );
 
         // Inbox should now be empty
         let status = inbox.status();
-        assert_eq!(status.pending_messages, 0, "inbox should be empty after read");
+        assert_eq!(
+            status.pending_messages, 0,
+            "inbox should be empty after read"
+        );
     }
 
     /// Test 3: healthy positions do NOT trigger a warning.
@@ -209,7 +230,11 @@ mod tests {
             price: BPS_SCALE,
         }];
         let pos_id = pool.borrow(bob, 1, 1_000_000, collateral).unwrap();
-        let pos = pool.borrow_positions.iter().find(|p| p.id == pos_id).unwrap();
+        let pos = pool
+            .borrow_positions
+            .iter()
+            .find(|p| p.id == pos_id)
+            .unwrap();
 
         let health = pos.health_factor_bps();
         assert!(

@@ -50,7 +50,12 @@ pub enum MountError {
 
 impl StorageMount {
     /// Create a new inbox mount.
-    pub fn inbox(path: String, owner: [u8; 32], fee_policy: FeePolicy, max_capacity: usize) -> Result<Self, MountError> {
+    pub fn inbox(
+        path: String,
+        owner: [u8; 32],
+        fee_policy: FeePolicy,
+        max_capacity: usize,
+    ) -> Result<Self, MountError> {
         Self::validate_path(&path)?;
         Self::validate_capacity(max_capacity)?;
         Ok(Self {
@@ -345,10 +350,7 @@ mod tests {
             FeePolicy::computrons_only(),
             10,
         );
-        assert!(matches!(
-            result,
-            Err(MountError::InvalidPath(_))
-        ));
+        assert!(matches!(result, Err(MountError::InvalidPath(_))));
     }
 
     #[test]

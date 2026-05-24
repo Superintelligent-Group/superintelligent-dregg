@@ -52,7 +52,10 @@ pub const HEADER_LEN: usize = 32 + 12;
 /// Errors from the crypto layer.
 #[derive(Debug, Error)]
 pub enum CryptoError {
-    #[error("ciphertext too short: {len} bytes (need at least {} for header)", HEADER_LEN)]
+    #[error(
+        "ciphertext too short: {len} bytes (need at least {} for header)",
+        HEADER_LEN
+    )]
     TooShort { len: usize },
     #[error("AEAD decryption failed (wrong key, tampered ciphertext, or bad nonce)")]
     DecryptionFailed,
@@ -116,10 +119,7 @@ pub fn encrypt_for(recv_pubkey: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
 /// Returns `Err(CryptoError::DecryptionFailed)` if the key does not match
 /// (i.e. the ciphertext was encrypted to someone else) or if the ciphertext
 /// has been tampered with.
-pub fn decrypt_with(
-    recv_privkey: &[u8; 32],
-    ciphertext: &[u8],
-) -> Result<Vec<u8>, CryptoError> {
+pub fn decrypt_with(recv_privkey: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     if ciphertext.len() < HEADER_LEN {
         return Err(CryptoError::TooShort {
             len: ciphertext.len(),

@@ -30,9 +30,7 @@
 use std::collections::HashMap;
 
 use proptest::prelude::*;
-use pyana_cell::{
-    AuthRequired, AuthRequired::None as AuthNone, Cell, CellId, Ledger, Permissions,
-};
+use pyana_cell::{AuthRequired, AuthRequired::None as AuthNone, Cell, CellId, Ledger, Permissions};
 use pyana_circuit::effect_vm::{
     CellState as VmCellState, Effect as VmEffect, extract_net_delta, generate_effect_vm_trace,
     state as vm_state,
@@ -140,13 +138,12 @@ fn fresh_ledger() -> (Ledger, Vec<CellId>) {
 /// `VmEffect::NoOp`.
 fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
     fn hash_to_bb(h: &[u8; 32]) -> BabyBear {
-        let v = u32::from_le_bytes([h[0], h[1], h[2], h[3]])
-            % pyana_circuit::field::BABYBEAR_P;
+        let v = u32::from_le_bytes([h[0], h[1], h[2], h[3]]) % pyana_circuit::field::BABYBEAR_P;
         BabyBear::new(v)
     }
     fn field_to_bb(v: &[u8; 32]) -> BabyBear {
-        let val_u32 = u32::from_le_bytes([v[0], v[1], v[2], v[3]])
-            % pyana_circuit::field::BABYBEAR_P;
+        let val_u32 =
+            u32::from_le_bytes([v[0], v[1], v[2], v[3]]) % pyana_circuit::field::BABYBEAR_P;
         BabyBear::new(val_u32)
     }
 
@@ -157,9 +154,15 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
             match effect {
                 Effect::Transfer { from, to, amount } => {
                     if from == cell_id {
-                        out.push(VmEffect::Transfer { amount: *amount, direction: 1 });
+                        out.push(VmEffect::Transfer {
+                            amount: *amount,
+                            direction: 1,
+                        });
                     } else if to == cell_id {
-                        out.push(VmEffect::Transfer { amount: *amount, direction: 0 });
+                        out.push(VmEffect::Transfer {
+                            amount: *amount,
+                            direction: 0,
+                        });
                     }
                 }
                 Effect::SetField { cell, index, value } if cell == cell_id => {
@@ -190,7 +193,10 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                         event_hash: hash_to_bb(h.finalize().as_bytes()),
                     });
                 }
-                Effect::SetPermissions { cell, new_permissions } if cell == cell_id => {
+                Effect::SetPermissions {
+                    cell,
+                    new_permissions,
+                } if cell == cell_id => {
                     let perm_bytes = postcard::to_allocvec(new_permissions).unwrap_or_default();
                     let perm_hash = blake3::hash(&perm_bytes);
                     out.push(VmEffect::SetPermissions {
@@ -208,7 +214,11 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                     };
                     out.push(VmEffect::SetVerificationKey { vk_hash });
                 }
-                Effect::CreateCell { public_key, token_id, balance } => {
+                Effect::CreateCell {
+                    public_key,
+                    token_id,
+                    balance,
+                } => {
                     let mut h = blake3::Hasher::new();
                     h.update(public_key);
                     h.update(token_id);
@@ -217,7 +227,11 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                         create_hash: hash_to_bb(h.finalize().as_bytes()),
                     });
                 }
-                Effect::SpawnWithDelegation { child_public_key, child_token_id, max_staleness } => {
+                Effect::SpawnWithDelegation {
+                    child_public_key,
+                    child_token_id,
+                    max_staleness,
+                } => {
                     let mut h = blake3::Hasher::new();
                     h.update(child_public_key);
                     h.update(child_token_id);
@@ -242,21 +256,25 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                     h.update(&root_bytes);
                     h.update(&portable_proof.destination_federation);
                     h.update(&portable_proof.asset_type.to_le_bytes());
-                    let value_lo = BabyBear::new(
-                        (portable_proof.value & ((1u64 << 30) - 1)) as u32,
-                    );
+                    let value_lo =
+                        BabyBear::new((portable_proof.value & ((1u64 << 30) - 1)) as u32);
                     out.push(VmEffect::BridgeMint {
                         value_lo,
                         mint_hash: hash_to_bb(h.finalize().as_bytes()),
                     });
                 }
-                Effect::BridgeLock { nullifier, destination, value, asset_type, .. } => {
+                Effect::BridgeLock {
+                    nullifier,
+                    destination,
+                    value,
+                    asset_type,
+                    ..
+                } => {
                     let mut h = blake3::Hasher::new();
                     h.update(nullifier);
                     h.update(destination);
                     h.update(&asset_type.to_le_bytes());
-                    let value_lo =
-                        BabyBear::new((*value & ((1u64 << 30) - 1)) as u32);
+                    let value_lo = BabyBear::new((*value & ((1u64 << 30) - 1)) as u32);
                     out.push(VmEffect::BridgeLock {
                         value_lo,
                         lock_hash: hash_to_bb(h.finalize().as_bytes()),
@@ -276,7 +294,12 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                         finalize_hash: hash_to_bb(h.finalize().as_bytes()),
                     });
                 }
-                Effect::Introduce { introducer, recipient, target, permissions } => {
+                Effect::Introduce {
+                    introducer,
+                    recipient,
+                    target,
+                    permissions,
+                } => {
                     let mut h = blake3::Hasher::new();
                     h.update(introducer.as_bytes());
                     h.update(recipient.as_bytes());
@@ -302,21 +325,27 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                         send_hash: hash_to_bb(h.finalize().as_bytes()),
                     });
                 }
-                Effect::CreateEscrow { cell, recipient, amount, condition, .. }
-                    if cell == cell_id =>
-                {
+                Effect::CreateEscrow {
+                    cell,
+                    recipient,
+                    amount,
+                    condition,
+                    ..
+                } if cell == cell_id => {
                     let mut h = blake3::Hasher::new();
                     h.update(recipient.as_bytes());
                     let cond_bytes = postcard::to_allocvec(condition).unwrap_or_default();
                     h.update(&cond_bytes);
-                    let amount_lo =
-                        BabyBear::new((*amount & ((1u64 << 30) - 1)) as u32);
+                    let amount_lo = BabyBear::new((*amount & ((1u64 << 30) - 1)) as u32);
                     out.push(VmEffect::CreateEscrow {
                         amount_lo,
                         escrow_hash: hash_to_bb(h.finalize().as_bytes()),
                     });
                 }
-                Effect::ExerciseViaCapability { cap_slot, inner_effects } => {
+                Effect::ExerciseViaCapability {
+                    cap_slot,
+                    inner_effects,
+                } => {
                     let mut h = blake3::Hasher::new();
                     h.update(&cap_slot.to_le_bytes());
                     for inner in inner_effects {
@@ -351,8 +380,7 @@ fn air_claim(actor_cell: &Cell, turn: &Turn) -> AirClaim {
     // projection).
     for i in 0..8 {
         if let Some(f) = actor_cell.state.get_field(i) {
-            let v = u32::from_le_bytes([f[0], f[1], f[2], f[3]])
-                % pyana_circuit::field::BABYBEAR_P;
+            let v = u32::from_le_bytes([f[0], f[1], f[2], f[3]]) % pyana_circuit::field::BABYBEAR_P;
             vm_initial.fields[i] = BabyBear::new(v);
         }
     }
@@ -363,23 +391,22 @@ fn air_claim(actor_cell: &Cell, turn: &Turn) -> AirClaim {
 
     // Last row's state_after columns give the AIR's claimed final state.
     let last_row = trace.last().expect("non-empty trace");
-    let final_balance_lo = last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::BALANCE_LO].0
-        as u64;
-    let final_balance_hi = last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::BALANCE_HI].0
-        as u64;
-    let final_cap_root =
-        last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::CAP_ROOT];
+    let final_balance_lo =
+        last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::BALANCE_LO].0 as u64;
+    let final_balance_hi =
+        last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::BALANCE_HI].0 as u64;
+    let final_cap_root = last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::CAP_ROOT];
     let initial_cap_root =
         trace[0][pyana_circuit::effect_vm::STATE_BEFORE_BASE + vm_state::CAP_ROOT];
     let mut final_fields = [BabyBear::ZERO; 8];
     for i in 0..8 {
-        final_fields[i] = last_row
-            [pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::FIELD_BASE + i];
+        final_fields[i] =
+            last_row[pyana_circuit::effect_vm::STATE_AFTER_BASE + vm_state::FIELD_BASE + i];
     }
     let mut initial_fields = [BabyBear::ZERO; 8];
     for i in 0..8 {
-        initial_fields[i] = trace[0]
-            [pyana_circuit::effect_vm::STATE_BEFORE_BASE + vm_state::FIELD_BASE + i];
+        initial_fields[i] =
+            trace[0][pyana_circuit::effect_vm::STATE_BEFORE_BASE + vm_state::FIELD_BASE + i];
     }
 
     AirClaim {
@@ -531,13 +558,15 @@ fn differential_bridge_lock() {
     // executor-rejection artifact, not a soundness gap.
     if runtime_delta == 0 {
         assert_eq!(
-            claim.net_balance_delta, -(value as i64),
+            claim.net_balance_delta,
+            -(value as i64),
             "BridgeLock (executor-rejected): AIR projection should claim -value"
         );
     } else {
         assert_eq!(
             claim.net_balance_delta, runtime_delta,
-            "BridgeLock: AIR vs runtime mismatch (value={})", value,
+            "BridgeLock: AIR vs runtime mismatch (value={})",
+            value,
         );
     }
 }
@@ -569,6 +598,8 @@ fn differential_bridge_mint() {
             nullifier_set_root: None,
             height: 0,
             timestamp: 0,
+            blocklace_block_id: None,
+            finality_round: None,
             quorum_signatures: vec![],
             threshold_qc: None,
             threshold: 0,
@@ -659,10 +690,7 @@ fn differential_revoke_cap() {
     let before = CellSnapshot::of(actor_cell);
     let nonce = actor_cell.state.nonce();
 
-    let effect = Effect::RevokeCapability {
-        cell: actor,
-        slot,
-    };
+    let effect = Effect::RevokeCapability { cell: actor, slot };
     let turn = one_effect_turn(actor, nonce, effect);
     let claim = air_claim(actor_cell, &turn);
 
@@ -861,7 +889,8 @@ fn differential_emit_event_passthrough_gap() {
     // receipt-chain layer's job), but worth documenting as a soundness
     // tripwire when Stage 4+ planning considers per-turn nonce coverage.
     assert_eq!(
-        after.nonce, before.nonce + 1,
+        after.nonce,
+        before.nonce + 1,
         "runtime bumps nonce on every committed turn — gap vs AIR",
     );
     assert_eq!(
@@ -1045,7 +1074,9 @@ fn differential_bridge_cancel_passthrough() {
     let before = CellSnapshot::of(actor_cell);
     let nonce = actor_cell.state.nonce();
 
-    let effect = Effect::BridgeCancel { nullifier: [5u8; 32] };
+    let effect = Effect::BridgeCancel {
+        nullifier: [5u8; 32],
+    };
     let turn = one_effect_turn(actor, nonce, effect);
     let claim = air_claim(actor_cell, &turn);
 

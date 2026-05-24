@@ -46,6 +46,8 @@ fn sample_attested_root(height: u64) -> StoredAttestedRoot {
         nullifier_set_root: None,
         height,
         timestamp: 1000 + height as i64 * 100,
+        blocklace_block_id: None,
+        finality_round: None,
         quorum_signatures: vec![
             (PublicKey([0x11; 32]), Signature([0x22; 64])),
             (PublicKey([0x33; 32]), Signature([0x44; 64])),
@@ -1228,6 +1230,8 @@ fn test_attested_root_includes_note_tree() {
         nullifier_set_root: Some(nullifier_root),
         height: 1,
         timestamp: 1700000000,
+        blocklace_block_id: None,
+        finality_round: None,
         quorum_signatures: vec![(PublicKey([0x11; 32]), Signature([0x22; 64]))],
         threshold_qc: None,
         threshold: 1,

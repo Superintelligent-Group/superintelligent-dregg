@@ -58,9 +58,13 @@ pub enum RelayError {
 impl From<StorageError> for RelayError {
     fn from(e: StorageError) -> Self {
         match e {
-            StorageError::QuotaExhausted { available, required } => {
-                RelayError::QuotaExhausted { available, required }
-            }
+            StorageError::QuotaExhausted {
+                available,
+                required,
+            } => RelayError::QuotaExhausted {
+                available,
+                required,
+            },
             StorageError::QuotaNotFound(id) => RelayError::QuotaNotFound(id),
             _ => RelayError::QuotaExhausted {
                 available: 0,
@@ -197,9 +201,10 @@ impl MeteredRelay {
 
         // Clean up empty queues.
         if let Some(q) = self.queues.get(destination)
-            && q.is_empty() {
-                self.queues.remove(destination);
-            }
+            && q.is_empty()
+        {
+            self.queues.remove(destination);
+        }
         self.metadata.remove(destination);
 
         results
@@ -263,20 +268,21 @@ impl MeteredRelay {
                 if let Some(queue) = self.queues.get_mut(&dest) {
                     if queue.dequeue().is_ok() {
                         if let Some(metas) = self.metadata.get_mut(&dest)
-                            && !metas.is_empty() {
-                                let meta = metas.remove(0);
-                                // 10% refund on expiry.
-                                let refund_amount = (meta.cost_paid as f64 * 0.1) as u64;
-                                if refund_amount > 0 {
-                                    if let Ok(cell) = self.bank.get_mut(&meta.payer) {
-                                        cell.refund(refund_amount);
-                                    }
-                                    refunds.push(ComputronRefund {
-                                        quota_id: meta.payer,
-                                        amount: refund_amount,
-                                    });
+                            && !metas.is_empty()
+                        {
+                            let meta = metas.remove(0);
+                            // 10% refund on expiry.
+                            let refund_amount = (meta.cost_paid as f64 * 0.1) as u64;
+                            if refund_amount > 0 {
+                                if let Ok(cell) = self.bank.get_mut(&meta.payer) {
+                                    cell.refund(refund_amount);
                                 }
+                                refunds.push(ComputronRefund {
+                                    quota_id: meta.payer,
+                                    amount: refund_amount,
+                                });
                             }
+                        }
                     } else {
                         break;
                     }

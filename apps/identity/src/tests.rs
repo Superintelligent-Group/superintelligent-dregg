@@ -697,8 +697,7 @@ mod inbox_delivery_tests {
         let content_hash = entry["content_hash_hex"].as_str().unwrap();
         assert_eq!(content_hash.len(), 64, "content_hash must be 32 bytes hex");
         assert_ne!(
-            content_hash,
-            "0000000000000000000000000000000000000000000000000000000000000000",
+            content_hash, "0000000000000000000000000000000000000000000000000000000000000000",
             "content hash must be non-zero (cert_bytes were hashed)"
         );
 
@@ -783,16 +782,12 @@ mod blinded_credential_tests {
         let commitment = all_commitments[position];
         // The local Merkle helper operates on the BLAKE3 leaves; the
         // dual-form Commitment4 carries `.blake3` for this exact purpose.
-        let blake_leaves: Vec<[u8; 32]> =
-            all_commitments.iter().map(|c| c.blake3).collect();
+        let blake_leaves: Vec<[u8; 32]> = all_commitments.iter().map(|c| c.blake3).collect();
         let sibling_bytes = merkle_siblings(&blake_leaves, position);
         let siblings: Vec<BlindedItemCommitment> =
             sibling_bytes.into_iter().map(Into::into).collect();
-        let nullifier = pyana_storage::blinded::crypto::derive_nullifier(
-            &commitment,
-            secret,
-            position,
-        );
+        let nullifier =
+            pyana_storage::blinded::crypto::derive_nullifier(&commitment, secret, position);
         ConsumptionProof {
             nullifier,
             commitment,
@@ -816,11 +811,10 @@ mod blinded_credential_tests {
         for i in 0..N {
             let item = format!("alumni-cert-{i}");
             let randomness = [(i as u8) + 1; 32];
-            let c = pyana_storage::blinded::crypto::create_commitment(
-                item.as_bytes(),
-                &randomness,
-            );
-            queue.commit(c).expect("commit must succeed within capacity");
+            let c = pyana_storage::blinded::crypto::create_commitment(item.as_bytes(), &randomness);
+            queue
+                .commit(c)
+                .expect("commit must succeed within capacity");
             commitments.push(c);
         }
         assert_eq!(queue.remaining(), N);
@@ -837,7 +831,11 @@ mod blinded_credential_tests {
         }
 
         // Queue is now empty.
-        assert_eq!(queue.remaining(), 0, "all credentials must have been withdrawn");
+        assert_eq!(
+            queue.remaining(),
+            0,
+            "all credentials must have been withdrawn"
+        );
         assert_eq!(queue.consumed_count(), N);
     }
 
@@ -855,10 +853,7 @@ mod blinded_credential_tests {
         for i in 0..N {
             let item = format!("alumni-cert-{i}");
             let randomness = [(i as u8) + 1; 32];
-            let c = pyana_storage::blinded::crypto::create_commitment(
-                item.as_bytes(),
-                &randomness,
-            );
+            let c = pyana_storage::blinded::crypto::create_commitment(item.as_bytes(), &randomness);
             queue.commit(c).unwrap();
             commitments.push(c);
         }
@@ -867,7 +862,10 @@ mod blinded_credential_tests {
         let secrets: Vec<[u8; 32]> = (0..N).map(|i| [(i as u8) + 0x20; 32]).collect();
         for i in 0..N {
             let proof = make_proof(&commitments, i, &secrets[i]);
-            assert!(matches!(queue.consume(&proof), ConsumeResult::Consumed { .. }));
+            assert!(matches!(
+                queue.consume(&proof),
+                ConsumeResult::Consumed { .. }
+            ));
         }
         assert_eq!(queue.remaining(), 0);
 

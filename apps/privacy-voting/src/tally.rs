@@ -67,7 +67,9 @@ pub struct RevealLog {
 
 impl RevealLog {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -103,7 +105,11 @@ impl RevealLog {
             let mut i = 0;
             while i < layer.len() {
                 let left = layer[i];
-                let right = if i + 1 < layer.len() { layer[i + 1] } else { layer[i] };
+                let right = if i + 1 < layer.len() {
+                    layer[i + 1]
+                } else {
+                    layer[i]
+                };
                 let mut hasher = blake3::Hasher::new_derive_key("pyana-tally-node-v1");
                 hasher.update(&left);
                 hasher.update(&right);

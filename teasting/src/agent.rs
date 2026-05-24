@@ -5,7 +5,9 @@
 //! proving, and presenting tokens.
 
 use pyana_bridge::{BridgePredicateProof, BridgePresentationProof, Predicate};
-use pyana_sdk::{AgentWallet, Attenuation, AuthRequest, DelegatedToken, DelegationAuthority, HeldToken};
+use pyana_sdk::{
+    AgentWallet, Attenuation, AuthRequest, DelegatedToken, DelegationAuthority, HeldToken,
+};
 use pyana_types::PublicKey;
 
 /// A simulated agent participating in integration tests.

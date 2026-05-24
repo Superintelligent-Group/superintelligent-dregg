@@ -629,97 +629,21 @@ pub fn spend_note(
 // Federation
 // ============================================================================
 
-/// Create a simulated federation.
-#[wasm_bindgen]
-pub fn create_federation(handle: usize, name: &str, num_nodes: usize) -> Result<JsValue, JsError> {
-    with_runtime(handle, |rt| {
-        let idx = rt.create_federation(name, num_nodes);
-        let fed = &rt.federations[idx];
-
-        #[derive(Serialize)]
-        struct FedResult {
-            fed_index: usize,
-            name: String,
-            num_nodes: usize,
-        }
-        let result = FedResult {
-            fed_index: idx,
-            name: fed.name.clone(),
-            num_nodes: fed.nodes.len(),
-        };
-        serde_wasm_bindgen::to_value(&result).map_err(|e| e.to_string())
-    })
-}
-
-/// Propose a block of events to a federation.
-#[wasm_bindgen]
-pub fn propose_block(
-    handle: usize,
-    fed_index: usize,
-    events_json: &str,
-) -> Result<JsValue, JsError> {
-    with_runtime(handle, |rt| {
-        if fed_index >= rt.federations.len() {
-            return Err("invalid federation index".to_string());
-        }
-        let events: Vec<String> = serde_json::from_str(events_json).map_err(|e| e.to_string())?;
-        let event_data: Vec<Vec<u8>> = events.iter().map(|e| e.as_bytes().to_vec()).collect();
-        let block_hash = rt.propose_block(fed_index, event_data);
-
-        #[derive(Serialize)]
-        struct BlockResult {
-            block_hash: String,
-            height: u64,
-        }
-        let result = BlockResult {
-            block_hash: hex_encode(&block_hash),
-            height: rt.federations[fed_index].height,
-        };
-        serde_wasm_bindgen::to_value(&result).map_err(|e| e.to_string())
-    })
-}
-
-/// Get federation state.
-#[wasm_bindgen]
-pub fn get_federation_state(handle: usize, fed_index: usize) -> Result<JsValue, JsError> {
-    with_runtime_ref(handle, |rt| {
-        if fed_index >= rt.federations.len() {
-            return Err("invalid federation index".to_string());
-        }
-        let fed = &rt.federations[fed_index];
-
-        #[derive(Serialize)]
-        struct FedState {
-            name: String,
-            height: u64,
-            num_nodes: usize,
-            num_events: usize,
-            num_finalized_roots: usize,
-            latest_root: Option<String>,
-        }
-        let result = FedState {
-            name: fed.name.clone(),
-            height: fed.height,
-            num_nodes: fed.nodes.len(),
-            num_events: fed.events.len(),
-            num_finalized_roots: fed.finalized_roots.len(),
-            latest_root: fed.finalized_roots.last().map(|r| hex_encode(r)),
-        };
-        serde_wasm_bindgen::to_value(&result).map_err(|e| e.to_string())
-    })
-}
-
-/// Simulate a consensus round.
-#[wasm_bindgen]
-pub fn simulate_consensus_round(handle: usize, fed_index: usize) -> Result<JsValue, JsError> {
-    with_runtime(handle, |rt| {
-        if fed_index >= rt.federations.len() {
-            return Err("invalid federation index".to_string());
-        }
-        let result = rt.simulate_consensus_round(fed_index);
-        serde_wasm_bindgen::to_value(&result).map_err(|e| e.to_string())
-    })
-}
+// Federation bindings removed. The wasm runtime no longer holds a parallel
+// `SimFederation` set of types — the canonical home is `pyana_federation`,
+// which doesn't yet cross-compile to wasm32 (pulls tokio + crossbeam-channel).
+// Once `pyana-federation` gains the same feature surgery `pyana-sdk` got,
+// thin bindings will be re-added here that expose the real
+// `Federation` / `FederationNode` / `FederationReceipt` types.
+//
+// Removed exports:
+//   - create_federation(handle, name, num_nodes)
+//   - propose_block(handle, fed_index, events_json)
+//   - get_federation_state(handle, fed_index)
+//   - simulate_consensus_round(handle, fed_index)
+//
+// Studio inspectors that referenced these now show a "awaiting wasm32
+// federation support" placeholder.
 
 // ============================================================================
 // Intents

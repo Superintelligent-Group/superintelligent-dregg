@@ -20,12 +20,7 @@
 //! the output back in the opposite direction (restoring reserves approximately;
 //! fees mean this is not perfectly lossless, but the invariant is never violated).
 
-use axum::{
-    Json, Router,
-    extract::State,
-    http::StatusCode,
-    routing::post,
-};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 use serde::{Deserialize, Serialize};
 
 use pyana_app_framework::ring_trade::{ExchangeSpec, LegId, RingTradeParticipant, Settlement};
@@ -374,7 +369,10 @@ pub fn ring_router() -> Router<AppState> {
 // Simple hex encoding helper (avoid pulling in the hex crate).
 mod hex {
     pub fn encode(b: impl AsRef<[u8]>) -> String {
-        b.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+        b.as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 }
 
@@ -440,14 +438,22 @@ mod tests {
         participant.settle_leg(&settlement).unwrap();
 
         // Reserve_a should have increased by 100
-        let reserve_a_after = participant.registry.find_pool_by_pair(1, 2).unwrap().reserve_a;
+        let reserve_a_after = participant
+            .registry
+            .find_pool_by_pair(1, 2)
+            .unwrap()
+            .reserve_a;
         assert_eq!(reserve_a_after, reserve_a_before + 100);
 
         // Rollback
         participant.rollback_leg(&settlement).unwrap();
 
         // Reserve_a should be approximately back (within fee tolerance)
-        let reserve_a_rolled = participant.registry.find_pool_by_pair(1, 2).unwrap().reserve_a;
+        let reserve_a_rolled = participant
+            .registry
+            .find_pool_by_pair(1, 2)
+            .unwrap()
+            .reserve_a;
         // After rollback, reserve_a should have decreased again
         assert!(reserve_a_rolled < reserve_a_after);
     }
@@ -528,13 +534,21 @@ mod tests {
 
         // Pool P/Q: reserve_a should have increased (we put asset 10 in)
         assert_ne!(
-            participant.registry.find_pool_by_pair(10, 20).unwrap().reserve_a,
+            participant
+                .registry
+                .find_pool_by_pair(10, 20)
+                .unwrap()
+                .reserve_a,
             pq_reserve_a_init,
             "pool P/Q reserve_a should change after leg 1"
         );
         // Pool R/S: reserve_a should have increased (we put asset 30 in)
         assert_ne!(
-            participant.registry.find_pool_by_pair(30, 40).unwrap().reserve_a,
+            participant
+                .registry
+                .find_pool_by_pair(30, 40)
+                .unwrap()
+                .reserve_a,
             rs_reserve_a_init,
             "pool R/S reserve_a should change after leg 2"
         );

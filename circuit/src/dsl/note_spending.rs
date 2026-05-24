@@ -231,6 +231,15 @@ pub fn note_spending_circuit_descriptor() -> CircuitDescriptor {
             col: merkle_col::CURRENT,
             pi_index: pi::MERKLE_ROOT,
         },
+        // Row 0: destination_federation == pi[4]
+        // CRITICAL: pins the prover-supplied destination_federation in the trace
+        // (col 18) to the verifier-supplied pi[4]. A proof generated for
+        // destination D fails verification under any other D'.
+        BoundaryDef::PiBinding {
+            row: BoundaryRow::First,
+            col: col::DESTINATION_FEDERATION,
+            pi_index: pi::DESTINATION_FEDERATION,
+        },
     ];
 
     // Column definitions
@@ -280,6 +289,11 @@ pub fn note_spending_circuit_descriptor() -> CircuitDescriptor {
             index: NULLIFIER_INTERMEDIATE,
             kind: ColumnKind::Hash,
         },
+        ColumnDef {
+            name: "destination_federation".into(),
+            index: col::DESTINATION_FEDERATION,
+            kind: ColumnKind::Value,
+        },
     ];
 
     CircuitDescriptor {
@@ -289,7 +303,7 @@ pub fn note_spending_circuit_descriptor() -> CircuitDescriptor {
         columns,
         constraints,
         boundaries,
-        public_input_count: 4, // [nullifier, merkle_root, value, asset_type]
+        public_input_count: 5, // [nullifier, merkle_root, value, asset_type, destination_federation]
         lookup_tables: vec![],
     }
 }
@@ -375,6 +389,7 @@ pub fn generate_note_spending_trace(
     row0[col::RANDOMNESS] = witness.randomness;
     row0[col::IS_MERKLE] = BabyBear::ZERO;
     row0[NULLIFIER_INTERMEDIATE] = intermediate;
+    row0[col::DESTINATION_FEDERATION] = witness.destination_federation;
     trace.push(row0);
 
     // Rows 1..depth+1: Merkle membership proof
@@ -426,7 +441,13 @@ pub fn generate_note_spending_trace(
 
     // The merkle_root is the `current` value after processing all Merkle levels
     // using hash_fact (not hash_4_to_1), which matches the DSL Hash constraint.
-    let public_inputs = vec![nullifier, merkle_root, witness.value, witness.asset_type];
+    let public_inputs = vec![
+        nullifier,
+        merkle_root,
+        witness.value,
+        witness.asset_type,
+        witness.destination_federation,
+    ];
     (trace, public_inputs)
 }
 
@@ -445,6 +466,10 @@ pub fn prove_note_spend_dsl(witness: &NoteSpendingWitness) -> StarkProof {
 
 /// Verify a DSL-native note spending STARK proof.
 ///
+/// For local (non-bridge) spends, pass `BabyBear::ZERO` for `destination_federation`.
+/// For bridge proofs, pass the destination federation's identity (as a BabyBear felt);
+/// the verifier rejects any proof whose trace destination_federation does not match.
+///
 /// This replaces `verify_note_spend` from `circuit/src/note_spending_air.rs`.
 pub fn verify_note_spend_dsl(
     nullifier: BabyBear,
@@ -453,12 +478,44 @@ pub fn verify_note_spend_dsl(
     asset_type: BabyBear,
     proof: &StarkProof,
 ) -> Result<(), String> {
+    verify_note_spend_dsl_with_destination(
+        nullifier,
+        merkle_root,
+        value,
+        asset_type,
+        BabyBear::ZERO,
+        proof,
+    )
+}
+
+/// Verify a DSL-native note spending STARK proof with an explicit destination
+/// federation public input.
+///
+/// This is the bridge-aware variant of `verify_note_spend_dsl`. Use
+/// `BabyBear::ZERO` for `destination_federation` when verifying a local
+/// (non-bridge) spend. For bridge-mint paths, pass the destination
+/// federation's BabyBear identity; the proof verifies only if the prover
+/// committed to the same destination at trace-generation time.
+pub fn verify_note_spend_dsl_with_destination(
+    nullifier: BabyBear,
+    merkle_root: BabyBear,
+    value: BabyBear,
+    asset_type: BabyBear,
+    destination_federation: BabyBear,
+    proof: &StarkProof,
+) -> Result<(), String> {
     if proof.trace_len < 4 {
         return Err("Proof trace too short for note spending circuit".to_string());
     }
 
     let circuit = note_spending_dsl_circuit();
-    let public_inputs = vec![nullifier, merkle_root, value, asset_type];
+    let public_inputs = vec![
+        nullifier,
+        merkle_root,
+        value,
+        asset_type,
+        destination_federation,
+    ];
     stark::verify(&circuit, proof, &public_inputs)
 }
 
@@ -472,6 +529,10 @@ pub fn prove_note_spend(witness: &NoteSpendingWitness) -> StarkProof {
 }
 
 /// Backward-compatible alias: verify note spending using the DSL-native circuit.
+///
+/// This variant uses `BabyBear::ZERO` for `destination_federation` (local-spend
+/// semantics). For bridge proofs, call `verify_note_spend_dsl_with_destination`
+/// directly.
 pub fn verify_note_spend(
     nullifier: BabyBear,
     merkle_root: BabyBear,

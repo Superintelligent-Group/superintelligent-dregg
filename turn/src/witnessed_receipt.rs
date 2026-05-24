@@ -228,12 +228,8 @@ mod tests {
 
     #[test]
     fn from_components_without_trace_has_zero_witness_hash() {
-        let wr = WitnessedReceipt::from_components(
-            dummy_receipt(),
-            vec![0u8; 4],
-            vec![1, 2, 3],
-            None,
-        );
+        let wr =
+            WitnessedReceipt::from_components(dummy_receipt(), vec![0u8; 4], vec![1, 2, 3], None);
         assert!(wr.witness_bundle.is_none());
         assert_eq!(wr.witness_hash, [0u8; 32]);
         assert!(wr.aggregate_membership.is_none());

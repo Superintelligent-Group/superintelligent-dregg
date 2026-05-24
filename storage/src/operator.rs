@@ -22,10 +22,10 @@
 
 use std::collections::HashMap;
 
+use crate::QuotaId;
 use crate::inbox::{CapInbox, InboxError, InboxMessage};
 use crate::queue::{DequeueProof, MerkleQueue, QueueEntry};
 use crate::relay::RelayError;
-use crate::QuotaId;
 
 /// Bond rate: computrons required per unit of committed capacity.
 const BOND_RATE_PER_CAPACITY: u64 = 100;
@@ -182,14 +182,10 @@ impl RelayOperator {
         let hosted = self
             .hosted_inboxes
             .get_mut(dest)
-            .ok_or(RelayError::InboxNotFound {
-                destination: *dest,
-            })?;
+            .ok_or(RelayError::InboxNotFound { destination: *dest })?;
 
         if hosted.evicted {
-            return Err(RelayError::InboxNotFound {
-                destination: *dest,
-            });
+            return Err(RelayError::InboxNotFound { destination: *dest });
         }
 
         // Use the CapInbox to enforce deposit and size limits.
@@ -387,10 +383,11 @@ impl RelayOperator {
 
         // If operator has a delivery proof, verify it.
         if let Some(ref delivery_proof) = dispute.delivery_proof
-            && crate::queue::verify_dequeue_proof(delivery_proof) {
-                // Operator proved delivery.
-                return DisputeOutcome::OperatorVindicated;
-            }
+            && crate::queue::verify_dequeue_proof(delivery_proof)
+        {
+            // Operator proved delivery.
+            return DisputeOutcome::OperatorVindicated;
+        }
 
         // Check if SLA window has passed.
         let sla_deadline = dispute.filed_at + self.max_delivery_latency;
@@ -454,8 +451,7 @@ mod tests {
         // Enqueue 3 messages.
         for i in 0u8..3 {
             let msg = test_msg([i + 1; 32], &[i; 8]);
-            op.receive_message(&owner, msg, 100, 10 + i as u64)
-                .unwrap();
+            op.receive_message(&owner, msg, 100, 10 + i as u64).unwrap();
         }
 
         assert_eq!(op.total_pending(), 3);

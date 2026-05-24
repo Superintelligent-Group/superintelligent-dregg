@@ -404,7 +404,10 @@ mod tests {
             .unwrap();
         assert_eq!(consume_resp.status(), 200, "first consume must succeed");
         let result: serde_json::Value = consume_resp.json().await.unwrap();
-        assert_eq!(result["result"], "consumed", "first consume: result=consumed");
+        assert_eq!(
+            result["result"], "consumed",
+            "first consume: result=consumed"
+        );
 
         // Step 3: attempt double-consume with same nullifier — must be rejected.
         let double_resp = client
@@ -413,7 +416,11 @@ mod tests {
             .send()
             .await
             .unwrap();
-        assert_eq!(double_resp.status(), 200, "double-consume returns 200 with error result");
+        assert_eq!(
+            double_resp.status(),
+            200,
+            "double-consume returns 200 with error result"
+        );
         let double_result: serde_json::Value = double_resp.json().await.unwrap();
         assert_eq!(
             double_result["result"], "already_consumed",
@@ -505,10 +512,7 @@ mod tests {
             .json()
             .await
             .unwrap();
-        assert_eq!(
-            status_before["pending_messages"], 0,
-            "inbox starts empty"
-        );
+        assert_eq!(status_before["pending_messages"], 0, "inbox starts empty");
 
         // Create a bounty.
         let bounty_id = create_test_bounty(&base, &client).await;
@@ -611,7 +615,11 @@ mod tests {
             .send()
             .await
             .unwrap();
-        assert_eq!(next_resp.status(), 200, "issuer should be able to read inbox");
+        assert_eq!(
+            next_resp.status(),
+            200,
+            "issuer should be able to read inbox"
+        );
         let msg: serde_json::Value = next_resp.json().await.unwrap();
 
         // The sender should be the worker commitment (hex-encoded).

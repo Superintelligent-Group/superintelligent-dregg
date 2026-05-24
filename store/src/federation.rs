@@ -33,6 +33,13 @@ pub struct StoredAttestedRoot {
     pub height: u64,
     /// Unix timestamp (seconds) when finalized.
     pub timestamp: i64,
+    /// The blocklace block id this attestation is anchored to.
+    /// `None` for legacy roots; production roots from the live node carry it.
+    #[serde(default)]
+    pub blocklace_block_id: Option<[u8; 32]>,
+    /// The Cordial Miners finality round at the anchoring block.
+    #[serde(default)]
+    pub finality_round: Option<u64>,
     /// Quorum signatures: Vec of (public_key, signature) with FULL 64-byte sigs.
     pub quorum_signatures: Vec<(PublicKey, Signature)>,
     /// Optional threshold aggregate QC (serialized BLS).
@@ -82,12 +89,45 @@ impl StoredAttestedRoot {
     }
 
     /// Compute the canonical message that was signed for this attested root.
+    ///
+    /// Mirrors [`pyana_types::AttestedRoot::signing_message`] (v2): includes
+    /// `note_tree_root`, `nullifier_set_root`, `blocklace_block_id`, and
+    /// `finality_round` with `0x00 | 0x01 || value` framing for unambiguous
+    /// `Option` encoding.
     fn signing_message(&self) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"pyana-attested-root-v1");
+        msg.extend_from_slice(b"pyana-attested-root-v2");
         msg.extend_from_slice(&self.merkle_root);
+        match self.note_tree_root {
+            Some(ref r) => {
+                msg.push(0x01);
+                msg.extend_from_slice(r);
+            }
+            None => msg.push(0x00),
+        }
+        match self.nullifier_set_root {
+            Some(ref r) => {
+                msg.push(0x01);
+                msg.extend_from_slice(r);
+            }
+            None => msg.push(0x00),
+        }
         msg.extend_from_slice(&self.height.to_le_bytes());
         msg.extend_from_slice(&self.timestamp.to_le_bytes());
+        match self.blocklace_block_id {
+            Some(ref id) => {
+                msg.push(0x01);
+                msg.extend_from_slice(id);
+            }
+            None => msg.push(0x00),
+        }
+        match self.finality_round {
+            Some(round) => {
+                msg.push(0x01);
+                msg.extend_from_slice(&round.to_le_bytes());
+            }
+            None => msg.push(0x00),
+        }
         msg
     }
 

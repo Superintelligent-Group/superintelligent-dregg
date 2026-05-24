@@ -67,7 +67,10 @@ impl BalanceLedger {
     }
 
     pub fn balance(&self, account: PublicKey, asset_id: u64) -> u64 {
-        self.balances.get(&(account, asset_id)).copied().unwrap_or(0)
+        self.balances
+            .get(&(account, asset_id))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Atomic transfer. Returns `Err` if `from` has insufficient balance,
@@ -100,13 +103,9 @@ impl BalanceLedger {
 pub enum PaymentsError {
     #[error("no auto-debit authorization on file for subscriber")]
     NoAuthorization,
-    #[error(
-        "debit asset {requested} does not match authorized asset {authorized} for subscriber"
-    )]
+    #[error("debit asset {requested} does not match authorized asset {authorized} for subscriber")]
     WrongAsset { authorized: u64, requested: u64 },
-    #[error(
-        "debit amount {requested} exceeds per-epoch limit {limit} for subscriber"
-    )]
+    #[error("debit amount {requested} exceeds per-epoch limit {limit} for subscriber")]
     ExceedsLimit { limit: u64, requested: u64 },
     #[error("account {account:?} has {have} of asset {asset_id}, needs {need}")]
     InsufficientBalance {
@@ -167,8 +166,8 @@ impl PaymentExecutor {
     /// enqueued by an HTTP handler that doesn't hold the registry lock; the
     /// authorization check is the source of truth.
     pub fn enqueue_debit(&mut self, debit: DebitTurn) -> Result<(), PaymentsError> {
-        let turn_bytes = serde_json::to_vec(&debit)
-            .map_err(|e| PaymentsError::Malformed(e.to_string()))?;
+        let turn_bytes =
+            serde_json::to_vec(&debit).map_err(|e| PaymentsError::Malformed(e.to_string()))?;
         self.pending.push(ClientTurnRequest {
             client: pyana_types::CellId(debit.subscriber.0),
             turn_bytes,
@@ -278,7 +277,12 @@ impl PaymentExecutor {
             // Move balances.
             if self
                 .ledger
-                .transfer(debit.subscriber, debit.creator, debit.asset_id, debit.amount)
+                .transfer(
+                    debit.subscriber,
+                    debit.creator,
+                    debit.asset_id,
+                    debit.amount,
+                )
                 .is_err()
             {
                 continue;
@@ -337,8 +341,12 @@ impl PaymentExecutor {
                 requested: new_cum,
             });
         }
-        self.ledger
-            .transfer(debit.subscriber, debit.creator, debit.asset_id, debit.amount)?;
+        self.ledger.transfer(
+            debit.subscriber,
+            debit.creator,
+            debit.asset_id,
+            debit.amount,
+        )?;
         self.debited_this_epoch
             .insert((debit.subscriber, debit.epoch), new_cum);
         let receipt = DebitReceipt {
@@ -402,7 +410,7 @@ impl BatchExecutor for PaymentExecutor {
 mod tests {
     use super::*;
     use crate::creator::{Creator, Tier};
-    use crate::subscriber::{deterministic_wallet, SubscriberRegistry};
+    use crate::subscriber::{SubscriberRegistry, deterministic_wallet};
     use pyana_sdk::Attenuation;
     use pyana_token::BudgetSpec;
 
@@ -491,7 +499,13 @@ mod tests {
             epoch: 0,
         };
         let r = exec.debit(&reg, d);
-        assert!(matches!(r, Err(PaymentsError::WrongAsset { authorized: 1, requested: 7 })));
+        assert!(matches!(
+            r,
+            Err(PaymentsError::WrongAsset {
+                authorized: 1,
+                requested: 7
+            })
+        ));
         // Balance unchanged.
         assert_eq!(exec.ledger.balance(alice.public_key(), 7), 500);
     }
@@ -521,7 +535,10 @@ mod tests {
         let r = exec.debit(&reg, d);
         assert!(matches!(
             r,
-            Err(PaymentsError::ExceedsLimit { limit: 100, requested: 250 })
+            Err(PaymentsError::ExceedsLimit {
+                limit: 100,
+                requested: 250
+            })
         ));
         assert_eq!(exec.ledger.balance(alice.public_key(), 1), 1_000);
     }
@@ -652,7 +669,11 @@ mod tests {
         );
         assert!(matches!(
             r,
-            Err(PaymentsError::InsufficientBalance { have: 5, need: 100, .. })
+            Err(PaymentsError::InsufficientBalance {
+                have: 5,
+                need: 100,
+                ..
+            })
         ));
     }
 

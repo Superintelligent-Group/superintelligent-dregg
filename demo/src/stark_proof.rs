@@ -55,7 +55,13 @@ pub fn prove_issuer_membership(
     // Convert raw u32 siblings/positions into BabyBear for the DSL Poseidon2 trace.
     let siblings_bb: Vec<[BabyBear; 3]> = siblings
         .iter()
-        .map(|s| [BabyBear::new(s[0]), BabyBear::new(s[1]), BabyBear::new(s[2])])
+        .map(|s| {
+            [
+                BabyBear::new(s[0]),
+                BabyBear::new(s[1]),
+                BabyBear::new(s[2]),
+            ]
+        })
         .collect();
     let positions_u8: Vec<u8> = positions.iter().map(|&p| p as u8).collect();
 

@@ -98,7 +98,9 @@ pub struct Commitment<T: CommitmentSchema> {
 // Manual Clone/Copy impls because the marker `T` is uninhabited and doesn't
 // derive Clone; the derive macro would gate Clone on T: Clone which fails.
 impl<T: CommitmentSchema> Clone for Commitment<T> {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl<T: CommitmentSchema> Copy for Commitment<T> {}
 
@@ -133,7 +135,11 @@ impl<T: CommitmentSchema> Commitment<T> {
         let bytes = T::canonical(value);
         let blake3 = blake3_with_tag(T::DOMAIN, &bytes);
         let poseidon2 = poseidon2_single_with_tag(T::DOMAIN, &T::to_felts(value));
-        Self { blake3, poseidon2, _phantom: PhantomData }
+        Self {
+            blake3,
+            poseidon2,
+            _phantom: PhantomData,
+        }
     }
 
     /// The empty (sentinel) commitment for this type.
@@ -157,7 +163,11 @@ impl<T: CommitmentSchema> Commitment<T> {
 
     /// Construct from precomputed parts. Use at trust boundaries only.
     pub fn from_parts(blake3: [u8; 32], poseidon2: BabyBear) -> Self {
-        Self { blake3, poseidon2, _phantom: PhantomData }
+        Self {
+            blake3,
+            poseidon2,
+            _phantom: PhantomData,
+        }
     }
 }
 
@@ -175,7 +185,9 @@ pub struct Commitment4<T: CommitmentSchema> {
 }
 
 impl<T: CommitmentSchema> Clone for Commitment4<T> {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl<T: CommitmentSchema> Copy for Commitment4<T> {}
 
@@ -212,7 +224,11 @@ impl<T: CommitmentSchema> Commitment4<T> {
         let bytes = T::canonical(value);
         let blake3 = blake3_with_tag(T::DOMAIN, &bytes);
         let poseidon2 = poseidon2_quad_with_tag(T::DOMAIN, &T::to_felts(value));
-        Self { blake3, poseidon2, _phantom: PhantomData }
+        Self {
+            blake3,
+            poseidon2,
+            _phantom: PhantomData,
+        }
     }
 
     /// The empty (sentinel) commitment for this type.
@@ -226,7 +242,11 @@ impl<T: CommitmentSchema> Commitment4<T> {
 
     /// Construct from precomputed parts. Use at trust boundaries only.
     pub fn from_parts(blake3: [u8; 32], poseidon2: [BabyBear; 4]) -> Self {
-        Self { blake3, poseidon2, _phantom: PhantomData }
+        Self {
+            blake3,
+            poseidon2,
+            _phantom: PhantomData,
+        }
     }
 
     /// Recompute the BLAKE3 form from a preimage and compare.
@@ -294,7 +314,8 @@ impl<T: CommitmentSchema> Accumulator<T> {
     pub fn extend(&mut self, item: &T::Value) {
         self.n_items += 1;
         let bytes = T::canonical(item);
-        self.blake3_state.update(&(bytes.len() as u64).to_le_bytes());
+        self.blake3_state
+            .update(&(bytes.len() as u64).to_le_bytes());
         self.blake3_state.update(&bytes);
 
         let felts = T::to_felts(item);
@@ -344,7 +365,9 @@ pub struct MerkleRoot<T: CommitmentSchema> {
 }
 
 impl<T: CommitmentSchema> Clone for MerkleRoot<T> {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl<T: CommitmentSchema> Copy for MerkleRoot<T> {}
 
@@ -376,7 +399,11 @@ impl<T: CommitmentSchema> MerkleRoot<T> {
     }
 
     pub fn from_parts(blake3_root: [u8; 32], poseidon2_root: [BabyBear; 4]) -> Self {
-        Self { blake3_root, poseidon2_root, _phantom: PhantomData }
+        Self {
+            blake3_root,
+            poseidon2_root,
+            _phantom: PhantomData,
+        }
     }
 
     /// Trust-boundary conversion: lift a wire-side 32-byte BLAKE3 root to
@@ -392,10 +419,7 @@ impl<T: CommitmentSchema> MerkleRoot<T> {
     /// they correspond to the same underlying values.
     ///
     /// Returns the empty sentinel for an empty input.
-    pub fn from_leaves(
-        blake3_leaves: &[[u8; 32]],
-        poseidon2_leaves: &[[BabyBear; 4]],
-    ) -> Self {
+    pub fn from_leaves(blake3_leaves: &[[u8; 32]], poseidon2_leaves: &[[BabyBear; 4]]) -> Self {
         assert_eq!(
             blake3_leaves.len(),
             poseidon2_leaves.len(),
@@ -440,9 +464,21 @@ pub fn encode_bytes_to_felts(bytes: &[u8]) -> Vec<BabyBear> {
     let mut i = 0;
     while i < bytes.len() {
         let b0 = bytes[i] as u32;
-        let b1 = if i + 1 < bytes.len() { bytes[i + 1] as u32 } else { 0 };
-        let b2 = if i + 2 < bytes.len() { bytes[i + 2] as u32 } else { 0 };
-        let b3 = if i + 3 < bytes.len() { bytes[i + 3] as u32 } else { 0 };
+        let b1 = if i + 1 < bytes.len() {
+            bytes[i + 1] as u32
+        } else {
+            0
+        };
+        let b2 = if i + 2 < bytes.len() {
+            bytes[i + 2] as u32
+        } else {
+            0
+        };
+        let b3 = if i + 3 < bytes.len() {
+            bytes[i + 3] as u32
+        } else {
+            0
+        };
         let limb = b0 | (b1 << 8) | (b2 << 16) | ((b3 & 0x3F) << 24);
         felts.push(BabyBear::new(limb));
         i += 4;
@@ -723,15 +759,19 @@ mod tests {
 
     #[test]
     fn merkle_root_empty_is_sentinel() {
-        let root: MerkleRoot<BlindedItemSetMarker> =
-            MerkleRoot::from_leaves(&[], &[]);
+        let root: MerkleRoot<BlindedItemSetMarker> = MerkleRoot::from_leaves(&[], &[]);
         assert_eq!(root, MerkleRoot::empty());
     }
 
     #[test]
     fn merkle_root_single_leaf_is_passthrough() {
         let blake3_leaf = [0x42u8; 32];
-        let poseidon2_leaf = [BabyBear::new(7), BabyBear::new(11), BabyBear::ZERO, BabyBear::ONE];
+        let poseidon2_leaf = [
+            BabyBear::new(7),
+            BabyBear::new(11),
+            BabyBear::ZERO,
+            BabyBear::ONE,
+        ];
         let root: MerkleRoot<BlindedItemSetMarker> =
             MerkleRoot::from_leaves(&[blake3_leaf], &[poseidon2_leaf]);
         assert_eq!(root.blake3_root, blake3_leaf);
@@ -742,8 +782,18 @@ mod tests {
     fn merkle_root_two_leaves_changes_with_order() {
         let l1_b = [0x11u8; 32];
         let l2_b = [0x22u8; 32];
-        let l1_p = [BabyBear::ONE, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO];
-        let l2_p = [BabyBear::new(2), BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO];
+        let l1_p = [
+            BabyBear::ONE,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ];
+        let l2_p = [
+            BabyBear::new(2),
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ];
 
         let r1: MerkleRoot<BlindedItemSetMarker> =
             MerkleRoot::from_leaves(&[l1_b, l2_b], &[l1_p, l2_p]);
@@ -794,10 +844,17 @@ mod tests {
         let expected_blake3: [u8; 32] = STABLE_BLINDED_ITEM_BLAKE3;
         let expected_poseidon2: [u32; 4] = STABLE_BLINDED_ITEM_POSEIDON2;
 
-        assert_eq!(c.blake3, expected_blake3,
-            "BLAKE3 form drifted — typed framework or TAG_BLINDED_ITEM changed");
         assert_eq!(
-            [c.poseidon2[0].0, c.poseidon2[1].0, c.poseidon2[2].0, c.poseidon2[3].0],
+            c.blake3, expected_blake3,
+            "BLAKE3 form drifted — typed framework or TAG_BLINDED_ITEM changed"
+        );
+        assert_eq!(
+            [
+                c.poseidon2[0].0,
+                c.poseidon2[1].0,
+                c.poseidon2[2].0,
+                c.poseidon2[3].0
+            ],
             expected_poseidon2,
             "Poseidon2 form drifted — pyana_circuit::poseidon2 parameters changed",
         );
@@ -821,8 +878,7 @@ const STABLE_BLINDED_ITEM_BLAKE3: [u8; 32] = [
     137, 79, 35, 157, 41, 139, 191, 243, 69, 17, 52, 43, 6, 1, 108, 68, 38, 122, 76, 8, 127, 233,
     201, 42, 156, 120, 113, 127, 40, 153, 96, 192,
 ];
-const STABLE_BLINDED_ITEM_POSEIDON2: [u32; 4] =
-    [433_477_333, 626_868_483, 68_240_588, 967_854_049];
+const STABLE_BLINDED_ITEM_POSEIDON2: [u32; 4] = [433_477_333, 626_868_483, 68_240_588, 967_854_049];
 
 // AUDIT[stage10-framework]: The two forms (BLAKE3 and Poseidon2) are
 // derived from the same canonical bytes via two independent paths.

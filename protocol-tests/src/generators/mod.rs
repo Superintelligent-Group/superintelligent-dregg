@@ -10,8 +10,8 @@
 //! that actually exist with permissions/capabilities the executor will
 //! honour.
 
-pub mod cell;
 pub mod capability;
+pub mod cell;
 pub mod effect;
 pub mod turn;
 

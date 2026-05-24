@@ -1301,6 +1301,8 @@ mod tests {
             nullifier_set_root: None,
             height,
             timestamp: 1000 + height as i64,
+            blocklace_block_id: None,
+            finality_round: None,
             quorum_signatures: vec![],
             threshold_qc: None,
             threshold: 0,
@@ -1707,6 +1709,8 @@ mod tests {
             nullifier_set_root: None,
             height: 1,
             timestamp: 1000,
+            blocklace_block_id: None,
+            finality_round: None,
             quorum_signatures: vec![],
             threshold_qc: None,
             threshold: 0,
@@ -2087,15 +2091,14 @@ mod tests {
 
     fn lock_envelope(bridge_id: [u8; 32]) -> BridgeReceiptEnvelope {
         BridgeReceiptEnvelope::new_locked(
-            bridge_id,
-            [0xAA; 32],         // src
-            [0xBB; 32],         // dst
-            10,                 // block_height
-            [0x01; 32],         // nullifier
-            7,                  // asset_type
-            500,                // value
-            100,                // timeout_height
-            [0x77; 32],         // spending_proof_digest
+            bridge_id, [0xAA; 32], // src
+            [0xBB; 32], // dst
+            10,         // block_height
+            [0x01; 32], // nullifier
+            7,          // asset_type
+            500,        // value
+            100,        // timeout_height
+            [0x77; 32], // spending_proof_digest
         )
     }
 
@@ -2121,11 +2124,18 @@ mod tests {
             [0x44; 32],
         );
         let witness_hash = witness.body_hash();
-        assert_ne!(lock_hash, witness_hash, "phases must produce distinct body hashes");
+        assert_ne!(
+            lock_hash, witness_hash,
+            "phases must produce distinct body hashes"
+        );
 
         // Same envelope re-built must hash identically.
         let lock2 = lock_envelope([0xC1; 32]);
-        assert_eq!(lock_hash, lock2.body_hash(), "body_hash must be deterministic");
+        assert_eq!(
+            lock_hash,
+            lock2.body_hash(),
+            "body_hash must be deterministic"
+        );
     }
 
     #[test]
@@ -2144,9 +2154,16 @@ mod tests {
         log.admit(&witness).expect("witness admission after lock");
 
         let finalize = BridgeReceiptEnvelope::new_finalized(
-            bridge_id, [0xAA; 32], [0xBB; 32], 15, witness_hash, 16, [0xEE; 32],
+            bridge_id,
+            [0xAA; 32],
+            [0xBB; 32],
+            15,
+            witness_hash,
+            16,
+            [0xEE; 32],
         );
-        log.admit(&finalize).expect("finalize admission after witness");
+        log.admit(&finalize)
+            .expect("finalize admission after witness");
 
         let (last_phase, _) = log.get(&bridge_id).unwrap();
         assert_eq!(last_phase, BridgePhase::Finalized);
@@ -2219,13 +2236,24 @@ mod tests {
         log_a.admit(&lock_a).unwrap();
         // Refund (legal after Locked).
         let refund_a = BridgeReceiptEnvelope::new_refunded(
-            bridge_id_a, [0xAA; 32], [0xBB; 32], 200, lock_hash_a, 201,
+            bridge_id_a,
+            [0xAA; 32],
+            [0xBB; 32],
+            200,
+            lock_hash_a,
+            201,
         );
         log_a.admit(&refund_a).expect("refund after lock is legal");
         // Now a witness from a slow destination arrives — must be rejected
         // (Refunded is terminal; next_valid() is empty).
         let witness_a = BridgeReceiptEnvelope::new_witnessed(
-            bridge_id_a, [0xAA; 32], [0xBB; 32], 195, lock_hash_a, 196, [0x55; 32],
+            bridge_id_a,
+            [0xAA; 32],
+            [0xBB; 32],
+            195,
+            lock_hash_a,
+            196,
+            [0x55; 32],
         );
         let err = log_a
             .admit(&witness_a)
@@ -2249,7 +2277,13 @@ mod tests {
         let lock_hash_b = lock_b.body_hash();
         log_b.admit(&lock_b).unwrap();
         let witness_b = BridgeReceiptEnvelope::new_witnessed(
-            bridge_id_b, [0xAA; 32], [0xBB; 32], 12, lock_hash_b, 13, [0x44; 32],
+            bridge_id_b,
+            [0xAA; 32],
+            [0xBB; 32],
+            12,
+            lock_hash_b,
+            13,
+            [0x44; 32],
         );
         let witness_hash_b = witness_b.body_hash();
         log_b.admit(&witness_b).unwrap();
@@ -2265,7 +2299,12 @@ mod tests {
         log_b.admit(&finalize_b).expect("finalize after witness");
         // Late refund — must fail (Finalized is terminal).
         let refund_b = BridgeReceiptEnvelope::new_refunded(
-            bridge_id_b, [0xAA; 32], [0xBB; 32], 200, lock_hash_b, 201,
+            bridge_id_b,
+            [0xAA; 32],
+            [0xBB; 32],
+            200,
+            lock_hash_b,
+            201,
         );
         let err = log_b
             .admit(&refund_b)
@@ -2304,7 +2343,9 @@ mod tests {
 
         // Same witness with `None` previous_phase_receipt_hash — also fails.
         witness.previous_phase_receipt_hash = None;
-        let err = log.admit(&witness).expect_err("missing prior hash must fail");
+        let err = log
+            .admit(&witness)
+            .expect_err("missing prior hash must fail");
         assert!(matches!(
             err,
             BridgePhaseError::PreviousPhaseHashMismatch { .. }
@@ -2335,10 +2376,7 @@ mod tests {
         let err = log
             .admit(&bogus)
             .expect_err("payload/phase mismatch must fail");
-        assert!(matches!(
-            err,
-            BridgePhaseError::PayloadPhaseMismatch { .. }
-        ));
+        assert!(matches!(err, BridgePhaseError::PayloadPhaseMismatch { .. }));
     }
 
     /// Witnessing for an unknown bridge_id must fail.

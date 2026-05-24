@@ -341,6 +341,8 @@ fn test_note_bridge_between_federations() {
         nullifier_set_root: None,
         height: fed_a_root.height,
         timestamp: fed_a_root.timestamp,
+        blocklace_block_id: None,
+        finality_round: None,
         quorum_signatures: vec![],
         threshold_qc: None,
         threshold: 0,

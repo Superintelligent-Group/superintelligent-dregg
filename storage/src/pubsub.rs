@@ -120,7 +120,7 @@ impl PubSubTopic {
             sender: self.publisher,
             deposit,
             enqueued_at: 0, // Caller should set from block height.
-            size: 32, // Hash reference; actual data stored externally.
+            size: 32,       // Hash reference; actual data stored externally.
         };
 
         let root = self.queue.enqueue(entry)?;

@@ -1,0 +1,41 @@
+/**
+ * <pyana-receipt-list> — list of receipts.
+ *
+ * Optional `agent` attribute (numeric agent_index) is currently a no-op
+ * because the wasm runtime does not expose per-agent filtering; we always
+ * render the global chain. The attribute is reserved for when wasm grows a
+ * `get_receipts_for_agent(handle, agent_idx)` getter.
+ */
+
+import { InspectorBase } from './_base.js';
+
+class PyanaReceiptList extends InspectorBase {
+  static get observedAttributes() { return ['uri', 'mode', 'agent']; }
+  _render() {
+    const { h, render, html, effect } = this._api;
+    if (this._dispose) { this._dispose(); this._dispose = null; }
+    this.replaceChildren();
+
+    const agentAttr = this.getAttribute('agent');
+    const agentIdx = agentAttr == null ? null : Number(agentAttr);
+    const sig = this._runtime.listReceipts(agentIdx);
+    const root = document.createElement('div');
+    this.appendChild(root);
+
+    const Component = () => {
+      const rs = sig.value || [];
+      if (!rs.length) return html`<div class="pyana-inspector pyana-inspector--empty">no receipts yet</div>`;
+      return html`
+        <div class="pyana-inspector pyana-inspector--cell-list">
+          <header>${rs.length} receipt${rs.length === 1 ? '' : 's'}${agentIdx != null ? ` (agent #${agentIdx})` : ''}</header>
+          <ul>
+            ${rs.map(r => html`
+              <li><pyana-receipt uri=${`pyana://receipt/${r.turn_hash}`} mode="compact"></pyana-receipt></li>
+            `)}
+          </ul>
+        </div>`;
+    };
+    this._dispose = effect(() => { render(h(Component, {}), root); });
+  }
+}
+if (!customElements.get('pyana-receipt-list')) customElements.define('pyana-receipt-list', PyanaReceiptList);

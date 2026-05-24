@@ -571,7 +571,8 @@ pub fn create_bearer_cap(
     use ed25519_dalek::{Signer, SigningKey};
 
     // Hold the signing seed in Zeroizing so the linear-memory copy is scrubbed.
-    let signing_seed: Zeroizing<[u8; 32]> = Zeroizing::new(hex_decode_32(delegator_signing_key_hex)?);
+    let signing_seed: Zeroizing<[u8; 32]> =
+        Zeroizing::new(hex_decode_32(delegator_signing_key_hex)?);
     let target_cell = hex_decode_32(target_cell_hex)?;
 
     let signing_key = SigningKey::from_bytes(&signing_seed);
@@ -1011,7 +1012,8 @@ mod audit_tests {
         );
         let err_msg = format!("{:?}", result.unwrap_err());
         assert!(
-            err_msg.to_lowercase().contains("recipient") || err_msg.to_lowercase().contains("pubkey"),
+            err_msg.to_lowercase().contains("recipient")
+                || err_msg.to_lowercase().contains("pubkey"),
             "error message must explain recipient requirement: {err_msg}"
         );
     }
@@ -1105,7 +1107,10 @@ mod audit_tests {
             signature_valid: bool,
         }
         let v: Verified = serde_wasm_bindgen::from_value(verified).unwrap();
-        assert!(!v.signature_valid, "forged BLAKE3-only token must NOT verify");
+        assert!(
+            !v.signature_valid,
+            "forged BLAKE3-only token must NOT verify"
+        );
         assert!(!v.valid);
     }
 
@@ -1124,9 +1129,15 @@ mod audit_tests {
 
         // Verify with the WRONG delegator pubkey (from seed_b).
         let wrong_pub = SigningKey::from_bytes(&seed_b).verifying_key().to_bytes();
-        let verified =
-            verify_bearer_cap(&c.bearer_token_hex, &hex_of(&wrong_pub), &target_hex, "read", 0, 0)
-                .unwrap();
+        let verified = verify_bearer_cap(
+            &c.bearer_token_hex,
+            &hex_of(&wrong_pub),
+            &target_hex,
+            "read",
+            0,
+            0,
+        )
+        .unwrap();
         #[derive(serde::Deserialize)]
         struct Verified {
             signature_valid: bool,
@@ -1169,8 +1180,14 @@ mod audit_tests {
             composed_proof: String,
         }
         let o: Out = serde_wasm_bindgen::from_value(result).unwrap();
-        assert!(!o.valid, "compose_proofs must NOT claim valid for garbage inputs");
-        assert!(!o.composed_proof.is_empty(), "still emits an opaque identifier");
+        assert!(
+            !o.valid,
+            "compose_proofs must NOT claim valid for garbage inputs"
+        );
+        assert!(
+            !o.composed_proof.is_empty(),
+            "still emits an opaque identifier"
+        );
     }
 
     #[test]
@@ -1182,8 +1199,8 @@ mod audit_tests {
         let recip_b_secret_bytes = [9u8; 32];
 
         let plaintext = r#"{"kind":"need","value":42}"#;
-        let sealed = seal_intent_body(plaintext, Some(recip_a_pub.as_bytes().to_vec()))
-            .expect("seal ok");
+        let sealed =
+            seal_intent_body(plaintext, Some(recip_a_pub.as_bytes().to_vec())).expect("seal ok");
 
         #[derive(serde::Deserialize)]
         struct Sealed {

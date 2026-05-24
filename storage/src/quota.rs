@@ -133,7 +133,9 @@ impl SpaceBank {
 
     /// Get a mutable reference to a quota cell.
     pub fn get_mut(&mut self, id: &QuotaId) -> Result<&mut QuotaCell, StorageError> {
-        self.quotas.get_mut(id).ok_or(StorageError::QuotaNotFound(*id))
+        self.quotas
+            .get_mut(id)
+            .ok_or(StorageError::QuotaNotFound(*id))
     }
 
     /// Charge a write to a quota cell. Returns the cost charged.
@@ -180,8 +182,7 @@ impl SpaceBank {
         ttl_blocks: u64,
     ) -> Result<u64, StorageError> {
         // Cost = base message cost + (size * cost_per_byte * ttl)
-        let cost =
-            self.cost_per_relay_message + (size_bytes * self.cost_per_byte * ttl_blocks);
+        let cost = self.cost_per_relay_message + (size_bytes * self.cost_per_byte * ttl_blocks);
         let cell = self.get_mut(payer)?;
         cell.charge(cost)?;
         Ok(cost)

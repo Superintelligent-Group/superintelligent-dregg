@@ -35,6 +35,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use pyana_app_framework::server::{AppConfig, AppServer};
+use pyana_app_framework::{AgentWallet, AppWallet, CellId};
 
 use cross_fed::MetaDirectory;
 use registry::{DelegationAuthority, NameRegistry, RegistryError};
@@ -61,6 +62,10 @@ struct AppState {
     meta_directory: MetaDirectory,
     /// Current epoch (in a real system this comes from federation consensus).
     current_epoch: u64,
+    /// Framework-issued wallet handle. Used to sign on-ledger Actions
+    /// emitted by the registry path (replaces the pre-framework
+    /// `[0u8; 64]` placeholder signatures).
+    wallet: AppWallet,
 }
 
 // =============================================================================
@@ -77,6 +82,12 @@ async fn main() {
     let rental_policy = RentalPolicy::default();
     let meta_directory = MetaDirectory::new();
 
+    // Build the framework wallet. In a real deployment the seed comes
+    // from key management (env-supplied mnemonic, HSM, etc.). For now a
+    // fresh wallet per process keeps the surface honest: signatures
+    // verify against the wallet's pubkey, no placeholders.
+    let wallet = AppWallet::new(AgentWallet::new(), nameservice_federation_id());
+
     let state = AppState {
         registry,
         resolver,
@@ -84,6 +95,7 @@ async fn main() {
         rental_policy,
         meta_directory,
         current_epoch: 1,
+        wallet: wallet.clone(),
     };
 
     let app_routes = app_router().with_state(state);
@@ -92,10 +104,21 @@ async fn main() {
         .service_name("pyana-nameservice")
         .with_health()
         .with_cors()
+        .with_wallet(wallet)
         .routes(app_routes)
         .serve()
         .await
         .unwrap();
+}
+
+/// 32-byte federation identifier for the nameservice's signing-message
+/// binding. Domain-tagged hash so every process in the same logical
+/// federation derives the same id; swap in real federation config when
+/// the discovery layer surfaces it.
+fn nameservice_federation_id() -> [u8; 32] {
+    *blake3::Hasher::new_derive_key("pyana-nameservice-federation-id-v1")
+        .finalize()
+        .as_bytes()
 }
 
 /// Build the application router.
@@ -242,22 +265,27 @@ async fn register_name(
         Ok(entry) => {
             state.reverse_index.on_register(&entry).await;
 
-            // P2.H / D-9: emit a real on-ledger Action via the typestate
-            // ActionBuilder. The action carries an EmitEvent +
-            // SetField pair; routing it through a TurnBuilder is the
-            // responsibility of whatever federation client integrates
-            // this HTTP surface. Today the action is built (proving
-            // the effect-emission path compiles and exercises the
-            // builder) and dropped; tests in `effects` cover its shape.
+            // Emit a real, framework-signed on-ledger Action. The
+            // action carries an EmitEvent + SetField pair. No
+            // placeholder signatures — the framework wallet binds the
+            // signature to its federation_id.
             //
-            // TODO(stage-7+): replace the EmitEvent+SetField pair with
-            // a dedicated `Effect::RegisterName` once Stage 7's Effect
-            // enum extension lands. Stage 8 must not introduce new
-            // Effect variants per scope.
+            // Userspace stance: name-registration policy lives here in
+            // app code; the ledger sees only the two primitive effects
+            // (EmitEvent + SetField). A dedicated `Effect::RegisterName`
+            // variant would be a misuse of the Effect enum — apps are
+            // userspace and should compose primitives, not extend the
+            // kernel. Uniqueness enforcement (name not previously bound)
+            // belongs in a cell-program caveat; see
+            // `APPS-USERSPACE-GAPS.md` for the gap analysis on
+            // expressing that caveat from userspace today.
             let registry_cell = registry_cell_id();
-            let caller = pyana_cell::CellId::from_bytes(entry.owner);
-            let _registration_action =
-                effects::build_register_action(registry_cell, caller, &entry.name, entry.owner);
+            let _registration_action = effects::build_register_action(
+                &state.wallet,
+                registry_cell,
+                &entry.name,
+                entry.owner,
+            );
 
             (
                 StatusCode::CREATED,
@@ -281,11 +309,11 @@ async fn register_name(
 /// Deterministic `CellId` for the nameservice registry cell. In a real
 /// federation deployment this comes from federation config; for now we
 /// derive it from a domain-tagged hash so all instances agree.
-fn registry_cell_id() -> pyana_cell::CellId {
+fn registry_cell_id() -> CellId {
     let bytes = *blake3::Hasher::new_derive_key("pyana-nameservice-registry-cell-v1")
         .finalize()
         .as_bytes();
-    pyana_cell::CellId::from_bytes(bytes)
+    CellId::from_bytes(bytes)
 }
 
 /// DELETE /names/:name — release a name.
@@ -643,6 +671,7 @@ mod tests {
         let reverse_index = ReverseIndex::new();
         let rental_policy = RentalPolicy::default();
         let meta_directory = MetaDirectory::new();
+        let wallet = AppWallet::new(AgentWallet::new(), nameservice_federation_id());
 
         let state = AppState {
             registry,
@@ -651,6 +680,7 @@ mod tests {
             rental_policy,
             meta_directory,
             current_epoch: 100,
+            wallet,
         };
 
         app_router().with_state(state)

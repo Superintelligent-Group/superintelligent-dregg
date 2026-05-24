@@ -269,11 +269,7 @@ mod tests {
     fn preflight_demo_agent() {
         let results = checks::demo_agent::run();
         for r in &results {
-            assert!(
-                r.passed,
-                "demo_agent::{} failed: {:?}",
-                r.name, r.error
-            );
+            assert!(r.passed, "demo_agent::{} failed: {:?}", r.name, r.error);
         }
     }
 

@@ -29,11 +29,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use pyana_cell::permissions::Permissions;
-use pyana_cell::{AuthRequired, Cell, CellId, Ledger};
 use pyana_captp::FederationId;
 use pyana_captp::handoff::{HandoffCertificate, HandoffPresentation, validate_handoff};
 use pyana_captp::sturdy::SwissTable;
+use pyana_cell::permissions::Permissions;
+use pyana_cell::{AuthRequired, Cell, CellId, Ledger};
 use pyana_federation::Federation;
 use pyana_federation::types::PublicKey as FedPublicKey;
 use pyana_sdk::AgentWallet;
@@ -148,8 +148,7 @@ fn main() {
         attested.threshold,
     ));
 
-    let fed_keys: Vec<FedPublicKey> =
-        fed.nodes.iter().map(|n| n.identity.public_key).collect();
+    let fed_keys: Vec<FedPublicKey> = fed.nodes.iter().map(|n| n.identity.public_key).collect();
     // NOTE: AttestedRoot::is_valid expects sigs over `signing_message()`, but the
     // federation populates `quorum_signatures` with consensus VOTE sigs (over
     // `vote_message`). External cryptographic verification of consensus-produced
@@ -168,12 +167,13 @@ fn main() {
     // The signing-message-based path explicitly returns false here today; we
     // assert that to document the known gap rather than ignore it.
     let _crypto_path_known_to_fail = attested.is_valid(&fed_keys);
-    step("(Crypto path is_valid(&fed_keys) returns false today — known gap, vote-msg vs signing-msg)");
+    step(
+        "(Crypto path is_valid(&fed_keys) returns false today — known gap, vote-msg vs signing-msg)",
+    );
 
     let attested_path = artifact_dir().join("attested-root.postcard");
     let attested_bytes = postcard::to_stdvec(&attested).expect("postcard encode attested");
-    std::fs::write(&attested_path, &attested_bytes)
-        .expect("write attested root artifact");
+    std::fs::write(&attested_path, &attested_bytes).expect("write attested root artifact");
     step(&format!(
         "Persisted {} byte attested-root artifact to {}",
         attested_bytes.len(),
@@ -249,10 +249,20 @@ fn main() {
     let mut bob_cell = Cell::with_balance(bob.public_key().0, token_id, 0);
     bob_cell.permissions = open_permissions();
     // Bob accepts inbound effects from Alice without authorization gating.
-    bob_cell.capabilities.grant(alice_cell_id, AuthRequired::None);
+    bob_cell
+        .capabilities
+        .grant(alice_cell_id, AuthRequired::None);
 
-    assert_eq!(alice_cell.id(), alice_cell_id, "alice cell id derivation must match wallet");
-    assert_eq!(bob_cell.id(), bob_cell_id, "bob cell id derivation must match wallet");
+    assert_eq!(
+        alice_cell.id(),
+        alice_cell_id,
+        "alice cell id derivation must match wallet"
+    );
+    assert_eq!(
+        bob_cell.id(),
+        bob_cell_id,
+        "bob cell id derivation must match wallet"
+    );
 
     let mut ledger = Ledger::new();
     ledger.insert_cell(alice_cell).expect("insert alice cell");
@@ -375,16 +385,19 @@ fn main() {
         target_cell,
         recipient_pk.0,
         AuthRequired::Signature,
-        None,                            // no effect mask (full delegated authority)
-        Some(current_height + 500),      // expires_at
-        Some(1),                         // single-use
+        None,                       // no effect mask (full delegated authority)
+        Some(current_height + 500), // expires_at
+        Some(1),                    // single-use
         swiss,
     );
     assert!(cert.verify_signature(&intro_pk));
     step(&format!(
         "Handoff cert created and self-verifies. Compact form: {}",
         // truncate for readability
-        cert.to_compact_string().chars().take(48).collect::<String>(),
+        cert.to_compact_string()
+            .chars()
+            .take(48)
+            .collect::<String>(),
     ));
 
     // Recipient produces presentation (proves ownership of recipient_pk).
@@ -398,11 +411,14 @@ fn main() {
     let wire_handoff = WireMessage::PresentHandoff {
         presentation_bytes: presentation_bytes.clone(),
         introducer_pk: intro_pk.0,
+        delivery_signature: None,
     };
     let frame = encode(&wire_handoff).expect("encode PresentHandoff");
     let decoded_handoff = decode(&frame[4..]).expect("decode PresentHandoff");
     match decoded_handoff {
-        WireMessage::PresentHandoff { introducer_pk: pk, .. } => {
+        WireMessage::PresentHandoff {
+            introducer_pk: pk, ..
+        } => {
             assert_eq!(pk, intro_pk.0);
             step(&format!(
                 "Wire round-trip: PresentHandoff → {} byte frame → decoded OK",

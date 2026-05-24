@@ -2,15 +2,14 @@
 
 use pyana_app_framework::blinded_endpoint::FairDistributionEndpoint;
 use pyana_app_framework::server::{AppConfig, AppServer};
-use pyana_privacy_voting::server::{AppState, router};
 use pyana_privacy_voting::EligibilityAuthority;
+use pyana_privacy_voting::server::{AppState, router};
 use pyana_types::PublicKey;
 
 #[tokio::main]
 async fn main() {
-    let config = AppConfig::from_env().with_listen(
-        std::env::var("LISTEN").unwrap_or_else(|_| "0.0.0.0:3100".into()),
-    );
+    let config = AppConfig::from_env()
+        .with_listen(std::env::var("LISTEN").unwrap_or_else(|_| "0.0.0.0:3100".into()));
 
     // REVIEW[P2]: In a real deployment the eligibility issuer's public key
     // would come from a config file or nameservice lookup. For local dev we
@@ -39,7 +38,10 @@ async fn main() {
         .with_health()
         .with_cors()
         .with_blinded_endpoint("/queue/ballots", blinded)
-        .with_name("privacy-voting", vec!["governance".into(), "privacy".into()])
+        .with_name(
+            "privacy-voting",
+            vec!["governance".into(), "privacy".into()],
+        )
         .routes(app_routes)
         .serve()
         .await

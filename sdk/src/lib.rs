@@ -67,15 +67,24 @@
 //! }).unwrap();
 //! ```
 
+// Modules that pull tokio / pyana-wire / pyana-captp are gated so the crate
+// stays buildable on wasm32 (set `default-features = false`). Anything in
+// the always-on group below is wasm-friendly.
+#[cfg(feature = "captp")]
 pub mod captp_client;
+#[cfg(feature = "network")]
 pub mod client;
 pub mod committed_turn;
+#[cfg(feature = "network")]
 pub mod discharge;
+#[cfg(feature = "network")]
 pub mod discovery;
+#[cfg(feature = "network")]
 pub mod embed;
 pub mod error;
 pub mod full_turn_proof;
 pub mod mnemonic;
+#[cfg(feature = "captp")]
 pub mod names;
 pub mod privacy;
 pub mod runtime;
@@ -84,6 +93,7 @@ pub mod wallet;
 pub mod wordlist;
 
 // Re-export primary types at crate root for convenience.
+#[cfg(feature = "network")]
 pub use client::{PresentationResult, RevocationStatus, SiloClient};
 pub use committed_turn::{
     CommittedNoteInput, CommittedNoteOutput, CommittedTurnBuilder, OwnedNote,
@@ -127,6 +137,7 @@ pub use pyana_cell::value_commitment::{
 pub use pyana_intent::sse::EncryptedIntent;
 
 // Re-export the no-IO embed layer for service integration.
+#[cfg(feature = "network")]
 pub use embed::{EmbedError, EngineConfig, PyanaEngine, WireCodec};
 
 // Re-export privacy API types at crate root for convenience.
@@ -143,6 +154,7 @@ pub use full_turn_proof::{
 };
 
 // Re-export discharge gateway client functions.
+#[cfg(feature = "network")]
 pub use discharge::{authorize_with_discharges, extract_third_party_tickets, obtain_discharge};
 
 // Re-export standalone verification functions.
@@ -158,14 +170,20 @@ pub use verify::{
 pub use pyana_circuit::{CryptographicProof, ProofTier, VerifiedProof};
 
 // Re-export name resolution types for the petname system.
+#[cfg(feature = "captp")]
 pub use names::{
     EdgeNameEntry, NameError, NameProvenance, NameResolver, PetnameDb, PetnameEntry,
     ProposedNameEntry, ResolvedName, WalletNames, WhoisResult,
 };
 
 // Re-export CapTP client types for capability sharing and pipelining.
+#[cfg(feature = "captp")]
 pub use captp_client::{CapTpClient, CapTpConfig, EventualRef, LiveRef};
+#[cfg(feature = "captp")]
 pub use pyana_captp::handoff::HandoffCertificate;
+#[cfg(feature = "captp")]
 pub use pyana_captp::pipeline::PipelinedAction;
+#[cfg(feature = "captp")]
 pub use pyana_captp::uri::PyanaUri;
+#[cfg(feature = "captp")]
 pub use pyana_captp::{FederationId, GroupId};

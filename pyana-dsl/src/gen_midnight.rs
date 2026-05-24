@@ -324,7 +324,9 @@ fn emit_zkir_requirement(
                 ),
             });
         }
-        RequirementKind::MerkleAtPosition { root, leaf, depth, .. } => {
+        RequirementKind::MerkleAtPosition {
+            root, leaf, depth, ..
+        } => {
             // Stub: Midnight TransientHash-based Merkle inclusion would unroll
             // `depth` layers of hash + cond-select. Emit a placeholder
             // constrain_eq against the root and a comment marker.

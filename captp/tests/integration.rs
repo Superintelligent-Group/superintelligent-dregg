@@ -769,3 +769,56 @@ fn multi_federation_gc_independence() {
     let r = export_gc.process_drop(shared_cell, fed(0xAA));
     assert_eq!(r, DropResult::Invalid);
 }
+
+// =============================================================================
+// Test: three-party handoff (Alice → Bob → Carol)
+//
+// Closes audit GAP-1: the introducer's federation differs from the target's.
+// The cert is signed by Alice, names Bob as recipient and Carol as target,
+// and Carol's swiss table has the swiss pre-registered out-of-band.
+// =============================================================================
+
+#[test]
+fn three_party_handoff_alice_introduces_bob_to_carol() {
+    let (alice_sk, alice_pk) = generate_keypair();
+    let alice_fed = FederationId(alice_pk.0);
+
+    let (bob_sk, bob_pk) = generate_keypair();
+
+    let carol_fed = fed(0xCA);
+    let carol_cell = cell(0x42);
+
+    // Carol pre-registers a swiss entry for the target cell.
+    let mut carol_swiss = SwissTable::new();
+    let swiss = carol_swiss.export(carol_cell, AuthRequired::Signature, 100, None);
+
+    // Alice mints a cert directing Bob at Carol's cell.
+    let cert = HandoffCertificate::create(
+        &alice_sk,
+        alice_fed,
+        carol_fed,
+        carol_cell,
+        bob_pk.0,
+        AuthRequired::Signature,
+        None,
+        Some(500),
+        Some(1),
+        swiss,
+    );
+    assert_ne!(cert.introducer, cert.target_federation);
+
+    // Bob signs a presentation binding himself to the cert.
+    let presentation = HandoffPresentation::create(cert, &bob_sk);
+
+    // Carol validates the cert end-to-end.
+    let known = vec![alice_fed];
+    let acceptance = pyana_captp::handoff::validate_handoff(
+        &presentation,
+        &alice_pk,
+        &mut carol_swiss,
+        &known,
+        150,
+    )
+    .expect("three-party cert must validate");
+    assert_eq!(acceptance.cell_id, carol_cell);
+}

@@ -10,7 +10,8 @@ use std::sync::Mutex;
 
 use pyana_cell::{
     CapabilityRef, CellId, DelegatedRef, Ledger, NoteCommitment, Nullifier, Permissions,
-    VerificationKey, note_bridge::BridgedNullifierSet, state::FieldElement,
+    VerificationKey, note_bridge::BridgedNullifierSet, nullifier_set::NullifierSet,
+    state::FieldElement,
 };
 
 use crate::action::Symbol;
@@ -104,6 +105,10 @@ pub(crate) enum JournalEntry {
     /// A bridged nullifier was inserted into the executor's nullifier set.
     /// On rollback, this nullifier must be REMOVED from the set.
     BridgedNullifierInserted { nullifier: [u8; 32] },
+    /// A note-spend nullifier was inserted into the executor's production
+    /// `note_nullifiers` set. On rollback this nullifier must be REMOVED so
+    /// a failed turn doesn't permanently burn the note.
+    NoteNullifierInserted { nullifier: Nullifier },
     /// A committed escrow was created. Recorded for event tracking.
     CommittedEscrowCreated { escrow_id: [u8; 32], amount: u64 },
     /// A committed escrow was released (recipient claimed).
@@ -308,6 +313,14 @@ impl LedgerJournal {
             .push(JournalEntry::BridgedNullifierInserted { nullifier });
     }
 
+    /// Record that a note-spend nullifier was inserted into the executor's
+    /// production `note_nullifiers` set. On rollback, this nullifier will be
+    /// removed so a failed turn doesn't permanently burn the note.
+    pub fn record_note_nullifier_inserted(&mut self, nullifier: Nullifier) {
+        self.entries
+            .push(JournalEntry::NoteNullifierInserted { nullifier });
+    }
+
     /// Record a committed escrow creation.
     pub fn record_committed_escrow_created(&mut self, escrow_id: [u8; 32], amount: u64) {
         self.entries
@@ -346,6 +359,7 @@ impl LedgerJournal {
         obligations: &Mutex<HashMap<[u8; 32], ObligationRecord>>,
         escrows: &Mutex<HashMap<[u8; 32], EscrowRecord>>,
         bridged_nullifiers: &Mutex<BridgedNullifierSet>,
+        note_nullifiers: &Mutex<NullifierSet>,
         committed_escrows: &Mutex<HashMap<[u8; 32], crate::escrow::CommittedEscrow>>,
         committed_escrow_amounts: &Mutex<HashMap<[u8; 32], u64>>,
     ) {
@@ -428,6 +442,9 @@ impl LedgerJournal {
                 }
                 JournalEntry::BridgedNullifierInserted { nullifier } => {
                     bridged_nullifiers.lock().unwrap().remove(&nullifier);
+                }
+                JournalEntry::NoteNullifierInserted { nullifier } => {
+                    note_nullifiers.lock().unwrap().remove(&nullifier);
                 }
                 JournalEntry::CommittedEscrowInserted { escrow_id } => {
                     committed_escrows.lock().unwrap().remove(&escrow_id);

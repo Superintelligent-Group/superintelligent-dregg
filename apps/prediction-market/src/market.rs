@@ -56,7 +56,11 @@ pub struct Market {
 impl Market {
     /// Construct a new market with a deterministic id derived from the
     /// question + outcomes + close_height.
-    pub fn new(question: impl Into<String>, outcome_labels: Vec<String>, close_height: u64) -> Self {
+    pub fn new(
+        question: impl Into<String>,
+        outcome_labels: Vec<String>,
+        close_height: u64,
+    ) -> Self {
         let question = question.into();
         // Pre-compute market id (so outcome ids can be derived from it).
         let mut hasher = blake3::Hasher::new_derive_key("pyana-prediction-market-id-v1");

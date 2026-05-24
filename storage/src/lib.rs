@@ -80,11 +80,19 @@ pub enum StorageError {
     /// The payer's quota is exhausted (insufficient computrons).
     QuotaExhausted { available: u64, required: u64 },
     /// The payer's byte cap would be exceeded.
-    ByteCapExceeded { current: u64, max: u64, attempted: u64 },
+    ByteCapExceeded {
+        current: u64,
+        max: u64,
+        attempted: u64,
+    },
     /// The referenced content hash does not exist.
     NotFound(ContentHash),
     /// The caller is not the owner of the referenced content.
-    NotOwner { hash: ContentHash, owner: QuotaId, caller: QuotaId },
+    NotOwner {
+        hash: ContentHash,
+        owner: QuotaId,
+        caller: QuotaId,
+    },
     /// Quota cell not found.
     QuotaNotFound(QuotaId),
     /// Erasure reconstruction failed (insufficient chunks).

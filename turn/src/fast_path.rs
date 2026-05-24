@@ -335,13 +335,10 @@ pub fn process_fast_path_lock(
         .get(&turn.agent)
         .map(|c| c.public_key())
         .ok_or(FastPathError::NotEligible)?;
-    let verifying_key = VerifyingKey::from_bytes(&agent_pk)
-        .map_err(|_| FastPathError::InvalidSignature)?;
+    let verifying_key =
+        VerifyingKey::from_bytes(&agent_pk).map_err(|_| FastPathError::InvalidSignature)?;
     let sig = Signature::from_bytes(agent_signature);
-    if verifying_key
-        .verify_strict(&turn_hash, &sig)
-        .is_err()
-    {
+    if verifying_key.verify_strict(&turn_hash, &sig).is_err() {
         return Err(FastPathError::InvalidSignature);
     }
 

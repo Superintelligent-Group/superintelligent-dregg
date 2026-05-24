@@ -68,11 +68,17 @@ pub enum QueueConstraint {
     /// Maximum message size (bytes).
     MaxSize { bytes: usize },
     /// Rate limit: max N enqueues per sender per epoch.
-    RateLimit { max_per_epoch: u32, epoch_duration: u64 },
+    RateLimit {
+        max_per_epoch: u32,
+        epoch_duration: u64,
+    },
     /// Sequence number must be monotonically increasing.
     MonotonicSequence,
     /// Temporal gate: operation only valid after/before a height.
-    TemporalGate { not_before: Option<u64>, not_after: Option<u64> },
+    TemporalGate {
+        not_before: Option<u64>,
+        not_after: Option<u64>,
+    },
     /// Conditional dequeue: requires knowledge of a preimage.
     PreimageGate { commitment: [u8; 32] },
     /// Custom (arbitrary constraint expression — full DSL power).
@@ -130,7 +136,11 @@ pub enum FactoryError {
     /// The program exceeds factory limits.
     TooManyConstraints { count: usize, max: usize },
     /// A lookup table is too large.
-    LookupTableTooLarge { table: String, entries: usize, max: usize },
+    LookupTableTooLarge {
+        table: String,
+        entries: usize,
+        max: usize,
+    },
     /// A disallowed constraint type was used.
     DisallowedConstraint { kind: ConstraintKind },
     /// Program has no constraints.
@@ -201,7 +211,12 @@ impl ProgrammableQueue {
     ) -> Result<[u8; 32], ProgramError> {
         self.validate_enqueue(&entry, context)?;
         // If MonotonicSequence is in constraints, advance counter.
-        if self.enqueue_program.constraints.iter().any(|c| matches!(c, QueueConstraint::MonotonicSequence)) {
+        if self
+            .enqueue_program
+            .constraints
+            .iter()
+            .any(|c| matches!(c, QueueConstraint::MonotonicSequence))
+        {
             self.next_sequence += 1;
         }
         let root = self.queue.enqueue(entry)?;
@@ -227,12 +242,7 @@ impl ProgrammableQueue {
         entry: &QueueEntry,
         context: &ValidationContext,
     ) -> Result<(), ProgramError> {
-        validate_enqueue_constraints(
-            &self.enqueue_program,
-            entry,
-            context,
-            self.next_sequence,
-        )
+        validate_enqueue_constraints(&self.enqueue_program, entry, context, self.next_sequence)
     }
 
     /// Get the program VK hash (for composition with Effect VM).
@@ -345,7 +355,9 @@ pub mod programs {
     pub fn open(min_deposit: u64) -> QueueProgram {
         QueueProgram {
             name: "open".to_string(),
-            constraints: vec![QueueConstraint::MinDeposit { amount: min_deposit }],
+            constraints: vec![QueueConstraint::MinDeposit {
+                amount: min_deposit,
+            }],
             lookup_tables: Vec::new(),
         }
     }
@@ -357,8 +369,12 @@ pub mod programs {
         QueueProgram {
             name: "acl".to_string(),
             constraints: vec![
-                QueueConstraint::SenderAuthorized { authorized_set_root: root },
-                QueueConstraint::MinDeposit { amount: min_deposit },
+                QueueConstraint::SenderAuthorized {
+                    authorized_set_root: root,
+                },
+                QueueConstraint::MinDeposit {
+                    amount: min_deposit,
+                },
             ],
             lookup_tables: vec![QueueLookupTable {
                 name: "authorized_senders".to_string(),
@@ -372,8 +388,13 @@ pub mod programs {
         QueueProgram {
             name: "rate_limited".to_string(),
             constraints: vec![
-                QueueConstraint::RateLimit { max_per_epoch, epoch_duration },
-                QueueConstraint::MinDeposit { amount: min_deposit },
+                QueueConstraint::RateLimit {
+                    max_per_epoch,
+                    epoch_duration,
+                },
+                QueueConstraint::MinDeposit {
+                    amount: min_deposit,
+                },
             ],
             lookup_tables: Vec::new(),
         }
@@ -405,8 +426,12 @@ pub mod programs {
         QueueProgram {
             name: "typed".to_string(),
             constraints: vec![
-                QueueConstraint::ContentPattern { required_prefix: prefix.to_vec() },
-                QueueConstraint::MinDeposit { amount: min_deposit },
+                QueueConstraint::ContentPattern {
+                    required_prefix: prefix.to_vec(),
+                },
+                QueueConstraint::MinDeposit {
+                    amount: min_deposit,
+                },
             ],
             lookup_tables: Vec::new(),
         }
@@ -426,7 +451,9 @@ fn validate_enqueue_constraints(
 ) -> Result<(), ProgramError> {
     for constraint in &program.constraints {
         match constraint {
-            QueueConstraint::SenderAuthorized { authorized_set_root: _ } => {
+            QueueConstraint::SenderAuthorized {
+                authorized_set_root: _,
+            } => {
                 // Check sender is in lookup table.
                 let authorized = program
                     .lookup_tables
@@ -464,10 +491,7 @@ fn validate_enqueue_constraints(
                 if entry.deposit < *amount {
                     return Err(ProgramError::ConstraintViolation {
                         constraint: "MinDeposit".to_string(),
-                        detail: format!(
-                            "deposit {} below minimum {}",
-                            entry.deposit, amount
-                        ),
+                        detail: format!("deposit {} below minimum {}", entry.deposit, amount),
                     });
                 }
             }
@@ -479,7 +503,10 @@ fn validate_enqueue_constraints(
                     });
                 }
             }
-            QueueConstraint::RateLimit { max_per_epoch, epoch_duration: _ } => {
+            QueueConstraint::RateLimit {
+                max_per_epoch,
+                epoch_duration: _,
+            } => {
                 if context.sender_epoch_count >= *max_per_epoch {
                     return Err(ProgramError::ConstraintViolation {
                         constraint: "RateLimit".to_string(),
@@ -495,10 +522,7 @@ fn validate_enqueue_constraints(
                     if seq != next_sequence {
                         return Err(ProgramError::ConstraintViolation {
                             constraint: "MonotonicSequence".to_string(),
-                            detail: format!(
-                                "expected sequence {}, got {}",
-                                next_sequence, seq
-                            ),
+                            detail: format!("expected sequence {}, got {}", next_sequence, seq),
                         });
                     }
                 } else {
@@ -508,7 +532,10 @@ fn validate_enqueue_constraints(
                     });
                 }
             }
-            QueueConstraint::TemporalGate { not_before, not_after } => {
+            QueueConstraint::TemporalGate {
+                not_before,
+                not_after,
+            } => {
                 if let Some(nb) = not_before {
                     if context.current_height < *nb {
                         return Err(ProgramError::ConstraintViolation {
@@ -535,7 +562,10 @@ fn validate_enqueue_constraints(
             QueueConstraint::PreimageGate { .. } => {
                 // PreimageGate is a dequeue constraint; skip during enqueue validation.
             }
-            QueueConstraint::Custom { expr: _, description } => {
+            QueueConstraint::Custom {
+                expr: _,
+                description,
+            } => {
                 // Custom constraints require external evaluation.
                 // For now, they always pass during local validation.
                 // In-circuit, the proof must satisfy the constraint expression.
@@ -555,9 +585,11 @@ fn validate_dequeue_constraints(
         match constraint {
             QueueConstraint::PreimageGate { commitment } => {
                 // Dequeue requires knowledge of the preimage.
-                let preimage = context.preimage.ok_or_else(|| ProgramError::DequeueRejected {
-                    reason: "no preimage provided for secret-gated dequeue".to_string(),
-                })?;
+                let preimage = context
+                    .preimage
+                    .ok_or_else(|| ProgramError::DequeueRejected {
+                        reason: "no preimage provided for secret-gated dequeue".to_string(),
+                    })?;
                 // Verify: blake3(preimage) == commitment.
                 let hash = *blake3::hash(&preimage).as_bytes();
                 if hash != *commitment {
@@ -566,7 +598,10 @@ fn validate_dequeue_constraints(
                     });
                 }
             }
-            QueueConstraint::TemporalGate { not_before, not_after } => {
+            QueueConstraint::TemporalGate {
+                not_before,
+                not_after,
+            } => {
                 if let Some(nb) = not_before {
                     if context.current_height < *nb {
                         return Err(ProgramError::DequeueRejected {
@@ -645,7 +680,9 @@ pub fn compute_vk_dual(
 /// Used as a sub-step in the typed-framework VK commitment computation.
 fn canonicalize_constraint(buf: &mut Vec<u8>, constraint: &QueueConstraint) {
     match constraint {
-        QueueConstraint::SenderAuthorized { authorized_set_root } => {
+        QueueConstraint::SenderAuthorized {
+            authorized_set_root,
+        } => {
             buf.extend_from_slice(b"sender_authorized");
             buf.extend_from_slice(authorized_set_root);
         }
@@ -661,7 +698,10 @@ fn canonicalize_constraint(buf: &mut Vec<u8>, constraint: &QueueConstraint) {
             buf.extend_from_slice(b"max_size");
             buf.extend_from_slice(&(*bytes as u64).to_le_bytes());
         }
-        QueueConstraint::RateLimit { max_per_epoch, epoch_duration } => {
+        QueueConstraint::RateLimit {
+            max_per_epoch,
+            epoch_duration,
+        } => {
             buf.extend_from_slice(b"rate_limit");
             buf.extend_from_slice(&max_per_epoch.to_le_bytes());
             buf.extend_from_slice(&epoch_duration.to_le_bytes());
@@ -669,7 +709,10 @@ fn canonicalize_constraint(buf: &mut Vec<u8>, constraint: &QueueConstraint) {
         QueueConstraint::MonotonicSequence => {
             buf.extend_from_slice(b"monotonic_sequence");
         }
-        QueueConstraint::TemporalGate { not_before, not_after } => {
+        QueueConstraint::TemporalGate {
+            not_before,
+            not_after,
+        } => {
             buf.extend_from_slice(b"temporal_gate");
             buf.extend_from_slice(&not_before.unwrap_or(0).to_le_bytes());
             buf.extend_from_slice(&not_after.unwrap_or(u64::MAX).to_le_bytes());
@@ -709,10 +752,8 @@ pub fn compute_authorized_set_root_dual(
         .iter()
         .map(|k| blake3_with_tag(domain::TAG_AUTHORIZED_KEY_SET, k))
         .collect();
-    let poseidon2_leaves: Vec<[pyana_circuit::field::BabyBear; 4]> = blake3_leaves
-        .iter()
-        .map(canonical_32_to_felts_4)
-        .collect();
+    let poseidon2_leaves: Vec<[pyana_circuit::field::BabyBear; 4]> =
+        blake3_leaves.iter().map(canonical_32_to_felts_4).collect();
     crate::commitment::MerkleRoot::from_leaves(&blake3_leaves, &poseidon2_leaves)
 }
 
@@ -762,13 +803,8 @@ mod tests {
     #[test]
     fn open_program_accepts_valid_deposit() {
         let program = programs::open(100);
-        let mut queue = ProgrammableQueue::new(
-            "open_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("open_queue".to_string(), [0x01; 32], program, None, 10);
 
         let entry = make_entry(b"hello", [0xAA; 32], 200, 32);
         let ctx = default_context([0xAA; 32]);
@@ -781,19 +817,17 @@ mod tests {
     #[test]
     fn open_program_rejects_insufficient_deposit() {
         let program = programs::open(100);
-        let mut queue = ProgrammableQueue::new(
-            "open_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("open_queue".to_string(), [0x01; 32], program, None, 10);
 
         let entry = make_entry(b"hello", [0xAA; 32], 50, 32); // deposit < 100
         let ctx = default_context([0xAA; 32]);
 
         let result = queue.enqueue_validated(entry, &ctx);
-        assert!(matches!(result, Err(ProgramError::ConstraintViolation { .. })));
+        assert!(matches!(
+            result,
+            Err(ProgramError::ConstraintViolation { .. })
+        ));
         assert_eq!(queue.len(), 0);
     }
 
@@ -802,13 +836,8 @@ mod tests {
     fn acl_program_authorized_sender_accepted() {
         let authorized = [[0xAA; 32], [0xBB; 32], [0xCC; 32]];
         let program = programs::acl(&authorized, 50);
-        let mut queue = ProgrammableQueue::new(
-            "acl_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("acl_queue".to_string(), [0x01; 32], program, None, 10);
 
         let entry = make_entry(b"message", [0xBB; 32], 100, 32);
         let ctx = default_context([0xBB; 32]);
@@ -822,19 +851,17 @@ mod tests {
     fn acl_program_unauthorized_sender_rejected() {
         let authorized = [[0xAA; 32], [0xBB; 32]];
         let program = programs::acl(&authorized, 50);
-        let mut queue = ProgrammableQueue::new(
-            "acl_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("acl_queue".to_string(), [0x01; 32], program, None, 10);
 
         let entry = make_entry(b"message", [0xFF; 32], 100, 32);
         let ctx = default_context([0xFF; 32]); // Not in authorized set
 
         let result = queue.enqueue_validated(entry, &ctx);
-        assert!(matches!(result, Err(ProgramError::ConstraintViolation { .. })));
+        assert!(matches!(
+            result,
+            Err(ProgramError::ConstraintViolation { .. })
+        ));
     }
 
     // --- Test 4: ACL program — sender not in lookup table → rejected ---
@@ -842,13 +869,8 @@ mod tests {
     fn acl_program_sender_not_in_lookup_table_rejected() {
         let authorized = [[0x11; 32], [0x22; 32], [0x33; 32]];
         let program = programs::acl(&authorized, 50);
-        let mut queue = ProgrammableQueue::new(
-            "acl_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("acl_queue".to_string(), [0x01; 32], program, None, 10);
 
         // A sender that is close to but not in the set.
         let mut almost = [0x11; 32];
@@ -857,20 +879,18 @@ mod tests {
         let ctx = default_context(almost);
 
         let result = queue.enqueue_validated(entry, &ctx);
-        assert!(matches!(result, Err(ProgramError::ConstraintViolation { .. })));
+        assert!(matches!(
+            result,
+            Err(ProgramError::ConstraintViolation { .. })
+        ));
     }
 
     // --- Test 5: Rate limit — within limit accepted, over limit rejected ---
     #[test]
     fn rate_limit_within_accepted_over_rejected() {
         let program = programs::rate_limited(3, 100, 50);
-        let mut queue = ProgrammableQueue::new(
-            "rate_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("rate_queue".to_string(), [0x01; 32], program, None, 10);
 
         let sender = [0xAA; 32];
 
@@ -897,20 +917,18 @@ mod tests {
             sequence: None,
         };
         let result = queue.enqueue_validated(entry2, &ctx_over);
-        assert!(matches!(result, Err(ProgramError::ConstraintViolation { .. })));
+        assert!(matches!(
+            result,
+            Err(ProgramError::ConstraintViolation { .. })
+        ));
     }
 
     // --- Test 6: Rate limit — new epoch resets count ---
     #[test]
     fn rate_limit_new_epoch_resets() {
         let program = programs::rate_limited(2, 100, 50);
-        let mut queue = ProgrammableQueue::new(
-            "rate_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("rate_queue".to_string(), [0x01; 32], program, None, 10);
 
         let sender = [0xAA; 32];
 
@@ -943,13 +961,8 @@ mod tests {
     #[test]
     fn temporal_gate_before_not_before_rejected() {
         let program = programs::timed(50, 200);
-        let mut queue = ProgrammableQueue::new(
-            "timed_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("timed_queue".to_string(), [0x01; 32], program, None, 10);
 
         let sender = [0xAA; 32];
         let entry = make_entry(b"too_early", sender, 100, 32);
@@ -981,13 +994,8 @@ mod tests {
     #[test]
     fn temporal_gate_after_not_after_rejected() {
         let program = programs::timed(50, 200);
-        let mut queue = ProgrammableQueue::new(
-            "timed_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("timed_queue".to_string(), [0x01; 32], program, None, 10);
 
         let sender = [0xAA; 32];
         let entry = make_entry(b"too_late", sender, 100, 32);
@@ -1002,7 +1010,10 @@ mod tests {
             sequence: None,
         };
         let result = queue.enqueue_validated(entry, &ctx_late);
-        assert!(matches!(result, Err(ProgramError::ConstraintViolation { .. })));
+        assert!(matches!(
+            result,
+            Err(ProgramError::ConstraintViolation { .. })
+        ));
     }
 
     // --- Test 9: Monotonic sequence — out-of-order rejected ---
@@ -1013,13 +1024,8 @@ mod tests {
             constraints: vec![QueueConstraint::MonotonicSequence],
             lookup_tables: Vec::new(),
         };
-        let mut queue = ProgrammableQueue::new(
-            "seq_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("seq_queue".to_string(), [0x01; 32], program, None, 10);
 
         let sender = [0xAA; 32];
 
@@ -1058,7 +1064,10 @@ mod tests {
             sequence: Some(5),
         };
         let result = queue.enqueue_validated(entry_bad, &ctx_bad);
-        assert!(matches!(result, Err(ProgramError::ConstraintViolation { .. })));
+        assert!(matches!(
+            result,
+            Err(ProgramError::ConstraintViolation { .. })
+        ));
     }
 
     // --- Test 10: Secret-gated dequeue — wrong preimage rejected, correct accepted ---
@@ -1113,13 +1122,8 @@ mod tests {
     fn content_pattern_prefix_matching() {
         let prefix = vec![0xDE, 0xAD];
         let program = programs::typed(&prefix, 50);
-        let mut queue = ProgrammableQueue::new(
-            "typed_queue".to_string(),
-            [0x01; 32],
-            program,
-            None,
-            10,
-        );
+        let mut queue =
+            ProgrammableQueue::new("typed_queue".to_string(), [0x01; 32], program, None, 10);
 
         let sender = [0xAA; 32];
 
@@ -1131,7 +1135,10 @@ mod tests {
         // Entry with non-matching prefix.
         let non_matching = make_entry_with_prefix(&[0xCA, 0xFE], sender, 100);
         let result = queue.enqueue_validated(non_matching, &ctx);
-        assert!(matches!(result, Err(ProgramError::ConstraintViolation { .. })));
+        assert!(matches!(
+            result,
+            Err(ProgramError::ConstraintViolation { .. })
+        ));
     }
 
     // --- Test 12: Factory — valid program accepted, oversized rejected ---
@@ -1159,13 +1166,19 @@ mod tests {
             constraints: vec![
                 QueueConstraint::MinDeposit { amount: 10 },
                 QueueConstraint::MaxSize { bytes: 1024 },
-                QueueConstraint::RateLimit { max_per_epoch: 5, epoch_duration: 100 },
+                QueueConstraint::RateLimit {
+                    max_per_epoch: 5,
+                    epoch_duration: 100,
+                },
                 QueueConstraint::MinDeposit { amount: 20 },
             ],
             lookup_tables: Vec::new(),
         };
         let result = factory.validate_program(&oversized);
-        assert!(matches!(result, Err(FactoryError::TooManyConstraints { .. })));
+        assert!(matches!(
+            result,
+            Err(FactoryError::TooManyConstraints { .. })
+        ));
     }
 
     // --- Test 13: Factory — disallowed constraint type rejected ---
@@ -1174,10 +1187,7 @@ mod tests {
         let factory = QueueFactory {
             max_constraints: 10,
             max_lookup_entries: 100,
-            allowed_constraints: vec![
-                ConstraintKind::MinDeposit,
-                ConstraintKind::MaxSize,
-            ],
+            allowed_constraints: vec![ConstraintKind::MinDeposit, ConstraintKind::MaxSize],
             factory_vk: [0xFF; 32],
         };
 
@@ -1197,7 +1207,9 @@ mod tests {
         let result = factory.validate_program(&program);
         assert_eq!(
             result,
-            Err(FactoryError::DisallowedConstraint { kind: ConstraintKind::Custom })
+            Err(FactoryError::DisallowedConstraint {
+                kind: ConstraintKind::Custom
+            })
         );
     }
 
@@ -1207,33 +1219,15 @@ mod tests {
         let program1 = programs::acl(&[[0xAA; 32], [0xBB; 32]], 100);
         let program2 = programs::acl(&[[0xAA; 32], [0xBB; 32]], 100);
 
-        let queue1 = ProgrammableQueue::new(
-            "q1".to_string(),
-            [0x01; 32],
-            program1,
-            None,
-            10,
-        );
-        let queue2 = ProgrammableQueue::new(
-            "q2".to_string(),
-            [0x01; 32],
-            program2,
-            None,
-            10,
-        );
+        let queue1 = ProgrammableQueue::new("q1".to_string(), [0x01; 32], program1, None, 10);
+        let queue2 = ProgrammableQueue::new("q2".to_string(), [0x01; 32], program2, None, 10);
 
         // Same program → same VK hash (regardless of queue name).
         assert_eq!(queue1.vk_hash(), queue2.vk_hash());
 
         // Different program → different VK hash.
         let program3 = programs::open(200);
-        let queue3 = ProgrammableQueue::new(
-            "q3".to_string(),
-            [0x01; 32],
-            program3,
-            None,
-            10,
-        );
+        let queue3 = ProgrammableQueue::new("q3".to_string(), [0x01; 32], program3, None, 10);
         assert_ne!(queue1.vk_hash(), queue3.vk_hash());
     }
 

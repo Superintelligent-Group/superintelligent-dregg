@@ -537,7 +537,12 @@ async fn queue_liquidation_submit(
 
     state
         .liquidation_queue
-        .submit(position, req.oracle_price, sender, LIQUIDATION_QUEUE_MIN_DEPOSIT)
+        .submit(
+            position,
+            req.oracle_price,
+            sender,
+            LIQUIDATION_QUEUE_MIN_DEPOSIT,
+        )
         .await
         .map_err(|e| {
             (
@@ -561,9 +566,7 @@ async fn queue_liquidation_submit(
 /// `GET /queue/liquidations/drain` — return all pending liquidation candidates in priority order.
 ///
 /// Returns candidates sorted lowest-health-factor-first (most-at-risk first).
-async fn queue_liquidation_drain(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+async fn queue_liquidation_drain(State(state): State<AppState>) -> Json<serde_json::Value> {
     let candidates = state.liquidation_queue.drain_priority().await;
     Json(serde_json::json!({
         "candidates": candidates.iter().map(|c| serde_json::json!({
@@ -604,7 +607,10 @@ async fn stability_fee(
 
 mod hex {
     pub fn encode(b: impl AsRef<[u8]>) -> String {
-        b.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+        b.as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 }
 

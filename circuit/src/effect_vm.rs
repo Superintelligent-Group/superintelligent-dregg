@@ -762,10 +762,16 @@ pub enum Effect {
     PipelinedSend { send_hash: BabyBear },
     /// CreateEscrow: actor's balance debits by `amount_lo`. Mirrors NoteCreate.
     /// `escrow_hash` = BLAKE3(recipient ‖ condition) binds the escrow target.
-    CreateEscrow { amount_lo: BabyBear, escrow_hash: BabyBear },
+    CreateEscrow {
+        amount_lo: BabyBear,
+        escrow_hash: BabyBear,
+    },
     /// BridgeLock: actor's balance debits by `value_lo`. Mirrors NoteCreate.
     /// `lock_hash` = BLAKE3(nullifier ‖ destination ‖ asset_type) binds the lock.
-    BridgeLock { value_lo: BabyBear, lock_hash: BabyBear },
+    BridgeLock {
+        value_lo: BabyBear,
+        lock_hash: BabyBear,
+    },
     /// CreateCommittedEscrow: passthrough; the locked amount is hidden in a
     /// Pedersen commitment that's verified outside this AIR.
     /// `commit_hash` = BLAKE3(creator_commit ‖ value_commit ‖ recipient_commit ‖ condition_commit).
@@ -773,7 +779,10 @@ pub enum Effect {
     /// BridgeMint: actor mints `value_lo` from a portable proof. Balance
     /// credit (mirrors NoteSpend). `mint_hash` binds (nullifier, root,
     /// dest_federation, asset_type).
-    BridgeMint { value_lo: BabyBear, mint_hash: BabyBear },
+    BridgeMint {
+        value_lo: BabyBear,
+        mint_hash: BabyBear,
+    },
     /// BridgeFinalize: actor finalizes a pending bridge. Passthrough.
     /// `finalize_hash` = BLAKE3(nullifier ‖ receipt_bytes).
     BridgeFinalize { finalize_hash: BabyBear },
@@ -1247,12 +1256,18 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(BabyBear::new(36));
                 hasher_inputs.push(*send_hash);
             }
-            Effect::CreateEscrow { amount_lo, escrow_hash } => {
+            Effect::CreateEscrow {
+                amount_lo,
+                escrow_hash,
+            } => {
                 hasher_inputs.push(BabyBear::new(37));
                 hasher_inputs.push(*amount_lo);
                 hasher_inputs.push(*escrow_hash);
             }
-            Effect::BridgeLock { value_lo, lock_hash } => {
+            Effect::BridgeLock {
+                value_lo,
+                lock_hash,
+            } => {
                 hasher_inputs.push(BabyBear::new(38));
                 hasher_inputs.push(*value_lo);
                 hasher_inputs.push(*lock_hash);
@@ -1261,7 +1276,10 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(BabyBear::new(39));
                 hasher_inputs.push(*commit_hash);
             }
-            Effect::BridgeMint { value_lo, mint_hash } => {
+            Effect::BridgeMint {
+                value_lo,
+                mint_hash,
+            } => {
                 hasher_inputs.push(BabyBear::new(40));
                 hasher_inputs.push(*value_lo);
                 hasher_inputs.push(*mint_hash);
@@ -1848,7 +1866,9 @@ impl StarkAir for EffectVmAir {
                 let mut num = BabyBear::ONE;
                 let mut den = BabyBear::ONE;
                 for j in 0..8usize {
-                    if j == k { continue; }
+                    if j == k {
+                        continue;
+                    }
                     num = num * (x - BabyBear::new(j as u32));
                     let diff = if k > j {
                         BabyBear::new((k - j) as u32)
@@ -1857,7 +1877,9 @@ impl StarkAir for EffectVmAir {
                     };
                     den = den * diff;
                 }
-                let den_inv = den.inverse().expect("Lagrange denominator non-zero on {0..7}");
+                let den_inv = den
+                    .inverse()
+                    .expect("Lagrange denominator non-zero on {0..7}");
                 acc = acc + num * den_inv * l_bits[k];
             }
             acc
@@ -1875,7 +1897,9 @@ impl StarkAir for EffectVmAir {
                 let mut num = BabyBear::ONE;
                 let mut den = BabyBear::ONE;
                 for j in 0..8usize {
-                    if j == k { continue; }
+                    if j == k {
+                        continue;
+                    }
                     num = num * (x - BabyBear::new(j as u32));
                     let diff = if k > j {
                         BabyBear::new((k - j) as u32)
@@ -1884,7 +1908,9 @@ impl StarkAir for EffectVmAir {
                     };
                     den = den * diff;
                 }
-                let den_inv = den.inverse().expect("Lagrange denominator non-zero on {0..7}");
+                let den_inv = den
+                    .inverse()
+                    .expect("Lagrange denominator non-zero on {0..7}");
                 acc = acc + num * den_inv * l_bits[k];
             }
             acc
@@ -1901,7 +1927,9 @@ impl StarkAir for EffectVmAir {
                 let mut num = BabyBear::ONE;
                 let mut den = BabyBear::ONE;
                 for j in 0..8usize {
-                    if j == k { continue; }
+                    if j == k {
+                        continue;
+                    }
                     num = num * (x - BabyBear::new(j as u32));
                     let diff = if k > j {
                         BabyBear::new((k - j) as u32)
@@ -1910,7 +1938,9 @@ impl StarkAir for EffectVmAir {
                     };
                     den = den * diff;
                 }
-                let den_inv = den.inverse().expect("Lagrange denominator non-zero on {0..7}");
+                let den_inv = den
+                    .inverse()
+                    .expect("Lagrange denominator non-zero on {0..7}");
                 acc = acc + num * den_inv * l_bits[k];
             }
             acc
@@ -2328,7 +2358,9 @@ impl StarkAir for EffectVmAir {
                 let mut num = BabyBear::ONE;
                 let mut den = BabyBear::ONE;
                 for j in 0..8u32 {
-                    if j == k { continue; }
+                    if j == k {
+                        continue;
+                    }
                     num = num * (x - BabyBear::new(j));
                     let diff = if k > j {
                         BabyBear::new(k - j)
@@ -2338,7 +2370,9 @@ impl StarkAir for EffectVmAir {
                     };
                     den = den * diff;
                 }
-                let den_inv = den.inverse().expect("Lagrange denominator non-zero on {0..7}");
+                let den_inv = den
+                    .inverse()
+                    .expect("Lagrange denominator non-zero on {0..7}");
                 result = result + num * den_inv * BabyBear::new(1u32 << k);
             }
             result
@@ -2416,7 +2450,8 @@ impl StarkAir for EffectVmAir {
         // Stage 2: reserved decreases by 2^field_idx (clears the bit;
         // requires bit was previously set, otherwise wrap into mode_flag
         // bits → trace-gen-side constraint).
-        let c_unseal_reserved = s_unseal * (old_reserved_unseal - new_reserved_unseal - unseal_pow2);
+        let c_unseal_reserved =
+            s_unseal * (old_reserved_unseal - new_reserved_unseal - unseal_pow2);
         combined = combined + alpha_pow * c_unseal_reserved;
         alpha_pow = alpha_pow * alpha;
         // Stage 2: aux_pow2 == 2^field_idx.
@@ -4048,7 +4083,10 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + 0] = *send_hash;
                 new_state.nonce += 1;
             }
-            Effect::CreateEscrow { amount_lo, escrow_hash } => {
+            Effect::CreateEscrow {
+                amount_lo,
+                escrow_hash,
+            } => {
                 // Mirror NoteCreate: param0 = escrow_hash, param1 = amount_lo
                 row[PARAM_BASE + 0] = *escrow_hash;
                 row[PARAM_BASE + 1] = *amount_lo;
@@ -4057,7 +4095,10 @@ pub fn generate_effect_vm_trace_ext(
                 net_delta -= amount_u64 as i64;
                 new_state.nonce += 1;
             }
-            Effect::BridgeLock { value_lo, lock_hash } => {
+            Effect::BridgeLock {
+                value_lo,
+                lock_hash,
+            } => {
                 // Mirror CreateEscrow: balance debit by value_lo.
                 row[PARAM_BASE + 0] = *lock_hash;
                 row[PARAM_BASE + 1] = *value_lo;
@@ -4070,7 +4111,10 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + 0] = *commit_hash;
                 new_state.nonce += 1;
             }
-            Effect::BridgeMint { value_lo, mint_hash } => {
+            Effect::BridgeMint {
+                value_lo,
+                mint_hash,
+            } => {
                 // Mirror NoteSpend: balance credit by value_lo.
                 row[PARAM_BASE + 0] = *mint_hash;
                 row[PARAM_BASE + 1] = *value_lo;
@@ -4083,8 +4127,7 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + 0] = *finalize_hash;
                 new_state.nonce += 1;
             }
-            Effect::ReleaseEscrow { escrow_id_hash }
-            | Effect::RefundEscrow { escrow_id_hash } => {
+            Effect::ReleaseEscrow { escrow_id_hash } | Effect::RefundEscrow { escrow_id_hash } => {
                 row[PARAM_BASE + 0] = *escrow_id_hash;
                 new_state.nonce += 1;
             }
@@ -4128,8 +4171,7 @@ pub fn generate_effect_vm_trace_ext(
                 net_delta -= *stake_amount as i64;
                 // Stage 2: cap_root advances to bind both obligation_id and beneficiary.
                 let obligation_leaf = hash_2_to_1(*obligation_id, *beneficiary_hash);
-                new_state.capability_root =
-                    hash_2_to_1(new_state.capability_root, obligation_leaf);
+                new_state.capability_root = hash_2_to_1(new_state.capability_root, obligation_leaf);
                 new_state.nonce += 1;
             }
             Effect::FulfillObligation {
@@ -4584,7 +4626,11 @@ pub fn generate_effect_vm_trace_ext(
         // The constraint in eval_constraints requires that
         //   Σ b_i * 2^i + mode * 256 == old_reserved
         // hold unconditionally for every row.
-        fill_reserved_bits(&mut row, current_state.sealed_field_mask, current_state.mode_flag);
+        fill_reserved_bits(
+            &mut row,
+            current_state.sealed_field_mask,
+            current_state.mode_flag,
+        );
 
         // Write state_after.
         let state_after_cols = new_state.to_trace_cols();
@@ -4645,7 +4691,11 @@ pub fn generate_effect_vm_trace_ext(
         row[AUX_BASE + aux_off::STATE_INTER3] = inter3;
 
         // Stage 2 (sealing honesty): bit-decompose OLD reserved.
-        fill_reserved_bits(&mut row, current_state.sealed_field_mask, current_state.mode_flag);
+        fill_reserved_bits(
+            &mut row,
+            current_state.sealed_field_mask,
+            current_state.mode_flag,
+        );
 
         trace.push(row);
         // current_state stays the same for padding.
@@ -4770,8 +4820,7 @@ pub fn generate_effect_vm_trace_ext(
     for i in 0..pi::EFFECTS_HASH_GLOBAL_LEN {
         public_inputs[pi::EFFECTS_HASH_GLOBAL_BASE + i] = context.effects_hash_global[i];
     }
-    public_inputs[pi::ACTOR_NONCE] =
-        BabyBear::new((context.actor_nonce & 0x7FFF_FFFF) as u32);
+    public_inputs[pi::ACTOR_NONCE] = BabyBear::new((context.actor_nonce & 0x7FFF_FFFF) as u32);
     for i in 0..pi::PREVIOUS_RECEIPT_HASH_LEN {
         public_inputs[pi::PREVIOUS_RECEIPT_HASH_BASE + i] = context.previous_receipt_hash[i];
     }
@@ -4968,19 +5017,13 @@ pub fn verify_balance_limb_pis(public_inputs: &[BabyBear]) -> Result<(), String>
     // we also check externally for defense-in-depth).
     let sign = public_inputs[pi::NET_DELTA_SIGN].0;
     if sign > 1 {
-        return Err(format!(
-            "NET_DELTA_SIGN must be 0 or 1; got {}",
-            sign
-        ));
+        return Err(format!("NET_DELTA_SIGN must be 0 or 1; got {}", sign));
     }
     // NET_DELTA_MAG must fit in 30 bits to match the per-limb subtraction
     // domain (otherwise modular wrap could occur in the algebraic check).
     let mag = public_inputs[pi::NET_DELTA_MAG].0;
     if mag >= (1u32 << 30) {
-        return Err(format!(
-            "NET_DELTA_MAG out of range: {} >= 2^30",
-            mag
-        ));
+        return Err(format!("NET_DELTA_MAG out of range: {} >= 2^30", mag));
     }
     Ok(())
 }
@@ -5156,7 +5199,8 @@ mod tests {
         if result.is_ok() {
             eprintln!(
                 "[stage2-fri-single-row-gap] STARK accepted single-row tamper; \
-                 AIR-level check confirms constraint != 0 (c0 = {:?})", c0
+                 AIR-level check confirms constraint != 0 (c0 = {:?})",
+                c0
             );
         }
     }
@@ -5327,27 +5371,65 @@ mod tests {
         let state = make_initial_state(10_000);
         let effects = vec![
             // Cap-root transition variants:
-            Effect::GrantCapability { cap_entry: BabyBear::new(1) },
-            Effect::RevokeCapability { slot_hash: BabyBear::new(2) },
+            Effect::GrantCapability {
+                cap_entry: BabyBear::new(1),
+            },
+            Effect::RevokeCapability {
+                slot_hash: BabyBear::new(2),
+            },
             // Stateless side-effects (passthrough):
-            Effect::EmitEvent { event_hash: BabyBear::new(0xE1) },
-            Effect::SetPermissions { permissions_hash: BabyBear::new(0xE2) },
-            Effect::SetVerificationKey { vk_hash: BabyBear::new(0xE3) },
-            Effect::CreateSealPair { pair_hash: BabyBear::new(0xE4) },
+            Effect::EmitEvent {
+                event_hash: BabyBear::new(0xE1),
+            },
+            Effect::SetPermissions {
+                permissions_hash: BabyBear::new(0xE2),
+            },
+            Effect::SetVerificationKey {
+                vk_hash: BabyBear::new(0xE3),
+            },
+            Effect::CreateSealPair {
+                pair_hash: BabyBear::new(0xE4),
+            },
             Effect::RefreshDelegation,
-            Effect::RevokeDelegation { child_hash: BabyBear::new(0xE5) },
-            Effect::CreateCell { create_hash: BabyBear::new(0xE6) },
-            Effect::SpawnWithDelegation { spawn_hash: BabyBear::new(0xE7) },
-            Effect::BridgeCancel { nullifier_hash: BabyBear::new(0xE8) },
-            Effect::ExerciseViaCapability { exercise_hash: BabyBear::new(0xE9) },
-            Effect::Introduce { intro_hash: BabyBear::new(0xEA) },
-            Effect::PipelinedSend { send_hash: BabyBear::new(0xEB) },
-            Effect::BridgeFinalize { finalize_hash: BabyBear::new(0xEC) },
-            Effect::ReleaseEscrow { escrow_id_hash: BabyBear::new(0xED) },
-            Effect::RefundEscrow { escrow_id_hash: BabyBear::new(0xEE) },
-            Effect::CreateCommittedEscrow { commit_hash: BabyBear::new(0xEF) },
-            Effect::ReleaseCommittedEscrow { commit_hash: BabyBear::new(0xF0) },
-            Effect::RefundCommittedEscrow { commit_hash: BabyBear::new(0xF1) },
+            Effect::RevokeDelegation {
+                child_hash: BabyBear::new(0xE5),
+            },
+            Effect::CreateCell {
+                create_hash: BabyBear::new(0xE6),
+            },
+            Effect::SpawnWithDelegation {
+                spawn_hash: BabyBear::new(0xE7),
+            },
+            Effect::BridgeCancel {
+                nullifier_hash: BabyBear::new(0xE8),
+            },
+            Effect::ExerciseViaCapability {
+                exercise_hash: BabyBear::new(0xE9),
+            },
+            Effect::Introduce {
+                intro_hash: BabyBear::new(0xEA),
+            },
+            Effect::PipelinedSend {
+                send_hash: BabyBear::new(0xEB),
+            },
+            Effect::BridgeFinalize {
+                finalize_hash: BabyBear::new(0xEC),
+            },
+            Effect::ReleaseEscrow {
+                escrow_id_hash: BabyBear::new(0xED),
+            },
+            Effect::RefundEscrow {
+                escrow_id_hash: BabyBear::new(0xEE),
+            },
+            Effect::CreateCommittedEscrow {
+                commit_hash: BabyBear::new(0xEF),
+            },
+            Effect::ReleaseCommittedEscrow {
+                commit_hash: BabyBear::new(0xF0),
+            },
+            Effect::RefundCommittedEscrow {
+                commit_hash: BabyBear::new(0xF1),
+            },
             // Balance arithmetic:
             Effect::CreateEscrow {
                 amount_lo: BabyBear::new(100),
@@ -5376,7 +5458,10 @@ mod tests {
         // Sanity: net delta should be -100 (CreateEscrow) - 50 (BridgeLock)
         // + 200 (BridgeMint) = +50.
         let delta = extract_net_delta(&public_inputs).unwrap();
-        assert_eq!(delta, 50, "net delta should be +50 (mint 200 - lock 50 - escrow 100)");
+        assert_eq!(
+            delta, 50,
+            "net delta should be +50 (mint 200 - lock 50 - escrow 100)"
+        );
     }
 
     #[test]
@@ -5417,9 +5502,13 @@ mod tests {
         // CreateSealPair, RefreshDelegation, RevokeDelegation all share the
         // EmitEvent passthrough shape. One round-trip each.
         for effect in [
-            Effect::CreateSealPair { pair_hash: BabyBear::new(0x111) },
+            Effect::CreateSealPair {
+                pair_hash: BabyBear::new(0x111),
+            },
             Effect::RefreshDelegation,
-            Effect::RevokeDelegation { child_hash: BabyBear::new(0x222) },
+            Effect::RevokeDelegation {
+                child_hash: BabyBear::new(0x222),
+            },
         ] {
             let state = make_initial_state(700);
             let effects = vec![effect.clone()];
@@ -5827,8 +5916,7 @@ mod tests {
         // Stage 2: CreateObligation advances cap_root with the
         // obligation_id + beneficiary leaf.
         {
-            let obligation_leaf =
-                hash_2_to_1(BabyBear::new(0xDEAD01), BabyBear::new(0xBEEF01));
+            let obligation_leaf = hash_2_to_1(BabyBear::new(0xDEAD01), BabyBear::new(0xBEEF01));
             expected_state.capability_root =
                 hash_2_to_1(expected_state.capability_root, obligation_leaf);
         }
@@ -5849,7 +5937,8 @@ mod tests {
         let expected_4 = compute_effects_hash_4(&effects);
         for i in 0..pi::EFFECTS_HASH_LEN {
             assert_eq!(
-                public_inputs[pi::EFFECTS_HASH_BASE + i], expected_4[i],
+                public_inputs[pi::EFFECTS_HASH_BASE + i],
+                expected_4[i],
                 "effects_hash position {} mismatch",
                 i,
             );
@@ -8345,7 +8434,12 @@ mod tests {
         let air = EffectVmAir::new(trace.len());
         let alpha = BabyBear::new(7);
         let c0 = air.eval_constraints(&trace[0], &trace[1 % trace.len()], &public_inputs, alpha);
-        assert_eq!(c0, BabyBear::ZERO, "Stage 2: honest shrink must satisfy AIR (c0 = {:?})", c0);
+        assert_eq!(
+            c0,
+            BabyBear::ZERO,
+            "Stage 2: honest shrink must satisfy AIR (c0 = {:?})",
+            c0
+        );
     }
 
     /// Stage 2 adversarial: lying about the sign (e.g., claiming a shrink
@@ -8411,10 +8505,7 @@ mod tests {
     #[should_panic(expected = "already sealed")]
     fn test_stage2_seal_double_seal_rejected() {
         let state = make_initial_state(1000);
-        let effects = vec![
-            Effect::Seal { field_idx: 2 },
-            Effect::Seal { field_idx: 2 },
-        ];
+        let effects = vec![Effect::Seal { field_idx: 2 }, Effect::Seal { field_idx: 2 }];
         // Trace generator's assert fires first (executor-side defense).
         let _ = generate_effect_vm_trace(&state, &effects);
     }
@@ -8791,10 +8882,7 @@ mod tests {
             direction: 1,
         }];
         let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
-        assert_eq!(
-            trace[0][STATE_BEFORE_BASE + state::NONCE],
-            BabyBear::new(3)
-        );
+        assert_eq!(trace[0][STATE_BEFORE_BASE + state::NONCE], BabyBear::new(3));
         // Forge PI: claim actor_nonce = 99.
         public_inputs[pi::ACTOR_NONCE] = BabyBear::new(99);
         let air = EffectVmAir::new(trace.len());

@@ -77,7 +77,12 @@ fn no_unchecked_authorization_in_framework_src() {
             "framework source must not contain `Authorization::Unchecked`. Offenders:\n",
         );
         for (path, lineno, line) in &offenders {
-            msg.push_str(&format!("  {}:{}  {}\n", path.display(), lineno, line.trim()));
+            msg.push_str(&format!(
+                "  {}:{}  {}\n",
+                path.display(),
+                lineno,
+                line.trim()
+            ));
         }
         msg.push_str(
             "\nIf you need an unauthenticated action in framework code, use an \

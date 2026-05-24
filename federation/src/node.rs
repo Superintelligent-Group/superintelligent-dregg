@@ -857,6 +857,8 @@ impl FederationNode {
             nullifier_set_root: None,
             height: qc.height,
             timestamp,
+            blocklace_block_id: None,
+            finality_round: None,
             threshold_qc: qc
                 .aggregate_qc
                 .as_ref()
@@ -971,6 +973,8 @@ impl Federation {
             nullifier_set_root: None,
             height,
             timestamp,
+            blocklace_block_id: None,
+            finality_round: None,
             threshold_qc: None,
             quorum_signatures: Vec::new(),
             threshold: 0,
@@ -979,7 +983,12 @@ impl Federation {
         self.nodes
             .iter()
             .filter(|n| n.is_online)
-            .map(|n| (n.identity.public_key.clone(), sign(&n.signing_key, &message)))
+            .map(|n| {
+                (
+                    n.identity.public_key.clone(),
+                    sign(&n.signing_key, &message),
+                )
+            })
             .collect()
     }
 
@@ -1196,11 +1205,7 @@ impl Federation {
                 let merkle_root = self.nodes[node_id].compute_state_root();
                 let quorum_signatures =
                     self.collect_attested_root_signatures(&merkle_root, qc.height, timestamp);
-                self.nodes[node_id].update_attested_root(
-                    &qc,
-                    quorum_signatures,
-                    timestamp,
-                );
+                self.nodes[node_id].update_attested_root(&qc, quorum_signatures, timestamp);
                 // Update the node's consensus state.
                 self.consensus_states[node_id].finalize_block(block, qc);
             }

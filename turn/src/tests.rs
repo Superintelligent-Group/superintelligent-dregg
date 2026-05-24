@@ -3627,7 +3627,8 @@ fn test_fee_charged_on_failure() {
     // Target cell should be completely unaffected (Phase 2 rolled back).
     let target = ledger.get(&target_id).unwrap();
     assert_eq!(
-        target.state.balance(), 100,
+        target.state.balance(),
+        100,
         "target balance must not change on failed turn"
     );
 }
@@ -5049,7 +5050,11 @@ fn test_child_acts_via_delegated_caps() {
     assert!(result.is_committed());
 
     // Now child acts on target using delegated capability.
-    ledger.get_mut(&child_id).unwrap().state.set_balance(100_000);
+    ledger
+        .get_mut(&child_id)
+        .unwrap()
+        .state
+        .set_balance(100_000);
 
     let value = [99u8; 32];
     let child_action = Action {
@@ -5180,7 +5185,11 @@ fn test_refresh_delegation_updates_snapshot() {
     );
 
     // Child refreshes delegation.
-    ledger.get_mut(&child_id).unwrap().state.set_balance(100_000);
+    ledger
+        .get_mut(&child_id)
+        .unwrap()
+        .state
+        .set_balance(100_000);
     executor.set_timestamp(2000);
 
     let refresh = Action {
@@ -5409,7 +5418,11 @@ fn test_parent_new_cap_invisible_until_refresh() {
         .grant(target_b_id, AuthRequired::None);
 
     // Child tries to use target_b via delegation — should fail.
-    ledger.get_mut(&child_id).unwrap().state.set_balance(100_000);
+    ledger
+        .get_mut(&child_id)
+        .unwrap()
+        .state
+        .set_balance(100_000);
 
     let child_action = Action {
         target: target_b_id,
@@ -5520,7 +5533,11 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
         .revoke(slot);
 
     // Child still has target in delegation snapshot — can still act.
-    ledger.get_mut(&child_id).unwrap().state.set_balance(100_000);
+    ledger
+        .get_mut(&child_id)
+        .unwrap()
+        .state
+        .set_balance(100_000);
 
     let value = [77u8; 32];
     let child_action = Action {

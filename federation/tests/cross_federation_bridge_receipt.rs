@@ -36,10 +36,10 @@
 //!   rejects any replay or non-monotone advancement.
 
 use pyana_cell::note_bridge::{
-    compute_bridge_id, BridgePhase, BridgePhaseLog, BridgeReceiptEnvelope,
+    BridgePhase, BridgePhaseLog, BridgeReceiptEnvelope, compute_bridge_id,
 };
 use pyana_federation::threshold::{
-    generate_test_committee, FederationCommittee, MemberSecret, ThresholdQC,
+    FederationCommittee, MemberSecret, ThresholdQC, generate_test_committee,
 };
 
 /// Sign `body_hash` with `threshold` of the committee's members.
@@ -239,9 +239,8 @@ fn cross_federation_replay_rejected_after_finalize() {
     // Adversary attempts: late refund (Phase 4) with a properly-signed body.
     // Federation B's phase log must reject it as non-monotone (Finalized is
     // terminal), even if A's QC over the refund body would have been valid.
-    let late_refund = BridgeReceiptEnvelope::new_refunded(
-        bridge_id, fed_a_id, fed_b_id, 250, lock_hash, 251,
-    );
+    let late_refund =
+        BridgeReceiptEnvelope::new_refunded(bridge_id, fed_a_id, fed_b_id, 250, lock_hash, 251);
     let late_refund_hash = late_refund.body_hash();
     // (We don't even need a QC for the test — admission is gated first by
     // the phase log. But to make the test realistic we sign it anyway.)

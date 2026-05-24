@@ -320,7 +320,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let entry: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(entry["deposit"], 0);
     }
@@ -337,7 +339,9 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let status: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(status["pending_messages"], 0);
         assert_eq!(status["min_deposit"], 100);

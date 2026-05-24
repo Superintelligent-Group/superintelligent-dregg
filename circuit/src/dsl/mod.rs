@@ -75,6 +75,7 @@ pub use crate::merkle_types::{
 pub use note_spending::{
     generate_note_spending_trace, note_spending_circuit_descriptor, note_spending_dsl_circuit,
     prove_note_spend, prove_note_spend_dsl, verify_note_spend, verify_note_spend_dsl,
+    verify_note_spend_dsl_with_destination,
 };
 
 // Re-export DSL-native accumulator proving API.

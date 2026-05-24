@@ -214,6 +214,8 @@ fn setup_genesis() -> Result<SharedState, Box<dyn Error>> {
         merkle_root: [0u8; 32],
         height: 0,
         timestamp: 1700000000,
+        blocklace_block_id: None,
+        finality_round: None,
         threshold_qc: None,
         note_tree_root: None,
         nullifier_set_root: None,
@@ -767,8 +769,14 @@ fn run_pipeline(_ledger: &mut Ledger) -> Result<(), Box<dyn Error>> {
     for (i, r) in results.iter().enumerate() {
         assert!(r.is_ok(), "Pipeline turn {} failed: {:?}", i, r);
     }
-    assert_eq!(pl.get(&id_a).unwrap().state.balance(), 1_000_000 - 500 + 100);
-    assert_eq!(pl.get(&id_b).unwrap().state.balance(), 1_000_000 + 500 - 100);
+    assert_eq!(
+        pl.get(&id_a).unwrap().state.balance(),
+        1_000_000 - 500 + 100
+    );
+    assert_eq!(
+        pl.get(&id_b).unwrap().state.balance(),
+        1_000_000 + 500 - 100
+    );
     Ok(())
 }
 

@@ -133,6 +133,9 @@ mod tests {
         let out_a = [1u8; 32];
         let out_b = [2u8; 32];
         let revealed = vec![rev(out_b, [11u8; 32], 50)];
-        assert_eq!(settle(&revealed, &out_a, 50), Err(SettlementError::NoWinners));
+        assert_eq!(
+            settle(&revealed, &out_a, 50),
+            Err(SettlementError::NoWinners)
+        );
     }
 }

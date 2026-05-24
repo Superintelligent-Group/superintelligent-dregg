@@ -161,10 +161,7 @@ impl ErasureEncoder {
         // Attempt XOR recovery for single missing chunk (prototype limitation).
         if available_data == n_data_chunks - 1 && available_parity >= 1 {
             // Find the missing chunk index.
-            let missing_idx = data_chunks
-                .iter()
-                .position(|c| c.is_none())
-                .unwrap();
+            let missing_idx = data_chunks.iter().position(|c| c.is_none()).unwrap();
 
             // XOR all available data chunks with the first parity chunk.
             let parity_chunk = chunks.iter().find(|c| c.is_parity).unwrap();
@@ -202,9 +199,7 @@ pub fn verify_chunk(chunk: &ErasureChunk) -> bool {
 }
 
 /// Dual-form commitment for a single erasure chunk's data.
-pub fn chunk_commitment_dual(
-    data: &[u8],
-) -> crate::commitment::ErasureChunkCommitment {
+pub fn chunk_commitment_dual(data: &[u8]) -> crate::commitment::ErasureChunkCommitment {
     crate::commitment::Commitment::seal(data)
 }
 
@@ -217,9 +212,7 @@ pub fn root_commitment(chunks: &[ErasureChunk]) -> ContentHash {
 }
 
 /// Dual-form combined-root commitment for a set of erasure chunks.
-pub fn root_commitment_dual(
-    chunks: &[ErasureChunk],
-) -> crate::commitment::ErasureSetCommitment {
+pub fn root_commitment_dual(chunks: &[ErasureChunk]) -> crate::commitment::ErasureSetCommitment {
     let mut canonical = Vec::with_capacity(chunks.len() * 32);
     for chunk in chunks {
         canonical.extend_from_slice(&chunk.commitment);

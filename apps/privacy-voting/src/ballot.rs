@@ -36,11 +36,7 @@ pub struct BallotReveal {
 pub const BALLOT_COMMIT_TAG: &str = "pyana-ballot-v1";
 
 /// Compute a ballot commitment.
-pub fn commit(
-    proposal_id: &ProposalId,
-    option_index: u32,
-    randomness: &[u8; 32],
-) -> Commitment {
+pub fn commit(proposal_id: &ProposalId, option_index: u32, randomness: &[u8; 32]) -> Commitment {
     let mut hasher = blake3::Hasher::new_derive_key(BALLOT_COMMIT_TAG);
     hasher.update(proposal_id);
     hasher.update(&option_index.to_le_bytes());

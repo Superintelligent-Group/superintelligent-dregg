@@ -696,3 +696,58 @@ fn merge_equivocator_blocks_marks_equivocator() {
     assert!(lace.is_equivocator(&creator_b));
     assert_eq!(lace.len(), 2); // Both blocks kept as evidence
 }
+
+#[test]
+fn merge_removes_tip_on_equivocation_detection() {
+    // Closes audit gap C: merge() must mirror receive_block()'s tip removal.
+    let key_a = random_key();
+    let key_b = random_key();
+    let creator_b = key_b.verifying_key().to_bytes();
+
+    let mut lace = Blocklace::new_simple(key_a);
+
+    // Build three blocks: a good seq-1, a CONFLICTING seq-1, and a seq-2.
+    // If merge fails to consult `equivocators` when deciding tips, the
+    // seq-2 block from B (which arrives after the equivocation was
+    // detected within this same merge) will set tips[B] = seq-2, leaving
+    // dissemination/frontier state inconsistent with B's eviction.
+    let b1_good = Block::new(&key_b, 1, Payload::Data(b"good".to_vec()), vec![]);
+    let b1_bad = Block::new(&key_b, 1, Payload::Data(b"bad".to_vec()), vec![]);
+    let b2 = Block::new(&key_b, 2, Payload::Data(b"after".to_vec()), vec![]);
+
+    let result = lace.merge(vec![b1_good, b1_bad, b2]);
+    assert!(result.is_ok());
+    assert!(lace.is_equivocator(&creator_b));
+    assert!(
+        !lace.tips.contains_key(&creator_b),
+        "tip for equivocator must be removed by merge (audit gap C)"
+    );
+}
+
+#[test]
+fn round_of_returns_dag_depth() {
+    let key_a = random_key();
+    let key_b = random_key();
+    let mut lace = Blocklace::new_simple(key_a.clone());
+
+    // Genesis block from A (round 1).
+    let block0 = lace.add_block(Payload::Data(b"genesis".to_vec()));
+    let r0 = lace.round_of(&block0.id()).expect("round for genesis");
+    assert_eq!(r0, 1);
+
+    // A second block from A predecessing block0 (round 2).
+    let block1 = lace.add_block(Payload::Data(b"second".to_vec()));
+    let r1 = lace.round_of(&block1.id()).expect("round for block1");
+    assert_eq!(r1, 2);
+
+    // A block from B predecessing both A's blocks (round 3).
+    let block2 = Block::new(
+        &key_b,
+        1,
+        Payload::Data(b"b1".to_vec()),
+        vec![block0.id(), block1.id()],
+    );
+    lace.receive_block(block2.clone()).expect("receive block2");
+    let r2 = lace.round_of(&block2.id()).expect("round for block2");
+    assert_eq!(r2, 3);
+}

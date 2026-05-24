@@ -62,6 +62,7 @@ pub mod queue_endpoint;
 pub mod ring_trade;
 pub mod server;
 pub mod store;
+pub mod wallet;
 
 // =============================================================================
 // Re-exports: types that apps commonly need from sub-crates
@@ -96,14 +97,27 @@ pub use authorizer::{
 };
 pub use persistence::JsonPersistence;
 pub use server::{AppConfig, AppServer, ErrorResponse, api_error};
+pub use wallet::AppWallet;
+
+// Re-export common action / effect types so apps build effects through
+// the framework rather than reaching into `pyana_turn` directly.
+pub use pyana_cell::state::FieldElement;
+pub use pyana_turn::Turn;
+pub use pyana_turn::action::{Action, Authorization, DelegationMode, Effect, Event, symbol};
+
+// Re-export the SDK wallet at the framework root so applications that
+// need to *construct* a wallet (typically in `main`) don't have to add
+// `pyana-sdk` to their Cargo.toml. App code outside `main` should reach
+// for [`AppWallet`] (the narrow handle), not [`AgentWallet`].
+pub use pyana_sdk::AgentWallet;
 
 // Re-export dispute framework types for apps implementing optimistic settlement.
+pub use dispute::BlindedDisputable;
 pub use dispute::{
     ArbiterStrategy, ComputeMetrics, DeliveryClaim, Disputable, DisputeConfig, DisputeError,
     DisputeEvidence, DisputeResolution, OptimisticSettlement, SettlementState,
 };
 pub use dispute::{DisputeId, SettlementId as DisputeSettlementId};
-pub use dispute::BlindedDisputable;
 
 // New-world module re-exports.
 pub use batch_executor::{BatchExecution, BatchExecutor, ClientTurnRequest};

@@ -61,8 +61,7 @@ pub fn bidder_inbox_endpoint() -> InboxEndpoint {
 /// `InboxMessage::Encrypted` at the call site. Real deployments must encrypt
 /// these to the bidder's pubkey (e.g., libsodium sealed box) before sending.
 pub fn outbid_notification(auction_id_hex: &str, new_high_bid: u64) -> Vec<u8> {
-    format!("outbid:{auction_id_hex}:{new_high_bid:016x}")
-        .into_bytes()
+    format!("outbid:{auction_id_hex}:{new_high_bid:016x}").into_bytes()
 }
 
 /// Encode a "won" notification payload.
@@ -173,10 +172,7 @@ pub mod tests {
             entry["sender_hex"].is_string(),
             "entry must have sender_hex; got: {entry}"
         );
-        assert_eq!(
-            entry["deposit"], 0,
-            "deposit should be 0; got: {entry}"
-        );
+        assert_eq!(entry["deposit"], 0, "deposit should be 0; got: {entry}");
     }
 
     // -------------------------------------------------------------------------
@@ -228,12 +224,18 @@ pub mod tests {
         send_encrypted(&app, &sender_hex, b"won:auction2:claim_within_50_blocks").await;
 
         let status = get_status(&app).await;
-        assert_eq!(status["pending_messages"], 2, "should show 2 pending; got: {status}");
+        assert_eq!(
+            status["pending_messages"], 2,
+            "should show 2 pending; got: {status}"
+        );
 
         // Read one.
         read_next(&app).await;
         let status = get_status(&app).await;
-        assert_eq!(status["pending_messages"], 1, "after reading one, 1 pending; got: {status}");
+        assert_eq!(
+            status["pending_messages"], 1,
+            "after reading one, 1 pending; got: {status}"
+        );
     }
 
     async fn get_status(app: &axum::Router) -> serde_json::Value {

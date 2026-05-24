@@ -656,7 +656,10 @@ impl core::fmt::Display for TurnError {
                 )
             }
             TurnError::CellFrozen { cell } => {
-                write!(f, "cell {cell} is frozen for migration; no turns may execute against it")
+                write!(
+                    f,
+                    "cell {cell} is frozen for migration; no turns may execute against it"
+                )
             }
             TurnError::ReceiptChainMismatch { expected, got } => {
                 fn fmt_hash(o: &Option<[u8; 32]>) -> String {

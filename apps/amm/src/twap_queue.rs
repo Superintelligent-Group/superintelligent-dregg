@@ -24,12 +24,7 @@
 
 use std::sync::Arc;
 
-use axum::{
-    Json, Router,
-    extract::State,
-    http::StatusCode,
-    routing::post,
-};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -417,7 +412,11 @@ mod tests {
             amount_in: 501,
             ..intent
         };
-        assert_ne!(h1, intent2.content_hash(), "different intents must hash differently");
+        assert_ne!(
+            h1,
+            intent2.content_hash(),
+            "different intents must hash differently"
+        );
     }
 
     #[test]
@@ -480,16 +479,16 @@ mod tests {
         let req = ExecuteBatchRequest {
             pool_id: pool_id_hex,
         };
-        let result = execute_batch_handler(
-            State(batch_state),
-            Json(req),
-        )
-        .await
-        .unwrap();
+        let result = execute_batch_handler(State(batch_state), Json(req))
+            .await
+            .unwrap();
 
         assert_eq!(result.executed + result.skipped, 2);
         // At least some should have been executed
-        assert!(result.executed > 0, "should have executed at least 1 intent");
+        assert!(
+            result.executed > 0,
+            "should have executed at least 1 intent"
+        );
         // TWAP price should match the initial pool state
         assert_eq!(result.twap_price_numerator, 20_000);
         assert_eq!(result.twap_price_denominator, 10_000);

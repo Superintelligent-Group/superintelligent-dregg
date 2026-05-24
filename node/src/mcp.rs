@@ -202,8 +202,7 @@ fn generate_effect_vm_proof(
     // verifier accepts on the wire.
     let proof_bytes = pyana_circuit::stark::proof_to_bytes(&proof);
     let proof_hex = hex_encode(&proof_bytes);
-    let public_inputs_u64: Vec<u64> =
-        public_inputs.iter().map(|f| f.as_u32() as u64).collect();
+    let public_inputs_u64: Vec<u64> = public_inputs.iter().map(|f| f.as_u32() as u64).collect();
     // Build the canonical WitnessBundle::Inline so we can both ship the
     // trace shape and compute its BLAKE3 hash via the canonical
     // postcard-serialised form. The demo writes both to disk; the verifier
@@ -2496,19 +2495,20 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
     // should be able to carry effects so the bearer can actually act through
     // the delegation. Empty / missing falls back to the prior empty-effects
     // behavior so existing callers aren't broken.
-    let parsed_effects: Vec<pyana_turn::Effect> = match params.get("effects").and_then(|v| v.as_array()) {
-        Some(arr) => {
-            let mut out = Vec::with_capacity(arr.len());
-            for ev in arr {
-                match parse_effect_json(ev) {
-                    Ok(e) => out.push(e),
-                    Err(msg) => return McpToolResult::error(format!("invalid effect: {msg}")),
+    let parsed_effects: Vec<pyana_turn::Effect> =
+        match params.get("effects").and_then(|v| v.as_array()) {
+            Some(arr) => {
+                let mut out = Vec::with_capacity(arr.len());
+                for ev in arr {
+                    match parse_effect_json(ev) {
+                        Ok(e) => out.push(e),
+                        Err(msg) => return McpToolResult::error(format!("invalid effect: {msg}")),
+                    }
                 }
+                out
             }
-            out
-        }
-        None => Vec::new(),
-    };
+            None => Vec::new(),
+        };
 
     let mut s = state.write().await;
     if !s.unlocked {
@@ -2545,7 +2545,9 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
         Some(hex) => match hex_decode(hex) {
             Ok(b) => b,
             Err(_) => {
-                return McpToolResult::error("invalid hex for delegator_pk (expected 64 hex chars)");
+                return McpToolResult::error(
+                    "invalid hex for delegator_pk (expected 64 hex chars)",
+                );
             }
         },
         None => s.wallet.public_key().0,
@@ -2572,14 +2574,19 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
                 if s.ledger.get(from).is_none() {
                     // The 'from' cell of a Transfer is the same as the
                     // bearer-cap target in the demo flow; tag with delegator_pk.
-                    let pk = if *from == target_cell_id { delegator_pk } else { [0u8; 32] };
+                    let pk = if *from == target_cell_id {
+                        delegator_pk
+                    } else {
+                        [0u8; 32]
+                    };
                     cells_to_stub.push((*from, (*amount).saturating_mul(10).max(1_000_000), pk));
                 }
                 if s.ledger.get(to).is_none() {
                     cells_to_stub.push((*to, 0, [0u8; 32]));
                 }
             }
-            pyana_turn::Effect::SetField { cell, .. } | pyana_turn::Effect::IncrementNonce { cell } => {
+            pyana_turn::Effect::SetField { cell, .. }
+            | pyana_turn::Effect::IncrementNonce { cell } => {
                 if s.ledger.get(cell).is_none() {
                     cells_to_stub.push((*cell, 0, [0u8; 32]));
                 }

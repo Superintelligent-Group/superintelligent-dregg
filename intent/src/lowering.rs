@@ -22,12 +22,12 @@
 //! `SettlementOutput` whose inner `SealedTurn` is ready for the executor.
 
 use pyana_cell::CellId;
+use pyana_turn::CallForest;
 use pyana_turn::action::{Action, Authorization, Effect};
 use pyana_turn::turn::Turn;
-use pyana_turn::CallForest;
 
-use crate::solver::Settlement as RingSettlement;
 use crate::solver::RingTrade;
+use crate::solver::Settlement as RingSettlement;
 
 // ─── Layer 1: Intent ──────────────────────────────────────────────────────────
 
@@ -409,10 +409,12 @@ mod tests {
         let amounts: Vec<u64> = plan
             .actions
             .iter()
-            .filter_map(|a| a.effects.first().and_then(|e| match e {
-                Effect::Transfer { amount, .. } => Some(*amount),
-                _ => None,
-            }))
+            .filter_map(|a| {
+                a.effects.first().and_then(|e| match e {
+                    Effect::Transfer { amount, .. } => Some(*amount),
+                    _ => None,
+                })
+            })
             .collect();
         assert_eq!(amounts, vec![10, 20, 30]);
         assert!(plan.validity_witness.is_some());

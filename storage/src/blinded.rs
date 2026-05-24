@@ -241,12 +241,10 @@ impl BlindedQueue {
             self.commitment_root = MerkleRoot::empty();
             return;
         }
-        let blake3_leaves: Vec<[u8; 32]> =
-            self.commitments.iter().map(|c| c.blake3).collect();
+        let blake3_leaves: Vec<[u8; 32]> = self.commitments.iter().map(|c| c.blake3).collect();
         let poseidon2_leaves: Vec<[pyana_circuit::field::BabyBear; 4]> =
             self.commitments.iter().map(|c| c.poseidon2).collect();
-        self.commitment_root =
-            MerkleRoot::from_leaves(&blake3_leaves, &poseidon2_leaves);
+        self.commitment_root = MerkleRoot::from_leaves(&blake3_leaves, &poseidon2_leaves);
     }
 
     /// Verify a consumption proof (public version — reveals which commitment).
@@ -263,11 +261,8 @@ impl BlindedQueue {
         // queue's stored BLAKE3 root). The Poseidon2 verification is the
         // in-circuit proof's job; out-of-circuit we only need the cheap
         // BLAKE3 check.
-        let blake3_siblings: Vec<[u8; 32]> = proof
-            .membership_proof
-            .iter()
-            .map(|c| c.blake3)
-            .collect();
+        let blake3_siblings: Vec<[u8; 32]> =
+            proof.membership_proof.iter().map(|c| c.blake3).collect();
         verify_merkle_proof_blake3(
             &proof.commitment.blake3,
             proof.position,
@@ -379,10 +374,7 @@ pub mod crypto {
     /// canonical preimage `len(item) || item || randomness`. The Poseidon2
     /// form is what the in-circuit `NoteSpendingAir` consumes; the BLAKE3
     /// form is what storage / gossip / HashMap keys consume.
-    pub fn create_commitment(
-        item_data: &[u8],
-        randomness: &[u8; 32],
-    ) -> BlindedItemCommitment {
+    pub fn create_commitment(item_data: &[u8], randomness: &[u8; 32]) -> BlindedItemCommitment {
         let mut canonical = Vec::with_capacity(8 + item_data.len() + 32);
         canonical.extend_from_slice(&(item_data.len() as u64).to_le_bytes());
         canonical.extend_from_slice(item_data);
@@ -596,7 +588,9 @@ mod tests {
 
         assert_eq!(
             result,
-            ConsumeResult::Consumed { nullifier: nullifier_blake3 }
+            ConsumeResult::Consumed {
+                nullifier: nullifier_blake3
+            }
         );
         assert_eq!(queue.consumed_count(), 1);
         assert_eq!(queue.remaining(), 2);
@@ -878,7 +872,9 @@ mod tests {
         let result = queue.consume_private(&proof);
         assert_eq!(
             result,
-            ConsumeResult::Consumed { nullifier: null_blake3 }
+            ConsumeResult::Consumed {
+                nullifier: null_blake3
+            }
         );
     }
 

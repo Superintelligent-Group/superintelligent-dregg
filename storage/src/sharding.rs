@@ -62,7 +62,10 @@ impl ShardedQueue {
     }
 
     /// Dequeue from a specific shard.
-    pub fn dequeue_shard(&mut self, shard: usize) -> Result<(QueueEntry, DequeueProof), QueueError> {
+    pub fn dequeue_shard(
+        &mut self,
+        shard: usize,
+    ) -> Result<(QueueEntry, DequeueProof), QueueError> {
         if shard >= self.shard_count {
             return Err(QueueError::Empty);
         }
@@ -174,9 +177,7 @@ fn compute_combined_root(shards: &[MerkleQueue]) -> [u8; 32] {
 }
 
 /// Dual-form (BLAKE3 + Poseidon2) combined-shard-root commitment.
-pub fn compute_combined_root_dual(
-    shards: &[MerkleQueue],
-) -> crate::commitment::ShardSetCommitment {
+pub fn compute_combined_root_dual(shards: &[MerkleQueue]) -> crate::commitment::ShardSetCommitment {
     let mut canonical = Vec::with_capacity(shards.len() * 32);
     for shard in shards {
         canonical.extend_from_slice(&shard.root());
@@ -266,7 +267,10 @@ mod tests {
 
         // We should have dequeued from multiple shards (given enough messages).
         let unique_shards: std::collections::HashSet<_> = dequeued_shards.iter().collect();
-        assert!(unique_shards.len() > 1, "Expected messages in multiple shards");
+        assert!(
+            unique_shards.len() > 1,
+            "Expected messages in multiple shards"
+        );
 
         // Queue should be empty now.
         assert!(sq.is_empty());
@@ -318,7 +322,10 @@ mod tests {
         shard_lens_after.sort();
         let spread = shard_lens_after.last().unwrap() - shard_lens_after.first().unwrap();
         // After rebalance, spread should be at most 2 (target +/- 1).
-        assert!(spread <= 2, "Spread after rebalance: {spread}, lens: {shard_lens_after:?}");
+        assert!(
+            spread <= 2,
+            "Spread after rebalance: {spread}, lens: {shard_lens_after:?}"
+        );
 
         // If original distribution was uneven, moved > 0.
         let original_spread =

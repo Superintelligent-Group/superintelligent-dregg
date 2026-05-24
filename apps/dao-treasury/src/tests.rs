@@ -25,9 +25,18 @@ const ASSET_B: [u8; 32] = [0xBB; 32];
 
 fn voters() -> Vec<Voter> {
     vec![
-        Voter { id: [1; 32], weight: 1 },
-        Voter { id: [2; 32], weight: 1 },
-        Voter { id: [3; 32], weight: 1 },
+        Voter {
+            id: [1; 32],
+            weight: 1,
+        },
+        Voter {
+            id: [2; 32],
+            weight: 1,
+        },
+        Voter {
+            id: [3; 32],
+            weight: 1,
+        },
     ]
 }
 
@@ -66,7 +75,11 @@ async fn under_quorum_proposal_rejected_at_queue_time() {
 
     let p = Proposal::new(
         [1; 32],
-        vec![SpendOrder { asset: ASSET_A, amount: 10, recipient: [9; 32] }],
+        vec![SpendOrder {
+            asset: ASSET_A,
+            amount: 10,
+            recipient: [9; 32],
+        }],
     );
     let id = state.governance.submit(p).await.unwrap();
 
@@ -115,7 +128,11 @@ async fn approved_proposal_with_insufficient_balance_rejected_at_execute_time() 
     let id = submit_and_approve(
         &state,
         [1; 32],
-        vec![SpendOrder { asset: ASSET_A, amount: 100, recipient: [9; 32] }],
+        vec![SpendOrder {
+            asset: ASSET_A,
+            amount: 100,
+            recipient: [9; 32],
+        }],
     )
     .await;
 
@@ -149,14 +166,22 @@ async fn batch_is_atomic_one_failure_rolls_back_all() {
     let id1 = submit_and_approve(
         &state,
         [1; 32],
-        vec![SpendOrder { asset: ASSET_A, amount: 50, recipient: [9; 32] }],
+        vec![SpendOrder {
+            asset: ASSET_A,
+            amount: 50,
+            recipient: [9; 32],
+        }],
     )
     .await;
     // proposal-2: spend 200 of A — exceeds remaining balance after p1's 50.
     let id2 = submit_and_approve(
         &state,
         [2; 32],
-        vec![SpendOrder { asset: ASSET_A, amount: 200, recipient: [9; 32] }],
+        vec![SpendOrder {
+            asset: ASSET_A,
+            amount: 200,
+            recipient: [9; 32],
+        }],
     )
     .await;
 
@@ -197,13 +222,21 @@ async fn batch_success_path_debits_and_marks_executed() {
     let id_a = submit_and_approve(
         &state,
         [1; 32],
-        vec![SpendOrder { asset: ASSET_A, amount: 100, recipient: [9; 32] }],
+        vec![SpendOrder {
+            asset: ASSET_A,
+            amount: 100,
+            recipient: [9; 32],
+        }],
     )
     .await;
     let id_b = submit_and_approve(
         &state,
         [2; 32],
-        vec![SpendOrder { asset: ASSET_B, amount: 50, recipient: [9; 32] }],
+        vec![SpendOrder {
+            asset: ASSET_B,
+            amount: 50,
+            recipient: [9; 32],
+        }],
     )
     .await;
 
@@ -242,7 +275,11 @@ async fn multi_asset_spend_only_touches_named_asset() {
     let _id = submit_and_approve(
         &state,
         [1; 32],
-        vec![SpendOrder { asset: ASSET_B, amount: 100, recipient: [9; 32] }],
+        vec![SpendOrder {
+            asset: ASSET_B,
+            amount: 100,
+            recipient: [9; 32],
+        }],
     )
     .await;
 
@@ -332,7 +369,11 @@ async fn approved_proposal_can_be_enqueued() {
     let id = submit_and_approve(
         &state,
         [1; 32],
-        vec![SpendOrder { asset: ASSET_A, amount: 1, recipient: [9; 32] }],
+        vec![SpendOrder {
+            asset: ASSET_A,
+            amount: 1,
+            recipient: [9; 32],
+        }],
     )
     .await;
 
@@ -370,16 +411,17 @@ async fn executor_rechecks_approval_at_execute_time() {
     let governance = GovernanceState::new(voters());
     let treasury = Arc::new(RwLock::new(Treasury::new()));
     treasury.write().await.credit(ASSET_A, 1_000).unwrap();
-    let mut exec = TreasuryBatchExecutor::new(
-        governance.clone(),
-        treasury.clone(),
-        CellId([0xEE; 32]),
-    );
+    let mut exec =
+        TreasuryBatchExecutor::new(governance.clone(), treasury.clone(), CellId([0xEE; 32]));
 
     // Submit a proposal but do NOT pass quorum — it stays Submitted.
     let p = Proposal::new(
         [1; 32],
-        vec![SpendOrder { asset: ASSET_A, amount: 10, recipient: [9; 32] }],
+        vec![SpendOrder {
+            asset: ASSET_A,
+            amount: 10,
+            recipient: [9; 32],
+        }],
     );
     let id = p.id;
     governance.submit(p).await.unwrap();

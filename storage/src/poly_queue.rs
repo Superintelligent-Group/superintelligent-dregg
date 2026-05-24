@@ -75,8 +75,8 @@ use ark_ff::{Field, One, PrimeField, UniformRand, Zero};
 use ark_poly::{DenseUVPolynomial, Polynomial, univariate::DensePolynomial};
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::RngCore;
-use poly_commitment::kzg::PairingSRS;
 use poly_commitment::SRS as SRSTrait;
+use poly_commitment::kzg::PairingSRS;
 
 /// Errors from KZG queue operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -394,11 +394,7 @@ impl KzgQueue {
     ///   e(C - [v]G1 - W * (tau - z), H) == 1  (in the exponent)
     ///
     /// We verify: e(C - [v]G1, H) * e(-W, [tau]H - [z]H) == 1
-    pub fn verify_position(
-        srs: &KzgSrs,
-        commitment: &G1Affine,
-        proof: &KzgPositionProof,
-    ) -> bool {
+    pub fn verify_position(srs: &KzgSrs, commitment: &G1Affine, proof: &KzgPositionProof) -> bool {
         // LHS: C - [v] * G1
         let g1_gen = G1Affine::generator();
         let v_g1: G1Projective = g1_gen.into_group() * proof.value;
@@ -556,11 +552,7 @@ impl KzgQueue {
     }
 
     /// Compute the quotient polynomial q(x) = (p(x) - value) / (x - point).
-    fn compute_quotient(
-        &self,
-        point: Fr,
-        value: Fr,
-    ) -> Result<DensePolynomial<Fr>, QueueError> {
+    fn compute_quotient(&self, point: Fr, value: Fr) -> Result<DensePolynomial<Fr>, QueueError> {
         // Numerator: p(x) - value
         let mut numerator = self.polynomial.clone();
         if numerator.coeffs.is_empty() {
@@ -1083,7 +1075,12 @@ mod tests {
         let srs = make_srs(32);
 
         // Build a test polynomial: p(x) = 3 + 5x + 7x^2 + 11x^3
-        let coeffs = vec![Fr::from(3u64), Fr::from(5u64), Fr::from(7u64), Fr::from(11u64)];
+        let coeffs = vec![
+            Fr::from(3u64),
+            Fr::from(5u64),
+            Fr::from(7u64),
+            Fr::from(11u64),
+        ];
         let poly = DensePolynomial::from_coefficients_vec(coeffs.clone());
 
         // Commit via our KzgSrs (which delegates to poly-commitment's commit_non_hiding).

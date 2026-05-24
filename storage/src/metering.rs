@@ -53,8 +53,7 @@ impl MeteringPolicy {
                 // Splice = cost of deleting old + writing new.
                 // The refund from old is handled at a higher level.
                 let delete_refund = self.compute_refund(&StorageOp::Write { size: *old_size });
-                let new_write_cost =
-                    self.write_base_cost + (new_size * self.write_cost_per_byte);
+                let new_write_cost = self.write_base_cost + (new_size * self.write_cost_per_byte);
                 // Net cost = new write cost - refund from old
                 new_write_cost.saturating_sub(delete_refund)
             }
@@ -67,9 +66,7 @@ impl MeteringPolicy {
             StorageOp::Relay { size, ttl_blocks } => {
                 self.relay_base_cost + (size * self.relay_cost_per_byte_block * ttl_blocks)
             }
-            StorageOp::Rental { bytes, epochs } => {
-                bytes * self.rental_cost_per_byte_epoch * epochs
-            }
+            StorageOp::Rental { bytes, epochs } => bytes * self.rental_cost_per_byte_epoch * epochs,
             StorageOp::Enqueue { size, deposit } => {
                 // Cost = base write cost for the message + deposit transferred to recipient.
                 // The deposit is held (not consumed), but the write cost is real.
@@ -104,9 +101,7 @@ impl MeteringPolicy {
     /// Compute refund for deleting content that was written with the given op cost.
     pub fn compute_refund(&self, original_write_op: &StorageOp) -> u64 {
         let original_cost = match original_write_op {
-            StorageOp::Write { size } => {
-                self.write_base_cost + (size * self.write_cost_per_byte)
-            }
+            StorageOp::Write { size } => self.write_base_cost + (size * self.write_cost_per_byte),
             _ => 0,
         };
         (original_cost as f64 * self.refund_rate) as u64
@@ -121,21 +116,46 @@ impl MeteringPolicy {
 /// A storage operation for cost computation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StorageOp {
-    Write { size: u64 },
-    Read { size: u64 },
-    Splice { old_size: u64, new_size: u64 },
-    Delete { size: u64 },
-    Relay { size: u64, ttl_blocks: u64 },
+    Write {
+        size: u64,
+    },
+    Read {
+        size: u64,
+    },
+    Splice {
+        old_size: u64,
+        new_size: u64,
+    },
+    Delete {
+        size: u64,
+    },
+    Relay {
+        size: u64,
+        ttl_blocks: u64,
+    },
     /// Rental cost for storing `bytes` for `epochs`.
-    Rental { bytes: u64, epochs: u64 },
+    Rental {
+        bytes: u64,
+        epochs: u64,
+    },
     /// Enqueue a message into a MerkleQueue.
-    Enqueue { size: u64, deposit: u64 },
+    Enqueue {
+        size: u64,
+        deposit: u64,
+    },
     /// Dequeue a message from a MerkleQueue.
-    Dequeue { size: u64 },
+    Dequeue {
+        size: u64,
+    },
     /// Create a new MerkleQueue with given capacity.
-    CreateQueue { capacity: u64 },
+    CreateQueue {
+        capacity: u64,
+    },
     /// Resize an existing MerkleQueue.
-    ResizeQueue { old_capacity: u64, new_capacity: u64 },
+    ResizeQueue {
+        old_capacity: u64,
+        new_capacity: u64,
+    },
 }
 
 /// Compute cost for a storage operation given a policy.

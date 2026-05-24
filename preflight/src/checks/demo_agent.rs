@@ -207,12 +207,7 @@ fn classify_output(name: &str, output: std::process::Output) -> Result<(), Strin
 }
 
 /// Produce a human-readable failure reason from cargo/compiler output.
-fn categorise_failure(
-    _name: &str,
-    stdout: &str,
-    stderr: &str,
-    exit_code: Option<i32>,
-) -> String {
+fn categorise_failure(_name: &str, stdout: &str, stderr: &str, exit_code: Option<i32>) -> String {
     // Cargo compile errors look like "error[E…]" in stderr.
     if stderr.contains("error[E") || stderr.contains("aborting due to") {
         let first_error = stderr
@@ -280,6 +275,10 @@ fn categorise_failure(
     format!(
         "RUNTIME ERROR: exit {} | last stderr: {}",
         exit_code.map(|c| c.to_string()).unwrap_or("?".into()),
-        if stderr_tail.is_empty() { "(no stderr)" } else { &stderr_tail }
+        if stderr_tail.is_empty() {
+            "(no stderr)"
+        } else {
+            &stderr_tail
+        }
     )
 }

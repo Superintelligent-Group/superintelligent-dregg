@@ -28,6 +28,9 @@ pyana-cell = { path = "../cell", default-features = false }
 pyana-turn = { path = "../turn", default-features = false }
 pyana-coord = { path = "../coord", default-features = false }
 pyana-intent = { path = "../intent", default-features = false }
+pyana-sdk = { path = "../sdk", default-features = false }
+# sdk pulls bulletproofs (via cell crypto) — already covered by the
+# clear_on_drop override below, but listing here for grep-ability.
 pyana-types = { path = "../types" }
 
 # Token crate without biscuit (biscuit-auth has complex deps)
@@ -39,6 +42,14 @@ js-sys = "0.3"
 x25519-dalek = { workspace = true }
 zeroize = { workspace = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
+
+# Indirect dep via bulletproofs (pulled in by pyana-cell when turn/coord/intent
+# enable their default crypto feature). clear_on_drop's default build invokes
+# a C compiler (build.rs -> cc -> clang --target=wasm32) which has no working
+# wasm32 toolchain on most systems. The `no_cc` feature switches it to a pure
+# Rust implementation. Declaring it directly here unifies the feature across
+# the workspace so wasm-pack succeeds.
+clear_on_drop = { version = "0.2", features = ["no_cc"] }
 
 [dependencies.web-sys]
 version = "0.3"

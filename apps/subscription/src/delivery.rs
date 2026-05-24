@@ -79,16 +79,13 @@ impl DeliveryLog {
     }
 
     /// Fetch a ciphertext by (subscriber, content_hash).
-    pub fn get(
-        &self,
-        subscriber: PublicKey,
-        content_hash: &[u8; 32],
-    ) -> Option<&PushedContent> {
+    pub fn get(&self, subscriber: PublicKey, content_hash: &[u8; 32]) -> Option<&PushedContent> {
         self.items.get(&(subscriber, *content_hash))
     }
 
     pub fn record(&mut self, push: PushedContent) {
-        self.items.insert((push.subscriber, push.content_hash), push);
+        self.items
+            .insert((push.subscriber, push.content_hash), push);
     }
 }
 
@@ -169,7 +166,7 @@ mod tests {
     use super::*;
     use crate::creator::{Creator, Tier};
     use crate::crypto::{decrypt_with, pubkey_from_privkey};
-    use crate::subscriber::{deterministic_wallet, SubscriberRegistry};
+    use crate::subscriber::{SubscriberRegistry, deterministic_wallet};
 
     fn wallet(seed: u8) -> pyana_sdk::AgentWallet {
         let mut s = [0u8; 32];
@@ -332,7 +329,12 @@ mod tests {
         .unwrap();
 
         let hash = creator.publish("free", b"hi".to_vec(), 0);
-        let item = creator.published.iter().find(|i| i.content_hash == hash).unwrap().clone();
+        let item = creator
+            .published
+            .iter()
+            .find(|i| i.content_hash == hash)
+            .unwrap()
+            .clone();
 
         let inbox = Arc::new(Mutex::new(new_subscriber_inbox(32)));
         let log = Arc::new(Mutex::new(DeliveryLog::new()));

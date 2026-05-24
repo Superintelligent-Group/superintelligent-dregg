@@ -261,9 +261,7 @@ fn test_fast_path_executes_immediately() {
     let agent_signature = agent_sig(&alice_seed, &turn_hash);
 
     // Simulate 3 validators granting locks (2f+1 with f=1, n=3).
-    let validator_seeds: Vec<[u8; 32]> = (0..3u8)
-        .map(|i| keypair_from_seed(0xA0 + i).0)
-        .collect();
+    let validator_seeds: Vec<[u8; 32]> = (0..3u8).map(|i| keypair_from_seed(0xA0 + i).0).collect();
 
     let mut table = CellLockTable::with_defaults();
 
@@ -302,7 +300,8 @@ fn test_fast_path_executes_immediately() {
     // Verify the ledger was updated (nonce bumped).
     let cell = ledger.get(&alice_id).expect("alice cell should exist");
     assert_eq!(
-        cell.state.nonce(), 1,
+        cell.state.nonce(),
+        1,
         "nonce should be bumped after execution"
     );
     // Verify the field was set.
@@ -355,7 +354,8 @@ fn test_consensus_path_waits_for_finalization() {
     // The turn should NOT have executed — ledger state unchanged.
     let bob_cell = ledger.get(&bob_id).expect("bob cell should exist");
     assert_eq!(
-        bob_cell.state.nonce(), 0,
+        bob_cell.state.nonce(),
+        0,
         "bob's cell should not have been modified"
     );
     assert!(table.is_empty(), "no locks should have been acquired");

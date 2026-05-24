@@ -59,10 +59,7 @@ pub enum FeeError {
         max_age: u64,
     },
     /// The computron equivalent in the payment doesn't match the rate.
-    EquivalentMismatch {
-        claimed: u64,
-        computed: u64,
-    },
+    EquivalentMismatch { claimed: u64, computed: u64 },
     /// Payment amount is zero.
     ZeroAmount,
 }

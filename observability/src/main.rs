@@ -15,18 +15,14 @@
 //! consume. It is **not** the executor's internal trace stream — that would
 //! require instrumenting `executor.rs` itself (a separate, larger lift).
 
-use pyana_cell::{
-    AuthRequired, Cell, CellId, Ledger, Permissions, state::FIELD_ZERO,
-};
+use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions, state::FIELD_ZERO};
 use pyana_circuit::{
     EffectVmAir,
     effect_vm::{self, generate_effect_vm_trace},
     field::BabyBear,
     stark,
 };
-use pyana_turn::{
-    ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult,
-};
+use pyana_turn::{ComputronCosts, DelegationMode, Effect, TurnBuilder, TurnExecutor, TurnResult};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -119,11 +115,7 @@ fn project_turn_effects_for_cell(
 ) -> Vec<effect_vm::Effect> {
     use pyana_turn::forest::CallTree;
 
-    fn walk(
-        tree: &CallTree,
-        cell_id: &CellId,
-        out: &mut Vec<effect_vm::Effect>,
-    ) {
+    fn walk(tree: &CallTree, cell_id: &CellId, out: &mut Vec<effect_vm::Effect>) {
         for effect in &tree.action.effects {
             match effect {
                 Effect::Transfer { from, to, amount } => {
@@ -198,7 +190,9 @@ fn main() {
         .grant(recipient_id, AuthRequired::None);
 
     ledger.insert_cell(agent_with_cap).expect("insert agent");
-    ledger.insert_cell(recipient_cell).expect("insert recipient");
+    ledger
+        .insert_cell(recipient_cell)
+        .expect("insert recipient");
 
     // Snapshot pre-state for the JSON dump.
     let pre_agent = cell_state_view("agent_pre", &ledger, &agent_id);
@@ -310,9 +304,7 @@ fn main() {
     // Approximate proof size: serialize via serde_json (the wire format the
     // explorer will see). For a "real" byte count, postcard would be tighter
     // but this is what'll cross the wire to the browser.
-    let proof_size_bytes = serde_json::to_vec(&proof)
-        .map(|v| v.len())
-        .unwrap_or(0);
+    let proof_size_bytes = serde_json::to_vec(&proof).map(|v| v.len()).unwrap_or(0);
 
     // ------------------------------------------------------------------
     // 6. Render the JSON document.
@@ -383,4 +375,3 @@ fn main() {
     let serialized = serde_json::to_string_pretty(&doc).expect("serialize");
     println!("{}", serialized);
 }
-

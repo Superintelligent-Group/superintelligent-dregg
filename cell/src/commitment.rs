@@ -43,13 +43,13 @@
 //! between the Poseidon2 inner commitment and `canonical_to_babybear_pi(bytes)`,
 //! or replace the Poseidon2 commitment with the canonical scheme entirely.
 
-use crate::cell::Cell;
 use crate::capability::CapabilitySet;
+use crate::cell::Cell;
+use crate::delegation::DelegatedRef;
 #[cfg(test)]
 use crate::id::CellId;
 use crate::permissions::{AuthRequired, Permissions};
 use crate::state::{CellState, FieldVisibility};
-use crate::delegation::DelegatedRef;
 
 /// Domain-separation context for the canonical state commitment.
 ///
@@ -220,10 +220,7 @@ fn hash_delegation_into(hasher: &mut blake3::Hasher, deleg: &DelegatedRef) {
     }
 }
 
-fn hash_capability_ref_into(
-    hasher: &mut blake3::Hasher,
-    cap: &crate::capability::CapabilityRef,
-) {
+fn hash_capability_ref_into(hasher: &mut blake3::Hasher, cap: &crate::capability::CapabilityRef) {
     hasher.update(cap.target.as_bytes());
     hasher.update(&cap.slot.to_le_bytes());
     hasher.update(&[auth_byte(&cap.permissions)]);
@@ -435,7 +432,10 @@ mod tests {
     fn capability_root_changes_on_grant() {
         let mut caps = CapabilitySet::new();
         let before = compute_canonical_capability_root(&caps);
-        caps.grant(CellId::derive_raw(&test_key(1), &test_token(1)), AuthRequired::Signature);
+        caps.grant(
+            CellId::derive_raw(&test_key(1), &test_token(1)),
+            AuthRequired::Signature,
+        );
         let after = compute_canonical_capability_root(&caps);
         assert_ne!(before, after);
     }

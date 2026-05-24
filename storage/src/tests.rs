@@ -18,9 +18,9 @@ use crate::{QuotaId, StorageError};
 /// Helper: create a space bank with standard test parameters.
 fn test_bank() -> SpaceBank {
     SpaceBank::new(
-        10,   // cost_per_byte
-        50,   // cost_per_relay_message
-        0.8,  // refund_rate
+        10,  // cost_per_byte
+        50,  // cost_per_relay_message
+        0.8, // refund_rate
     )
 }
 
@@ -54,7 +54,10 @@ fn write_exceeds_quota_error() {
     let result = store.write(&data, &payer);
     assert!(result.is_err());
     match result.unwrap_err() {
-        StorageError::QuotaExhausted { available, required } => {
+        StorageError::QuotaExhausted {
+            available,
+            required,
+        } => {
             assert_eq!(available, 50);
             assert_eq!(required, 1000);
         }
@@ -73,7 +76,11 @@ fn write_exceeds_byte_cap() {
     let result = store.write(&data, &id);
     assert!(result.is_err());
     match result.unwrap_err() {
-        StorageError::ByteCapExceeded { current, max, attempted } => {
+        StorageError::ByteCapExceeded {
+            current,
+            max,
+            attempted,
+        } => {
             assert_eq!(current, 0);
             assert_eq!(max, 50);
             assert_eq!(attempted, 100);
@@ -327,8 +334,14 @@ fn relay_enqueue_and_drain() {
     let entries = relay.drain(&dest);
     assert_eq!(entries.len(), 2);
     // Verify content hashes match expected payloads.
-    assert_eq!(entries[0].0.content_hash, *blake3::hash(b"hello offline node").as_bytes());
-    assert_eq!(entries[1].0.content_hash, *blake3::hash(b"second message").as_bytes());
+    assert_eq!(
+        entries[0].0.content_hash,
+        *blake3::hash(b"hello offline node").as_bytes()
+    );
+    assert_eq!(
+        entries[1].0.content_hash,
+        *blake3::hash(b"second message").as_bytes()
+    );
     // Verify dequeue proofs are valid.
     assert!(crate::queue::verify_dequeue_proof(&entries[0].1));
     assert!(crate::queue::verify_dequeue_proof(&entries[1].1));
@@ -348,7 +361,10 @@ fn relay_rejects_on_exhausted_quota() {
     let result = relay.enqueue(dest, vec![0u8; 100], 10, &payer);
     assert!(result.is_err());
     match result.unwrap_err() {
-        crate::relay::RelayError::QuotaExhausted { available, required } => {
+        crate::relay::RelayError::QuotaExhausted {
+            available,
+            required,
+        } => {
             assert_eq!(available, 100);
             assert!(required > 100);
         }
@@ -365,7 +381,9 @@ fn relay_ttl_expiry_refund() {
     let mut relay = MeteredRelay::new(bank, 1024, 100);
     let dest = [0xBB; 32];
 
-    relay.enqueue(dest, b"will expire".to_vec(), 5, &payer).unwrap();
+    relay
+        .enqueue(dest, b"will expire".to_vec(), 5, &payer)
+        .unwrap();
     assert_eq!(relay.total_buffered(), 1);
 
     // Advance past TTL.
@@ -804,7 +822,10 @@ fn quota_depletion_prevents_enqueue() {
     // Should fail: only 200 available, need 700.
     assert!(result.is_err());
     match result.unwrap_err() {
-        StorageError::QuotaExhausted { available, required } => {
+        StorageError::QuotaExhausted {
+            available,
+            required,
+        } => {
             assert_eq!(available, 200);
             assert_eq!(required, 700);
         }
@@ -922,9 +943,7 @@ fn dedup_capacity_eviction() {
     let mut filter = DeduplicationFilter::new(5);
 
     // Fill to capacity.
-    let hashes: Vec<[u8; 32]> = (0..5u8)
-        .map(|i| *blake3::hash(&[i]).as_bytes())
-        .collect();
+    let hashes: Vec<[u8; 32]> = (0..5u8).map(|i| *blake3::hash(&[i]).as_bytes()).collect();
     for h in &hashes {
         assert!(!filter.is_duplicate(h));
     }
@@ -1006,7 +1025,9 @@ fn idempotent_publish_dedup() {
     let data_hash = *blake3::hash(b"publish_once").as_bytes();
 
     // First publish: New.
-    let result = topic.publish_idempotent(&publisher, data_hash, 100).unwrap();
+    let result = topic
+        .publish_idempotent(&publisher, data_hash, 100)
+        .unwrap();
     match result {
         PublishResult::New { root } => {
             assert_ne!(root, [0u8; 32]);
@@ -1015,7 +1036,9 @@ fn idempotent_publish_dedup() {
     }
 
     // Second publish with same hash: Duplicate.
-    let result2 = topic.publish_idempotent(&publisher, data_hash, 100).unwrap();
+    let result2 = topic
+        .publish_idempotent(&publisher, data_hash, 100)
+        .unwrap();
     match result2 {
         PublishResult::Duplicate { existing_position } => {
             assert_eq!(existing_position, 0);
@@ -1152,8 +1175,8 @@ fn integration_pipeline_step_is_atomic_via_transaction() {
     // Use a transaction to atomically move a message from source to sink.
     let mut tx = QueueTransaction::new();
     tx.assert_root(source_id, source_root_before)
-      .dequeue(source_id)
-      .enqueue(sink_id, entry.clone());
+        .dequeue(source_id)
+        .enqueue(sink_id, entry.clone());
 
     let result = tx.execute(&mut queues).unwrap();
 
@@ -1178,7 +1201,9 @@ fn integration_pipeline_step_is_atomic_via_transaction() {
     queues.get_mut(&source_id).unwrap().enqueue(entry2).unwrap();
 
     let pipeline = Pipeline::new(vec![
-        PipelineStage::Source { queue_id: source_id },
+        PipelineStage::Source {
+            queue_id: source_id,
+        },
         PipelineStage::Filter {
             predicate: FilterPredicate::MinDeposit(100),
         },

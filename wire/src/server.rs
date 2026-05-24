@@ -26,7 +26,8 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_rustls::TlsAcceptor;
 
 use pyana_captp::{
-    CapSession, ExportGcManager, FederationId, HandoffPresentation, SwissTable, validate_handoff,
+    CapSession, CrossFedPipelineBridge, ExportGcManager, FederationId, HandoffPresentation,
+    PipelinedAction, PipelinedMessage, SwissTable, validate_handoff,
 };
 
 use crate::captp_routing;
@@ -926,6 +927,26 @@ pub struct CapTpState {
     /// the receipt-side record. P1.C tightens the AIR membership
     /// constraints to bind the mirror's Merkle root.
     pub pending_captp_turns: Vec<pyana_turn::Turn>,
+    /// Cross-federation pipeline bridge: receives PipelinedMsg from peers
+    /// and queues them against unresolved promises, plus tracks our own
+    /// local promises so we can resolve / break them and notify peers.
+    ///
+    /// Closes audit GAP-4 (PipelinedMsg never delivered): the wire's
+    /// PipelinedMsg handler now records into this bridge, and the bridge's
+    /// outbox is drained by the node tick to push results back as
+    /// `WireMessage::PipelinedMsg` results.
+    pub pipeline_bridge: CrossFedPipelineBridge,
+    /// Handoff replay-nonce registry. Each handoff cert carries a 32-byte
+    /// random nonce; before validation we check this set, and on success
+    /// we insert. Defeats replay of `max_uses = None` certificates.
+    /// (Closes audit GAP-2 / makes `HandoffError::ReplayDetected` actually
+    /// reachable.)
+    pub seen_handoff_nonces: HashSet<[u8; 32]>,
+    /// Outstanding promises owned by *us* (per peer) — keyed by peer
+    /// federation. Used during a TCP disconnect to break any promises the
+    /// peer was supposed to resolve and emit broken-promise notifications.
+    /// (Closes audit GAP-7.)
+    pub outstanding_peer_promises: HashMap<FederationId, Vec<u64>>,
 }
 
 impl CapTpState {
@@ -939,6 +960,9 @@ impl CapTpState {
             current_height: 0,
             next_session_epoch: 1,
             pending_captp_turns: Vec::new(),
+            pipeline_bridge: CrossFedPipelineBridge::new(),
+            seen_handoff_nonces: HashSet::new(),
+            outstanding_peer_promises: HashMap::new(),
         }
     }
 
@@ -948,11 +972,75 @@ impl CapTpState {
         std::mem::take(&mut self.pending_captp_turns)
     }
 
+    /// Drain pipelined messages that were queued against a now-resolved
+    /// local promise. Returns the messages so the caller can dispatch them
+    /// (typically by building a Turn per message and pushing onto
+    /// `pending_captp_turns`).
+    pub fn resolve_local_pipeline_promise(
+        &mut self,
+        promise_id: u64,
+        cell: pyana_types::CellId,
+    ) -> Vec<PipelinedMessage> {
+        self.pipeline_bridge.resolve_local_promise(promise_id, cell)
+    }
+
+    /// Drain the pipeline bridge's outbox of wire messages to peers.
+    /// The transport tick calls this and writes each wire message out.
+    pub fn drain_pipeline_outbox(
+        &mut self,
+    ) -> Vec<(FederationId, pyana_captp::PipelineWireMessage)> {
+        self.pipeline_bridge.drain_outbox()
+    }
+
     /// Allocate a new session epoch (monotonically increasing).
     pub fn allocate_epoch(&mut self) -> u64 {
         let epoch = self.next_session_epoch;
         self.next_session_epoch += 1;
         epoch
+    }
+
+    /// Mark a peer's session as torn down (e.g., on TCP disconnect).
+    ///
+    /// Breaks any outstanding promises associated with the peer and emits
+    /// `PromiseBroken` notifications through the pipeline bridge. The
+    /// session itself is removed so the next CapHello allocates a fresh
+    /// epoch. (Closes audit GAP-7.)
+    pub fn on_peer_disconnect(
+        &mut self,
+        peer: FederationId,
+    ) -> Vec<pyana_captp::BrokenPromiseNotification> {
+        // Mark any associated CapSession promises as broken.
+        let mut notifications = Vec::new();
+        if let Some(session) = self.sessions.get_mut(&peer) {
+            // Snapshot pending promise IDs.
+            let pending: Vec<u64> = session
+                .promises
+                .iter()
+                .filter_map(|(id, st)| {
+                    if matches!(st, pyana_captp::session::PromiseState::Pending) {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for pid in pending {
+                let _ = session.break_promise(pid, "peer disconnected".to_string());
+            }
+        }
+
+        // Cascade breakage in the pipeline bridge for any promises this
+        // peer was supposed to resolve.
+        if let Some(promise_ids) = self.outstanding_peer_promises.remove(&peer) {
+            for pid in promise_ids {
+                let notifs = self
+                    .pipeline_bridge
+                    .break_local_promise(pid, "peer disconnected".to_string());
+                notifications.extend(notifs);
+            }
+        }
+
+        notifications
     }
 }
 
@@ -1042,7 +1130,33 @@ pub struct SiloServer {
     ban_list: SharedBanList,
     /// Graceful shutdown coordinator.
     shutdown: Arc<ShutdownCoordinator>,
+    /// Optional dispatcher for CapTP-routed pending turns (Seam 3 keystone).
+    /// When set, the server spawns a background task in `run()` that polls
+    /// `captp_state.drain_pending_captp_turns()` on an interval and forwards
+    /// each drained Turn to the dispatcher.
+    captp_turn_dispatcher: Option<CapTpTurnDispatcher>,
+    /// Interval between drain polls (default 100ms).
+    captp_drain_interval: std::time::Duration,
 }
+
+/// Type alias for a CapTP-routed Turn dispatcher.
+///
+/// The Seam 3 keystone: when the wire layer accepts a CapTP delivery, it
+/// constructs a Turn carrying the corresponding `Effect::EnlivenRef` /
+/// `DropRef` / `ExportSturdyRef` / `ValidateHandoff`. Those Turns sit in
+/// `CapTpState::pending_captp_turns` until the wire server's drain task
+/// pulls them out and forwards each to this dispatcher. The dispatcher
+/// is typically a thin wrapper around a node-side `TurnExecutor` holding
+/// the ledger. The dispatcher MUST handle each turn (or report an error);
+/// turns are not redelivered.
+pub type CapTpTurnDispatcher = Arc<
+    dyn Fn(
+            pyana_turn::Turn,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Events logged by the server for diagnostics.
 #[derive(Clone, Debug)]
@@ -1107,6 +1221,8 @@ impl SiloServer {
             auth_config: AuthConfig::default(),
             ban_list: crate::auth::new_shared_ban_list(),
             shutdown: Arc::new(ShutdownCoordinator::new(node_id, grace_period)),
+            captp_turn_dispatcher: None,
+            captp_drain_interval: std::time::Duration::from_millis(100),
         }
     }
 
@@ -1139,6 +1255,8 @@ impl SiloServer {
             auth_config: AuthConfig::default(),
             ban_list: crate::auth::new_shared_ban_list(),
             shutdown: Arc::new(ShutdownCoordinator::new(node_id, grace_period)),
+            captp_turn_dispatcher: None,
+            captp_drain_interval: std::time::Duration::from_millis(100),
         }
     }
 
@@ -1224,6 +1342,55 @@ impl SiloServer {
         &self.captp_state
     }
 
+    /// Configure the dispatcher for CapTP-routed pending turns (Seam 3).
+    ///
+    /// Closes the receipt-mirror loop: when set, the server spawns a
+    /// background task in `run()` that periodically drains
+    /// `captp_state.pending_captp_turns` and forwards each Turn to the
+    /// dispatcher. Typically the dispatcher is a closure wrapping a
+    /// node-side `TurnExecutor::execute` call.
+    pub fn with_captp_turn_dispatcher(mut self, dispatcher: CapTpTurnDispatcher) -> Self {
+        self.captp_turn_dispatcher = Some(dispatcher);
+        self
+    }
+
+    /// Override the drain poll interval (default 100ms).
+    pub fn with_captp_drain_interval(mut self, interval: std::time::Duration) -> Self {
+        self.captp_drain_interval = interval;
+        self
+    }
+
+    /// Spawn the background CapTP drain task. Returns a `JoinHandle` so
+    /// callers can await its completion. The task exits when the shutdown
+    /// coordinator signals shutdown. Public so tests / external runtimes
+    /// can drive the loop without calling `run`.
+    pub fn spawn_captp_drain(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let dispatcher = self.captp_turn_dispatcher.as_ref()?.clone();
+        let captp_state = Arc::clone(&self.captp_state);
+        let interval = self.captp_drain_interval;
+        let shutdown = Arc::clone(&self.shutdown);
+        let handle = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                if shutdown.is_shutting_down() {
+                    return;
+                }
+                ticker.tick().await;
+                let drained = {
+                    let mut state = captp_state.write().await;
+                    state.drain_pending_captp_turns()
+                };
+                for turn in drained {
+                    if let Err(e) = dispatcher(turn).await {
+                        eprintln!("pyana-wire: captp turn dispatch failed: {e}");
+                    }
+                }
+            }
+        });
+        Some(handle)
+    }
+
     /// Get the listening address.
     pub fn addr(&self) -> SocketAddr {
         self.addr
@@ -1274,6 +1441,9 @@ impl SiloServer {
         // Update addr to reflect the actual bound address (useful for port 0)
         let _actual_addr = listener.local_addr()?;
 
+        // Seam 3: spawn the CapTP-turn drain task if a dispatcher is configured.
+        let _drain_handle = self.spawn_captp_drain();
+
         self.accept_loop(listener).await
     }
 
@@ -1288,6 +1458,9 @@ impl SiloServer {
         let listener = TcpListener::bind(self.addr).await?;
         let actual_addr = listener.local_addr()?;
         let _ = addr_tx.send(actual_addr);
+
+        // Seam 3: spawn the CapTP-turn drain task if a dispatcher is configured.
+        let _drain_handle = self.spawn_captp_drain();
 
         self.accept_loop(listener).await
     }
@@ -1696,6 +1869,15 @@ impl SiloServer {
         let mut metrics =
             ConnectionMetrics::new(conn_auth.role.clone(), config.hardening.new_rate_limiter());
 
+        // --- CapTP peer tracking (for disconnect-driven break_promise) ---
+        //
+        // When the peer issues `CapHello` we record their federation id so
+        // that if the read loop exits (TCP error, codec error, heartbeat
+        // timeout, shutdown) we can call `CapTpState::on_peer_disconnect`
+        // and break any outstanding promises associated with the peer.
+        // Closes audit GAP-7 (disconnect → broken-promise cascade).
+        let mut captp_peer_fed: Option<FederationId> = None;
+
         // --- Shutdown receiver ---
         let mut shutdown_rx = shutdown.subscribe();
 
@@ -1835,6 +2017,7 @@ impl SiloServer {
                     rate_limiter
                         .update_limit(auth_config.rate_limits.limit_for_role(&conn_auth.role));
                 }
+                captp_peer_fed = Some(FederationId(*group_id));
             }
 
             let response = Self::process_message(
@@ -1862,6 +2045,25 @@ impl SiloServer {
         }
 
         // Connection cleanup
+        //
+        // If we had a CapTP session with this peer, break any outstanding
+        // promises and emit broken-promise notifications via the pipeline
+        // bridge. The notifications surface in `captp.pipeline_bridge.outbox`
+        // (or via direct propagation) so peers awaiting results learn the
+        // promise failed instead of waiting forever. (Closes audit GAP-7.)
+        if let Some(peer) = captp_peer_fed {
+            let mut captp = captp_state.write().await;
+            let notifications = captp.on_peer_disconnect(peer);
+            if !notifications.is_empty() {
+                event_log.lock().await.push(ServerEvent::ConnectionError {
+                    error: format!(
+                        "captp disconnect: broke {} promise(s) for peer {peer:?}",
+                        notifications.len()
+                    ),
+                    remote: remote_addr,
+                });
+            }
+        }
         shutdown.unregister_connection();
     }
 
@@ -2298,9 +2500,7 @@ impl SiloServer {
                     // we use the cell_id bytes as a deterministic stub.
                     // The full handshake fills in the swiss properly.
                     let effect = captp_routing::export_sturdy_ref_effect(*export_bytes, cell_id);
-                    let turn = captp_routing::build_captp_turn(
-                        agent_cell, cell_id, effect, 0,
-                    );
+                    let turn = captp_routing::build_captp_turn(agent_cell, cell_id, effect, 0);
                     captp.pending_captp_turns.push(turn);
                 }
 
@@ -2320,6 +2520,12 @@ impl SiloServer {
 
                 // Remove the session — all exports/imports for this peer are invalidated.
                 captp.sessions.remove(&fed_id);
+
+                // Break any outstanding promises so callers awaiting results
+                // see the breakage immediately rather than waiting for a
+                // TCP-level disconnect. (Closes audit GAP-7 for the
+                // graceful-shutdown path.)
+                let _ = captp.on_peer_disconnect(fed_id);
 
                 // No response needed for goodbye (it's a notification).
                 None
@@ -2359,12 +2565,8 @@ impl SiloServer {
                         let bearer_cell = entry.cell_id;
                         // Stage 7 / P1.B: route the EnlivenRef as a Turn.
                         let effect = captp_routing::enliven_ref_effect(uri.swiss, bearer_cell);
-                        let turn = captp_routing::build_captp_turn(
-                            agent_cell,
-                            bearer_cell,
-                            effect,
-                            0,
-                        );
+                        let turn =
+                            captp_routing::build_captp_turn(agent_cell, bearer_cell, effect, 0);
                         captp.pending_captp_turns.push(turn);
                         Some(WireMessage::EnlivenResponse {
                             success: true,
@@ -2441,9 +2643,7 @@ impl SiloServer {
                         // message identifies).
                         let agent_cell = pyana_types::CellId(config.node_id);
                         let effect = captp_routing::drop_ref_effect(cell_id);
-                        let turn = captp_routing::build_captp_turn(
-                            agent_cell, cell, effect, 0,
-                        );
+                        let turn = captp_routing::build_captp_turn(agent_cell, cell, effect, 0);
                         captp.pending_captp_turns.push(turn);
                         None // Silent success (GC is fire-and-forget).
                     }
@@ -2464,12 +2664,8 @@ impl SiloServer {
                 sender_federation,
                 session_epoch: msg_epoch,
             } => {
-                // For now, acknowledge receipt. Full pipeline delivery requires
-                // integration with the turn executor, which is out of scope for
-                // this initial wire-layer integration. The message is queued in
-                // the session's pipeline registry.
                 let fed_id = FederationId(sender_federation);
-                let captp = captp_state.read().await;
+                let mut captp = captp_state.write().await;
 
                 let current_epoch = match captp.sessions.get(&fed_id) {
                     Some(session) => session.epoch,
@@ -2493,22 +2689,44 @@ impl SiloServer {
                     });
                 }
 
-                // Silently accept and queue — pipeline delivery is async.
-                // In a full implementation, this would be dispatched to the
-                // CrossFedPipelineBridge for eventual delivery.
-                let _ = (
-                    target_promise_id,
+                // Dispatch into the CrossFedPipelineBridge. The bridge
+                // queues the message against the target promise (creating
+                // it implicitly if it has not yet been seen) and the node
+                // tick will drain it once the promise resolves.
+                let action = PipelinedAction {
                     method,
                     args,
                     authorization,
+                };
+                if let Err(e) = captp.pipeline_bridge.on_pipeline_message(
+                    fed_id,
+                    target_promise_id,
+                    action,
                     result_promise_id,
-                );
+                ) {
+                    return Some(WireMessage::Error {
+                        code: crate::message::error_codes::INTERNAL_ERROR,
+                        message: format!("pipeline dispatch failed: {e}"),
+                    });
+                }
+
+                // Track the result promise so a later disconnect can
+                // cascade breakage.
+                if let Some(rp) = result_promise_id {
+                    captp
+                        .outstanding_peer_promises
+                        .entry(fed_id)
+                        .or_default()
+                        .push(rp);
+                }
+
                 None
             }
 
             WireMessage::PresentHandoff {
                 presentation_bytes,
                 introducer_pk,
+                delivery_signature,
             } => {
                 // Deserialize the presentation.
                 let presentation: HandoffPresentation =
@@ -2527,6 +2745,19 @@ impl SiloServer {
                 let current_height = captp.current_height;
                 let known_feds = captp.known_federations.clone();
 
+                // Replay defense: reject if we have already seen this
+                // certificate's nonce, regardless of `max_uses`. The
+                // swiss-table's use_count still applies but is too coarse
+                // for `max_uses = None` certs that should be presented
+                // exactly once after issuance.
+                let cert_nonce = presentation.certificate.nonce;
+                if captp.seen_handoff_nonces.contains(&cert_nonce) {
+                    return Some(WireMessage::Error {
+                        code: crate::message::error_codes::HANDOFF_FAILED,
+                        message: pyana_captp::HandoffError::ReplayDetected.to_string(),
+                    });
+                }
+
                 // Validate the handoff.
                 match validate_handoff(
                     &presentation,
@@ -2543,20 +2774,41 @@ impl SiloServer {
                             pyana_cell::AuthRequired::Either => 3u8,
                             pyana_cell::AuthRequired::Impossible => 4u8,
                         };
-                        // Stage 7 / P1.B: route the ValidateHandoff as a
-                        // Turn. The cert_hash is BLAKE3 over the
-                        // presentation bytes (consume-on-use binding).
+                        // Stage 7 / P1.B + Seam 3 keystone: route the ValidateHandoff
+                        // as a Turn. The cert_hash is BLAKE3 over the presentation
+                        // bytes (consume-on-use binding).
                         let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
                         let agent_cell = pyana_types::CellId(config.node_id);
                         let target_cell = acceptance.cell_id;
                         let effect = captp_routing::validate_handoff_effect(cert_hash);
-                        let turn = captp_routing::build_captp_turn(
-                            agent_cell,
-                            target_cell,
-                            effect,
-                            0,
-                        );
+
+                        let turn = if let Some(sig) = delivery_signature {
+                            // Cert-backed CapTpDelivered authorization closes the
+                            // receipt-mirror loop. The executor verifies cert +
+                            // sender_signature against the canonical signing message.
+                            captp_routing::build_captp_turn_delivered_from_parts(
+                                target_cell,
+                                target_cell,
+                                effect,
+                                0,
+                                presentation.certificate.clone(),
+                                introducer_pk,
+                                presentation.certificate.recipient_pk,
+                                sig.0,
+                            )
+                        } else {
+                            // Legacy: no delivery signature → Unchecked. Executor
+                            // will reject the resulting Turn, but the federation
+                            // mirror still mutates as before. The caller should
+                            // start sending a delivery_signature to enable the
+                            // on-chain receipt mirror.
+                            captp_routing::build_captp_turn(agent_cell, target_cell, effect, 0)
+                        };
                         captp.pending_captp_turns.push(turn);
+                        // Mark the nonce as seen so a replay of this exact
+                        // certificate is rejected even if `max_uses` was
+                        // left unbounded.
+                        captp.seen_handoff_nonces.insert(cert_nonce);
                         Some(WireMessage::HandoffAccepted {
                             routing_token: acceptance.routing_token,
                             cell_id: acceptance.cell_id.0,

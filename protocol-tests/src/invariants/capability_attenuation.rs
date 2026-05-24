@@ -32,8 +32,7 @@ pub struct CapabilityAttenuation;
 
 impl Invariant for CapabilityAttenuation {
     const NAME: &'static str = "capability_attenuation";
-    const DESCRIPTION: &'static str =
-        "granted capability permissions are always narrower-or-equal to the granter's held permissions";
+    const DESCRIPTION: &'static str = "granted capability permissions are always narrower-or-equal to the granter's held permissions";
 }
 
 proptest! {

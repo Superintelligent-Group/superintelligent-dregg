@@ -359,11 +359,7 @@ impl KimchiFoldCircuit {
         // ====================================================================
         if let Some(first_root_match) = root_match_rows.first() {
             // PI(old_root).w[0]  ↔  root_match[0].w[1]
-            super::link_wires(
-                &mut gates,
-                (pi_old_root_row, 0),
-                (*first_root_match, 1),
-            );
+            super::link_wires(&mut gates, (pi_old_root_row, 0), (*first_root_match, 1));
         }
         if let Some(out_row) = last_transition_output_row {
             // last_gadget_output.w[0]  ↔  final_binding.w[0]

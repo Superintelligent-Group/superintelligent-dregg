@@ -408,9 +408,7 @@ impl AppState {
 fn make_escrow_authorizer() -> Box<dyn Authorizer> {
     let secret = match std::env::var("PYANA_COMPUTE_ESCROW_KEY") {
         Ok(hex) => parse_hex_32(&hex).unwrap_or_else(|| {
-            eprintln!(
-                "WARNING: PYANA_COMPUTE_ESCROW_KEY is not valid 32-byte hex; using dev key"
-            );
+            eprintln!("WARNING: PYANA_COMPUTE_ESCROW_KEY is not valid 32-byte hex; using dev key");
             dev_key_bytes()
         }),
         Err(_) => {

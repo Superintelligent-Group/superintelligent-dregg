@@ -20,9 +20,7 @@ use std::collections::HashMap;
 
 use proptest::prelude::*;
 use pyana_cell::CellId;
-use pyana_turn::{
-    Action, Authorization, CallForest, DelegationMode, Effect, turn::Turn,
-};
+use pyana_turn::{Action, Authorization, CallForest, DelegationMode, Effect, turn::Turn};
 
 /// A single transfer operation described abstractly, before being projected
 /// into a `Turn`.

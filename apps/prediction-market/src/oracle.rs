@@ -91,8 +91,8 @@ impl OracleReport {
         if self.signature == [0u8; 64] {
             return Err(OracleError::UnsignedReport);
         }
-        let vk = VerifyingKey::from_bytes(&self.oracle_pubkey)
-            .map_err(|_| OracleError::MalformedKey)?;
+        let vk =
+            VerifyingKey::from_bytes(&self.oracle_pubkey).map_err(|_| OracleError::MalformedKey)?;
         let sig = Signature::from_bytes(&self.signature);
         vk.verify(&self.entry.signing_bytes(self.position), &sig)
             .map_err(|_| OracleError::InvalidSignature)
@@ -264,7 +264,11 @@ pub fn pubkey_of(signing_key_bytes: &[u8; 32]) -> [u8; 32] {
 
 /// Build a report that intentionally has an empty signature (for adversarial
 /// tests that the server rejects it).
-pub fn unsigned_report_for_test(entry: OracleEntry, position: u64, claimed_pubkey: [u8; 32]) -> OracleReport {
+pub fn unsigned_report_for_test(
+    entry: OracleEntry,
+    position: u64,
+    claimed_pubkey: [u8; 32],
+) -> OracleReport {
     OracleReport {
         entry,
         position,

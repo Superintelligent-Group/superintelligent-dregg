@@ -51,6 +51,8 @@ fn mock_attested_root(fed_name: &str, height: u64) -> AttestedRoot {
         nullifier_set_root: None,
         height,
         timestamp: 1700000000 + height as i64,
+        blocklace_block_id: None,
+        finality_round: None,
         quorum_signatures: vec![],
         threshold_qc: None,
         threshold: 0,

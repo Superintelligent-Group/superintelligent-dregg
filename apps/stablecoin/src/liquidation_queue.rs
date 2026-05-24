@@ -140,7 +140,9 @@ impl LiquidationQueue {
     ) -> Result<(), LiquidationQueueError> {
         // Application-layer gate: must be genuinely undercollateralized.
         if !position.is_liquidatable(oracle_price) {
-            return Err(LiquidationQueueError::NotLiquidatable { price: oracle_price });
+            return Err(LiquidationQueueError::NotLiquidatable {
+                price: oracle_price,
+            });
         }
 
         let mut pending = self.pending.lock().await;
@@ -178,10 +180,11 @@ impl LiquidationQueue {
         };
 
         let mut q = self.inner.lock().await;
-        q.enqueue_validated(entry, &ctx)
-            .map_err(|e| LiquidationQueueError::ConstraintViolation {
+        q.enqueue_validated(entry, &ctx).map_err(|e| {
+            LiquidationQueueError::ConstraintViolation {
                 detail: format!("{e:?}"),
-            })?;
+            }
+        })?;
 
         pending.push(PendingEntry {
             position_id: position.id,
@@ -284,8 +287,7 @@ mod tests {
     /// At price=1200: ratio = 100*1200*10000/200000 = 6000 bps = 60% < 150%.
     fn undercollateralized_position(height: u64) -> CollateralPosition {
         let mut pos =
-            CollateralPosition::open(alice(), 100, ETH_ASSET_TYPE, MIN_RATIO_BPS, height)
-                .unwrap();
+            CollateralPosition::open(alice(), 100, ETH_ASSET_TYPE, MIN_RATIO_BPS, height).unwrap();
         pos.debt_amount = 200_000;
         pos
     }
@@ -294,8 +296,7 @@ mod tests {
     /// At price=2000: ratio = 1000*2000*10000/100000 = 200000 bps = well over 150%.
     fn healthy_position(height: u64) -> CollateralPosition {
         let mut pos =
-            CollateralPosition::open(alice(), 1000, ETH_ASSET_TYPE, MIN_RATIO_BPS, height)
-                .unwrap();
+            CollateralPosition::open(alice(), 1000, ETH_ASSET_TYPE, MIN_RATIO_BPS, height).unwrap();
         pos.debt_amount = 100_000;
         pos
     }
@@ -306,7 +307,9 @@ mod tests {
         let queue = LiquidationQueue::new();
         let pos = healthy_position(100);
         // At price=2000, ratio is ~200% — well above 150% threshold.
-        let result = queue.submit(&pos, 2000, [0xAA; 32], LIQUIDATION_QUEUE_MIN_DEPOSIT).await;
+        let result = queue
+            .submit(&pos, 2000, [0xAA; 32], LIQUIDATION_QUEUE_MIN_DEPOSIT)
+            .await;
         assert!(
             matches!(result, Err(LiquidationQueueError::NotLiquidatable { .. })),
             "expected NotLiquidatable, got {result:?}"
@@ -321,7 +324,9 @@ mod tests {
         let pos = undercollateralized_position(100);
         // At price=1200: ratio = 60% < 150%
         assert!(pos.is_liquidatable(1200));
-        let result = queue.submit(&pos, 1200, [0xBB; 32], LIQUIDATION_QUEUE_MIN_DEPOSIT).await;
+        let result = queue
+            .submit(&pos, 1200, [0xBB; 32], LIQUIDATION_QUEUE_MIN_DEPOSIT)
+            .await;
         assert!(result.is_ok(), "expected Ok, got {result:?}");
         assert_eq!(queue.len().await, 1);
     }
@@ -379,9 +384,15 @@ mod tests {
 
         // Must be in ascending health_factor_bps order (most-at-risk first).
         // C: 2400, A: 6000, B: 7500
-        assert_eq!(candidates[0].position_id, pos_c.id, "C should be first (most at risk)");
+        assert_eq!(
+            candidates[0].position_id, pos_c.id,
+            "C should be first (most at risk)"
+        );
         assert_eq!(candidates[1].position_id, pos_a.id, "A should be second");
-        assert_eq!(candidates[2].position_id, pos_b.id, "B should be last (least at risk)");
+        assert_eq!(
+            candidates[2].position_id, pos_b.id,
+            "B should be last (least at risk)"
+        );
 
         // Health factors are ascending.
         assert!(candidates[0].health_factor_bps <= candidates[1].health_factor_bps);
@@ -414,7 +425,10 @@ mod tests {
             .submit(&pos, 1200, [0xBB; 32], LIQUIDATION_QUEUE_MIN_DEPOSIT - 1)
             .await;
         assert!(
-            matches!(result, Err(LiquidationQueueError::ConstraintViolation { .. })),
+            matches!(
+                result,
+                Err(LiquidationQueueError::ConstraintViolation { .. })
+            ),
             "expected ConstraintViolation for insufficient deposit, got {result:?}"
         );
     }

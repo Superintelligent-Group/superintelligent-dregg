@@ -1574,7 +1574,9 @@ mod tests {
 
     #[test]
     fn test_blinded_queue_double_consume_rejected() {
-        use crate::blinded_queue::{BlindedOrderError, OrderBlindedQueue, compute_blinded_order_commitment};
+        use crate::blinded_queue::{
+            BlindedOrderError, OrderBlindedQueue, compute_blinded_order_commitment,
+        };
 
         let alice = make_cell(1);
         let order = Order::new(
@@ -1610,7 +1612,9 @@ mod tests {
 
     #[test]
     fn test_blinded_queue_wrong_commitment_rejected() {
-        use crate::blinded_queue::{BlindedOrderError, OrderBlindedQueue, compute_blinded_order_commitment};
+        use crate::blinded_queue::{
+            BlindedOrderError, OrderBlindedQueue, compute_blinded_order_commitment,
+        };
 
         let alice = make_cell(1);
         let order = Order::new(
@@ -1691,8 +1695,8 @@ mod tests {
     fn test_ring_trade_settle_leg_fills_order() {
         use crate::ring_trade::{OrderbookRingParticipant, base_asset_id};
         use pyana_app_framework::ring_trade::RingTradeParticipant;
-        use pyana_intent::CommitmentId;
         use pyana_app_framework::ring_trade::Settlement;
+        use pyana_intent::CommitmentId;
 
         let mut book = OrderBook::new(eth_usdc_pair());
         let alice = make_cell(1);
@@ -1734,8 +1738,8 @@ mod tests {
     fn test_ring_trade_rollback_leg_restores_order() {
         use crate::ring_trade::{OrderbookRingParticipant, base_asset_id};
         use pyana_app_framework::ring_trade::RingTradeParticipant;
-        use pyana_intent::CommitmentId;
         use pyana_app_framework::ring_trade::Settlement;
+        use pyana_intent::CommitmentId;
 
         let mut book = OrderBook::new(eth_usdc_pair());
         let alice = make_cell(1);

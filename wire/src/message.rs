@@ -333,6 +333,17 @@ pub enum WireMessage {
         presentation_bytes: Vec<u8>,
         /// The introducer's public key (for signature verification).
         introducer_pk: [u8; 32],
+        /// Seam 3 keystone: recipient's signature over the canonical CapTP-delivery
+        /// signing message (see `pyana_turn::action::Authorization::captp_delivered_signing_message`).
+        /// Binds this PresentHandoff to a specific Turn (cert.nonce ↔ target_cell ↔
+        /// ValidateHandoff effect). The target federation puts this signature into the
+        /// constructed Turn's `Authorization::CapTpDelivered`, closing the receipt-mirror loop.
+        ///
+        /// Backward compat: legacy senders may omit this; the target then falls back
+        /// to building the Turn with `Authorization::Unchecked` (executor rejection,
+        /// but the federation mirror still mutates as before).
+        #[serde(default)]
+        delivery_signature: Option<Signature>,
     },
 
     /// Response to a successful handoff presentation.
@@ -683,6 +694,7 @@ mod tests {
             WireMessage::PresentHandoff {
                 presentation_bytes: vec![0x11; 200],
                 introducer_pk: [0x22; 32],
+                delivery_signature: Some(Signature([0x33; 64])),
             },
             WireMessage::HandoffAccepted {
                 routing_token: [0x33; 32],

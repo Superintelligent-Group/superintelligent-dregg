@@ -298,7 +298,8 @@ fn verify_owner_signature(
     msg.extend_from_slice(domain);
     msg.extend_from_slice(payload);
 
-    vk.verify(&msg, &sig).map_err(|_| "signature does not verify")
+    vk.verify(&msg, &sig)
+        .map_err(|_| "signature does not verify")
 }
 
 fn hex_decode_var(s: &str) -> Result<Vec<u8>, ()> {
@@ -359,7 +360,12 @@ async fn handle_subscribe(
     let mut payload = Vec::with_capacity(32 + nonce_bytes.len());
     payload.extend_from_slice(&owner);
     payload.extend_from_slice(&nonce_bytes);
-    if let Err(e) = verify_owner_signature(&owner, &req.signature, b"pyana-relay-subscribe-v1", &payload) {
+    if let Err(e) = verify_owner_signature(
+        &owner,
+        &req.signature,
+        b"pyana-relay-subscribe-v1",
+        &payload,
+    ) {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -446,7 +452,12 @@ async fn handle_unsubscribe(
     let mut payload = Vec::with_capacity(32 + nonce_bytes.len());
     payload.extend_from_slice(&owner);
     payload.extend_from_slice(&nonce_bytes);
-    if let Err(e) = verify_owner_signature(&owner, &req.signature, b"pyana-relay-unsubscribe-v1", &payload) {
+    if let Err(e) = verify_owner_signature(
+        &owner,
+        &req.signature,
+        b"pyana-relay-unsubscribe-v1",
+        &payload,
+    ) {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -567,7 +578,9 @@ async fn handle_drain(
     payload.extend_from_slice(&owner);
     payload.extend_from_slice(&nonce_bytes);
     payload.extend_from_slice(&(max as u64).to_le_bytes());
-    if let Err(e) = verify_owner_signature(&owner, &query.signature, b"pyana-relay-drain-v1", &payload) {
+    if let Err(e) =
+        verify_owner_signature(&owner, &query.signature, b"pyana-relay-drain-v1", &payload)
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
@@ -823,14 +836,10 @@ mod tests {
         let (_sk, pk) = make_key(1);
         let payload = b"\x00\x01\x02";
         // Empty signature.
-        assert!(
-            verify_owner_signature(&pk, "", b"pyana-relay-drain-v1", payload).is_err()
-        );
+        assert!(verify_owner_signature(&pk, "", b"pyana-relay-drain-v1", payload).is_err());
         // Garbage signature.
         let bad = "ff".repeat(64);
-        assert!(
-            verify_owner_signature(&pk, &bad, b"pyana-relay-drain-v1", payload).is_err()
-        );
+        assert!(verify_owner_signature(&pk, &bad, b"pyana-relay-drain-v1", payload).is_err());
     }
 
     /// F-P1-1: a drain signature by another key (key A) but claiming to be
@@ -891,11 +900,15 @@ mod tests {
         let sig_hex: String = sig.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
 
         // Verifies under subscribe domain.
-        assert!(verify_owner_signature(&pk, &sig_hex, b"pyana-relay-subscribe-v1", payload).is_ok());
+        assert!(
+            verify_owner_signature(&pk, &sig_hex, b"pyana-relay-subscribe-v1", payload).is_ok()
+        );
         // Replayed as drain: rejected.
         assert!(verify_owner_signature(&pk, &sig_hex, b"pyana-relay-drain-v1", payload).is_err());
         // Replayed as unsubscribe: rejected.
-        assert!(verify_owner_signature(&pk, &sig_hex, b"pyana-relay-unsubscribe-v1", payload).is_err());
+        assert!(
+            verify_owner_signature(&pk, &sig_hex, b"pyana-relay-unsubscribe-v1", payload).is_err()
+        );
     }
 
     /// F-P1-1: the request structs require nonce + signature fields. Verify

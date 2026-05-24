@@ -28,8 +28,23 @@ use pyana_captp::sturdy::SwissTable;
 use pyana_captp::uri::PyanaUri;
 use pyana_cell::AuthRequired;
 use pyana_types::CellId;
+use pyana_wire::message::WireMessage;
 
 use crate::error::SdkError;
+
+// =============================================================================
+// Wire outbox
+// =============================================================================
+
+/// A wire-level outbox shared between the `CapTpClient` and every `LiveRef` it
+/// vends. When CapTP operations (`send`, `pipeline_to`, `Drop`, `release`,
+/// `pipeline`) need to escape the local process they push a `WireMessage` here.
+/// The transport layer drains the outbox via [`CapTpClient::drain_wire_outbox`]
+/// and writes the messages to the appropriate peers.
+///
+/// This is the wiring point that closes audit GAP-4 (PipelinedMsg never
+/// dispatched) and GAP-9 (DropMessage produced-then-discarded).
+pub type WireOutbox = Arc<Mutex<Vec<WireMessage>>>;
 
 // =============================================================================
 // Configuration
@@ -108,6 +123,17 @@ pub struct LiveRef {
     gc_manager: Arc<Mutex<ImportGcManager>>,
     /// Shared pipeline registry for sending pipelined actions.
     pipeline_registry: Arc<Mutex<PipelineRegistry>>,
+    /// Shared wire outbox — pushed to on send/pipeline/drop.
+    outbox: WireOutbox,
+    /// The federation identity that the local node speaks as. Stamped onto
+    /// every outgoing `PipelinedMsg` / `DropRemoteRef` as `sender_federation`
+    /// / `from_strand` so the receiving server can attribute the message to
+    /// the correct `CapSession`.
+    local_federation: GroupId,
+    /// The session epoch we last observed with the remote. Stamped onto
+    /// outgoing wire messages so the receiver can reject stale-epoch
+    /// chatter when sessions are reset.
+    session_epoch: u64,
     /// Whether this reference has already been dropped (to prevent double-drop).
     dropped: bool,
 }
@@ -128,54 +154,121 @@ impl LiveRef {
         &self.permissions
     }
 
-    /// Allocate an [`EventualRef`] for an action to-be-sent to the remote
-    /// cell.
+    /// Send an action to the remote cell (fire-and-forget unless the caller
+    /// observes the returned promise via the registry).
     ///
-    /// **Current status (audit finding C-2):** this method allocates a
-    /// promise id in the local pipeline registry but does *not* yet
-    /// enqueue the `action` argument for wire delivery. The
-    /// argument is reserved in the signature so this becomes a no-op
-    /// rename once the wire-delivery path is wired through; until then,
-    /// callers that need actual remote dispatch must use the
-    /// `CapTpClient::pipeline` / `pipeline_to` methods (which route
-    /// through the pipeline registry) and/or submit a real `Turn` via the
-    /// node HTTP path.
-    pub fn send(&self, _action: PipelinedAction) -> EventualRef {
-        let promise_id = {
+    /// Allocates a fresh promise id in the local pipeline registry, records
+    /// a pending entry against it, and enqueues a [`WireMessage::PipelinedMsg`]
+    /// in the shared wire outbox. The transport layer drains the outbox via
+    /// [`CapTpClient::drain_wire_outbox`] and writes the message to the
+    /// owning federation. The receiving server queues the message in its
+    /// `CrossFedPipelineBridge` until the target promise resolves.
+    ///
+    /// Closes audit GAP-4 (PipelinedMsg never dispatched) and the SDK side of
+    /// C-2 (LiveRef::send dropped its action).
+    pub fn send(&self, action: PipelinedAction) -> EventualRef {
+        let result_promise_id = {
             let mut registry = self.pipeline_registry.lock().expect("pipeline lock");
             registry.create_promise()
         };
+
+        // Use the remote cell_id bytes as the implicit target_promise_id.
+        // The receiving server resolves `target_promise_id` against the
+        // local cell_id space when the promise is the bearer cell itself.
+        // This is the "fire-and-forget to a known cell" shape.
+        let target_promise_id = bytes_to_promise_id(&self.cell_id.0);
+
+        let msg = WireMessage::PipelinedMsg {
+            target_promise_id,
+            method: action.method.clone(),
+            args: action.args.clone(),
+            authorization: action.authorization.clone(),
+            result_promise_id: Some(result_promise_id),
+            sender_federation: self.local_federation.0,
+            session_epoch: self.session_epoch,
+        };
+        self.outbox.lock().expect("outbox lock").push(msg);
+
         EventualRef {
-            promise_id,
+            promise_id: result_promise_id,
             target_federation: self.federation_id,
         }
     }
 
-    /// Pipeline an action onto this reference.
+    /// Pipeline an action onto this reference, returning an `EventualRef` for
+    /// the action's result.
     ///
-    /// **Current status:** identical to [`send`](Self::send) — the
-    /// remote-delivery seam is not yet implemented, so both methods
-    /// allocate a fresh promise without enqueuing the action. The
-    /// distinction is preserved at the type level because pipelined
-    /// chains will eventually want a different routing decision
-    /// (resolve-and-forward vs. resolve-and-collect).
+    /// Distinct from [`send`](Self::send) in that pipelined messages are
+    /// expected to participate in further chaining: the local registry queues
+    /// the action against the *bearer cell promise* (not the bearer cell
+    /// directly), so a subsequent `pipeline_to` can target the result.
+    /// Mechanically: allocate a result promise, queue a `PipelinedMessage` in
+    /// the local registry so cascading breakage works, and emit the wire
+    /// message.
     pub fn pipeline(&self, action: PipelinedAction) -> EventualRef {
-        // For pipelining, we create a promise and the action targets the cell.
-        // The difference from send is semantic: pipeline signals intent to chain.
-        self.send(action)
+        let (target_promise_id, result_promise_id) = {
+            let mut registry = self.pipeline_registry.lock().expect("pipeline lock");
+            // Allocate a promise that represents the bearer cell on the
+            // local side and immediately resolve it to the live cell so
+            // pipelined chains can target it.
+            let bearer_promise = registry.create_promise();
+            let _ = registry.resolve_promise(bearer_promise, self.cell_id);
+            let result_promise = registry.create_promise();
+            // Queue locally so break_promise cascades correctly if the
+            // result is later broken on the wire.
+            let msg = pyana_captp::pipeline::PipelinedMessage {
+                target_promise_id: bearer_promise,
+                action: action.clone(),
+                result_promise_id: Some(result_promise),
+                sender: self.local_federation,
+            };
+            let _ = registry.pipeline_message(msg);
+            (bearer_promise, result_promise)
+        };
+
+        let wire = WireMessage::PipelinedMsg {
+            target_promise_id,
+            method: action.method,
+            args: action.args,
+            authorization: action.authorization,
+            result_promise_id: Some(result_promise_id),
+            sender_federation: self.local_federation.0,
+            session_epoch: self.session_epoch,
+        };
+        self.outbox.lock().expect("outbox lock").push(wire);
+
+        EventualRef {
+            promise_id: result_promise_id,
+            target_federation: self.federation_id,
+        }
     }
 
-    /// Explicitly release this reference, generating the DropRef message.
+    /// Explicitly release this reference, generating the DropRef message and
+    /// enqueuing it on the wire outbox.
     ///
     /// This is called automatically on drop, but can be called explicitly for
-    /// more control over when the DropRef is sent.
+    /// more control over when the DropRef is sent. The returned
+    /// [`DropMessage`] is also pushed onto the shared wire outbox as a
+    /// [`WireMessage::DropRemoteRef`] so the transport actually delivers it
+    /// (closes audit GAP-9).
     pub fn release(&mut self) -> Option<DropMessage> {
         if self.dropped {
             return None;
         }
         self.dropped = true;
-        let mut gc = self.gc_manager.lock().expect("gc lock");
-        gc.local_ref_dropped(self.federation_id, self.cell_id)
+        let drop_msg = {
+            let mut gc = self.gc_manager.lock().expect("gc lock");
+            gc.local_ref_dropped(self.federation_id, self.cell_id)
+        };
+        if let Some(ref m) = drop_msg {
+            let wire = WireMessage::DropRemoteRef {
+                from_strand: self.local_federation.0,
+                cell_id: m.cell_id.0,
+                session_epoch: self.session_epoch,
+            };
+            self.outbox.lock().expect("outbox lock").push(wire);
+        }
+        drop_msg
     }
 }
 
@@ -183,11 +276,34 @@ impl Drop for LiveRef {
     fn drop(&mut self) {
         if !self.dropped {
             self.dropped = true;
-            if let Ok(mut gc) = self.gc_manager.lock() {
-                gc.local_ref_dropped(self.federation_id, self.cell_id);
+            let drop_msg = if let Ok(mut gc) = self.gc_manager.lock() {
+                gc.local_ref_dropped(self.federation_id, self.cell_id)
+            } else {
+                None
+            };
+            if let Some(m) = drop_msg {
+                if let Ok(mut outbox) = self.outbox.lock() {
+                    outbox.push(WireMessage::DropRemoteRef {
+                        from_strand: self.local_federation.0,
+                        cell_id: m.cell_id.0,
+                        session_epoch: self.session_epoch,
+                    });
+                }
             }
         }
     }
+}
+
+/// Map a 32-byte cell id to a 64-bit promise identifier used as the
+/// `target_promise_id` field on `WireMessage::PipelinedMsg`. The receiving
+/// server uses the same mapping to look up the bearer cell in its local
+/// registry / bridge. (Higher 24 bytes are discarded; this is acceptable
+/// because the server cross-references against its session's import table
+/// to disambiguate.)
+fn bytes_to_promise_id(bytes: &[u8; 32]) -> u64 {
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&bytes[..8]);
+    u64::from_le_bytes(buf)
 }
 
 impl std::fmt::Debug for LiveRef {
@@ -224,6 +340,15 @@ pub struct CapTpClient {
     pipeline_registry: Arc<Mutex<PipelineRegistry>>,
     /// Active CapTP sessions with peers.
     sessions: std::collections::HashMap<GroupId, CapSession>,
+    /// Shared wire outbox. Every CapTP operation that crosses the trust
+    /// boundary (`pipeline_to`, `LiveRef::send`, `LiveRef::pipeline`, drop)
+    /// pushes a `WireMessage` here. The transport drains it via
+    /// [`Self::drain_wire_outbox`].
+    outbox: WireOutbox,
+    /// Per-peer session epoch tracking: when the SDK observes a `CapHello`
+    /// (or other epoch-bearing handshake) for a peer it records the epoch
+    /// here so that subsequently-issued wire messages stamp the right value.
+    session_epochs: std::collections::HashMap<GroupId, u64>,
 }
 
 impl CapTpClient {
@@ -235,7 +360,41 @@ impl CapTpClient {
             import_gc: Arc::new(Mutex::new(ImportGcManager::new())),
             pipeline_registry: Arc::new(Mutex::new(PipelineRegistry::new())),
             sessions: std::collections::HashMap::new(),
+            outbox: Arc::new(Mutex::new(Vec::new())),
+            session_epochs: std::collections::HashMap::new(),
         }
+    }
+
+    /// Drain pending wire messages.
+    ///
+    /// The transport layer calls this after every operation (or on a tick)
+    /// and writes the resulting messages to the appropriate peer connections.
+    /// Returns the drained messages in the order they were enqueued.
+    pub fn drain_wire_outbox(&self) -> Vec<WireMessage> {
+        std::mem::take(&mut *self.outbox.lock().expect("outbox lock"))
+    }
+
+    /// Get a clone of the shared wire outbox handle.
+    ///
+    /// Useful for tests and for transport integrations that want to share
+    /// the outbox with non-SDK code (e.g., a connection pool).
+    pub fn wire_outbox(&self) -> WireOutbox {
+        Arc::clone(&self.outbox)
+    }
+
+    /// Record the session epoch most recently negotiated with a peer.
+    ///
+    /// The SDK stamps this onto outgoing `PipelinedMsg` / `DropRemoteRef`
+    /// messages so the server can reject messages bearing an old epoch.
+    /// Callers should invoke this after sending a `CapHello` and receiving
+    /// the peer's reply.
+    pub fn record_session_epoch(&mut self, peer: GroupId, epoch: u64) {
+        self.session_epochs.insert(peer, epoch);
+    }
+
+    /// Look up the session epoch we observed for a peer (defaults to 0).
+    pub fn session_epoch(&self, peer: GroupId) -> u64 {
+        self.session_epochs.get(&peer).copied().unwrap_or(0)
     }
 
     /// Get the federation ID this client operates within.
@@ -417,12 +576,20 @@ impl CapTpClient {
             .or_insert_with(|| CapSession::new(federation_id.0));
         session.import(cell_id, permissions.clone());
 
+        let epoch = self
+            .session_epochs
+            .get(&federation_id)
+            .copied()
+            .unwrap_or(0);
         LiveRef {
             cell_id,
             federation_id,
             permissions,
             gc_manager: Arc::clone(&self.import_gc),
             pipeline_registry: Arc::clone(&self.pipeline_registry),
+            outbox: Arc::clone(&self.outbox),
+            local_federation: self.config.federation_id,
+            session_epoch: epoch,
             dropped: false,
         }
     }
@@ -444,11 +611,17 @@ impl CapTpClient {
     // Handoff — offline delegation
     // =========================================================================
 
-    /// Create a handoff certificate for offline capability delegation.
+    /// Create a handoff certificate for offline capability delegation, with
+    /// the introducer and target being the same federation (us). This is the
+    /// "Alice introduces Bob to a cell on Alice" topology.
     ///
-    /// The introducer (this wallet) pre-registers a swiss entry at the target
-    /// and signs a certificate naming the recipient. The certificate can travel
-    /// out-of-band (QR code, email, BLE).
+    /// For the full OCapN Alice→Bob→Carol topology (where the introducer's
+    /// federation differs from the target's), use
+    /// [`Self::create_handoff_for_remote`]: it parameterizes
+    /// `target_federation` and accepts a pre-registered `swiss` number so a
+    /// caller that already negotiated a swiss with the target federation can
+    /// mint a cross-federation handoff certificate without needing to host
+    /// the target cell themselves.
     ///
     /// # Arguments
     ///
@@ -485,6 +658,55 @@ impl CapTpClient {
             recipient_pk,
             permissions,
             None, // no effect mask
+            expires_at,
+            max_uses,
+            swiss,
+        )
+    }
+
+    /// Create a handoff certificate naming a **remote** target federation.
+    ///
+    /// This is the OCapN three-party (Alice→Bob→Carol) topology: the
+    /// introducer (us) authorizes a recipient (Bob) to enliven a cell on a
+    /// remote federation (Carol). The caller must have already pre-registered
+    /// a swiss number at the target federation out-of-band (typically via
+    /// a prior CapTP session or a custodial swiss-registration flow); the
+    /// `swiss` argument carries it.
+    ///
+    /// Closes audit GAP-1 (three-party handoff non-constructible).
+    ///
+    /// # Arguments
+    ///
+    /// * `signing_key` - The introducer's signing key.
+    /// * `target_federation` - The federation hosting the cell (Carol).
+    /// * `target_cell` - The cell being delegated, on `target_federation`.
+    /// * `recipient_pk` - The recipient's Ed25519 public key (Bob).
+    /// * `permissions` - Permissions to delegate.
+    /// * `allowed_effects` - Optional effect-mask restriction.
+    /// * `expires_at` - Optional expiration height.
+    /// * `max_uses` - Optional max presentation count.
+    /// * `swiss` - The pre-registered swiss number at `target_federation`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_handoff_for_remote(
+        &self,
+        signing_key: &pyana_types::SigningKey,
+        target_federation: GroupId,
+        target_cell: CellId,
+        recipient_pk: [u8; 32],
+        permissions: AuthRequired,
+        allowed_effects: Option<pyana_cell::EffectMask>,
+        expires_at: Option<u64>,
+        max_uses: Option<u32>,
+        swiss: [u8; 32],
+    ) -> HandoffCertificate {
+        HandoffCertificate::create(
+            signing_key,
+            self.config.federation_id,
+            target_federation,
+            target_cell,
+            recipient_pk,
+            permissions,
+            allowed_effects,
             expires_at,
             max_uses,
             swiss,
@@ -539,25 +761,53 @@ impl CapTpClient {
     /// Pipeline a single action to an existing EventualRef.
     ///
     /// Sends an action to the target of an unresolved promise (the `eventual`),
-    /// returning a new EventualRef for the result.
+    /// returning a new EventualRef for the result. The action is queued in
+    /// the local pipeline registry (so local breakage cascades work) **and**
+    /// emitted as a `WireMessage::PipelinedMsg` in the shared outbox so the
+    /// remote federation actually receives it. (Closes audit GAP-4.)
     pub fn pipeline_to(
         &mut self,
         eventual: &EventualRef,
         action: PipelinedAction,
     ) -> Result<EventualRef, SdkError> {
-        let mut registry = self.pipeline_registry.lock().expect("pipeline lock");
+        let local_fed = self.config.federation_id;
+        let epoch = self
+            .session_epochs
+            .get(&eventual.target_federation)
+            .copied()
+            .unwrap_or(0);
 
-        let result_promise = registry.create_promise();
+        let result_promise = {
+            let mut registry = self.pipeline_registry.lock().expect("pipeline lock");
 
-        let msg = pyana_captp::pipeline::PipelinedMessage {
-            target_promise_id: eventual.promise_id,
-            action,
-            result_promise_id: Some(result_promise),
-            sender: self.config.federation_id,
+            let result_promise = registry.create_promise();
+
+            let msg = pyana_captp::pipeline::PipelinedMessage {
+                target_promise_id: eventual.promise_id,
+                action: action.clone(),
+                result_promise_id: Some(result_promise),
+                sender: local_fed,
+            };
+            registry
+                .pipeline_message(msg)
+                .map_err(|e| SdkError::Wire(format!("pipeline error: {e}")))?;
+            result_promise
         };
-        registry
-            .pipeline_message(msg)
-            .map_err(|e| SdkError::Wire(format!("pipeline error: {e}")))?;
+
+        // Emit the wire message so the remote actually gets the pipelined
+        // action. The target_promise_id is the promise as known on the
+        // sender's side; the receiving server bridges through its
+        // CrossFedPipelineBridge which dual-keys (local + per-peer).
+        let wire = WireMessage::PipelinedMsg {
+            target_promise_id: eventual.promise_id,
+            method: action.method,
+            args: action.args,
+            authorization: action.authorization,
+            result_promise_id: Some(result_promise),
+            sender_federation: local_fed.0,
+            session_epoch: epoch,
+        };
+        self.outbox.lock().expect("outbox lock").push(wire);
 
         Ok(EventualRef {
             promise_id: result_promise,
@@ -921,7 +1171,10 @@ mod tests {
         let result = mallory.enliven_with_proof(&uri, &cert, &intro_pk, &mallory_pk.0);
         assert!(result.is_err(), "wrong recipient must be rejected");
         let msg = format!("{}", result.err().unwrap());
-        assert!(msg.contains("recipient"), "expected recipient mismatch, got: {msg}");
+        assert!(
+            msg.contains("recipient"),
+            "expected recipient mismatch, got: {msg}"
+        );
     }
 
     /// P2-1: cert whose target_cell does not match the URI must be rejected.
@@ -955,7 +1208,10 @@ mod tests {
         let result = recipient.enliven_with_proof(&uri, &cert, &intro_pk, &recipient_pk.0);
         assert!(result.is_err(), "URI/cert target mismatch must be rejected");
         let msg = format!("{}", result.err().unwrap());
-        assert!(msg.contains("target_cell"), "expected URI mismatch error, got: {msg}");
+        assert!(
+            msg.contains("target_cell"),
+            "expected URI mismatch error, got: {msg}"
+        );
     }
 
     /// P2-1: expired cert must be rejected.
@@ -1006,5 +1262,175 @@ mod tests {
         let eventual = live_ref.send(make_action("do_something"));
 
         assert_eq!(eventual.target_federation, GroupId([0xCC; 32]));
+    }
+
+    // =========================================================================
+    // Wire-delivery seam tests (GAP-4, GAP-9, GAP-7, GAP-1 closure)
+    // =========================================================================
+
+    /// GAP-4: `LiveRef::send` now emits a `WireMessage::PipelinedMsg` on the
+    /// shared outbox in addition to allocating a local promise id.
+    #[test]
+    fn live_ref_send_enqueues_wire_message() {
+        let mut client = CapTpClient::new(test_config());
+        let uri = PyanaUri {
+            federation_id: [0xCC; 32],
+            cell_id: [0xDD; 32],
+            swiss: [0xEE; 32],
+        };
+        let live_ref = client.enliven(&uri, AuthRequired::Signature);
+        let _eventual = live_ref.send(make_action("hello"));
+
+        let drained = client.drain_wire_outbox();
+        assert_eq!(drained.len(), 1, "expected exactly one wire message");
+        match &drained[0] {
+            WireMessage::PipelinedMsg {
+                method,
+                sender_federation,
+                result_promise_id,
+                ..
+            } => {
+                assert_eq!(method, "hello");
+                // The sender stamp is our local federation id.
+                assert_eq!(*sender_federation, [0xAA; 32]);
+                assert!(result_promise_id.is_some());
+            }
+            other => panic!("expected PipelinedMsg, got {:?}", other.variant_name()),
+        }
+    }
+
+    /// GAP-4: `LiveRef::pipeline` distinguishes from send by queueing a local
+    /// pipeline message AND emitting a wire message.
+    #[test]
+    fn live_ref_pipeline_enqueues_wire_message() {
+        let mut client = CapTpClient::new(test_config());
+        let uri = PyanaUri {
+            federation_id: [0xCC; 32],
+            cell_id: [0xDD; 32],
+            swiss: [0xEE; 32],
+        };
+        let live_ref = client.enliven(&uri, AuthRequired::Signature);
+        let _eventual = live_ref.pipeline(make_action("chain_step"));
+
+        let drained = client.drain_wire_outbox();
+        assert_eq!(drained.len(), 1);
+        assert!(matches!(drained[0], WireMessage::PipelinedMsg { .. }));
+    }
+
+    /// GAP-4: `CapTpClient::pipeline_to` emits a wire message stamped with the
+    /// peer's session epoch.
+    #[test]
+    fn pipeline_to_emits_wire_message_with_epoch() {
+        let mut client = CapTpClient::new(test_config());
+        let peer = GroupId([0xCC; 32]);
+        client.record_session_epoch(peer, 7);
+
+        let actions = vec![make_action("first")];
+        let eventual = client.pipeline(peer, actions).unwrap();
+        // pipeline() is local-only; clear the outbox.
+        let _ = client.drain_wire_outbox();
+
+        let _chained = client
+            .pipeline_to(&eventual, make_action("second"))
+            .unwrap();
+        let drained = client.drain_wire_outbox();
+        assert_eq!(drained.len(), 1);
+        match &drained[0] {
+            WireMessage::PipelinedMsg {
+                method,
+                session_epoch,
+                ..
+            } => {
+                assert_eq!(method, "second");
+                assert_eq!(*session_epoch, 7);
+            }
+            _ => panic!("expected PipelinedMsg"),
+        }
+    }
+
+    /// GAP-9: dropping a LiveRef emits a `WireMessage::DropRemoteRef` on the
+    /// shared outbox.
+    #[test]
+    fn live_ref_drop_emits_drop_remote_ref() {
+        let mut client = CapTpClient::new(test_config());
+        let uri = PyanaUri {
+            federation_id: [0xCC; 32],
+            cell_id: [0xDD; 32],
+            swiss: [0xEE; 32],
+        };
+        {
+            let _live_ref = client.enliven(&uri, AuthRequired::Signature);
+        }
+        // After the live_ref is dropped, the outbox should have a
+        // DropRemoteRef stamped with our local federation id.
+        let drained = client.drain_wire_outbox();
+        assert_eq!(drained.len(), 1);
+        match &drained[0] {
+            WireMessage::DropRemoteRef {
+                from_strand,
+                cell_id,
+                ..
+            } => {
+                assert_eq!(*from_strand, [0xAA; 32]);
+                assert_eq!(*cell_id, [0xDD; 32]);
+            }
+            _ => panic!("expected DropRemoteRef"),
+        }
+    }
+
+    /// GAP-9: explicit `release` also emits the wire DropRemoteRef.
+    #[test]
+    fn live_ref_release_emits_drop_remote_ref() {
+        let mut client = CapTpClient::new(test_config());
+        let uri = PyanaUri {
+            federation_id: [0xCC; 32],
+            cell_id: [0xDD; 32],
+            swiss: [0xEE; 32],
+        };
+        let mut live_ref = client.enliven(&uri, AuthRequired::Signature);
+        let dm = live_ref.release();
+        assert!(dm.is_some());
+
+        let drained = client.drain_wire_outbox();
+        assert_eq!(drained.len(), 1);
+        assert!(matches!(drained[0], WireMessage::DropRemoteRef { .. }));
+    }
+
+    /// GAP-1: `create_handoff_for_remote` allows constructing a cert whose
+    /// `target_federation` is **not** the introducer's federation — the OCapN
+    /// three-party Alice→Bob→Carol topology.
+    #[test]
+    fn create_handoff_for_remote_supports_three_party() {
+        let alice_fed = GroupId([0xAA; 32]);
+        let carol_fed = GroupId([0xCC; 32]); // remote target
+        let mut alice = CapTpClient::new(CapTpConfig {
+            federation_id: alice_fed,
+            current_height: 100,
+        });
+        let (signing_key, _intro_pk) = pyana_types::generate_keypair();
+        let recipient_pk = [0xBB; 32]; // bob
+        let target_cell = CellId([0x42; 32]);
+        let pre_registered_swiss = [0x77; 32];
+
+        let cert = alice.create_handoff_for_remote(
+            &signing_key,
+            carol_fed,
+            target_cell,
+            recipient_pk,
+            AuthRequired::Signature,
+            None,
+            Some(500),
+            Some(3),
+            pre_registered_swiss,
+        );
+
+        assert_eq!(cert.introducer, alice_fed, "introducer is alice");
+        assert_eq!(cert.target_federation, carol_fed, "target is carol");
+        assert_ne!(
+            cert.introducer, cert.target_federation,
+            "GAP-1: cert spans federations"
+        );
+        assert_eq!(cert.target_cell, target_cell);
+        assert_eq!(cert.swiss, pre_registered_swiss);
     }
 }

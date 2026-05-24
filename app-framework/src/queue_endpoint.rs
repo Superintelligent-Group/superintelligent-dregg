@@ -139,10 +139,7 @@ impl QueueEndpoint {
     }
 
     /// Override the height provider used when building `ValidationContext`.
-    pub fn with_height_provider(
-        mut self,
-        f: impl Fn() -> u64 + Send + Sync + 'static,
-    ) -> Self {
+    pub fn with_height_provider(mut self, f: impl Fn() -> u64 + Send + Sync + 'static) -> Self {
         self.height_provider = Arc::new(f);
         self
     }
@@ -185,10 +182,18 @@ async fn handle_enqueue(
     State(state): State<EndpointState>,
     Json(req): Json<EnqueueRequest>,
 ) -> Result<Json<EnqueueResponse>, (StatusCode, Json<crate::server::ErrorResponse>)> {
-    let content_hash =
-        parse_hex32(&req.content_hash).ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid content_hash hex (expected 64 hex chars)"))?;
-    let sender =
-        parse_hex32(&req.sender).ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid sender hex (expected 64 hex chars)"))?;
+    let content_hash = parse_hex32(&req.content_hash).ok_or_else(|| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid content_hash hex (expected 64 hex chars)",
+        )
+    })?;
+    let sender = parse_hex32(&req.sender).ok_or_else(|| {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "invalid sender hex (expected 64 hex chars)",
+        )
+    })?;
 
     let height = (state.height_provider)();
     let ctx = ValidationContext {
@@ -262,9 +267,7 @@ async fn handle_dequeue(
     }
 }
 
-async fn handle_status(
-    State(state): State<EndpointState>,
-) -> Json<StatusResponse> {
+async fn handle_status(State(state): State<EndpointState>) -> Json<StatusResponse> {
     let q = state.inner.lock().await;
     Json(StatusResponse {
         len: q.len(),
@@ -358,7 +361,9 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let status: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(status["len"], 0);
         assert_eq!(status["name"], "test");

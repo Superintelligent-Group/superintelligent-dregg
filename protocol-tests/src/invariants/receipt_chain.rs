@@ -18,14 +18,15 @@ use crate::generators::cell::{LedgerSpec, build_open_ledger};
 use crate::generators::turn::build_no_op_turn;
 
 use proptest::prelude::*;
-use pyana_turn::{ComputronCosts, TurnExecutor, TurnReceipt, TurnResult, verify::verify_receipt_chain};
+use pyana_turn::{
+    ComputronCosts, TurnExecutor, TurnReceipt, TurnResult, verify::verify_receipt_chain,
+};
 
 pub struct ReceiptChain;
 
 impl Invariant for ReceiptChain {
     const NAME: &'static str = "receipt_chain";
-    const DESCRIPTION: &'static str =
-        "per-agent receipts form a hash-linked total order; verify_receipt_chain accepts iff the chain is intact";
+    const DESCRIPTION: &'static str = "per-agent receipts form a hash-linked total order; verify_receipt_chain accepts iff the chain is intact";
 }
 
 /// Build a chain of `n` committed no-op turns for `agent`.

@@ -7245,6 +7245,7 @@ dependencies = [
  "pyana-commit",
  "pyana-coord",
  "pyana-intent",
+ "pyana-sdk",
  "pyana-trace",
  "pyana-turn",
  "pyana-types",

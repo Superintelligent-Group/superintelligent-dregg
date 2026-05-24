@@ -1,0 +1,64 @@
+/**
+ * <pyana-federation uri="pyana://federation/<fed_index>"> — federation summary.
+ *
+ * Reads `get_federation_state(handle, fed_idx)`. Federations are addressed
+ * by numeric index in the sim (no stable handle by name yet).
+ *
+ * Shape: { name, height, num_nodes, num_events, num_finalized_roots,
+ *          latest_root, fed_index (added in JS) }
+ */
+
+import { parseRef } from '../uri.js';
+import { InspectorBase, renderParseError, shortHex } from './_base.js';
+
+class PyanaFederation extends InspectorBase {
+  _render() {
+    const { h, render, html, effect } = this._api;
+    const refAttr = this.getAttribute('uri');
+    const mode = this.getAttribute('mode') || 'default';
+
+    if (this._dispose) { this._dispose(); this._dispose = null; }
+    this.replaceChildren();
+
+    let parsed = null;
+    try { parsed = parseRef(refAttr); } catch {}
+    if (renderParseError(this, refAttr, parsed, 'federation')) return;
+
+    const fedIdx = parsed.id;
+    const sig = this._runtime.getFederation(fedIdx);
+    const root = document.createElement('div');
+    this.appendChild(root);
+
+    const Component = () => {
+      const f = sig.value;
+      if (!f) return html`<div class="pyana-inspector pyana-inspector--empty">federation #${fedIdx} not found</div>`;
+      if (mode === 'compact') {
+        return html`
+          <span class="pyana-inspector pyana-inspector--compact">
+            <code>${f.name}</code>
+            · h=${String(f.height)}
+            · ${String(f.num_nodes)} nodes
+          </span>`;
+      }
+      return html`
+        <div class="pyana-inspector pyana-inspector--cell">
+          <header>
+            <span class="pyana-inspector__kind">federation</span>
+            <code class="pyana-inspector__id">${f.name} (#${String(f.fed_index)})</code>
+          </header>
+          <dl class="pyana-inspector__kv">
+            <dt>name</dt><dd>${f.name}</dd>
+            <dt>height</dt><dd>${String(f.height)}</dd>
+            <dt>nodes</dt><dd>${String(f.num_nodes)}</dd>
+            <dt>events</dt><dd>${String(f.num_events)}</dd>
+            <dt>finalized roots</dt><dd>${String(f.num_finalized_roots)}</dd>
+            <dt>latest root</dt><dd>${f.latest_root
+              ? html`<code title=${f.latest_root}>${shortHex(f.latest_root, 24)}</code>`
+              : html`<span style="opacity:0.6">(none)</span>`}</dd>
+          </dl>
+        </div>`;
+    };
+    this._dispose = effect(() => { render(h(Component, {}), root); });
+  }
+}
+if (!customElements.get('pyana-federation')) customElements.define('pyana-federation', PyanaFederation);

@@ -103,7 +103,7 @@ export function initComposition(wasm) {
     const leafValue = Math.floor(Math.random() * 1000);
     let proofJson;
     try {
-      const result = wasm.generate_stark_proof(leafValue, 3);
+      const result = wasm.generate_demo_stark_proof(leafValue, 3);
       proofJson = JSON.stringify(result);
     } catch (e) {
       proofJson = JSON.stringify({ type: 'membership', leaf: leafValue, depth: 3, proof_hash: randomHex(32) });

@@ -188,10 +188,7 @@ impl WriteAheadLog {
             0
         };
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
         let writer = BufWriter::new(file);
 
         Ok(Self {
@@ -234,7 +231,10 @@ impl WriteAheadLog {
     pub fn truncate_before(&mut self, sequence: u64) -> io::Result<()> {
         // Read all entries, keep only those with sequence >= the given value.
         let entries = self.replay()?;
-        let kept: Vec<&WalEntry> = entries.iter().filter(|e| e.sequence() >= sequence).collect();
+        let kept: Vec<&WalEntry> = entries
+            .iter()
+            .filter(|e| e.sequence() >= sequence)
+            .collect();
 
         // Close the writer, rewrite the file, reopen.
         self.writer = None;

@@ -81,26 +81,20 @@ impl AtomicSettlement {
         // composes signed fragments via TurnComposer in production; this
         // helper is exercised in tests with an unchecked path until the
         // composer migration lands (follow-up).
-        let payment_action: Action = ActionBuilder::new_unchecked_for_tests(
-            self.winner,
-            "settle_payment",
-            self.winner,
-        )
-        .effect_release_escrow(self.winner_escrow_id, Some(self.artwork_id.to_vec()))
-        .effect_transfer(self.winner, self.artist, self.winning_bid)
-        .commitment_mode(CommitmentMode::Partial)
-        .delegation(DelegationMode::None)
-        .build();
+        let payment_action: Action =
+            ActionBuilder::new_unchecked_for_tests(self.winner, "settle_payment", self.winner)
+                .effect_release_escrow(self.winner_escrow_id, Some(self.artwork_id.to_vec()))
+                .effect_transfer(self.winner, self.artist, self.winning_bid)
+                .commitment_mode(CommitmentMode::Partial)
+                .delegation(DelegationMode::None)
+                .build();
 
-        let transfer_action: Action = ActionBuilder::new_unchecked_for_tests(
-            self.artist,
-            "transfer_ownership",
-            self.artist,
-        )
-        .effect_transfer(self.artist, self.winner, 1) // NFT: ownership token
-        .commitment_mode(CommitmentMode::Partial)
-        .delegation(DelegationMode::Inherit)
-        .build();
+        let transfer_action: Action =
+            ActionBuilder::new_unchecked_for_tests(self.artist, "transfer_ownership", self.artist)
+                .effect_transfer(self.artist, self.winner, 1) // NFT: ownership token
+                .commitment_mode(CommitmentMode::Partial)
+                .delegation(DelegationMode::Inherit)
+                .build();
 
         // Compose into a single atomic turn.
         let composed_turn = Turn {

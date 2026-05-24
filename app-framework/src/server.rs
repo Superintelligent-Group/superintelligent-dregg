@@ -134,6 +134,10 @@ pub struct AppServer {
     /// Pending nameservice registration, set by `with_name`.
     /// Registered just before the server starts accepting connections.
     pending_registration: Option<crate::discovery::NameRegistration>,
+    /// App wallet handle. When set, it is installed as an axum
+    /// `Extension<AppWallet>` so handlers can sign actions through the
+    /// framework.
+    wallet: Option<crate::wallet::AppWallet>,
 }
 
 impl AppServer {
@@ -144,7 +148,27 @@ impl AppServer {
             router: Router::new(),
             service_name: "pyana-app".into(),
             pending_registration: None,
+            wallet: None,
         }
+    }
+
+    /// Install an [`AppWallet`](crate::wallet::AppWallet) as an axum
+    /// `Extension<AppWallet>` layer.
+    ///
+    /// Handlers can then extract it via `axum::Extension<AppWallet>` and
+    /// build signed actions/turns through it — no `[0u8; 64]` placeholder
+    /// signatures, no direct `pyana_turn::builder::ActionBuilder` imports.
+    pub fn with_wallet(mut self, wallet: crate::wallet::AppWallet) -> Self {
+        self.router = self.router.layer(axum::Extension(wallet.clone()));
+        self.wallet = Some(wallet);
+        self
+    }
+
+    /// Get a reference to the installed wallet, if any. Useful for code
+    /// that needs to capture the wallet *before* `serve()` consumes the
+    /// builder (e.g. for shared state construction).
+    pub fn wallet(&self) -> Option<&crate::wallet::AppWallet> {
+        self.wallet.as_ref()
     }
 
     /// Set the service name (used in health responses and startup logging).

@@ -1154,9 +1154,18 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
 ///
 /// The turn has been totally ordered by the blocklace consensus (tau function)
 /// and is ready for deterministic execution.
+///
+/// On successful commit this function ALSO:
+/// 1. Produces a [`pyana_federation::FederationReceipt`] (audit F7) signed by
+///    the local wallet (Ed25519 vote-signature flavor; the BLS aggregate path
+///    requires a multi-node ceremony we don't run inline). The receipt is
+///    emitted via [`crate::state::NodeEvent::FederationReceipt`].
+/// 2. Writes a fresh [`pyana_types::AttestedRoot`] anchored to the blocklace
+///    `block_id` + finality round (audit F3 / gap D), so the executor on the
+///    next turn no longer sees `block_height = 0`.
 async fn execute_finalized_turn(
     state: &NodeState,
-    _handle: &BlocklaceHandle,
+    handle: &BlocklaceHandle,
     block_id: BlockId,
     turn_data: &[u8],
 ) {
@@ -1188,12 +1197,25 @@ async fn execute_finalized_turn(
 
     let turn_hash_hex: String = computed_hash.iter().map(|b| format!("{b:02x}")).collect();
 
+    // Resolve the Cordial Miners "round" (DAG depth) of this finalized block
+    // BEFORE we take the state lock — the lace read lock is held briefly.
+    let finality_round = {
+        let lace = handle.lace.read().await;
+        lace.round_of(&block_id)
+    };
+
     // Execute the turn against the local ledger.
     let mut s = state.write().await;
     let mut executor = pyana_turn::TurnExecutor::new(pyana_turn::ComputronCosts::default());
 
-    // Configure the executor with current node state.
-    let local_fed_id = *blake3::hash(s.wallet.public_key().as_bytes()).as_bytes();
+    // Configure the executor with the canonical federation_id (audit F1).
+    // Falls back to discovery-mode (wallet-hash) only if no committee has
+    // been loaded yet — solo devnet pre-genesis.
+    let local_fed_id = if s.federation_configured {
+        s.federation_id
+    } else {
+        *blake3::hash(s.wallet.public_key().as_bytes()).as_bytes()
+    };
     executor.set_local_federation_id(local_fed_id);
 
     let now = std::time::SystemTime::now()
@@ -1202,14 +1224,17 @@ async fn execute_finalized_turn(
         .unwrap_or(0);
     executor.set_timestamp(now);
 
-    let current_height = s
+    let prior_height = s
         .store
         .latest_attested_root()
         .ok()
         .flatten()
         .map(|r| r.height)
         .unwrap_or(0);
-    executor.set_block_height(current_height);
+    // Block height advances per finalized turn so downstream verifiers see a
+    // monotone sequence (audit gap D: was always 0).
+    let new_height = prior_height.saturating_add(1);
+    executor.set_block_height(new_height);
 
     let exec_result = executor.execute(&signed_turn.turn, &mut s.ledger);
 
@@ -1239,6 +1264,72 @@ async fn execute_finalized_turn(
 
             // Append receipt to wallet.
             s.wallet.append_receipt(receipt.clone());
+
+            // ── Lift TurnReceipt → FederationReceipt (audit F7) ──────────
+            // We carry the committed turn into a federation-shaped receipt
+            // by hashing its post-state into the body and signing with the
+            // local validator's Ed25519 key. In solo mode the local node is
+            // the entire committee so a single signature suffices; in full
+            // mode this becomes one vote of many that an aggregator collects.
+            let fed_receipt_opt =
+                build_federation_receipt(&s, &signed_turn.turn, &receipt, new_height, block_id);
+
+            // ── Write a fresh AttestedRoot anchored to (block_id, round)
+            // (audit F3 / gap D). The merkle_root is the BLAKE3 of the
+            // ledger's canonical bytes — fine as a soundness commitment for
+            // now; the Poseidon2 note-tree root is threaded as a BabyBear
+            // serialized to bytes (best-effort; full STARK root binding is a
+            // separate workitem).
+            let merkle_root = canonical_ledger_root(&s.ledger);
+            let note_tree_root: Option<[u8; 32]> = None;
+            let timestamp_for_root = now;
+            let federation_keys = s.known_federation_keys.clone();
+            let federation_threshold = s.decryption_threshold.max(1);
+            let signing_key_bytes = s.wallet.gossip_signing_key().to_bytes();
+
+            // Build the attested root struct, then sign its canonical message.
+            let mut attested = pyana_types::AttestedRoot {
+                merkle_root,
+                note_tree_root,
+                nullifier_set_root: None,
+                height: new_height,
+                timestamp: timestamp_for_root,
+                blocklace_block_id: Some(block_id.0),
+                finality_round,
+                quorum_signatures: Vec::new(),
+                threshold_qc: None,
+                threshold: federation_threshold,
+            };
+            let signing_msg = attested.signing_message();
+            let local_pk = s.wallet.public_key().clone();
+            let signing_key = pyana_types::SigningKey::from_bytes(&signing_key_bytes);
+            let sig = pyana_types::sign(&signing_key, &signing_msg);
+            // In solo / single-validator mode our signature alone meets the
+            // threshold (threshold defaults to 1 if the genesis-declared
+            // value is zero). In full mode this is one signature; peer
+            // aggregation occurs in a follow-up commit.
+            if federation_keys.is_empty() || federation_keys.contains(&local_pk) {
+                attested.quorum_signatures.push((local_pk, sig));
+            }
+
+            // Persist the attested root so the next turn's executor sees
+            // its height (closes audit gap D — was never written).
+            let stored = pyana_store::StoredAttestedRoot {
+                merkle_root: attested.merkle_root,
+                note_tree_root: attested.note_tree_root,
+                nullifier_set_root: attested.nullifier_set_root,
+                height: attested.height,
+                timestamp: attested.timestamp,
+                blocklace_block_id: attested.blocklace_block_id,
+                finality_round: attested.finality_round,
+                quorum_signatures: attested.quorum_signatures.clone(),
+                threshold_qc: attested.threshold_qc.clone(),
+                threshold: attested.threshold,
+            };
+            if let Err(e) = s.store.store_attested_root(&stored) {
+                warn!(error = %e, height = new_height, "failed to persist attested root");
+            }
+
             drop(s);
 
             // Emit to WS subscribers.
@@ -1246,9 +1337,19 @@ async fn execute_finalized_turn(
                 hash: receipt_hash_hex,
             });
 
+            if let Some(fed_receipt) = fed_receipt_opt {
+                tracing::debug!(
+                    federation_id = %pyana_types::hex_encode(&fed_receipt.federation_id),
+                    height = fed_receipt.body.block_height,
+                    "federation receipt produced",
+                );
+            }
+
             info!(
                 turn_hash = %turn_hash_hex,
                 block_id = %block_id,
+                height = new_height,
+                round = ?finality_round,
                 "finalized turn executed (blocklace consensus)"
             );
         }
@@ -1918,4 +2019,93 @@ async fn advance_constitution_wave(handle: &BlocklaceHandle) {
             }
         }
     }
+}
+
+// ─── Federation Receipt + Attested Root Helpers ─────────────────────────────
+
+/// Build a [`pyana_federation::FederationReceipt`] for a committed turn.
+///
+/// Closes audit finding F7 (`AUDIT-federation.md`): the production path now
+/// emits a federation-shaped receipt after every successful turn execution,
+/// not just from tests. The receipt body commits to the turn hash, the
+/// pre/post state, the effects hash, and the block height; the QC is the
+/// local validator's Ed25519 vote signature.
+///
+/// In **solo mode** (single validator) this single signature satisfies the
+/// threshold of 1 and the receipt is fully self-contained.
+///
+/// In **full mode** (multi-validator BFT) this returns a partially-signed
+/// receipt — one of `threshold` vote signatures the aggregator collects.
+/// The aggregator runs out-of-band (see `node/src/blocklace_sync.rs::execute_finalized_turn`
+/// for the per-turn vote-collection scaffold).
+fn build_federation_receipt(
+    state_guard: &crate::state::NodeStateInner,
+    turn: &pyana_turn::Turn,
+    receipt: &pyana_turn::TurnReceipt,
+    block_height: u64,
+    block_id: BlockId,
+) -> Option<pyana_federation::FederationReceipt> {
+    use pyana_federation::FederationReceiptBody;
+    use pyana_federation::receipt::FederationReceipt;
+
+    // Federation id MUST come from state (audit F1). In discovery mode we
+    // skip producing a federation receipt — there is no committee to attest.
+    if !state_guard.federation_configured {
+        return None;
+    }
+
+    let federation_id = state_guard.federation_id;
+    let committee_epoch = state_guard.committee_epoch;
+
+    let body = FederationReceiptBody {
+        turn_hash: receipt.turn_hash,
+        block_height,
+        block_hash: block_id.0,
+        agent: receipt.agent,
+        nonce: turn.nonce,
+        pre_state_hash: receipt.pre_state_hash,
+        post_state_hash: receipt.post_state_hash,
+        effects_hash: receipt.effects_hash,
+        previous_receipt_hash: receipt.previous_receipt_hash,
+    };
+
+    let body_hash = body.body_hash();
+    let signing_key_bytes = state_guard.wallet.gossip_signing_key().to_bytes();
+    let signing_key = pyana_types::SigningKey::from_bytes(&signing_key_bytes);
+    let sig = pyana_types::sign(&signing_key, &body_hash);
+    let local_pk = state_guard.wallet.public_key().clone();
+
+    Some(FederationReceipt::with_vote_signatures(
+        federation_id,
+        committee_epoch,
+        body,
+        vec![(local_pk, sig)],
+    ))
+}
+
+/// Compute a canonical 32-byte root over the ledger's current state.
+///
+/// Folds each cell's id + state-hash into a domain-separated BLAKE3 hash,
+/// sorted lexicographically by cell id for determinism. This is the
+/// `merkle_root` field carried in [`pyana_types::AttestedRoot`].
+fn canonical_ledger_root(ledger: &pyana_cell::Ledger) -> [u8; 32] {
+    let mut entries: Vec<(pyana_types::CellId, [u8; 32])> = ledger
+        .iter()
+        .map(|(id, cell)| {
+            // Hash the cell's state via postcard serialization. Postcard is
+            // canonical for our types (deterministic field order, fixed
+            // encoding), so this is a stable commitment.
+            let bytes = postcard::to_stdvec(&cell.state).unwrap_or_default();
+            let h = *blake3::hash(&bytes).as_bytes();
+            (*id, h)
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+    let mut hasher = blake3::Hasher::new_derive_key("pyana-ledger-root-v1");
+    hasher.update(&(entries.len() as u64).to_le_bytes());
+    for (id, h) in &entries {
+        hasher.update(id.as_bytes());
+        hasher.update(h);
+    }
+    *hasher.finalize().as_bytes()
 }

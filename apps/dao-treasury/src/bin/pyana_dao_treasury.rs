@@ -19,9 +19,18 @@ async fn main() {
     // Default voter set for local development. Production deployments will
     // override this via a state file or a constitutional bootstrap.
     let voters = vec![
-        Voter { id: [1; 32], weight: 1 },
-        Voter { id: [2; 32], weight: 1 },
-        Voter { id: [3; 32], weight: 1 },
+        Voter {
+            id: [1; 32],
+            weight: 1,
+        },
+        Voter {
+            id: [2; 32],
+            weight: 1,
+        },
+        Voter {
+            id: [3; 32],
+            weight: 1,
+        },
     ];
 
     let app_state = AppState::new(voters);

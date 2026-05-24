@@ -54,7 +54,10 @@ fn rejecting_authorizer_blocks_release_with_proof() {
         .expect_err("rejecting authorizer must block release");
 
     assert!(
-        matches!(err, EscrowError::AuthorizationFailed(AuthError::Rejected(_))),
+        matches!(
+            err,
+            EscrowError::AuthorizationFailed(AuthError::Rejected(_))
+        ),
         "expected AuthorizationFailed(Rejected), got: {err:?}"
     );
 }
@@ -71,7 +74,10 @@ fn rejecting_authorizer_blocks_refund_expired() {
         .expect_err("rejecting authorizer must block refund");
 
     assert!(
-        matches!(err, EscrowError::AuthorizationFailed(AuthError::Rejected(_))),
+        matches!(
+            err,
+            EscrowError::AuthorizationFailed(AuthError::Rejected(_))
+        ),
         "expected AuthorizationFailed(Rejected), got: {err:?}"
     );
 }

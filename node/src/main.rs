@@ -374,6 +374,12 @@ async fn run_node(
                 match serde_json::from_str::<serde_json::Value>(&json_str) {
                     Ok(genesis) => {
                         let mut s = node_state.write().await;
+                        // Set committee_epoch BEFORE loading keys so the
+                        // first federation_id derivation uses the correct
+                        // epoch.
+                        if let Some(ce) = genesis["committee_epoch"].as_u64() {
+                            s.committee_epoch = ce;
+                        }
                         // Extract validator public keys from genesis.
                         if let Some(validators) = genesis["validators"].as_array() {
                             let mut fed_keys = Vec::new();
@@ -390,6 +396,19 @@ async fn run_node(
                                     "loaded federation keys from genesis.json"
                                 );
                                 s.set_federation_keys(fed_keys);
+                            }
+                        }
+                        // Verify the genesis-declared federation_id matches the
+                        // committee-derived id (audit F1: the writer of
+                        // genesis.json doesn't get to pick an arbitrary id).
+                        if let Some(declared_id) = genesis["federation_id"].as_str() {
+                            let derived = pyana_types::hex_encode(&s.federation_id);
+                            if declared_id != derived {
+                                tracing::warn!(
+                                    declared = %declared_id,
+                                    derived = %derived,
+                                    "genesis.json federation_id does not match committee-derived id (audit F1); using derived id",
+                                );
                             }
                         }
                         // Extract threshold from genesis.
@@ -484,8 +503,7 @@ async fn run_node(
     // F-CRIT-2: gate auto-approval of federation join proposals on CLI flag or
     // `.devnet` marker. Defaults to false otherwise — any peer publishing a
     // MembershipAction::Join used to be enough to flip the federation.
-    let auto_approve_joins =
-        auto_approve_joins_flag || data_path.join(".devnet").exists();
+    let auto_approve_joins = auto_approve_joins_flag || data_path.join(".devnet").exists();
     if auto_approve_joins {
         tracing::warn!(
             "auto-approve-joins is ENABLED — any peer publishing a join proposal \

@@ -99,6 +99,13 @@ pub struct NodeStateInner {
     /// Whether federation keys have been configured. When `false`, the node operates
     /// in "discovery mode" and will not finalize attested roots (Issue 10).
     pub federation_configured: bool,
+    /// Canonical federation_id — derived from `known_federation_keys` +
+    /// `committee_epoch` via [`pyana_federation::derive_federation_id_with_epoch`].
+    /// Recomputed whenever the committee changes via [`Self::set_federation_keys`].
+    /// Closes audit F1: this id is bound to the committee, not a random tag.
+    pub federation_id: [u8; 32],
+    /// Current committee epoch (rotates with key rotations).
+    pub committee_epoch: u64,
     /// Maximum age (in seconds) for accepting incoming attested roots. Default: 3600.
     pub max_root_age_secs: u64,
     /// This validator's threshold decryption key share (Phase 2 turn privacy).
@@ -421,6 +428,8 @@ impl NodeState {
                 used_proof_hashes,
                 known_federation_keys: Vec::new(),
                 federation_configured: false,
+                federation_id: [0u8; 32],
+                committee_epoch: 0,
                 max_root_age_secs: 3600,
                 threshold_key_share: None,
                 decryption_threshold: 0,
@@ -496,6 +505,8 @@ impl NodeState {
                 used_proof_hashes: HashSet::new(),
                 known_federation_keys: Vec::new(),
                 federation_configured: false,
+                federation_id: [0u8; 32],
+                committee_epoch: 0,
                 max_root_age_secs: 3600,
                 threshold_key_share: None,
                 decryption_threshold: 0,
@@ -860,6 +871,9 @@ impl NodeStateInner {
     ///
     /// Once called with a non-empty key set, the node transitions out of
     /// "discovery mode" and will verify attested root quorum signatures.
+    ///
+    /// Also recomputes [`Self::federation_id`] as
+    /// `derive_federation_id(keys, committee_epoch)` — closes audit F1.
     pub fn set_federation_keys(&mut self, keys: Vec<pyana_types::PublicKey>) {
         if keys.is_empty() {
             tracing::warn!(
@@ -867,12 +881,32 @@ impl NodeStateInner {
             );
             return;
         }
+        let id = pyana_federation::derive_federation_id_with_epoch(&keys, self.committee_epoch);
         tracing::info!(
             key_count = keys.len(),
-            "federation keys loaded — exiting discovery mode"
+            committee_epoch = self.committee_epoch,
+            federation_id = %pyana_types::hex_encode(&id),
+            "federation keys loaded — exiting discovery mode; federation_id derived",
         );
         self.known_federation_keys = keys;
+        self.federation_id = id;
         self.federation_configured = true;
+    }
+
+    /// Set the active committee epoch and recompute `federation_id`.
+    pub fn set_committee_epoch(&mut self, epoch: u64) {
+        self.committee_epoch = epoch;
+        if !self.known_federation_keys.is_empty() {
+            self.federation_id = pyana_federation::derive_federation_id_with_epoch(
+                &self.known_federation_keys,
+                epoch,
+            );
+            tracing::info!(
+                committee_epoch = epoch,
+                federation_id = %pyana_types::hex_encode(&self.federation_id),
+                "committee epoch rotated — federation_id recomputed",
+            );
+        }
     }
 
     // =========================================================================

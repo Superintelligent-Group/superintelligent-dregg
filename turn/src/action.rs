@@ -115,6 +115,42 @@ pub enum Authorization {
     /// code review flags its usage. Previously called `None`.
     #[serde(alias = "None")]
     Unchecked,
+    /// Authorization derived from a verified CapTP delivery (Seam 3, Stage 7 / P1.B).
+    ///
+    /// When a CapTP wire message (EnlivenSturdyRef, DropRemoteRef, PresentHandoff,
+    /// CapHello-driven export) is received, the wire layer constructs a Turn that
+    /// mirrors the CapTP-side state mutation on-chain. The cryptographic legitimacy
+    /// of that delivery is captured here:
+    ///
+    /// - `handoff_cert` is the introducer-signed certificate naming the recipient,
+    ///   target cell, swiss number, permissions, allowed_effects, and nonce. Its
+    ///   `introducer_signature` binds the certificate to the introducer's identity.
+    /// - `sender_pk` is the recipient public key named in the certificate (the
+    ///   entity that delivered the CapTP wire message).
+    /// - `sender_signature` is a 64-byte ed25519 signature by `sender_pk` over
+    ///   the canonical CapTP-delivery signing message (see
+    ///   `Authorization::captp_delivered_signing_message`). This binds the
+    ///   specific Turn (agent, target, effects, nonce) to this certificate's
+    ///   nonce — defeating replay against unrelated turns.
+    ///
+    /// The executor verifies (a) the introducer signature on the cert against
+    /// `introducer_pk`, (b) the sender signature over the canonical message
+    /// against `sender_pk`, (c) that `sender_pk == handoff_cert.recipient_pk`,
+    /// and (d) that the cert's `allowed_effects` (when present) covers every
+    /// effect in the action.
+    CapTpDelivered {
+        /// The introducer-signed handoff certificate that authorized this delivery.
+        handoff_cert: pyana_captp::HandoffCertificate,
+        /// The introducer's public key (used to verify `handoff_cert.introducer_signature`).
+        /// Must derive from `handoff_cert.introducer` (the federation id) — the executor
+        /// rejects the variant if they disagree.
+        introducer_pk: [u8; 32],
+        /// The recipient/sender public key. Must equal `handoff_cert.recipient_pk`.
+        sender_pk: [u8; 32],
+        /// Ed25519 signature by `sender_pk` over `captp_delivered_signing_message`.
+        #[serde(with = "crate::escrow::serde_sig64")]
+        sender_signature: [u8; 64],
+    },
 }
 
 /// Proof-carrying bearer capability: demonstrates delegated authority to exercise
@@ -179,6 +215,7 @@ impl Authorization {
             Authorization::Breadstuff(_) => None,
             Authorization::Bearer(_) => None,
             Authorization::Unchecked => None,
+            Authorization::CapTpDelivered { .. } => None,
         }
     }
 
@@ -189,6 +226,40 @@ impl Authorization {
         r.copy_from_slice(&bytes[..32]);
         s.copy_from_slice(&bytes[32..]);
         Authorization::Signature(r, s)
+    }
+
+    /// Canonical signing message for `Authorization::CapTpDelivered`.
+    ///
+    /// Binds the sender's signature to:
+    /// - domain separator (`b"pyana-captp-delivered-v1"`),
+    /// - the handoff certificate's nonce (cert-binding — same delegation),
+    /// - the agent CellId (who runs the turn at the receiving federation),
+    /// - the target CellId (which cell the action mutates),
+    /// - the turn nonce (replay protection),
+    /// - and the canonical postcard encoding of the action's effects.
+    ///
+    /// Verifiers MUST recompute this from the on-the-wire Turn fields and the
+    /// cert nonce — the recipient cannot retroactively repoint their signed
+    /// claim to a different turn.
+    pub fn captp_delivered_signing_message(
+        cert_nonce: &[u8; 32],
+        agent: &pyana_cell::CellId,
+        target: &pyana_cell::CellId,
+        turn_nonce: u64,
+        effects: &[Effect],
+    ) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(128);
+        msg.extend_from_slice(b"pyana-captp-delivered-v1");
+        msg.extend_from_slice(cert_nonce);
+        msg.extend_from_slice(&agent.0);
+        msg.extend_from_slice(&target.0);
+        msg.extend_from_slice(&turn_nonce.to_le_bytes());
+        // Effects are postcard-serialized for a canonical bytewise encoding.
+        // The wire-layer builder uses the same encoding, so both sides agree.
+        let effects_bytes = postcard::to_allocvec(effects).expect("effects serialization failed");
+        msg.extend_from_slice(&(effects_bytes.len() as u32).to_le_bytes());
+        msg.extend_from_slice(&effects_bytes);
+        msg
     }
 }
 
@@ -761,6 +832,23 @@ impl Action {
             }
             Authorization::Unchecked => {
                 hasher.update(&[3u8]);
+            }
+            Authorization::CapTpDelivered {
+                handoff_cert,
+                introducer_pk,
+                sender_pk,
+                sender_signature,
+            } => {
+                hasher.update(&[5u8]);
+                // Hash the cert's signing message (covers all cert fields) + its
+                // signature, plus the sender pk and signature.
+                let cert_msg = handoff_cert.signing_message();
+                hasher.update(&(cert_msg.len() as u64).to_le_bytes());
+                hasher.update(&cert_msg);
+                hasher.update(&handoff_cert.introducer_signature.0);
+                hasher.update(introducer_pk);
+                hasher.update(sender_pk);
+                hasher.update(sender_signature);
             }
         }
         // Hash delegation mode.

@@ -18,8 +18,8 @@
 //! (`"pyana-effect-vm-v1"`), identified by its 32-byte SHA-256 of the AIR name.
 //! Future versions will support additional cell programs by VK hash lookup.
 
-use pyana_circuit::{EffectVmAir, field::BabyBear, stark};
 use pyana_circuit::stark::StarkAir;
+use pyana_circuit::{EffectVmAir, field::BabyBear, stark};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -35,11 +35,17 @@ pub struct VerifierOutput {
 
 impl VerifierOutput {
     pub fn accept(reason: impl Into<String>) -> Self {
-        Self { verified: true, reason: reason.into() }
+        Self {
+            verified: true,
+            reason: reason.into(),
+        }
     }
 
     pub fn reject(reason: impl Into<String>) -> Self {
-        Self { verified: false, reason: reason.into() }
+        Self {
+            verified: false,
+            reason: reason.into(),
+        }
     }
 }
 

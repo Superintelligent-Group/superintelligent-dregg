@@ -25,6 +25,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::identity::derive_federation_id_with_epoch;
 use crate::threshold::{FederationCommittee, ThresholdQC};
 use crate::types::{PublicKey, Signature};
 use pyana_types::{CellId, ThresholdQC as OpaqueThresholdQC};
@@ -178,9 +179,19 @@ impl FederationReceipt {
 
     /// Verify this receipt.
     ///
-    /// - For the `Threshold` flavor: requires the committee for BLS aggregate
+    /// Closes finding F1 + F4 in `AUDIT-federation.md`:
+    ///
+    /// 1. The carried `federation_id` MUST equal
+    ///    `derive_federation_id_with_epoch(known_keys, self.committee_epoch)`.
+    ///    This binds receipt to (committee, epoch); a receipt tagged with one
+    ///    federation but signed by another's committee is rejected.
+    /// 2. The carried `committee_epoch` MUST match the caller's `expected_epoch`.
+    ///    Old-epoch receipts presented under a new-epoch committee are rejected.
+    /// 3. The QC (threshold or per-voter) must verify cryptographically.
+    ///
+    /// - For the `Threshold` flavor: requires the BLS `committee` for aggregate
     ///   verification.
-    /// - For the `Votes` flavor: requires a `known_keys` slice; signatures
+    /// - For the `Votes` flavor: requires the `known_keys` slice; signatures
     ///   must be cryptographically valid over `body_hash` AND a unique-signer
     ///   count must meet `threshold`.
     pub fn verify(
@@ -188,10 +199,26 @@ impl FederationReceipt {
         committee: Option<&FederationCommittee>,
         known_keys: &[PublicKey],
         threshold: usize,
+        expected_epoch: u64,
     ) -> bool {
         if self.version != Self::VERSION {
             return false;
         }
+
+        // F4: epoch must match what the caller currently considers active.
+        if self.committee_epoch != expected_epoch {
+            return false;
+        }
+
+        // F1: federation_id must commit to the actual committee + epoch.
+        // We bind to the Ed25519 `known_keys` because that's the substrate the
+        // live node operates over (genesis validators). The BLS committee
+        // is auxiliary; it shares the same federation, so the same id.
+        let expected_id = derive_federation_id_with_epoch(known_keys, self.committee_epoch);
+        if expected_id != self.federation_id {
+            return false;
+        }
+
         let body_hash = self.body.body_hash();
         match &self.qc {
             ReceiptQc::Threshold(opaque) => {
@@ -233,6 +260,7 @@ impl FederationReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::derive_federation_id;
     use crate::threshold::generate_test_committee;
     use hints::PartialSignature;
     use pyana_types::{generate_keypair, sign};
@@ -264,8 +292,13 @@ mod tests {
 
     #[test]
     fn threshold_receipt_verifies_under_committee() {
-        // 4-member committee, threshold 3.
+        // 4-member committee, threshold 3. We also produce a parallel Ed25519
+        // committee for the federation_id derivation (in production the same
+        // genesis validators have both Ed25519 + BLS keys; here we just need
+        // *some* Ed25519 set to bind the receipt's federation_id).
         let (committee, members) = generate_test_committee(4, 3).unwrap();
+        let ed_keys: Vec<PublicKey> = (0..4).map(|_| generate_keypair().1).collect();
+        let fed_id = derive_federation_id(&ed_keys);
 
         let body = sample_body(42);
         let body_hash = body.body_hash();
@@ -277,12 +310,61 @@ mod tests {
             .collect();
         let qc = committee.aggregate(&shares, &body_hash).unwrap();
 
-        let receipt = FederationReceipt::with_threshold_qc([0u8; 32], 1, body, &qc);
+        let receipt = FederationReceipt::with_threshold_qc(fed_id, 0, body, &qc);
 
         assert!(
-            receipt.verify(Some(&committee), &[], 0),
+            receipt.verify(Some(&committee), &ed_keys, 0, 0),
             "threshold receipt must verify against its committee"
         );
+    }
+
+    #[test]
+    fn threshold_receipt_rejected_when_federation_id_mismatches() {
+        // F1: a receipt tagged with a different federation_id must not verify
+        // even if the BLS QC is otherwise valid.
+        let (committee, members) = generate_test_committee(4, 3).unwrap();
+        let ed_keys: Vec<PublicKey> = (0..4).map(|_| generate_keypair().1).collect();
+
+        let body = sample_body(11);
+        let body_hash = body.body_hash();
+        let shares: Vec<(usize, PartialSignature)> = members[0..3]
+            .iter()
+            .map(|m| (m.index, committee.sign_share(m, &body_hash)))
+            .collect();
+        let qc = committee.aggregate(&shares, &body_hash).unwrap();
+
+        // Lie about federation_id: pretend it's all-zeros instead of the
+        // derived value. The QC is still valid but the binding check fires.
+        let bogus = FederationReceipt::with_threshold_qc([0u8; 32], 0, body, &qc);
+        assert!(
+            !bogus.verify(Some(&committee), &ed_keys, 0, 0),
+            "receipt with wrong federation_id must be rejected (F1)"
+        );
+    }
+
+    #[test]
+    fn threshold_receipt_rejected_when_epoch_mismatches() {
+        // F4: epoch binding must be consulted.
+        let (committee, members) = generate_test_committee(4, 3).unwrap();
+        let ed_keys: Vec<PublicKey> = (0..4).map(|_| generate_keypair().1).collect();
+        let fed_id_e1 = derive_federation_id_with_epoch(&ed_keys, 1);
+
+        let body = sample_body(13);
+        let body_hash = body.body_hash();
+        let shares: Vec<(usize, PartialSignature)> = members[0..3]
+            .iter()
+            .map(|m| (m.index, committee.sign_share(m, &body_hash)))
+            .collect();
+        let qc = committee.aggregate(&shares, &body_hash).unwrap();
+
+        // Receipt claims epoch 1; verifier expects epoch 2 → reject.
+        let receipt = FederationReceipt::with_threshold_qc(fed_id_e1, 1, body, &qc);
+        assert!(
+            !receipt.verify(Some(&committee), &ed_keys, 0, 2),
+            "receipt with stale committee_epoch must be rejected (F4)"
+        );
+        // Same receipt with matching expected_epoch verifies.
+        assert!(receipt.verify(Some(&committee), &ed_keys, 0, 1));
     }
 
     #[test]
@@ -309,6 +391,9 @@ mod tests {
     fn threshold_receipt_fails_on_wrong_body() {
         // A receipt's QC over body A must not verify against a modified body.
         let (committee, members) = generate_test_committee(4, 3).unwrap();
+        let ed_keys: Vec<PublicKey> = (0..4).map(|_| generate_keypair().1).collect();
+        let fed_id = derive_federation_id(&ed_keys);
+
         let body_a = sample_body(1);
         let hash_a = body_a.body_hash();
         let shares: Vec<(usize, PartialSignature)> = members[0..3]
@@ -318,9 +403,9 @@ mod tests {
         let qc = committee.aggregate(&shares, &hash_a).unwrap();
 
         let body_b = sample_body(2); // different body
-        let bogus_receipt = FederationReceipt::with_threshold_qc([0u8; 32], 1, body_b, &qc);
+        let bogus_receipt = FederationReceipt::with_threshold_qc(fed_id, 0, body_b, &qc);
         assert!(
-            !bogus_receipt.verify(Some(&committee), &[], 0),
+            !bogus_receipt.verify(Some(&committee), &ed_keys, 0, 0),
             "QC signed over body_a must not satisfy a receipt carrying body_b"
         );
     }
@@ -330,6 +415,7 @@ mod tests {
         // Ed25519 fallback: 3 federation keypairs, threshold 2.
         let kps: Vec<(_, _)> = (0..3).map(|_| generate_keypair()).collect();
         let known_keys: Vec<PublicKey> = kps.iter().map(|(_, pk)| pk.clone()).collect();
+        let fed_id = derive_federation_id(&known_keys);
 
         let body = sample_body(9);
         let body_hash = body.body_hash();
@@ -338,8 +424,8 @@ mod tests {
             .map(|(sk, pk)| (pk.clone(), sign(sk, &body_hash)))
             .collect();
 
-        let receipt = FederationReceipt::with_vote_signatures([1u8; 32], 0, body, votes);
-        assert!(receipt.verify(None, &known_keys, 2));
+        let receipt = FederationReceipt::with_vote_signatures(fed_id, 0, body, votes);
+        assert!(receipt.verify(None, &known_keys, 2, 0));
     }
 
     #[test]
@@ -348,12 +434,13 @@ mod tests {
         let (_sk2, pk2) = generate_keypair();
         // pk2's owner did not "consent" — pretend only pk1 is in the known set.
         let known_keys = vec![pk1.clone()];
+        let fed_id = derive_federation_id(&known_keys);
 
         let body = sample_body(3);
         let votes = vec![(pk2.clone(), sign(&sk1, &body.body_hash()))];
-        let receipt = FederationReceipt::with_vote_signatures([0u8; 32], 0, body, votes);
+        let receipt = FederationReceipt::with_vote_signatures(fed_id, 0, body, votes);
         assert!(
-            !receipt.verify(None, &known_keys, 1),
+            !receipt.verify(None, &known_keys, 1, 0),
             "signers outside known_keys must be rejected"
         );
     }
@@ -362,15 +449,16 @@ mod tests {
     fn votes_receipt_rejects_duplicate_signer() {
         let (sk, pk) = generate_keypair();
         let known_keys = vec![pk.clone()];
+        let fed_id = derive_federation_id(&known_keys);
 
         let body = sample_body(8);
         let body_hash = body.body_hash();
         // Same key signs twice; threshold 2 must NOT be met.
         let sig = sign(&sk, &body_hash);
         let votes = vec![(pk.clone(), sig.clone()), (pk.clone(), sig)];
-        let receipt = FederationReceipt::with_vote_signatures([0u8; 32], 0, body, votes);
+        let receipt = FederationReceipt::with_vote_signatures(fed_id, 0, body, votes);
         assert!(
-            !receipt.verify(None, &known_keys, 2),
+            !receipt.verify(None, &known_keys, 2, 0),
             "duplicate-signer replay must not satisfy threshold"
         );
     }

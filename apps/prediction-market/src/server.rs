@@ -228,7 +228,10 @@ async fn create_market(
     Json(req): Json<CreateMarketRequest>,
 ) -> Result<(StatusCode, Json<MarketResponse>), (StatusCode, Json<ErrorResponse>)> {
     if req.outcomes.is_empty() {
-        return Err(api_error(StatusCode::BAD_REQUEST, "outcomes cannot be empty"));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "outcomes cannot be empty",
+        ));
     }
     let m = Market::new(req.question, req.outcomes, req.close_height);
     let resp = market_to_response(&m);
@@ -240,8 +243,8 @@ async fn get_market(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<MarketResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let id_bytes = parse_hex_id(&id)
-        .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid market id"))?;
+    let id_bytes =
+        parse_hex_id(&id).ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid market id"))?;
     let markets = state.markets.read().await;
     let m = markets
         .get(&id_bytes)
@@ -252,12 +255,12 @@ async fn get_market(
 fn market_to_response(m: &Market) -> MarketResponse {
     let (status_str, winner) = match &m.status {
         MarketStatus::Open => ("open".to_string(), None),
-        MarketStatus::Resolving { winning_outcome, .. } => {
-            ("resolving".to_string(), Some(hex_id(winning_outcome)))
-        }
-        MarketStatus::Resolved { winning_outcome, .. } => {
-            ("resolved".to_string(), Some(hex_id(winning_outcome)))
-        }
+        MarketStatus::Resolving {
+            winning_outcome, ..
+        } => ("resolving".to_string(), Some(hex_id(winning_outcome))),
+        MarketStatus::Resolved {
+            winning_outcome, ..
+        } => ("resolved".to_string(), Some(hex_id(winning_outcome))),
     };
     MarketResponse {
         id: hex_id(&m.id),
@@ -329,7 +332,10 @@ async fn commit_bet(
     let mut queue = state.blinded_queue.lock().await;
     let mut commitments = state.commitments.lock().await;
     queue.commit(commitment).map_err(|e| {
-        api_error(StatusCode::UNPROCESSABLE_ENTITY, format!("commit failed: {e:?}"))
+        api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("commit failed: {e:?}"),
+        )
     })?;
     let position = commitments.len();
     commitments.push(commitment.blake3);
@@ -350,7 +356,11 @@ async fn commit_bet(
         secret,
         position,
     };
-    state.pending_bets.write().await.insert(commitment.blake3, pending);
+    state
+        .pending_bets
+        .write()
+        .await
+        .insert(commitment.blake3, pending);
 
     Ok(Json(PlaceBetResponse {
         commitment_hex: hex_id(&commitment.blake3),
@@ -502,19 +512,24 @@ async fn settle_market(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<SettleResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let market_id = parse_hex_id(&id)
-        .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid market id"))?;
+    let market_id =
+        parse_hex_id(&id).ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid market id"))?;
     let mut markets = state.markets.write().await;
     let market = markets
         .get_mut(&market_id)
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "market not found"))?;
     let winning = match &market.status {
-        MarketStatus::Resolving { winning_outcome, .. } => *winning_outcome,
+        MarketStatus::Resolving {
+            winning_outcome, ..
+        } => *winning_outcome,
         MarketStatus::Resolved { .. } => {
             return Err(api_error(StatusCode::CONFLICT, "market already resolved"));
         }
         MarketStatus::Open => {
-            return Err(api_error(StatusCode::CONFLICT, "market is not in resolution"));
+            return Err(api_error(
+                StatusCode::CONFLICT,
+                "market is not in resolution",
+            ));
         }
     };
 
@@ -533,9 +548,7 @@ async fn settle_market(
         // Find the original stake to subtract.
         let original: u64 = revealed
             .iter()
-            .filter(|r| {
-                r.payload.outcome_id == winning && r.payload.bettor == p.bettor
-            })
+            .filter(|r| r.payload.outcome_id == winning && r.payload.bettor == p.bettor)
             .map(|r| r.payload.stake)
             .sum();
         if let Some(v) = escrow.get_mut(&p.bettor) {
@@ -568,8 +581,8 @@ async fn get_payouts(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<PayoutDto>>, (StatusCode, Json<ErrorResponse>)> {
-    let market_id = parse_hex_id(&id)
-        .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid market id"))?;
+    let market_id =
+        parse_hex_id(&id).ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid market id"))?;
     let payouts = state.payouts.read().await;
     let list = payouts
         .get(&market_id)

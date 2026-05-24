@@ -20,7 +20,7 @@ use pyana_app_framework::batch_executor::{BatchExecution, BatchExecutor, ClientT
 use pyana_types::CellId;
 use serde::{Deserialize, Serialize};
 
-use crate::{LendingPool};
+use crate::LendingPool;
 
 /// Health-factor threshold (in bps) below which the executor acts: 1.1 = 11000.
 pub const EXECUTOR_HEALTH_THRESHOLD_BPS: u64 = 11_000;
@@ -110,9 +110,10 @@ impl LendingBatchExecutor {
             // also name the same borrower as the position — otherwise anyone
             // could register a delegation against someone else's position and
             // have repayment turns issued in their (the impostor's) name.
-            let delegation = self.delegations.iter().find(|d| {
-                d.active && d.position_id == pos.id && d.borrower == pos.borrower
-            });
+            let delegation = self
+                .delegations
+                .iter()
+                .find(|d| d.active && d.position_id == pos.id && d.borrower == pos.borrower);
             let Some(delegation) = delegation else {
                 continue;
             };
@@ -127,8 +128,7 @@ impl LendingBatchExecutor {
                 position_id: pos.id,
                 amount: repay,
             };
-            let turn_bytes =
-                serde_json::to_vec(&instruction).unwrap_or_default();
+            let turn_bytes = serde_json::to_vec(&instruction).unwrap_or_default();
             self.pending.push(ClientTurnRequest {
                 client: delegation.borrower,
                 turn_bytes,
@@ -158,12 +158,14 @@ impl LendingBatchExecutor {
     ) -> Vec<[u8; 32]> {
         let mut repaid_positions = Vec::new();
         for req in batch {
-            let Ok(instruction) =
-                serde_json::from_slice::<RepaymentInstruction>(&req.turn_bytes)
+            let Ok(instruction) = serde_json::from_slice::<RepaymentInstruction>(&req.turn_bytes)
             else {
                 continue;
             };
-            if pool.repay(&instruction.position_id, instruction.amount).is_ok() {
+            if pool
+                .repay(&instruction.position_id, instruction.amount)
+                .is_ok()
+            {
                 repaid_positions.push(instruction.position_id);
                 // Mark delegation inactive so we don't repay twice
                 if let Some(d) = self
@@ -255,7 +257,11 @@ mod tests {
         let pos_id = pool.borrow(bob, 1, 1_000_000, collateral).unwrap();
 
         // Confirm health is below EXECUTOR_HEALTH_THRESHOLD_BPS (11000)
-        let pos = pool.borrow_positions.iter().find(|p| p.id == pos_id).unwrap();
+        let pos = pool
+            .borrow_positions
+            .iter()
+            .find(|p| p.id == pos_id)
+            .unwrap();
         let health = pos.health_factor_bps();
         assert!(
             health < EXECUTOR_HEALTH_THRESHOLD_BPS,
@@ -333,8 +339,15 @@ mod tests {
         assert_eq!(repaid[0], pos_id);
 
         // Position debt should be reduced
-        let pos = pool.borrow_positions.iter().find(|p| p.id == pos_id).unwrap();
-        assert!(pos.total_debt() < 1_000_000, "debt should be reduced after batch repay");
+        let pos = pool
+            .borrow_positions
+            .iter()
+            .find(|p| p.id == pos_id)
+            .unwrap();
+        assert!(
+            pos.total_debt() < 1_000_000,
+            "debt should be reduced after batch repay"
+        );
     }
 
     #[test]
@@ -383,7 +396,10 @@ mod tests {
 
         let result1 = executor.execute_batch(batch.clone()).unwrap();
         let result2 = executor.execute_batch(batch).unwrap();
-        assert_eq!(result1.batch_id, result2.batch_id, "batch_id should be deterministic");
+        assert_eq!(
+            result1.batch_id, result2.batch_id,
+            "batch_id should be deterministic"
+        );
         assert_eq!(result1.turn_count, 2);
     }
 
@@ -404,7 +420,11 @@ mod tests {
         executor.apply_batch(&batch, &mut pool);
 
         // Delegation should now be inactive
-        let deleg = executor.delegations.iter().find(|d| d.position_id == pos_id).unwrap();
+        let deleg = executor
+            .delegations
+            .iter()
+            .find(|d| d.position_id == pos_id)
+            .unwrap();
         assert!(!deleg.active, "delegation should be inactive after apply");
     }
 }

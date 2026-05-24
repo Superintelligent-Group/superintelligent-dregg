@@ -64,11 +64,8 @@ impl AppState {
         let governance = GovernanceState::new(voters);
         let treasury = Arc::new(RwLock::new(Treasury::new()));
         let queue = QuorumGate::make_queue("dao-treasury-proposals", [0u8; 32], 1024);
-        let executor = TreasuryBatchExecutor::new(
-            governance.clone(),
-            treasury.clone(),
-            CellId([0xEE; 32]),
-        );
+        let executor =
+            TreasuryBatchExecutor::new(governance.clone(), treasury.clone(), CellId([0xEE; 32]));
         Self {
             governance,
             treasury,
@@ -279,7 +276,11 @@ async fn enqueue_proposal(
     // The queue's `QueueConstraint::Custom { expr: "quorum-met" }` does not
     // currently enforce anything at the storage layer (see REVIEW[P1] in
     // `governance::QuorumGate::queue_program`). Enforce here.
-    state.governance.check_quorum(&id_bytes).await.map_err(map_gov_err)?;
+    state
+        .governance
+        .check_quorum(&id_bytes)
+        .await
+        .map_err(map_gov_err)?;
 
     // Forward to the programmable queue.
     let entry = QueueEntry {
@@ -343,10 +344,7 @@ async fn executor_run(
 
 async fn treasury_balances(State(state): State<AppState>) -> Json<BalancesResponse> {
     let t = state.treasury.read().await;
-    let balances = t
-        .iter()
-        .map(|(a, b)| (bytes32_to_hex(a), *b))
-        .collect();
+    let balances = t.iter().map(|(a, b)| (bytes32_to_hex(a), *b)).collect();
     Json(BalancesResponse { balances })
 }
 

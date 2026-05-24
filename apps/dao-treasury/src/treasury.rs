@@ -42,9 +42,10 @@ impl Treasury {
     /// Credit `amount` to `asset`. Returns the new balance.
     pub fn credit(&mut self, asset: AssetId, amount: u128) -> Result<u128, TreasuryError> {
         let entry = self.balances.entry(asset).or_insert(0);
-        let new = entry
-            .checked_add(amount)
-            .ok_or(TreasuryError::Overflow { current: *entry, amount })?;
+        let new = entry.checked_add(amount).ok_or(TreasuryError::Overflow {
+            current: *entry,
+            amount,
+        })?;
         *entry = new;
         Ok(new)
     }
@@ -55,7 +56,10 @@ impl Treasury {
     pub fn debit(&mut self, asset: AssetId, amount: u128) -> Result<u128, TreasuryError> {
         let entry = self.balances.entry(asset).or_insert(0);
         if *entry < amount {
-            return Err(TreasuryError::Insufficient { have: *entry, want: amount });
+            return Err(TreasuryError::Insufficient {
+                have: *entry,
+                want: amount,
+            });
         }
         *entry -= amount;
         Ok(*entry)
@@ -102,7 +106,13 @@ mod tests {
         let mut t = Treasury::new();
         t.credit(A, 100).unwrap();
         let err = t.debit(A, 200).unwrap_err();
-        assert_eq!(err, TreasuryError::Insufficient { have: 100, want: 200 });
+        assert_eq!(
+            err,
+            TreasuryError::Insufficient {
+                have: 100,
+                want: 200
+            }
+        );
         // Adversarial: a rejected debit must leave the balance intact.
         assert_eq!(t.balance(&A), 100);
     }

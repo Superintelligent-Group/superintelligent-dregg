@@ -192,6 +192,8 @@ fn main() {
         nullifier_set_root: None,
         height: 42,
         timestamp: fresh_timestamp,
+        blocklace_block_id: None,
+        finality_round: None,
         threshold_qc: None,
         quorum_signatures: Vec::new(),
         threshold: 2,

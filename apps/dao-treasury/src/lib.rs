@@ -24,6 +24,6 @@ pub mod treasury;
 mod tests;
 
 pub use executor::{BatchSummary, TreasuryBatchExecutor, TreasuryBatchExecutorError};
-pub use governance::{GovernanceState, GovernanceError, QuorumGate, Voter};
+pub use governance::{GovernanceError, GovernanceState, QuorumGate, Voter};
 pub use proposal::{Proposal, ProposalId, ProposalStatus, SpendOrder};
 pub use treasury::{AssetId, Treasury, TreasuryError};

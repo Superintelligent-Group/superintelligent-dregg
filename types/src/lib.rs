@@ -195,6 +195,12 @@ pub struct ThresholdQC(pub Vec<u8>);
 /// Attested revocation root with quorum signatures.
 ///
 /// This is the canonical definition. It carries FULL 64-byte signatures.
+///
+/// Closes finding F3 in `AUDIT-federation.md` / gap D in
+/// `AUDIT-blocklace-consensus.md`: an attested root now binds to a specific
+/// blocklace block id and finality round. Two attested roots at the same
+/// `height` from different blocklace forks are distinguishable because their
+/// `blocklace_block_id` differs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttestedRoot {
     /// The Merkle root of the revocation tree (cell state).
@@ -209,6 +215,15 @@ pub struct AttestedRoot {
     pub height: u64,
     /// Unix timestamp (seconds) when finalized.
     pub timestamp: i64,
+    /// The blocklace block id (32-byte BLAKE3) this attestation is anchored
+    /// to. `None` for legacy roots produced before F3 was wired; production
+    /// roots from the live consensus path always carry it.
+    #[serde(default)]
+    pub blocklace_block_id: Option<[u8; 32]>,
+    /// The Cordial Miners "round" (DAG depth, monotone per-participant) at
+    /// the anchoring block. `None` for legacy roots.
+    #[serde(default)]
+    pub finality_round: Option<u64>,
     /// Quorum signatures: (public_key, signature) pairs with FULL 64-byte sigs.
     pub quorum_signatures: Vec<(PublicKey, Signature)>,
     /// Optional threshold aggregate QC (constant-size BLS, preferred over individual sigs).
@@ -218,6 +233,31 @@ pub struct AttestedRoot {
 }
 
 impl AttestedRoot {
+    /// Convenience constructor for the common "no blocklace binding yet" case
+    /// (tests, legacy fixtures). Production code in `node/` always sets
+    /// `blocklace_block_id` and `finality_round` directly.
+    pub fn new_legacy(
+        merkle_root: [u8; 32],
+        height: u64,
+        timestamp: i64,
+        quorum_signatures: Vec<(PublicKey, Signature)>,
+        threshold_qc: Option<ThresholdQC>,
+        threshold: usize,
+    ) -> Self {
+        Self {
+            merkle_root,
+            note_tree_root: None,
+            nullifier_set_root: None,
+            height,
+            timestamp,
+            blocklace_block_id: None,
+            finality_round: None,
+            quorum_signatures,
+            threshold_qc,
+            threshold,
+        }
+    }
+
     /// Check if this root has sufficient signatures (count-only check, no crypto).
     ///
     /// **STRUCTURAL VALIDATION ONLY.** This performs no cryptographic verification.
@@ -307,7 +347,10 @@ impl AttestedRoot {
     /// produces a different message than `note_tree_root = None, nullifier_set_root = Some(X)`.
     pub fn signing_message(&self) -> Vec<u8> {
         let mut msg = Vec::new();
-        msg.extend_from_slice(b"pyana-attested-root-v1");
+        // v2 binds the blocklace block_id + finality_round so that two
+        // attested roots at the same `height` from different blocklace forks
+        // are distinguishable (closes audit F3).
+        msg.extend_from_slice(b"pyana-attested-root-v2");
         msg.extend_from_slice(&self.merkle_root);
         match self.note_tree_root {
             Some(ref note_root) => {
@@ -329,6 +372,24 @@ impl AttestedRoot {
         }
         msg.extend_from_slice(&self.height.to_le_bytes());
         msg.extend_from_slice(&self.timestamp.to_le_bytes());
+        match self.blocklace_block_id {
+            Some(ref id) => {
+                msg.push(0x01);
+                msg.extend_from_slice(id);
+            }
+            None => {
+                msg.push(0x00);
+            }
+        }
+        match self.finality_round {
+            Some(round) => {
+                msg.push(0x01);
+                msg.extend_from_slice(&round.to_le_bytes());
+            }
+            None => {
+                msg.push(0x00);
+            }
+        }
         msg
     }
 
@@ -529,6 +590,8 @@ mod tests {
             nullifier_set_root: None,
             height: 42,
             timestamp: 1700000000,
+            blocklace_block_id: None,
+            finality_round: None,
             quorum_signatures: vec![
                 (PublicKey([0x11; 32]), Signature([0x22; 64])),
                 (PublicKey([0x33; 32]), Signature([0x44; 64])),
@@ -585,6 +648,8 @@ mod tests {
             nullifier_set_root: None,
             height: 42,
             timestamp: 1700000000,
+            blocklace_block_id: None,
+            finality_round: None,
             quorum_signatures: vec![],
             threshold_qc: None,
             threshold: 2,
@@ -622,6 +687,8 @@ mod tests {
             nullifier_set_root: Some([0x03; 32]),
             height: 99,
             timestamp: 1700000000,
+            blocklace_block_id: Some([0x04; 32]),
+            finality_round: Some(7),
             quorum_signatures: vec![(PublicKey([0xAA; 32]), Signature([0xBB; 64]))],
             threshold_qc: None,
             threshold: 1,

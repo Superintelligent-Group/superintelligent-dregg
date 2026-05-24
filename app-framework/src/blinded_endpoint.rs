@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use pyana_storage::blinded::{
-    BlindedQueue, ConsumptionProof, ConsumeResult, FairDistribution, PrivateConsumptionProof,
+    BlindedQueue, ConsumeResult, ConsumptionProof, FairDistribution, PrivateConsumptionProof,
 };
 
 use crate::server::api_error;
@@ -210,8 +210,12 @@ async fn handle_commit(
     let commitment = commitment_bytes.into();
 
     let mut q = state.queue.lock().await;
-    q.commit(commitment)
-        .map_err(|e| api_error(StatusCode::UNPROCESSABLE_ENTITY, format!("commit failed: {e:?}")))?;
+    q.commit(commitment).map_err(|e| {
+        api_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("commit failed: {e:?}"),
+        )
+    })?;
 
     Ok(Json(CommitResponse {
         root_hex: hex_encode(&q.commitment_root()),
@@ -260,7 +264,10 @@ async fn handle_consume_private(
 
     // Decode the spending proof from hex.
     let spending_proof: Vec<u8> = if req.spending_proof_hex.len() % 2 != 0 {
-        return Err(api_error(StatusCode::BAD_REQUEST, "spending_proof_hex must have even length"));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "spending_proof_hex must have even length",
+        ));
     } else {
         (0..req.spending_proof_hex.len())
             .step_by(2)
@@ -327,7 +334,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let status: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(status["consumed_count"], 0);
         assert_eq!(status["remaining"], 1);

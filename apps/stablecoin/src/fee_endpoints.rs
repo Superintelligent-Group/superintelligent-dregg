@@ -86,9 +86,7 @@ fn asset_to_hex(a: &AssetId) -> String {
 }
 
 /// `GET /fees` — return the current fee policy as JSON.
-pub async fn get_fees(
-    Extension(policy): Extension<FeePolicy>,
-) -> Json<FeePolicyResponse> {
+pub async fn get_fees(Extension(policy): Extension<FeePolicy>) -> Json<FeePolicyResponse> {
     Json(FeePolicyResponse {
         accepted_assets: policy
             .accepted
@@ -135,17 +133,15 @@ pub fn compute_fee_or_reject(
     asset: &AssetId,
     base_amount: u64,
 ) -> Result<u64, (StatusCode, Json<pyana_app_framework::server::ErrorResponse>)> {
-    policy
-        .compute_fee(asset, base_amount)
-        .ok_or_else(|| {
-            pyana_app_framework::server::api_error(
-                StatusCode::BAD_REQUEST,
-                format!(
-                    "asset {} is not accepted for fee payment",
-                    hex::encode(asset)
-                ),
-            )
-        })
+    policy.compute_fee(asset, base_amount).ok_or_else(|| {
+        pyana_app_framework::server::api_error(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "asset {} is not accepted for fee payment",
+                hex::encode(asset)
+            ),
+        )
+    })
 }
 
 // =============================================================================
@@ -181,7 +177,10 @@ mod tests {
     #[test]
     fn default_policy_accepts_pusd_and_eth() {
         let policy = default_fee_policy();
-        assert!(policy.accepts(&NATIVE_ASSET), "should accept native computrons");
+        assert!(
+            policy.accepts(&NATIVE_ASSET),
+            "should accept native computrons"
+        );
         assert!(policy.accepts(&pusd_asset_id()), "should accept PUSD");
         assert!(policy.accepts(&eth_asset_id()), "should accept ETH");
     }

@@ -18,8 +18,8 @@
 //! (after asserting in unit tests that it builds). A future commit
 //! routes the action through a federation client's `TurnBuilder`.
 
-use pyana_cell::state::FieldElement;
 use pyana_cell::CellId;
+use pyana_cell::state::FieldElement;
 use pyana_turn::action::Action;
 use pyana_turn::builder::ActionBuilder;
 
@@ -39,11 +39,7 @@ pub fn build_ballot_submit_action(
     let commit_field: FieldElement = commitment;
     ActionBuilder::new(voting_cell, "ballot_submit", caller)
         .signed_by(placeholder_sig)
-        .effect_emit_event(
-            voting_cell,
-            "ballot-cast",
-            vec![pid_field, commit_field],
-        )
+        .effect_emit_event(voting_cell, "ballot-cast", vec![pid_field, commit_field])
         .build()
 }
 
@@ -120,7 +116,13 @@ mod tests {
         let caller = CellId::from_bytes([2u8; 32]);
         let s = build_ballot_submit_action(voting, caller, [7u8; 32], [9u8; 32]);
         let r = build_ballot_reveal_action(voting, caller, [7u8; 32], [9u8; 32], 1);
-        assert!(matches!(s.authorization, pyana_turn::action::Authorization::Signature(..)));
-        assert!(matches!(r.authorization, pyana_turn::action::Authorization::Signature(..)));
+        assert!(matches!(
+            s.authorization,
+            pyana_turn::action::Authorization::Signature(..)
+        ));
+        assert!(matches!(
+            r.authorization,
+            pyana_turn::action::Authorization::Signature(..)
+        ));
     }
 }

@@ -35,7 +35,9 @@ pub enum PipelineStage {
     /// Transform message content (map).
     Transform { transform: TransformFn },
     /// Route to different sinks based on content.
-    Router { routes: Vec<(FilterPredicate, [u8; 32])> },
+    Router {
+        routes: Vec<(FilterPredicate, [u8; 32])>,
+    },
     /// Write to a sink queue.
     Sink { queue_id: [u8; 32] },
     /// Fan-out: write to ALL listed queues.
@@ -131,7 +133,9 @@ impl Pipeline {
         // Dequeue one message from source.
         let source_queue = queues
             .get_mut(&source_id)
-            .ok_or(PipelineError::SourceNotFound { queue_id: source_id })?;
+            .ok_or(PipelineError::SourceNotFound {
+                queue_id: source_id,
+            })?;
 
         let entry = match source_queue.dequeue() {
             Ok((entry, _proof)) => entry,
@@ -162,7 +166,10 @@ impl Pipeline {
                     result.messages_filtered += before_count - messages.len();
                 }
                 PipelineStage::Transform { transform } => {
-                    messages = messages.into_iter().map(|e| apply_transform(transform, e)).collect();
+                    messages = messages
+                        .into_iter()
+                        .map(|e| apply_transform(transform, e))
+                        .collect();
                 }
                 PipelineStage::Router { routes } => {
                     // Route each message to the first matching route's sink.
@@ -188,9 +195,12 @@ impl Pipeline {
                     messages = routed_messages;
                 }
                 PipelineStage::Sink { queue_id } => {
-                    let sink_queue = queues
-                        .get_mut(queue_id)
-                        .ok_or(PipelineError::SinkNotFound { queue_id: *queue_id })?;
+                    let sink_queue =
+                        queues
+                            .get_mut(queue_id)
+                            .ok_or(PipelineError::SinkNotFound {
+                                queue_id: *queue_id,
+                            })?;
                     for msg in &messages {
                         sink_queue.enqueue(msg.clone())?;
                         *result.messages_routed.entry(*queue_id).or_insert(0) += 1;
@@ -404,7 +414,9 @@ mod tests {
         let sink_id = [0x02; 32];
 
         let pipeline = Pipeline::new(vec![
-            PipelineStage::Source { queue_id: source_id },
+            PipelineStage::Source {
+                queue_id: source_id,
+            },
             PipelineStage::Filter {
                 predicate: FilterPredicate::MinDeposit(100),
             },
@@ -447,7 +459,9 @@ mod tests {
         let sink_b = [0x0B; 32];
 
         let pipeline = Pipeline::new(vec![
-            PipelineStage::Source { queue_id: source_id },
+            PipelineStage::Source {
+                queue_id: source_id,
+            },
             PipelineStage::Router {
                 routes: vec![
                     (FilterPredicate::Sender([0xAA; 32]), sink_a),
@@ -485,7 +499,9 @@ mod tests {
         let sink_c = [0x0C; 32];
 
         let pipeline = Pipeline::new(vec![
-            PipelineStage::Source { queue_id: source_id },
+            PipelineStage::Source {
+                queue_id: source_id,
+            },
             PipelineStage::FanOut {
                 queue_ids: vec![sink_a, sink_b, sink_c],
             },
@@ -493,7 +509,9 @@ mod tests {
 
         let mut queues = HashMap::new();
         let mut source = MerkleQueue::new(10);
-        source.enqueue(make_entry(b"broadcast", [0xAA; 32], 100)).unwrap();
+        source
+            .enqueue(make_entry(b"broadcast", [0xAA; 32], 100))
+            .unwrap();
 
         queues.insert(source_id, source);
         queues.insert(sink_a, MerkleQueue::new(10));
@@ -515,7 +533,9 @@ mod tests {
         let sink_id = [0x02; 32];
 
         let pipeline = Pipeline::new(vec![
-            PipelineStage::Source { queue_id: source_id },
+            PipelineStage::Source {
+                queue_id: source_id,
+            },
             PipelineStage::Sink { queue_id: sink_id },
         ]);
 
@@ -540,7 +560,9 @@ mod tests {
         let sink_id = [0x02; 32];
 
         let pipeline = Pipeline::new(vec![
-            PipelineStage::Source { queue_id: source_id },
+            PipelineStage::Source {
+                queue_id: source_id,
+            },
             PipelineStage::Sink { queue_id: sink_id },
         ]);
 
@@ -557,11 +579,15 @@ mod tests {
     #[test]
     fn pipeline_id_is_deterministic() {
         let stages = vec![
-            PipelineStage::Source { queue_id: [0x01; 32] },
+            PipelineStage::Source {
+                queue_id: [0x01; 32],
+            },
             PipelineStage::Filter {
                 predicate: FilterPredicate::MinDeposit(100),
             },
-            PipelineStage::Sink { queue_id: [0x02; 32] },
+            PipelineStage::Sink {
+                queue_id: [0x02; 32],
+            },
         ];
 
         let p1 = Pipeline::new(stages.clone());
@@ -570,8 +596,12 @@ mod tests {
 
         // Different stages -> different id.
         let p3 = Pipeline::new(vec![
-            PipelineStage::Source { queue_id: [0x01; 32] },
-            PipelineStage::Sink { queue_id: [0x03; 32] },
+            PipelineStage::Source {
+                queue_id: [0x01; 32],
+            },
+            PipelineStage::Sink {
+                queue_id: [0x03; 32],
+            },
         ]);
         assert_ne!(p1.id(), p3.id());
     }
@@ -582,14 +612,20 @@ mod tests {
         let sink_id = [0x02; 32];
 
         let pipeline = Pipeline::new(vec![
-            PipelineStage::Source { queue_id: source_id },
-            PipelineStage::Transform { transform: TransformFn::Anonymize },
+            PipelineStage::Source {
+                queue_id: source_id,
+            },
+            PipelineStage::Transform {
+                transform: TransformFn::Anonymize,
+            },
             PipelineStage::Sink { queue_id: sink_id },
         ]);
 
         let mut queues = HashMap::new();
         let mut source = MerkleQueue::new(10);
-        source.enqueue(make_entry(b"secret", [0xFF; 32], 100)).unwrap();
+        source
+            .enqueue(make_entry(b"secret", [0xFF; 32], 100))
+            .unwrap();
 
         queues.insert(source_id, source);
         queues.insert(sink_id, MerkleQueue::new(10));
@@ -607,7 +643,9 @@ mod tests {
         let sink_id = [0x02; 32];
 
         let pipeline = Pipeline::new(vec![
-            PipelineStage::Source { queue_id: source_id },
+            PipelineStage::Source {
+                queue_id: source_id,
+            },
             PipelineStage::Filter {
                 predicate: FilterPredicate::ContentPrefix(vec![0xDE, 0xAD]),
             },

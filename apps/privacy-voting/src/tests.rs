@@ -10,7 +10,7 @@
 
 use std::collections::HashSet;
 
-use axum::body::{to_bytes, Body};
+use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -42,12 +42,7 @@ fn make_app(state: AppState) -> axum::Router {
     router().with_state(state)
 }
 
-async fn post_json(
-    app: &axum::Router,
-    uri: &str,
-    body: Value,
-    admin: bool,
-) -> (StatusCode, Value) {
+async fn post_json(app: &axum::Router, uri: &str, body: Value, admin: bool) -> (StatusCode, Value) {
     let mut req = Request::builder()
         .method(Method::POST)
         .uri(uri)
@@ -55,22 +50,28 @@ async fn post_json(
     if admin {
         req = req.header("authorization", format!("Bearer {}", admin_token_value()));
     }
-    let req = req.body(Body::from(serde_json::to_vec(&body).unwrap())).unwrap();
+    let req = req
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    let value: Value =
-        serde_json::from_slice(&bytes).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into()));
+    let value: Value = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into()));
     (status, value)
 }
 
 async fn get_json(app: &axum::Router, uri: &str) -> (StatusCode, Value) {
-    let req = Request::builder().method(Method::GET).uri(uri).body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .body(Body::empty())
+        .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
     let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
-    let value: Value =
-        serde_json::from_slice(&bytes).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into()));
+    let value: Value = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into()));
     (status, value)
 }
 
@@ -131,7 +132,10 @@ async fn create_proposal_without_admin_token_rejected() {
         false,
     )
     .await;
-    assert!(status.is_client_error(), "no admin token must be rejected: {status}");
+    assert!(
+        status.is_client_error(),
+        "no admin token must be rejected: {status}"
+    );
 }
 
 // ---------------------------------------------------------------------------

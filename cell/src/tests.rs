@@ -1680,9 +1680,7 @@ fn test_visibility_transition_to_public_clears_commitment() {
 // P1-6, P2-1, P2-2, P2-3)
 // ============================================================
 
-use crate::facet::{
-    EFFECT_TRANSFER, FACET_TRANSFER_ONLY, is_effect_permitted,
-};
+use crate::facet::{EFFECT_TRANSFER, FACET_TRANSFER_ONLY, is_effect_permitted};
 
 /// P0-1 adversarial: sealed `Cell` identity fields cannot be mutated
 /// from outside the cell crate.
@@ -1739,9 +1737,9 @@ fn p1_2_set_field_does_not_leak_committed_plaintext() {
     // The public view MUST NOT reveal `new_secret`.
     let view = state.get_field_public(3).expect("index in range");
     match view {
-        PublicFieldView::Revealed(_) => panic!(
-            "P1-2 regression: committed-field plaintext leaked after set_field"
-        ),
+        PublicFieldView::Revealed(_) => {
+            panic!("P1-2 regression: committed-field plaintext leaked after set_field")
+        }
         PublicFieldView::Committed(hash) => {
             // Sentinel: all-zero hash signals "stale commitment, ask the
             // holder to re-commit." Non-informative.
@@ -1760,8 +1758,7 @@ fn p1_2_set_field_does_not_leak_committed_plaintext() {
 #[test]
 fn p1_5_spawn_child_with_delegation_in_crate() {
     let parent = Cell::new(test_key(1), test_token(1));
-    let child =
-        parent.spawn_child_with_delegation(test_key(2), test_token(2), 1, 100, 1000);
+    let child = parent.spawn_child_with_delegation(test_key(2), test_token(2), 1, 100, 1000);
     let delegation = child.delegation.expect("delegation present");
     // The placeholder signature is all-zero — the audit's point is that
     // such delegations must always run signature verification. Now that
@@ -1813,7 +1810,10 @@ fn p2_1_zero_mask_denies_all() {
     // Zero mask = deny all (new semantics).
     assert!(!is_effect_permitted(Some(0), EFFECT_TRANSFER));
     // Specific mask still works.
-    assert!(is_effect_permitted(Some(FACET_TRANSFER_ONLY), EFFECT_TRANSFER));
+    assert!(is_effect_permitted(
+        Some(FACET_TRANSFER_ONLY),
+        EFFECT_TRANSFER
+    ));
 }
 
 /// P2-2 adversarial: `increment_nonce` returns `false` at u64::MAX

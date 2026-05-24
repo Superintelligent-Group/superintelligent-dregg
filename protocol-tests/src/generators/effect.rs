@@ -13,10 +13,7 @@ use pyana_turn::Effect;
 /// are not produced — they're either no-ops or rejected depending on
 /// executor variant, and either way they're noise for the conservation
 /// invariant.
-pub fn arb_transfer_effect(
-    ids: Vec<CellId>,
-    max_amount: u64,
-) -> impl Strategy<Value = Effect> {
+pub fn arb_transfer_effect(ids: Vec<CellId>, max_amount: u64) -> impl Strategy<Value = Effect> {
     let n = ids.len();
     (0..n, 0..n, 1u64..=max_amount).prop_filter_map(
         "no self-transfers",

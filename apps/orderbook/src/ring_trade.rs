@@ -113,11 +113,7 @@ impl<'a> OrderbookRingParticipant<'a> {
     ///   "I offer Q base tokens, I want Q * P quote tokens."
     fn order_to_exchange_spec(&self, order: &Order) -> Option<ExchangeSpec> {
         match &order.order_type {
-            OrderType::Limit {
-                price,
-                side,
-                ..
-            } => {
+            OrderType::Limit { price, side, .. } => {
                 let q = order.remaining_amount;
                 if q == 0 {
                     return None;
@@ -306,9 +302,7 @@ impl<'a> RingTradeParticipant for OrderbookRingParticipant<'a> {
             // Fully filled: don't re-insert; the order is consumed.
         } else {
             let filled_amount = match &order.order_type {
-                OrderType::Limit { amount, .. } => {
-                    amount.saturating_sub(order.remaining_amount)
-                }
+                OrderType::Limit { amount, .. } => amount.saturating_sub(order.remaining_amount),
                 _ => settlement.amount,
             };
             order.status = OrderStatus::PartiallyFilled { filled_amount };

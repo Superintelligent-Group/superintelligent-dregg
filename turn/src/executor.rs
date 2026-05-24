@@ -42,7 +42,9 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use pyana_cell::{
     AuthRequired, BulletproofRangeProof, Cell, CellId, CellStateDelta, Ledger, LedgerDelta,
     Preconditions, RevocationChannelSet, ValueCommitment, ValueCommitmentBytes,
+    note::NoteError,
     note_bridge::{BridgedNullifierSet, PendingBridgeSet},
+    nullifier_set::NullifierSet,
     preconditions::EvalContext,
     state::STATE_SLOTS,
 };
@@ -522,6 +524,17 @@ pub struct TurnExecutor {
     /// Bridged nullifier set: tracks nullifiers from OTHER federations that have
     /// been bridged into this one. Prevents the same note from being bridged twice.
     pub bridged_nullifiers: Mutex<BridgedNullifierSet>,
+    /// Production note-spend nullifier set: tracks every nullifier published by a
+    /// successful `Effect::NoteSpend` in this federation. Append-only with
+    /// double-spend rejection (`NullifierSet::insert` errors on re-insert).
+    /// Rolled back via `JournalEntry::NoteNullifierInserted` if the turn fails
+    /// after the insert.
+    ///
+    /// This is the production-side complement to `bridged_nullifiers` (which
+    /// tracks *inbound* cross-federation bridges) — `note_nullifiers` tracks
+    /// *local* spends. Together they form the permanent ledger gate that
+    /// `Checkpoint::nullifier_set_root` commits to.
+    pub note_nullifiers: Mutex<NullifierSet>,
     /// Pending bridges: notes locked for cross-federation transfer (two-phase protocol).
     /// Tracks notes that are committed-to-burn but not yet permanently spent.
     pub pending_bridges: Mutex<PendingBridgeSet>,
@@ -634,6 +647,7 @@ impl TurnExecutor {
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
+            note_nullifiers: Mutex::new(NullifierSet::new()),
             pending_bridges: Mutex::new(PendingBridgeSet::new()),
             bridge_phase_log: Mutex::new(pyana_cell::note_bridge::BridgePhaseLog::new()),
             trusted_destination_keys: Vec::new(),
@@ -670,6 +684,7 @@ impl TurnExecutor {
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
+            note_nullifiers: Mutex::new(NullifierSet::new()),
             pending_bridges: Mutex::new(PendingBridgeSet::new()),
             bridge_phase_log: Mutex::new(pyana_cell::note_bridge::BridgePhaseLog::new()),
             trusted_destination_keys: Vec::new(),
@@ -702,6 +717,7 @@ impl TurnExecutor {
             trusted_federation_roots: Vec::new(),
             local_federation_id: [0u8; 32],
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
+            note_nullifiers: Mutex::new(NullifierSet::new()),
             pending_bridges: Mutex::new(PendingBridgeSet::new()),
             bridge_phase_log: Mutex::new(pyana_cell::note_bridge::BridgePhaseLog::new()),
             trusted_destination_keys: Vec::new(),
@@ -965,7 +981,8 @@ impl TurnExecutor {
                 if let TurnResult::Committed { .. } = &result {
                     if conditional.deposit_amount > 0 {
                         if let Some(cell) = ledger.get_mut(&conditional.turn.agent) {
-                            cell.state.set_balance(cell.state.balance() + conditional.deposit_amount);
+                            cell.state
+                                .set_balance(cell.state.balance() + conditional.deposit_amount);
                         }
                     }
                 }
@@ -1216,8 +1233,7 @@ impl TurnExecutor {
             public_inputs[effect_vm::pi::TURN_HASH_BASE + i] = turn_hash_4[i];
         }
         for i in 0..effect_vm::pi::EFFECTS_HASH_GLOBAL_LEN {
-            public_inputs[effect_vm::pi::EFFECTS_HASH_GLOBAL_BASE + i] =
-                effects_hash_global_4[i];
+            public_inputs[effect_vm::pi::EFFECTS_HASH_GLOBAL_BASE + i] = effects_hash_global_4[i];
         }
         public_inputs[effect_vm::pi::ACTOR_NONCE] =
             BabyBear::new((actor_nonce & 0x7FFF_FFFF) as u32);
@@ -1249,18 +1265,14 @@ impl TurnExecutor {
         // them at boundaries and Group 6 binds them algebraically). We copy
         // them now so the PI matching loop below doesn't trip on zero.
         if proof.public_inputs.len() >= effect_vm::pi::BASE_COUNT {
-            public_inputs[effect_vm::pi::INIT_BAL_LO] = BabyBear::new_canonical(
-                proof.public_inputs[effect_vm::pi::INIT_BAL_LO],
-            );
-            public_inputs[effect_vm::pi::INIT_BAL_HI] = BabyBear::new_canonical(
-                proof.public_inputs[effect_vm::pi::INIT_BAL_HI],
-            );
-            public_inputs[effect_vm::pi::FINAL_BAL_LO] = BabyBear::new_canonical(
-                proof.public_inputs[effect_vm::pi::FINAL_BAL_LO],
-            );
-            public_inputs[effect_vm::pi::FINAL_BAL_HI] = BabyBear::new_canonical(
-                proof.public_inputs[effect_vm::pi::FINAL_BAL_HI],
-            );
+            public_inputs[effect_vm::pi::INIT_BAL_LO] =
+                BabyBear::new_canonical(proof.public_inputs[effect_vm::pi::INIT_BAL_LO]);
+            public_inputs[effect_vm::pi::INIT_BAL_HI] =
+                BabyBear::new_canonical(proof.public_inputs[effect_vm::pi::INIT_BAL_HI]);
+            public_inputs[effect_vm::pi::FINAL_BAL_LO] =
+                BabyBear::new_canonical(proof.public_inputs[effect_vm::pi::FINAL_BAL_LO]);
+            public_inputs[effect_vm::pi::FINAL_BAL_HI] =
+                BabyBear::new_canonical(proof.public_inputs[effect_vm::pi::FINAL_BAL_HI]);
         }
 
         // 9. Validate proof PI count and verify PI matching.
@@ -1489,12 +1501,7 @@ impl TurnExecutor {
             [BabyBear; 4],
         ) = if let Some(t) = turn {
             let (th, eg, an, pr) = Self::compute_turn_identity_pi(t);
-            (
-                th,
-                eg,
-                BabyBear::new((an & 0x7FFF_FFFF) as u32),
-                pr,
-            )
+            (th, eg, BabyBear::new((an & 0x7FFF_FFFF) as u32), pr)
         } else {
             let p0 = &bundle_pis[0];
             let mut th = [BabyBear::ZERO; 4];
@@ -1516,7 +1523,10 @@ impl TurnExecutor {
                     return Err(TurnError::InvalidExecutionProof(format!(
                         "bundle PI mismatch: TURN_HASH felt {} differs in proof {} \
                          (expected {:?}, got {:?})",
-                        i, proof_idx, ref_turn_hash[i], p[pi::TURN_HASH_BASE + i],
+                        i,
+                        proof_idx,
+                        ref_turn_hash[i],
+                        p[pi::TURN_HASH_BASE + i],
                     )));
                 }
             }
@@ -1525,7 +1535,9 @@ impl TurnExecutor {
                     return Err(TurnError::InvalidExecutionProof(format!(
                         "bundle PI mismatch: EFFECTS_HASH_GLOBAL felt {} differs in \
                          proof {} (expected {:?}, got {:?})",
-                        i, proof_idx, ref_eff_global[i],
+                        i,
+                        proof_idx,
+                        ref_eff_global[i],
                         p[pi::EFFECTS_HASH_GLOBAL_BASE + i],
                     )));
                 }
@@ -1534,7 +1546,9 @@ impl TurnExecutor {
                 return Err(TurnError::InvalidExecutionProof(format!(
                     "bundle PI mismatch: ACTOR_NONCE differs in proof {} \
                      (expected {:?}, got {:?})",
-                    proof_idx, ref_actor_nonce, p[pi::ACTOR_NONCE],
+                    proof_idx,
+                    ref_actor_nonce,
+                    p[pi::ACTOR_NONCE],
                 )));
             }
             for i in 0..pi::PREVIOUS_RECEIPT_HASH_LEN {
@@ -1542,7 +1556,9 @@ impl TurnExecutor {
                     return Err(TurnError::InvalidExecutionProof(format!(
                         "bundle PI mismatch: PREVIOUS_RECEIPT_HASH felt {} differs in \
                          proof {} (expected {:?}, got {:?})",
-                        i, proof_idx, ref_prev_receipt[i],
+                        i,
+                        proof_idx,
+                        ref_prev_receipt[i],
                         p[pi::PREVIOUS_RECEIPT_HASH_BASE + i],
                     )));
                 }
@@ -2051,10 +2067,7 @@ impl TurnExecutor {
                             beneficiary_hash: hash_to_bb(cell_id.as_bytes()),
                         });
                     }
-                    Effect::Seal {
-                        pair_id,
-                        ..
-                    } => {
+                    Effect::Seal { pair_id, .. } => {
                         // Stage 1: the runtime variant doesn't carry an
                         // explicit field_idx; we use the low bits of
                         // pair_id as a placeholder. Stage 2 reworks the
@@ -2097,11 +2110,13 @@ impl TurnExecutor {
                     // variant rationale and EFFECT-VM-SHAPE-A.md for the
                     // master plan context.
                     // ====================================================
-                    Effect::SetPermissions { cell, new_permissions } if cell == cell_id => {
+                    Effect::SetPermissions {
+                        cell,
+                        new_permissions,
+                    } if cell == cell_id => {
                         // Stage 3: real AIR coverage. Permissions aren't in
                         // VM state; bind their hash into effects_hash.
-                        let perm_bytes = postcard::to_allocvec(new_permissions)
-                            .unwrap_or_default();
+                        let perm_bytes = postcard::to_allocvec(new_permissions).unwrap_or_default();
                         let perm_hash_bytes = blake3::hash(&perm_bytes);
                         vm_effects.push(VmEffect::SetPermissions {
                             permissions_hash: hash_to_bb(perm_hash_bytes.as_bytes()),
@@ -2130,7 +2145,11 @@ impl TurnExecutor {
                             slot_hash: hash_to_bb(slot_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::CreateCell { public_key, token_id, balance } => {
+                    Effect::CreateCell {
+                        public_key,
+                        token_id,
+                        balance,
+                    } => {
                         // Stage 3: real AIR coverage. CreateCell rejects
                         // non-zero balance via executor, so the actor's
                         // balance doesn't change — passthrough is correct.
@@ -2143,7 +2162,10 @@ impl TurnExecutor {
                             create_hash: hash_to_bb(create_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::CreateSealPair { sealer_holder, unsealer_holder } => {
+                    Effect::CreateSealPair {
+                        sealer_holder,
+                        unsealer_holder,
+                    } => {
                         // Stage 3: real AIR coverage. Hash both holders into
                         // a single pair_hash bound via effects_hash.
                         let mut hasher = blake3::Hasher::new();
@@ -2167,7 +2189,11 @@ impl TurnExecutor {
                             event_hash: hash_to_bb(event_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::SpawnWithDelegation { child_public_key, child_token_id, max_staleness } => {
+                    Effect::SpawnWithDelegation {
+                        child_public_key,
+                        child_token_id,
+                        max_staleness,
+                    } => {
                         // Stage 3: real AIR coverage. Passthrough — the
                         // child cell is its own entity; actor's state
                         // doesn't change.
@@ -2205,8 +2231,8 @@ impl TurnExecutor {
                         let mut hasher = blake3::Hasher::new();
                         hasher.update(&portable_proof.nullifier);
                         // AttestedRoot is structured; serialize it for hashing.
-                        let root_bytes = postcard::to_allocvec(&portable_proof.source_root)
-                            .unwrap_or_default();
+                        let root_bytes =
+                            postcard::to_allocvec(&portable_proof.source_root).unwrap_or_default();
                         hasher.update(&root_bytes);
                         hasher.update(&portable_proof.destination_federation);
                         hasher.update(&portable_proof.asset_type.to_le_bytes());
@@ -2219,7 +2245,13 @@ impl TurnExecutor {
                             mint_hash: hash_to_bb(mint_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::BridgeLock { nullifier, destination, value, asset_type, .. } => {
+                    Effect::BridgeLock {
+                        nullifier,
+                        destination,
+                        value,
+                        asset_type,
+                        ..
+                    } => {
                         // Stage 3: real AIR coverage. Balance debit.
                         let mut hasher = blake3::Hasher::new();
                         hasher.update(nullifier);
@@ -2239,8 +2271,7 @@ impl TurnExecutor {
                         // in the bridge state lookup (executor's job).
                         let mut hasher = blake3::Hasher::new();
                         hasher.update(nullifier);
-                        let receipt_bytes = postcard::to_allocvec(receipt)
-                            .unwrap_or_default();
+                        let receipt_bytes = postcard::to_allocvec(receipt).unwrap_or_default();
                         hasher.update(&receipt_bytes);
                         let finalize_hash_bytes = hasher.finalize();
                         vm_effects.push(VmEffect::BridgeFinalize {
@@ -2254,7 +2285,12 @@ impl TurnExecutor {
                             nullifier_hash: hash_to_bb(nullifier),
                         });
                     }
-                    Effect::Introduce { introducer, recipient, target, permissions } => {
+                    Effect::Introduce {
+                        introducer,
+                        recipient,
+                        target,
+                        permissions,
+                    } => {
                         // Stage 3: real AIR coverage. Passthrough from the
                         // introducer's POV; recipient-side cap_root update
                         // happens when this turn is replayed against the
@@ -2289,13 +2325,18 @@ impl TurnExecutor {
                             send_hash: hash_to_bb(send_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::CreateEscrow { cell, recipient, amount, condition, .. } if cell == cell_id => {
+                    Effect::CreateEscrow {
+                        cell,
+                        recipient,
+                        amount,
+                        condition,
+                        ..
+                    } if cell == cell_id => {
                         // Stage 3: real AIR coverage. Mirror NoteCreate's
                         // balance debit constraint shape.
                         let mut hasher = blake3::Hasher::new();
                         hasher.update(recipient.as_bytes());
-                        let cond_bytes = postcard::to_allocvec(condition)
-                            .unwrap_or_default();
+                        let cond_bytes = postcard::to_allocvec(condition).unwrap_or_default();
                         hasher.update(&cond_bytes);
                         let escrow_hash_bytes = hasher.finalize();
                         // Truncate amount to u32 for the field element.
@@ -2340,7 +2381,11 @@ impl TurnExecutor {
                             commit_hash: hash_to_bb(commit_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::ReleaseCommittedEscrow { escrow_id, recipient, .. } => {
+                    Effect::ReleaseCommittedEscrow {
+                        escrow_id,
+                        recipient,
+                        ..
+                    } => {
                         // Stage 3: passthrough. Amount + binding to claim_auth
                         // is verified separately by executor.
                         let mut hasher = blake3::Hasher::new();
@@ -2351,7 +2396,9 @@ impl TurnExecutor {
                             commit_hash: hash_to_bb(commit_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::RefundCommittedEscrow { escrow_id, creator, .. } => {
+                    Effect::RefundCommittedEscrow {
+                        escrow_id, creator, ..
+                    } => {
                         // Stage 3: passthrough. Same shape with creator.
                         let mut hasher = blake3::Hasher::new();
                         hasher.update(escrow_id);
@@ -2361,7 +2408,10 @@ impl TurnExecutor {
                             commit_hash: hash_to_bb(commit_hash_bytes.as_bytes()),
                         });
                     }
-                    Effect::ExerciseViaCapability { cap_slot, inner_effects } => {
+                    Effect::ExerciseViaCapability {
+                        cap_slot,
+                        inner_effects,
+                    } => {
                         // Stage 3: real AIR coverage. From the actor's POV
                         // this is passthrough — the inner_effects act on
                         // the target cell. Bind (cap_slot, inner_effects)
@@ -2386,7 +2436,10 @@ impl TurnExecutor {
                     // The richer Merkle-proof witnesses required to make
                     // the AIR non-tautological are added in P1.C.
                     // ────────────────────────────────────────────────────
-                    Effect::ExportSturdyRef { swiss_number, target } if target == cell_id => {
+                    Effect::ExportSturdyRef {
+                        swiss_number,
+                        target,
+                    } if target == cell_id => {
                         // Project: AIR's ExportSturdyRef proves
                         //   swiss = hash(cell_id, hash(random_seed, counter))
                         // To keep the AIR constraint satisfiable from
@@ -2415,7 +2468,10 @@ impl TurnExecutor {
                             export_counter: 0,
                         });
                     }
-                    Effect::EnlivenRef { swiss_number, bearer } if bearer == cell_id => {
+                    Effect::EnlivenRef {
+                        swiss_number,
+                        bearer,
+                    } if bearer == cell_id => {
                         // Project: AIR's EnlivenRef proves swiss-table
                         // membership of the entry. The presenter is the
                         // bearer cell. P1.C will tighten this to a real
@@ -2817,12 +2873,16 @@ impl TurnExecutor {
                     let treasury_share = turn.fee * 3 / 10;
                     if let Some(proposer_id) = &self.proposer_cell {
                         if let Some(proposer) = ledger.get_mut(proposer_id) {
-                            proposer.state.set_balance(proposer.state.balance() + proposer_share);
+                            proposer
+                                .state
+                                .set_balance(proposer.state.balance() + proposer_share);
                         }
                     }
                     if let Some(treasury_id) = &self.treasury_cell {
                         if let Some(treasury) = ledger.get_mut(treasury_id) {
-                            treasury.state.set_balance(treasury.state.balance() + treasury_share);
+                            treasury
+                                .state
+                                .set_balance(treasury.state.balance() + treasury_share);
                         }
                     }
 
@@ -2909,7 +2969,8 @@ impl TurnExecutor {
                     reason: TurnError::InvalidEffect {
                         reason: format!(
                             "sovereign witness cell ID mismatch: expected {}, got {}",
-                            cell_id, witness.cell_state.id()
+                            cell_id,
+                            witness.cell_state.id()
                         ),
                     },
                     at_action: vec![],
@@ -2972,6 +3033,7 @@ impl TurnExecutor {
                     &self.obligations,
                     &self.escrows,
                     &self.bridged_nullifiers,
+                    &self.note_nullifiers,
                     &self.committed_escrows,
                     &self.committed_escrow_amounts,
                 );
@@ -2999,6 +3061,7 @@ impl TurnExecutor {
                 &self.obligations,
                 &self.escrows,
                 &self.bridged_nullifiers,
+                &self.note_nullifiers,
                 &self.committed_escrows,
                 &self.committed_escrow_amounts,
             );
@@ -3028,6 +3091,7 @@ impl TurnExecutor {
                 &self.obligations,
                 &self.escrows,
                 &self.bridged_nullifiers,
+                &self.note_nullifiers,
                 &self.committed_escrows,
                 &self.committed_escrow_amounts,
             );
@@ -3056,6 +3120,7 @@ impl TurnExecutor {
                 &self.obligations,
                 &self.escrows,
                 &self.bridged_nullifiers,
+                &self.note_nullifiers,
                 &self.committed_escrows,
                 &self.committed_escrow_amounts,
             );
@@ -3105,14 +3170,18 @@ impl TurnExecutor {
 
         if let Some(proposer_id) = &self.proposer_cell {
             if let Some(proposer) = ledger.get_mut(proposer_id) {
-                proposer.state.set_balance(proposer.state.balance() + proposer_share);
+                proposer
+                    .state
+                    .set_balance(proposer.state.balance() + proposer_share);
             }
             // If proposer cell doesn't exist in ledger, share is burned.
         }
 
         if let Some(treasury_id) = &self.treasury_cell {
             if let Some(treasury) = ledger.get_mut(treasury_id) {
-                treasury.state.set_balance(treasury.state.balance() + treasury_share);
+                treasury
+                    .state
+                    .set_balance(treasury.state.balance() + treasury_share);
             }
             // If treasury cell doesn't exist in ledger, share is burned.
         }
@@ -3434,6 +3503,8 @@ impl TurnExecutor {
             Authorization::Breadstuff(_) => self.costs.signature_verify / 2, // cheaper
             Authorization::Bearer(_) => self.costs.signature_verify, // sig verification + delegation check
             Authorization::Unchecked => 0,
+            // CapTpDelivered verifies introducer signature + sender signature: two ed25519 verifies.
+            Authorization::CapTpDelivered { .. } => self.costs.signature_verify.saturating_mul(2),
         };
         *computrons_used = computrons_used.saturating_add(auth_cost);
         if *computrons_used > budget {
@@ -3578,9 +3649,13 @@ impl TurnExecutor {
             let cell_mut = ledger.get_mut(&action.target).unwrap();
             journal.record_set_balance(action.target, cell_mut.state.balance());
             if delta < 0 {
-                cell_mut.state.set_balance(cell_mut.state.balance() - delta.unsigned_abs());
+                cell_mut
+                    .state
+                    .set_balance(cell_mut.state.balance() - delta.unsigned_abs());
             } else {
-                cell_mut.state.set_balance(cell_mut.state.balance() + delta as u64);
+                cell_mut
+                    .state
+                    .set_balance(cell_mut.state.balance() + delta as u64);
             }
 
             // Update excess: withdrawal (negative delta) PRODUCES excess (adds to excess),
@@ -3723,6 +3798,30 @@ impl TurnExecutor {
         path: &[usize],
         turn_nonce: u64,
     ) -> Result<(), (TurnError, Vec<usize>)> {
+        // CapTpDelivered carries the cryptographic provenance of a CapTP wire
+        // delivery (introducer-signed handoff cert + recipient-signed turn
+        // binding). Verified holistically here regardless of the target cell's
+        // permission level — the upstream CapTP handshake already established
+        // legitimacy through (cert.introducer_signature, recipient.sender_signature).
+        if let Authorization::CapTpDelivered {
+            handoff_cert,
+            introducer_pk,
+            sender_pk,
+            sender_signature,
+        } = &action.authorization
+        {
+            self.verify_captp_delivered(
+                action,
+                handoff_cert,
+                introducer_pk,
+                sender_pk,
+                sender_signature,
+                turn_nonce,
+                path,
+            )?;
+            return Ok(());
+        }
+
         // Bearer caps carry their own delegation proof and MUST always be verified,
         // regardless of target cell permission level.
         if let Authorization::Bearer(bearer_proof) = &action.authorization {
@@ -3847,6 +3946,130 @@ impl TurnExecutor {
         Ok(())
     }
 
+    /// Verify a CapTP-delivered authorization.
+    ///
+    /// Closes the receipt-mirror loop (Seam 3, GAP-12/13): every CapTP wire
+    /// delivery carries proof of (a) introducer signing the handoff cert and
+    /// (b) the recipient signing this specific Turn. Both are checked here
+    /// before the executor commits the mirroring effects.
+    fn verify_captp_delivered(
+        &self,
+        action: &Action,
+        handoff_cert: &pyana_captp::HandoffCertificate,
+        introducer_pk: &[u8; 32],
+        sender_pk: &[u8; 32],
+        sender_signature: &[u8; 64],
+        turn_nonce: u64,
+        path: &[usize],
+    ) -> Result<(), (TurnError, Vec<usize>)> {
+        // 1. Sender pk must match the certificate's recipient pk.
+        if sender_pk != &handoff_cert.recipient_pk {
+            return Err((
+                TurnError::InvalidAuthorization {
+                    reason: "captp-delivered: sender_pk does not match cert.recipient_pk"
+                        .to_string(),
+                },
+                path.to_vec(),
+            ));
+        }
+
+        // 2. introducer_pk must derive from cert.introducer (FederationId).
+        // FederationId is the ed25519 public key bytes of the introducer (per
+        // captp/src/handoff.rs:427 `FederationId(pk.0)`).
+        if introducer_pk != &handoff_cert.introducer.0 {
+            return Err((
+                TurnError::InvalidAuthorization {
+                    reason: "captp-delivered: introducer_pk does not match cert.introducer"
+                        .to_string(),
+                },
+                path.to_vec(),
+            ));
+        }
+
+        // 3. Verify the introducer signature on the certificate.
+        let intro_pk_wrapper = pyana_types::PublicKey(*introducer_pk);
+        if !handoff_cert.verify_signature(&intro_pk_wrapper) {
+            return Err((
+                TurnError::InvalidAuthorization {
+                    reason: "captp-delivered: introducer signature on handoff cert is invalid"
+                        .to_string(),
+                },
+                path.to_vec(),
+            ));
+        }
+
+        // 4. Verify the sender signature over the canonical CapTP-delivery message.
+        let agent_for_msg = path
+            .first()
+            .copied()
+            .map(|_| action.target) // path-driven; sender binds to action.target as below
+            .unwrap_or(action.target);
+        let _ = agent_for_msg; // currently the message binds target only; agent is enforced via the Turn-level path.
+        // The signing message binds: cert.nonce, agent (= target_cell of this action's
+        // immediate frame), action.target, turn_nonce, and serialized effects.
+        // We use action.target as both "agent" and "target" here because at the
+        // wire-construction site the agent cell IS the gateway and the action's
+        // target IS the cell being mutated. The wire builder computes this exact
+        // message; the executor recomputes it from the on-chain Turn.
+        let message = Authorization::captp_delivered_signing_message(
+            &handoff_cert.nonce,
+            &action.target,
+            &action.target,
+            turn_nonce,
+            &action.effects,
+        );
+        let sender_verifying = VerifyingKey::from_bytes(sender_pk).map_err(|_| {
+            (
+                TurnError::InvalidAuthorization {
+                    reason: "captp-delivered: sender_pk is not a valid Ed25519 point".to_string(),
+                },
+                path.to_vec(),
+            )
+        })?;
+        let sig = Signature::from_bytes(sender_signature);
+        sender_verifying
+            .verify_strict(&message, &sig)
+            .map_err(|_| {
+                (
+                    TurnError::InvalidAuthorization {
+                        reason: "captp-delivered: sender signature verification failed".to_string(),
+                    },
+                    path.to_vec(),
+                )
+            })?;
+
+        // 5. If the cert restricts allowed_effects, enforce the mask.
+        if let Some(mask) = handoff_cert.allowed_effects {
+            let effects_mask = action
+                .effects
+                .iter()
+                .fold(0u32, |acc, e| acc | e.effect_kind_mask());
+            if effects_mask != 0 && effects_mask & mask != effects_mask {
+                return Err((
+                    TurnError::InvalidAuthorization {
+                        reason: format!(
+                            "captp-delivered: action effects mask {effects_mask:#x} not within \
+                             cert.allowed_effects {mask:#x}"
+                        ),
+                    },
+                    path.to_vec(),
+                ));
+            }
+        }
+
+        // 6. Expiration check.
+        if !handoff_cert.is_valid(self.block_height) {
+            return Err((
+                TurnError::InvalidAuthorization {
+                    reason: "captp-delivered: handoff cert has expired".to_string(),
+                },
+                path.to_vec(),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Check a single auth requirement against an action's authorization.
     fn check_single_auth_requirement(
         &self,
@@ -3959,6 +4182,17 @@ impl TurnExecutor {
                 }
                 Authorization::Bearer(proof) => self.verify_bearer_cap(proof, ledger, path),
                 Authorization::Unchecked => Err((
+                    TurnError::PermissionDenied {
+                        cell: action.target,
+                        action: action_name.to_string(),
+                        required: AuthRequired::Either,
+                    },
+                    path.to_vec(),
+                )),
+                // CapTpDelivered is verified holistically in `verify_authorization`
+                // and short-circuits before reaching this point. If we ever reach
+                // here it means the early-return was bypassed: treat as deny.
+                Authorization::CapTpDelivered { .. } => Err((
                     TurnError::PermissionDenied {
                         cell: action.target,
                         action: action_name.to_string(),
@@ -4682,8 +4916,16 @@ impl TurnExecutor {
                 let old_to_balance = ledger.get(to).unwrap().state.balance();
                 journal.record_set_balance(*from, old_from_balance);
                 journal.record_set_balance(*to, old_to_balance);
-                ledger.get_mut(from).unwrap().state.set_balance(old_from_balance - *amount);
-                ledger.get_mut(to).unwrap().state.set_balance(old_to_balance + *amount);
+                ledger
+                    .get_mut(from)
+                    .unwrap()
+                    .state
+                    .set_balance(old_from_balance - *amount);
+                ledger
+                    .get_mut(to)
+                    .unwrap()
+                    .state
+                    .set_balance(old_to_balance + *amount);
                 Ok(())
             }
 
@@ -4916,20 +5158,24 @@ impl TurnExecutor {
                         path.to_vec(),
                     )
                 })?;
-                // Public inputs for the note spending STARK:
-                // nullifier || note_tree_root || value || asset_type
+                // Public inputs for the note spending STARK (advisory buffer for
+                // the wire-side verifier; the real PI lives in the embedded proof):
+                // nullifier || note_tree_root || value || asset_type || dest_fed
                 //
-                // SECURITY: value and asset_type are now included in the public inputs.
-                // The STARK proof binds these via boundary constraints to the actual
-                // note preimage columns. A spender cannot claim a different value/asset_type
-                // than what is committed in the note — the proof verification will fail.
-                // The conservation check uses these STARK-proven values, not the declared
-                // effect fields (which are now the same thing, cryptographically bound).
-                let mut public_inputs = Vec::with_capacity(80);
+                // SECURITY: value and asset_type are bound via boundary constraints
+                // to the actual note preimage columns. A spender cannot claim a
+                // different value/asset_type than what is committed in the note —
+                // the proof verification will fail. destination_federation is
+                // ZERO for local (non-bridge) spends; the AIR boundary pins col 18
+                // to pi[4] so a bridge-shaped proof (non-zero dest) cannot be
+                // replayed against the local-spend path.
+                let mut public_inputs = Vec::with_capacity(112);
                 public_inputs.extend_from_slice(&nullifier.0);
                 public_inputs.extend_from_slice(note_tree_root);
                 public_inputs.extend_from_slice(&value.to_le_bytes());
                 public_inputs.extend_from_slice(&asset_type.to_le_bytes());
+                // destination_federation = ZERO for local spends.
+                public_inputs.extend_from_slice(&[0u8; 32]);
                 if !verifier.verify(spending_proof, "note-spend", "note-tree", &public_inputs) {
                     return Err((
                         TurnError::InvalidEffect {
@@ -4938,6 +5184,37 @@ impl TurnExecutor {
                         path.to_vec(),
                     ));
                 }
+                // Insert into the production note-nullifier set with double-spend
+                // rejection. This is the ledger-side gate that prevents the same
+                // nullifier from being re-presented in a later turn. The insert is
+                // journaled so a turn that fails *after* this point unwinds the
+                // record (preventing a deliberate-failure attack that would
+                // permanently burn the note).
+                {
+                    let mut set = self.note_nullifiers.lock().unwrap();
+                    if set.contains(nullifier) {
+                        return Err((
+                            TurnError::InvalidEffect {
+                                reason: "double-spend: nullifier already in note_nullifiers set"
+                                    .to_string(),
+                            },
+                            path.to_vec(),
+                        ));
+                    }
+                    set.insert(*nullifier).map_err(|e| {
+                        // `insert` returns DoubleSpend on collision; we just
+                        // checked above, so this is defensive against future
+                        // concurrent races (the Mutex makes that impossible today).
+                        let reason = match e {
+                            NoteError::DoubleSpend { .. } => {
+                                "double-spend: race on nullifier insert".to_string()
+                            }
+                            other => format!("nullifier insert failed: {:?}", other),
+                        };
+                        (TurnError::InvalidEffect { reason }, path.to_vec())
+                    })?;
+                }
+                journal.record_note_nullifier_inserted(*nullifier);
                 // Record for the note layer to process after turn commits.
                 journal.record_note_spend(*nullifier);
                 Ok(())
@@ -4963,6 +5240,19 @@ impl TurnExecutor {
             // and track the nullifier to prevent double-bridge attacks.
             // The destination_federation in the proof must match our local_federation_id
             // to prevent cross-federation replay (inflation bug).
+            //
+            // The note-spending AIR's pi layout (post-DSL upgrade) is:
+            //   pi[0] = nullifier
+            //   pi[1] = merkle_root
+            //   pi[2] = value
+            //   pi[3] = asset_type
+            //   pi[4] = destination_federation
+            // The boundary constraint at row 0 col 18 = pi[4] pins the prover's
+            // trace destination to whatever the verifier passes — so a proof
+            // generated with dest_federation D fails verification if the
+            // verifier passes D' != D. Combined with `verify_portable_note`'s
+            // local-federation-id check, this closes the cross-federation
+            // replay trapdoor (see AUDIT-nullifiers.md §5).
             Effect::BridgeMint { portable_proof } => {
                 let verify_stark = |nullifier: &[u8; 32],
                                     root: &[u8; 32],
@@ -4973,12 +5263,19 @@ impl TurnExecutor {
                  -> Result<(), String> {
                     match &self.proof_verifier {
                         Some(verifier) => {
+                            // Build the advisory PI byte buffer in canonical
+                            // (post-upgrade) order: nullifier || root || value ||
+                            // asset_type || destination_federation. The
+                            // wire-side verifier consumes the proof's embedded
+                            // PI list (BabyBear felts) for the boundary check;
+                            // this buffer is used by verifiers that re-derive
+                            // typed PI from byte input.
                             let mut public_inputs = Vec::with_capacity(112);
                             public_inputs.extend_from_slice(nullifier);
                             public_inputs.extend_from_slice(root);
-                            public_inputs.extend_from_slice(dest_federation);
                             public_inputs.extend_from_slice(&value.to_le_bytes());
                             public_inputs.extend_from_slice(&asset_type.to_le_bytes());
+                            public_inputs.extend_from_slice(dest_federation);
                             // Use well-known constants for bridge-mint proofs so the
                             // verifier can distinguish them from authorization proofs.
                             // action = "bridge-mint", resource = hex(destination_federation).
@@ -5178,7 +5475,11 @@ impl TurnExecutor {
                 }
                 let old_balance = obligor_cell.state.balance();
                 journal.record_set_balance(*action_target, old_balance);
-                ledger.get_mut(action_target).unwrap().state.set_balance(old_balance - *stake_amount);
+                ledger
+                    .get_mut(action_target)
+                    .unwrap()
+                    .state
+                    .set_balance(old_balance - *stake_amount);
 
                 // Derive obligation ID and store in registry.
                 let obligation_id = {
@@ -5301,7 +5602,11 @@ impl TurnExecutor {
                 })?;
                 let old_balance = obligor_cell.state.balance();
                 journal.record_set_balance(record.obligor, old_balance);
-                ledger.get_mut(&record.obligor).unwrap().state.set_balance(old_balance + record.stake_amount);
+                ledger
+                    .get_mut(&record.obligor)
+                    .unwrap()
+                    .state
+                    .set_balance(old_balance + record.stake_amount);
                 // Mark as resolved.
                 {
                     let mut obligations = self.obligations.lock().unwrap();
@@ -5363,7 +5668,11 @@ impl TurnExecutor {
                 })?;
                 let old_ben_balance = beneficiary_cell.state.balance();
                 journal.record_set_balance(record.beneficiary, old_ben_balance);
-                ledger.get_mut(&record.beneficiary).unwrap().state.set_balance(old_ben_balance + record.stake_amount);
+                ledger
+                    .get_mut(&record.beneficiary)
+                    .unwrap()
+                    .state
+                    .set_balance(old_ben_balance + record.stake_amount);
                 // Mark as resolved.
                 {
                     let mut obligations = self.obligations.lock().unwrap();
@@ -5459,7 +5768,11 @@ impl TurnExecutor {
                 // Lock the funds: subtract from creator.
                 let old_balance = creator_cell.state.balance();
                 journal.record_set_balance(*cell, old_balance);
-                ledger.get_mut(cell).unwrap().state.set_balance(old_balance - *amount);
+                ledger
+                    .get_mut(cell)
+                    .unwrap()
+                    .state
+                    .set_balance(old_balance - *amount);
 
                 // Store escrow record.
                 {
@@ -5659,7 +5972,11 @@ impl TurnExecutor {
                 })?;
                 let old_recipient_balance = recipient_cell.state.balance();
                 journal.record_set_balance(record.recipient, old_recipient_balance);
-                ledger.get_mut(&record.recipient).unwrap().state.set_balance(old_recipient_balance + record.amount);
+                ledger
+                    .get_mut(&record.recipient)
+                    .unwrap()
+                    .state
+                    .set_balance(old_recipient_balance + record.amount);
                 // Mark escrow as resolved.
                 {
                     let mut escrows = self.escrows.lock().unwrap();
@@ -5720,7 +6037,11 @@ impl TurnExecutor {
                 })?;
                 let old_creator_balance = creator_cell.state.balance();
                 journal.record_set_balance(record.creator, old_creator_balance);
-                ledger.get_mut(&record.creator).unwrap().state.set_balance(old_creator_balance + record.amount);
+                ledger
+                    .get_mut(&record.creator)
+                    .unwrap()
+                    .state
+                    .set_balance(old_creator_balance + record.amount);
                 // Mark escrow as resolved.
                 {
                     let mut escrows = self.escrows.lock().unwrap();
@@ -5878,7 +6199,11 @@ impl TurnExecutor {
                 }
                 let old_balance = creator_cell.state.balance();
                 journal.record_set_balance(*action_target, old_balance);
-                ledger.get_mut(action_target).unwrap().state.set_balance(old_balance - *amount);
+                ledger
+                    .get_mut(action_target)
+                    .unwrap()
+                    .state
+                    .set_balance(old_balance - *amount);
 
                 // Store committed escrow record.
                 let record = CommittedEscrow {
@@ -5987,7 +6312,11 @@ impl TurnExecutor {
                 let recipient_cell = ledger.get(recipient).unwrap();
                 let old_balance = recipient_cell.state.balance();
                 journal.record_set_balance(*recipient, old_balance);
-                ledger.get_mut(recipient).unwrap().state.set_balance(old_balance + amount);
+                ledger
+                    .get_mut(recipient)
+                    .unwrap()
+                    .state
+                    .set_balance(old_balance + amount);
                 // Mark as resolved.
                 {
                     let mut committed = self.committed_escrows.lock().unwrap();
@@ -6087,7 +6416,11 @@ impl TurnExecutor {
                 let creator_cell = ledger.get(creator).unwrap();
                 let old_balance = creator_cell.state.balance();
                 journal.record_set_balance(*creator, old_balance);
-                ledger.get_mut(creator).unwrap().state.set_balance(old_balance + amount);
+                ledger
+                    .get_mut(creator)
+                    .unwrap()
+                    .state
+                    .set_balance(old_balance + amount);
                 // Mark as resolved.
                 {
                     let mut committed = self.committed_escrows.lock().unwrap();
@@ -6860,7 +7193,11 @@ impl TurnExecutor {
                 // Deduct the cost from the actor's balance.
                 let old_balance = ledger.get(actor).unwrap().state.balance();
                 journal.record_set_balance(*actor, old_balance);
-                ledger.get_mut(actor).unwrap().state.set_balance(old_balance - cost);
+                ledger
+                    .get_mut(actor)
+                    .unwrap()
+                    .state
+                    .set_balance(old_balance - cost);
 
                 Ok(())
             }
@@ -6911,8 +7248,16 @@ impl TurnExecutor {
                 let old_queue_balance = ledger.get(queue).unwrap().state.balance();
                 journal.record_set_balance(*actor, old_actor_balance);
                 journal.record_set_balance(*queue, old_queue_balance);
-                ledger.get_mut(actor).unwrap().state.set_balance(old_actor_balance - *deposit);
-                ledger.get_mut(queue).unwrap().state.set_balance(old_queue_balance + *deposit);
+                ledger
+                    .get_mut(actor)
+                    .unwrap()
+                    .state
+                    .set_balance(old_actor_balance - *deposit);
+                ledger
+                    .get_mut(queue)
+                    .unwrap()
+                    .state
+                    .set_balance(old_queue_balance + *deposit);
 
                 // Increment queue length.
                 let old_len_field = ledger.get(queue).unwrap().state.fields[1];
@@ -6977,7 +7322,11 @@ impl TurnExecutor {
 
                     let old_actor_balance = ledger.get(action_target).unwrap().state.balance();
                     journal.record_set_balance(*action_target, old_actor_balance);
-                    ledger.get_mut(action_target).unwrap().state.set_balance(old_actor_balance + refund);
+                    ledger
+                        .get_mut(action_target)
+                        .unwrap()
+                        .state
+                        .set_balance(old_actor_balance + refund);
                 }
 
                 Ok(())
@@ -7041,7 +7390,11 @@ impl TurnExecutor {
                         ));
                     }
                     journal.record_set_balance(*actor, actor_balance);
-                    ledger.get_mut(actor).unwrap().state.set_balance(actor_balance - additional);
+                    ledger
+                        .get_mut(actor)
+                        .unwrap()
+                        .state
+                        .set_balance(actor_balance - additional);
                 }
 
                 // Update capacity field.
@@ -7097,8 +7450,16 @@ impl TurnExecutor {
                             let old_queue_balance = ledger.get(queue).unwrap().state.balance();
                             journal.record_set_balance(*actor, old_actor_balance);
                             journal.record_set_balance(*queue, old_queue_balance);
-                            ledger.get_mut(actor).unwrap().state.set_balance(old_actor_balance - *deposit);
-                            ledger.get_mut(queue).unwrap().state.set_balance(old_queue_balance + *deposit);
+                            ledger
+                                .get_mut(actor)
+                                .unwrap()
+                                .state
+                                .set_balance(old_actor_balance - *deposit);
+                            ledger
+                                .get_mut(queue)
+                                .unwrap()
+                                .state
+                                .set_balance(old_queue_balance + *deposit);
 
                             let old_len_field = ledger.get(queue).unwrap().state.fields[1];
                             let new_len = current_len + 1;
@@ -7152,12 +7513,20 @@ impl TurnExecutor {
                             if refund > 0 {
                                 let old_q_bal = ledger.get(queue).unwrap().state.balance();
                                 journal.record_set_balance(*queue, old_q_bal);
-                                ledger.get_mut(queue).unwrap().state.set_balance(old_q_bal - refund);
+                                ledger
+                                    .get_mut(queue)
+                                    .unwrap()
+                                    .state
+                                    .set_balance(old_q_bal - refund);
 
                                 let old_actor_bal =
                                     ledger.get(action_target).unwrap().state.balance();
                                 journal.record_set_balance(*action_target, old_actor_bal);
-                                ledger.get_mut(action_target).unwrap().state.set_balance(old_actor_bal + refund);
+                                ledger
+                                    .get_mut(action_target)
+                                    .unwrap()
+                                    .state
+                                    .set_balance(old_actor_bal + refund);
                             }
                         }
                     }
@@ -7244,7 +7613,10 @@ impl TurnExecutor {
             // single source of truth for CapTP state transitions. The
             // wire layer constructs a Turn with these effects and runs
             // it through `TurnExecutor::execute`.
-            Effect::ExportSturdyRef { swiss_number, target } => {
+            Effect::ExportSturdyRef {
+                swiss_number,
+                target,
+            } => {
                 if target != action_target {
                     self.check_cross_cell_permission(
                         ledger,
@@ -7274,7 +7646,10 @@ impl TurnExecutor {
                 Ok(())
             }
 
-            Effect::EnlivenRef { swiss_number, bearer } => {
+            Effect::EnlivenRef {
+                swiss_number,
+                bearer,
+            } => {
                 // The bearer cell gains a routing entry; for the
                 // minimal P1.A shape we increment the target's
                 // use_count (field[6]) on the bearer cell since that's
@@ -7298,14 +7673,12 @@ impl TurnExecutor {
                 // Decrement field[5] (refcount) on the action target.
                 // P1.C tightens this to a real refcount-table Merkle
                 // proof keyed by ref_id.
-                let c = ledger
-                    .get_mut(action_target)
-                    .ok_or_else(|| {
-                        (
-                            TurnError::CellNotFound { id: *action_target },
-                            path.to_vec(),
-                        )
-                    })?;
+                let c = ledger.get_mut(action_target).ok_or_else(|| {
+                    (
+                        TurnError::CellNotFound { id: *action_target },
+                        path.to_vec(),
+                    )
+                })?;
                 let mut rc_bytes = c.state.fields[5];
                 let rc = u64::from_le_bytes(rc_bytes[..8].try_into().unwrap());
                 if rc == 0 {
@@ -7557,6 +7930,7 @@ impl TurnExecutor {
             Authorization::Breadstuff(_) => self.costs.signature_verify / 2,
             Authorization::Bearer(_) => self.costs.signature_verify,
             Authorization::Unchecked => 0,
+            Authorization::CapTpDelivered { .. } => self.costs.signature_verify.saturating_mul(2),
         });
 
         for effect in &tree.action.effects {
@@ -8049,6 +8423,7 @@ impl TurnExecutor {
                 | JournalEntry::ObligationInserted { .. }
                 | JournalEntry::EscrowInserted { .. }
                 | JournalEntry::BridgedNullifierInserted { .. }
+                | JournalEntry::NoteNullifierInserted { .. }
                 | JournalEntry::CommittedEscrowCreated { .. }
                 | JournalEntry::CommittedEscrowReleased { .. }
                 | JournalEntry::CommittedEscrowRefunded { .. }
@@ -9214,10 +9589,18 @@ impl core::fmt::Display for AtomicTurnError {
                 write!(f, "cell {} is frozen for migration", id)
             }
             Self::HostedAuthorizationFailed { cell, reason } => {
-                write!(f, "hosted action on cell {} failed authorization: {}", cell, reason)
+                write!(
+                    f,
+                    "hosted action on cell {} failed authorization: {}",
+                    cell, reason
+                )
             }
             Self::HostedApplyFailed { cell, reason } => {
-                write!(f, "hosted action on cell {} failed to apply: {}", cell, reason)
+                write!(
+                    f,
+                    "hosted action on cell {} failed to apply: {}",
+                    cell, reason
+                )
             }
         }
     }
@@ -9370,8 +9753,7 @@ impl TurnExecutor {
             // Verify reconstructed commitment PIs match the proof's embedded PIs
             // (all 4 felts each, Stage 1 widening).
             for i in 0..pi::OLD_COMMIT_LEN {
-                let proof_v =
-                    BabyBear::new_canonical(proof.public_inputs[pi::OLD_COMMIT_BASE + i]);
+                let proof_v = BabyBear::new_canonical(proof.public_inputs[pi::OLD_COMMIT_BASE + i]);
                 if proof_v != old_commit_4[i] {
                     return Err(AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
@@ -9383,8 +9765,7 @@ impl TurnExecutor {
                 }
             }
             for i in 0..pi::NEW_COMMIT_LEN {
-                let proof_v =
-                    BabyBear::new_canonical(proof.public_inputs[pi::NEW_COMMIT_BASE + i]);
+                let proof_v = BabyBear::new_canonical(proof.public_inputs[pi::NEW_COMMIT_BASE + i]);
                 if proof_v != new_commit_4[i] {
                     return Err(AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
@@ -9447,7 +9828,9 @@ impl TurnExecutor {
         // Deduct fee and increment nonce.
         {
             let agent = ledger.get_mut(&atomic_turn.agent).unwrap();
-            agent.state.set_balance(agent.state.balance() - atomic_turn.fee);
+            agent
+                .state
+                .set_balance(agent.state.balance() - atomic_turn.fee);
             agent.state.increment_nonce();
         }
 
@@ -9607,8 +9990,7 @@ impl TurnExecutor {
 
             // Verify commitment PIs match (4 felts each).
             for i in 0..pi::OLD_COMMIT_LEN {
-                let proof_v =
-                    BabyBear::new_canonical(proof.public_inputs[pi::OLD_COMMIT_BASE + i]);
+                let proof_v = BabyBear::new_canonical(proof.public_inputs[pi::OLD_COMMIT_BASE + i]);
                 if proof_v != old_commit_4[i] {
                     return Err(AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
@@ -9620,8 +10002,7 @@ impl TurnExecutor {
                 }
             }
             for i in 0..pi::NEW_COMMIT_LEN {
-                let proof_v =
-                    BabyBear::new_canonical(proof.public_inputs[pi::NEW_COMMIT_BASE + i]);
+                let proof_v = BabyBear::new_canonical(proof.public_inputs[pi::NEW_COMMIT_BASE + i]);
                 if proof_v != new_commit_4[i] {
                     return Err(AtomicTurnError::ProofFailed {
                         cell: entry.cell_id,
@@ -9690,6 +10071,7 @@ impl TurnExecutor {
                         &self.obligations,
                         &self.escrows,
                         &self.bridged_nullifiers,
+                        &self.note_nullifiers,
                         &self.committed_escrows,
                         &self.committed_escrow_amounts,
                     );
@@ -9715,6 +10097,7 @@ impl TurnExecutor {
                     &self.obligations,
                     &self.escrows,
                     &self.bridged_nullifiers,
+                    &self.note_nullifiers,
                     &self.committed_escrows,
                     &self.committed_escrow_amounts,
                 );
@@ -9733,6 +10116,7 @@ impl TurnExecutor {
                     &self.obligations,
                     &self.escrows,
                     &self.bridged_nullifiers,
+                    &self.note_nullifiers,
                     &self.committed_escrows,
                     &self.committed_escrow_amounts,
                 );
@@ -9768,6 +10152,7 @@ impl TurnExecutor {
                         &self.obligations,
                         &self.escrows,
                         &self.bridged_nullifiers,
+                        &self.note_nullifiers,
                         &self.committed_escrows,
                         &self.committed_escrow_amounts,
                     );
@@ -9790,6 +10175,7 @@ impl TurnExecutor {
                 &self.obligations,
                 &self.escrows,
                 &self.bridged_nullifiers,
+                &self.note_nullifiers,
                 &self.committed_escrows,
                 &self.committed_escrow_amounts,
             );
@@ -9806,7 +10192,9 @@ impl TurnExecutor {
         // ====================================================================
         {
             let agent = ledger.get_mut(&mixed_turn.agent).unwrap();
-            agent.state.set_balance(agent.state.balance() - mixed_turn.fee);
+            agent
+                .state
+                .set_balance(agent.state.balance() - mixed_turn.fee);
             agent.state.increment_nonce();
         }
 
@@ -10190,7 +10578,11 @@ mod hardening_tests {
         let mut turn2 = build_noop_turn(agent_id, 1);
         turn2.previous_receipt_hash = Some(receipt1.receipt_hash());
         let r2 = executor.execute(&turn2, &mut ledger);
-        assert!(r2.is_committed(), "correctly-chained turn must commit: {:?}", r2);
+        assert!(
+            r2.is_committed(),
+            "correctly-chained turn must commit: {:?}",
+            r2
+        );
     }
 
     /// A turn that claims a prior receipt when the executor has none on file
@@ -10528,7 +10920,10 @@ mod hardening_tests {
         };
 
         let r = executor.execute_mixed_atomic(&mixed, &mut ledger);
-        assert!(matches!(r, Err(AtomicTurnError::HostedAuthorizationFailed { .. })));
+        assert!(matches!(
+            r,
+            Err(AtomicTurnError::HostedAuthorizationFailed { .. })
+        ));
 
         // Both balances UNCHANGED.
         assert_eq!(ledger.get(&victim_id).unwrap().state.balance(), 10_000);
@@ -10606,7 +11001,10 @@ mod hardening_tests {
         let err = crate::verify::verify_receipt_chain_with_keys(&[receipt], &[wrong_key])
             .expect_err("verification must fail under a foreign key");
         assert!(
-            matches!(err, crate::verify::VerifyError::ExecutorSignatureInvalid { .. }),
+            matches!(
+                err,
+                crate::verify::VerifyError::ExecutorSignatureInvalid { .. }
+            ),
             "expected ExecutorSignatureInvalid, got {:?}",
             err
         );

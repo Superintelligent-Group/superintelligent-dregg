@@ -594,11 +594,7 @@ impl KimchiDerivationCircuit {
         // gate's w[0] (so the binding gate's "computed_hash" really came from
         // the gadget rather than being a free witness value).
         if let Some(out_row) = last_rule_hash_output_row {
-            super::link_wires(
-                &mut gates,
-                (out_row, 0),
-                (rule_hash_binding_row, 0),
-            );
+            super::link_wires(&mut gates, (out_row, 0), (rule_hash_binding_row, 0));
         }
         // Bind the rule_hash binding gate's w[1] (the "expected" cell) to the
         // PI(rule_structure_hash) row's w[0]. This forces the prover to use

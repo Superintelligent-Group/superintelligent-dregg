@@ -43,7 +43,7 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use pyana_storage::blinded::{BlindedQueue, ConsumptionProof, ConsumeResult};
+use pyana_storage::blinded::{BlindedQueue, ConsumeResult, ConsumptionProof};
 
 use crate::order::Order;
 

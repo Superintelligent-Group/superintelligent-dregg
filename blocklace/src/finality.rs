@@ -625,28 +625,95 @@ impl Blocklace {
 
             // Check for equivocation.
             if let Some(proof) = self.detect_equivocation(&block) {
+                // Closes audit gap C in AUDIT-blocklace-consensus.md: merge()
+                // must mirror receive_block() and remove the equivocator's
+                // tip. Without this, subsequent blocks from the equivocator
+                // in the same delta could update tips for a creator we now
+                // know to be Byzantine — leaving stale tip state for the
+                // dissemination/frontier and multi-group block-creation
+                // codepaths to consume.
                 self.equivocators.insert(block.creator);
+                self.tips.remove(&block.creator);
                 self.blocks.insert(id, block);
                 let _ = proof;
                 continue;
             }
 
-            // Update tip.
-            let should_update_tip = match self.tips.get(&block.creator) {
-                Some(current_tip_id) => {
-                    let current_tip = &self.blocks[current_tip_id];
-                    block.seq > current_tip.seq
+            // Don't update tips for known equivocators (mirrors receive_block).
+            if !self.equivocators.contains(&block.creator) {
+                // Update tip.
+                let should_update_tip = match self.tips.get(&block.creator) {
+                    Some(current_tip_id) => {
+                        let current_tip = &self.blocks[current_tip_id];
+                        block.seq > current_tip.seq
+                    }
+                    None => true,
+                };
+                if should_update_tip {
+                    self.tips.insert(block.creator, id);
                 }
-                None => true,
-            };
-            if should_update_tip {
-                self.tips.insert(block.creator, id);
             }
 
             self.blocks.insert(id, block);
         }
 
         Ok(())
+    }
+
+    // ─── Round Computation (Cordial Miners DAG depth) ────────────────────
+
+    /// Compute Cordial Miners "round" for a single block.
+    ///
+    /// `round(block) = 1 + max(round(pred))` over the block's predecessors,
+    /// or `1` if the block has no predecessors. Bind this into the federation
+    /// [`pyana_types::AttestedRoot`] to distinguish forks (closes audit F3).
+    ///
+    /// This is intentionally a per-block accessor (not a full DAG sweep);
+    /// callers wanting the rounds for the whole DAG should iterate.
+    pub fn round_of(&self, block_id: &BlockId) -> Option<u64> {
+        let block = self.blocks.get(block_id)?;
+        if block.predecessors.is_empty() {
+            return Some(1);
+        }
+        // Recursive walk with memoization-free traversal — used per-finalized
+        // block, which is sparse, so the O(depth) cost is acceptable.
+        let mut stack: Vec<BlockId> = vec![*block_id];
+        let mut memo: HashMap<BlockId, u64> = HashMap::new();
+        while let Some(id) = stack.last().copied() {
+            let b = match self.blocks.get(&id) {
+                Some(b) => b,
+                None => {
+                    stack.pop();
+                    continue;
+                }
+            };
+            if b.predecessors.is_empty() {
+                memo.insert(id, 1);
+                stack.pop();
+                continue;
+            }
+            let mut all_ready = true;
+            let mut max_pred = 0u64;
+            for pred in &b.predecessors {
+                match memo.get(pred) {
+                    Some(&r) => max_pred = max_pred.max(r),
+                    None => {
+                        if self.blocks.contains_key(pred) {
+                            stack.push(*pred);
+                            all_ready = false;
+                        }
+                        // Missing predecessor: treat as round 0 contribution
+                        // (cannot happen for a closed blocklace, but be
+                        // defensive).
+                    }
+                }
+            }
+            if all_ready {
+                memo.insert(id, 1 + max_pred);
+                stack.pop();
+            }
+        }
+        memo.get(block_id).copied()
     }
 
     // ─── Equivocation Detection ──────────────────────────────────────────

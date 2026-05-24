@@ -37,9 +37,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use pyana_storage::programmable::{
-    ProgrammableQueue, QueueConstraint, QueueProgram,
-};
+use pyana_storage::programmable::{ProgrammableQueue, QueueConstraint, QueueProgram};
 
 use crate::proposal::{Proposal, ProposalId, ProposalStatus};
 
@@ -190,7 +188,10 @@ impl GovernanceState {
     pub async fn check_quorum(&self, id: &ProposalId) -> Result<(), GovernanceError> {
         let threshold = self.threshold().await;
         let g = self.inner.read().await;
-        let p = g.proposals.get(id).ok_or(GovernanceError::ProposalNotFound)?;
+        let p = g
+            .proposals
+            .get(id)
+            .ok_or(GovernanceError::ProposalNotFound)?;
         if !p.meets_quorum(threshold) {
             return Err(GovernanceError::QuorumNotMet {
                 have: p.approve_weight,
@@ -246,7 +247,11 @@ impl QuorumGate {
     }
 
     /// Build a queue using [`Self::queue_program`].
-    pub fn make_queue(name: impl Into<String>, owner: [u8; 32], capacity: usize) -> ProgrammableQueue {
+    pub fn make_queue(
+        name: impl Into<String>,
+        owner: [u8; 32],
+        capacity: usize,
+    ) -> ProgrammableQueue {
         ProgrammableQueue::new(name.into(), owner, Self::queue_program(), None, capacity)
     }
 }
@@ -254,20 +259,33 @@ impl QuorumGate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proposal::{SpendOrder};
+    use crate::proposal::SpendOrder;
 
     fn voters() -> Vec<Voter> {
         vec![
-            Voter { id: [1; 32], weight: 1 },
-            Voter { id: [2; 32], weight: 1 },
-            Voter { id: [3; 32], weight: 1 },
+            Voter {
+                id: [1; 32],
+                weight: 1,
+            },
+            Voter {
+                id: [2; 32],
+                weight: 1,
+            },
+            Voter {
+                id: [3; 32],
+                weight: 1,
+            },
         ]
     }
 
     fn proposal(proposer: [u8; 32]) -> Proposal {
         Proposal::new(
             proposer,
-            vec![SpendOrder { asset: [0xAA; 32], amount: 1, recipient: [9; 32] }],
+            vec![SpendOrder {
+                asset: [0xAA; 32],
+                amount: 1,
+                recipient: [9; 32],
+            }],
         )
     }
 
@@ -283,9 +301,18 @@ mod tests {
         let g = GovernanceState::new(voters());
         let p = proposal([1; 32]);
         let id = g.submit(p).await.unwrap();
-        assert_eq!(g.vote(&id, [1; 32], true).await.unwrap(), ProposalStatus::Submitted);
-        assert_eq!(g.vote(&id, [2; 32], true).await.unwrap(), ProposalStatus::Submitted);
-        assert_eq!(g.vote(&id, [3; 32], true).await.unwrap(), ProposalStatus::Approved);
+        assert_eq!(
+            g.vote(&id, [1; 32], true).await.unwrap(),
+            ProposalStatus::Submitted
+        );
+        assert_eq!(
+            g.vote(&id, [2; 32], true).await.unwrap(),
+            ProposalStatus::Submitted
+        );
+        assert_eq!(
+            g.vote(&id, [3; 32], true).await.unwrap(),
+            ProposalStatus::Approved
+        );
         assert!(g.check_quorum(&id).await.is_ok());
     }
 
@@ -297,7 +324,10 @@ mod tests {
         // Only 1/3 votes — well under threshold of 3.
         g.vote(&id, [1; 32], true).await.unwrap();
         let err = g.check_quorum(&id).await.unwrap_err();
-        assert!(matches!(err, GovernanceError::QuorumNotMet { have: 1, need: 3 }));
+        assert!(matches!(
+            err,
+            GovernanceError::QuorumNotMet { have: 1, need: 3 }
+        ));
     }
 
     #[tokio::test]
@@ -329,9 +359,10 @@ mod tests {
         let open = pyana_storage::programmable::programs::open(0);
         assert_ne!(gate.name, open.name);
         // The gate has a Custom constraint encoding the quorum rule.
-        assert!(gate.constraints.iter().any(|c| matches!(
-            c,
-            QueueConstraint::Custom { .. }
-        )));
+        assert!(
+            gate.constraints
+                .iter()
+                .any(|c| matches!(c, QueueConstraint::Custom { .. }))
+        );
     }
 }

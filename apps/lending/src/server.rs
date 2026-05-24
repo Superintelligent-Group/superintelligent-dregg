@@ -592,11 +592,13 @@ async fn executor_run(
     let batch_size = batch.len();
 
     // Step 3: compute batch_id
-    let execution = exec.execute_batch(batch.clone()).unwrap_or(pyana_app_framework::batch_executor::BatchExecution {
-        batch_id: [0u8; 32],
-        turn_count: 0,
-        proof: None,
-    });
+    let execution = exec.execute_batch(batch.clone()).unwrap_or(
+        pyana_app_framework::batch_executor::BatchExecution {
+            batch_id: [0u8; 32],
+            turn_count: 0,
+            proof: None,
+        },
+    );
 
     // Step 4: apply repayments to the pool
     let mut pool_write = state.pool.write().await;
@@ -626,7 +628,11 @@ async fn executor_run(
         }
     }
 
-    let batch_id_hex: String = execution.batch_id.iter().map(|b| format!("{b:02x}")).collect();
+    let batch_id_hex: String = execution
+        .batch_id
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
 
     Json(ExecutorRunResponse {
         scanned,

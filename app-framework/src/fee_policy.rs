@@ -71,7 +71,11 @@ impl FeePolicy {
     /// * `fee_bps` — fee multiplier in basis points (10_000 = par with base).
     /// * `min_fee` — minimum fee denominated in `asset`.
     pub fn with_asset(mut self, asset: AssetId, fee_bps: u32, min_fee: u64) -> Self {
-        self.accepted.push(AcceptedAsset { asset, fee_bps, min_fee });
+        self.accepted.push(AcceptedAsset {
+            asset,
+            fee_bps,
+            min_fee,
+        });
         self
     }
 
@@ -86,9 +90,7 @@ impl FeePolicy {
     /// Returns `Some(fee)` where `fee = max(min_fee, base_amount * fee_bps / 10_000)`.
     pub fn compute_fee(&self, asset: &AssetId, base_amount: u64) -> Option<u64> {
         let entry = self.accepted.iter().find(|a| &a.asset == asset)?;
-        let scaled = (base_amount as u128)
-            .saturating_mul(entry.fee_bps as u128)
-            / 10_000;
+        let scaled = (base_amount as u128).saturating_mul(entry.fee_bps as u128) / 10_000;
         let fee = (scaled as u64).max(entry.min_fee);
         Some(fee)
     }

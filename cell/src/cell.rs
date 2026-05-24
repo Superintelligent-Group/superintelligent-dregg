@@ -270,11 +270,7 @@ impl Cell {
     /// executor walks the local ledger to find the *delegator* of a bearer
     /// cap by pk: a zero-pk stub wouldn't match, so the bearer-cap proof
     /// would be rejected as if the delegator weren't present.
-    pub fn remote_stub_with_id_pk_balance(
-        id: CellId,
-        public_key: [u8; 32],
-        balance: u64,
-    ) -> Self {
+    pub fn remote_stub_with_id_pk_balance(id: CellId, public_key: [u8; 32], balance: u64) -> Self {
         Cell {
             id,
             public_key,

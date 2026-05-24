@@ -477,7 +477,13 @@ fn emit_p3_requirement(
                 }
             }
         }
-        RequirementKind::MerkleAtPosition { root, leaf, position, depth, .. } => {
+        RequirementKind::MerkleAtPosition {
+            root,
+            leaf,
+            position,
+            depth,
+            ..
+        } => {
             // Per-row Merkle inclusion: position-bits + sibling commits + chain.
             //
             // Aux column layout (depth = d):
@@ -513,9 +519,9 @@ fn emit_p3_requirement(
             let leaf_col = find_p3_col(layout, &quote::quote!(#leaf).to_string());
             let pos_col = find_p3_col(layout, &quote::quote!(#position).to_string());
             let d = *depth as usize;
-            let chain_start = layout.aux_start + *aux_idx;       // d+1 cols
-            let bits_start = chain_start + d + 1;                // d cols
-            let _sibs_start = bits_start + d;                    // d cols (unused in constraint)
+            let chain_start = layout.aux_start + *aux_idx; // d+1 cols
+            let bits_start = chain_start + d + 1; // d cols
+            let _sibs_start = bits_start + d; // d cols (unused in constraint)
             *aux_idx += 3 * d + 1;
 
             let leaf_bind_col = chain_start;

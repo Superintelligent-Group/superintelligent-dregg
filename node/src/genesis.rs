@@ -28,7 +28,13 @@ struct GenesisCell {
 /// The complete genesis configuration.
 #[derive(Serialize)]
 struct GenesisConfig {
+    /// Hex-encoded 32-byte federation id, derived from the sorted committee
+    /// public keys via [`pyana_federation::derive_federation_id`]. Closes
+    /// audit finding F1: not random bytes anymore.
     federation_id: String,
+    /// The committee epoch this id was minted for. Always 0 at genesis;
+    /// rotated by epoch transitions which mint a fresh id.
+    committee_epoch: u64,
     epoch_length: u64,
     checkpoint_interval: u64,
     validators: Vec<GenesisValidator>,
@@ -49,13 +55,10 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         std::process::exit(1);
     });
 
-    // Generate a unique federation ID.
-    let mut federation_id_bytes = [0u8; 16];
-    getrandom::fill(&mut federation_id_bytes).expect("getrandom failed");
-    let federation_id = hex_encode(&federation_id_bytes);
-
-    // Generate keypairs for each validator.
+    // Generate keypairs for each validator. Federation_id is derived from
+    // the committee pubkeys AFTER this loop — see below.
     let mut genesis_validators = Vec::with_capacity(validators);
+    let mut committee_pubkeys: Vec<pyana_types::PublicKey> = Vec::with_capacity(validators);
 
     for i in 0..validators {
         // Generate a 32-byte signing key.
@@ -75,6 +78,7 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         let xmss_root = blake3::derive_key("pyana-devnet-xmss-root-v1", &key_bytes);
         let xmss_root_hex = hex_encode(&xmss_root);
 
+        committee_pubkeys.push(pyana_types::PublicKey(public_key.to_bytes()));
         genesis_validators.push(GenesisValidator {
             name: format!("node-{i}"),
             public_key: pk_hex,
@@ -126,9 +130,18 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     // BFT quorum threshold: n - floor((n-1)/3) for n validators.
     let threshold = pyana_federation::quorum_threshold(validators);
 
+    // Derive federation_id = H(sorted committee pubkeys || epoch=0).
+    // Closes audit F1: federation_id is now a commitment to the committee,
+    // not random bytes. Adding/removing/rekeying a member changes the id.
+    let committee_epoch: u64 = 0;
+    let federation_id_bytes =
+        pyana_federation::derive_federation_id_with_epoch(&committee_pubkeys, committee_epoch);
+    let federation_id = hex_encode(&federation_id_bytes);
+
     // Build genesis config.
     let genesis = GenesisConfig {
         federation_id,
+        committee_epoch,
         epoch_length,
         checkpoint_interval,
         validators: genesis_validators,

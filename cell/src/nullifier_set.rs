@@ -101,6 +101,18 @@ impl NullifierSet {
         self.nullifiers.contains(nullifier)
     }
 
+    /// Remove a nullifier from the set.
+    ///
+    /// Used ONLY by the turn-journal rollback path to undo a speculative insert
+    /// when a turn fails after the nullifier was recorded. Outside of rollback
+    /// the set is append-only.
+    ///
+    /// Returns `true` if the nullifier was present and removed, `false`
+    /// otherwise. O(log N) via BTreeSet remove.
+    pub fn remove(&mut self, nullifier: &Nullifier) -> bool {
+        self.nullifiers.remove(nullifier)
+    }
+
     /// Get the sorted list of nullifiers (materializes from BTreeSet iterator).
     /// Used internally for Merkle tree construction and non-membership proofs.
     fn sorted_vec(&self) -> Vec<Nullifier> {

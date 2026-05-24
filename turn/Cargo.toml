@@ -10,6 +10,7 @@ repository.workspace = true
 description = "Call-forest transaction model for atomic agent execution turns"
 
 [dependencies]
+pyana-captp = { path = "../captp" }
 pyana-cell = { path = "../cell" }
 pyana-circuit = { path = "../circuit" }
 pyana-commit = { path = "../commit" }
@@ -24,7 +25,6 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 curve25519-dalek = { version = "4", features = ["alloc"] }
-pyana-captp = { path = "../captp" }
 proptest = { workspace = true }
 
 [lints]

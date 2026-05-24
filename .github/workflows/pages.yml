@@ -48,19 +48,19 @@ jobs:
       - name: Build WASM
         # Output must match the path imported by the playground/sandbox
         # (../pkg/pyana_wasm.js). The build script copies site/pkg/ verbatim
-        # into dist/pkg/. (Was ../site/demo/pkg, which nothing imported.)
+        # into dist/pkg/. (Was ../site/demo/pkg, which nothing imported, so
+        # deployments shipped without any WASM bundle at all.)
         #
-        # Known-fragile: pyana-cell's default crypto feature pulls bulletproofs
-        # -> clear_on_drop whose build.rs can't target wasm32. If this step
-        # fails, the deploy will fall back to a committed site/pkg/ if one
-        # exists, otherwise the playground will be WASM-less. See commit
-        # 89f8e693 for the deferred remediation plan.
+        # The bulletproofs -> clear_on_drop cross-compile to wasm32 is gated
+        # via wasm/Cargo.toml's direct `clear_on_drop = { features = ["no_cc"] }`
+        # dep, which switches it off the C build path. If this step fails, the
+        # playground will be broken — fail the deploy rather than ship a
+        # WASM-less site.
         run: wasm-pack build wasm --target web --out-dir ../site/pkg
-        continue-on-error: true
 
       - name: Build extension WASM
+        # Same cross-compile setup as the playground WASM step above.
         run: wasm-pack build wasm --target web --out-dir ../extension/pkg --no-typescript
-        continue-on-error: true
 
       - name: Package extension
         run: |

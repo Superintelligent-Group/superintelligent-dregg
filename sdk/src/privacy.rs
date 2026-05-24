@@ -30,6 +30,9 @@ use pyana_dsl_runtime::revocation::{
 };
 use pyana_token::AuthRequest;
 
+// `discovery` is gated behind `network` (tokio-using); the lone method below
+// that needs it is gated the same way.
+#[cfg(feature = "network")]
 use crate::discovery::{PirTransport, PrivateDiscoveryClient};
 use crate::error::SdkError;
 use crate::wallet::{AgentWallet, HeldToken};
@@ -476,6 +479,7 @@ impl AgentWallet {
     ///
     /// A vector of 32-byte intent IDs matching the tag, discovered without
     /// revealing which tag was queried.
+    #[cfg(feature = "network")]
     pub async fn discover_intents_privately<T: PirTransport>(
         &self,
         tag: &str,

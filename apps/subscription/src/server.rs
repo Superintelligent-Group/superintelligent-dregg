@@ -171,19 +171,13 @@ pub struct RunEpochResponse {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/subscribers/register", post(handle_register_subscriber))
-        .route(
-            "/creators/{creator_pk_hex}/tiers",
-            post(handle_add_tier),
-        )
+        .route("/creators/{creator_pk_hex}/tiers", post(handle_add_tier))
         .route("/subscribers/subscribe", post(handle_subscribe))
         .route(
             "/subscribers/{subscriber_pk_hex}/delegate-debit",
             post(handle_delegate_debit),
         )
-        .route(
-            "/creators/{creator_pk_hex}/publish",
-            post(handle_publish),
-        )
+        .route("/creators/{creator_pk_hex}/publish", post(handle_publish))
         .route("/executor/run-epoch", post(handle_run_epoch))
         .route(
             "/content/{subscriber_pk_hex}/{content_hash_hex}",
@@ -249,12 +243,13 @@ async fn handle_add_tier(
 ) -> Result<Json<()>, (StatusCode, Json<pyana_app_framework::ErrorResponse>)> {
     let creator_pk = parse_pk_hex(&creator_pk_hex)
         .ok_or_else(|| api_error(StatusCode::BAD_REQUEST, "invalid creator_pk_hex"))?;
-    let issuer = match req.credential_issuer_hex.as_ref() {
-        Some(s) => Some(parse_pk_hex(s).ok_or_else(|| {
-            api_error(StatusCode::BAD_REQUEST, "invalid credential_issuer_hex")
-        })?),
-        None => None,
-    };
+    let issuer =
+        match req.credential_issuer_hex.as_ref() {
+            Some(s) => Some(parse_pk_hex(s).ok_or_else(|| {
+                api_error(StatusCode::BAD_REQUEST, "invalid credential_issuer_hex")
+            })?),
+            None => None,
+        };
     let tier = Tier {
         id: req.id,
         label: req.label,
@@ -308,7 +303,9 @@ async fn handle_delegate_debit(
         .receive_debit_delegation(&mut wallet, sub_pk, req.envelope)
         .map_err(|e| api_error(StatusCode::UNPROCESSABLE_ENTITY, format!("{e}")))?
         .clone();
-    Ok(Json(DelegateDebitResponse { authorization: auth }))
+    Ok(Json(DelegateDebitResponse {
+        authorization: auth,
+    }))
 }
 
 async fn handle_publish(
@@ -332,7 +329,10 @@ async fn handle_publish(
         .find(|i| i.content_hash == hash)
         .cloned()
         .ok_or_else(|| {
-            api_error(StatusCode::INTERNAL_SERVER_ERROR, "publish list out of sync")
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "publish list out of sync",
+            )
         })?;
     // creator_snapshot for the call (don't hold catalog lock across delivery)
     let creator_snapshot = creator.clone();
@@ -411,11 +411,7 @@ async fn handle_fetch_content(
         .get(sub_pk, &hash)
         .ok_or_else(|| api_error(StatusCode::NOT_FOUND, "not delivered to this subscriber"))?;
     Ok(Json(ContentResponse {
-        ciphertext_hex: item
-            .ciphertext
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect(),
+        ciphertext_hex: item.ciphertext.iter().map(|b| format!("{b:02x}")).collect(),
         epoch: item.epoch,
     }))
 }

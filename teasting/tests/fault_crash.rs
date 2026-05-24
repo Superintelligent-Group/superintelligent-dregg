@@ -42,8 +42,18 @@ fn test_crash_mid_turn_no_partial_state() {
     let target_cell = harness.ledger.create_cell([0x02; 32], [0x20; 32]);
 
     // Fund the cells
-    harness.ledger.get_mut(&agent_cell).unwrap().state.set_balance(1000);
-    harness.ledger.get_mut(&target_cell).unwrap().state.set_balance(500);
+    harness
+        .ledger
+        .get_mut(&agent_cell)
+        .unwrap()
+        .state
+        .set_balance(1000);
+    harness
+        .ledger
+        .get_mut(&target_cell)
+        .unwrap()
+        .state
+        .set_balance(500);
     let initial_total = 1500u64;
 
     // Record pre-turn state

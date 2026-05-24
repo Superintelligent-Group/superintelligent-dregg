@@ -181,8 +181,7 @@ impl BatchExecutor for TreasuryBatchExecutor {
 
     fn collect_batch(&mut self, max_size: usize) -> Vec<ClientTurnRequest> {
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(self.collect_batch_async(max_size))
+            tokio::runtime::Handle::current().block_on(self.collect_batch_async(max_size))
         })
     }
 
@@ -191,8 +190,7 @@ impl BatchExecutor for TreasuryBatchExecutor {
         batch: Vec<ClientTurnRequest>,
     ) -> Result<BatchExecution, Self::Error> {
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(self.execute_batch_async(batch))
+            tokio::runtime::Handle::current().block_on(self.execute_batch_async(batch))
         })
         .map(|(exec, _)| exec)
     }

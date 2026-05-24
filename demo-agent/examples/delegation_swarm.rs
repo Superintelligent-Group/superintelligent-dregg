@@ -174,7 +174,11 @@ fn main() {
         };
 
         // Give worker some balance for future turns.
-        ledger.get_mut(&expected_id).unwrap().state.set_balance(100_000);
+        ledger
+            .get_mut(&expected_id)
+            .unwrap()
+            .state
+            .set_balance(100_000);
 
         worker_ids.push(expected_id);
         println!(

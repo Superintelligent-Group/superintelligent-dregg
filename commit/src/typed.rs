@@ -279,7 +279,8 @@ impl<T: CommitmentSchema> Accumulator<T> {
     pub fn extend(&mut self, item: &T::Value) {
         self.n_items += 1;
         let bytes = T::canonical(item);
-        self.blake3_state.update(&(bytes.len() as u64).to_le_bytes());
+        self.blake3_state
+            .update(&(bytes.len() as u64).to_le_bytes());
         self.blake3_state.update(&bytes);
 
         let felts = T::to_felts(item);
@@ -534,9 +535,21 @@ pub fn encode_bytes_to_felts(bytes: &[u8]) -> Vec<BabyBear> {
     let mut i = 0;
     while i < bytes.len() {
         let b0 = bytes[i] as u32;
-        let b1 = if i + 1 < bytes.len() { bytes[i + 1] as u32 } else { 0 };
-        let b2 = if i + 2 < bytes.len() { bytes[i + 2] as u32 } else { 0 };
-        let b3 = if i + 3 < bytes.len() { bytes[i + 3] as u32 } else { 0 };
+        let b1 = if i + 1 < bytes.len() {
+            bytes[i + 1] as u32
+        } else {
+            0
+        };
+        let b2 = if i + 2 < bytes.len() {
+            bytes[i + 2] as u32
+        } else {
+            0
+        };
+        let b3 = if i + 3 < bytes.len() {
+            bytes[i + 3] as u32
+        } else {
+            0
+        };
         // Pack 30 bits: 8+8+8+6.
         let limb = b0 | (b1 << 8) | (b2 << 16) | ((b3 & 0x3F) << 24);
         felts.push(BabyBear::new(limb));

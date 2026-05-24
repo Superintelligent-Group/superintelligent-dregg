@@ -122,7 +122,10 @@ impl MerkleQueue {
     /// Enqueue with WAL (logged before applied, fsync'd).
     pub fn enqueue_durable(&mut self, entry: QueueEntry) -> std::io::Result<[u8; 32]> {
         if self.is_full() {
-            return Err(std::io::Error::other(format!("queue full (capacity {})", self.capacity)));
+            return Err(std::io::Error::other(format!(
+                "queue full (capacity {})",
+                self.capacity
+            )));
         }
 
         let wal_state = self
@@ -222,14 +225,10 @@ impl MerkleQueue {
                         queue_entries.push(qe);
                     }
                 }
-                WalEntry::Dequeue {
-                    queue_id: qid, ..
-                } if *qid == queue_id => {
+                WalEntry::Dequeue { queue_id: qid, .. } if *qid == queue_id => {
                     head += 1;
                 }
-                WalEntry::Checkpoint {
-                    queue_id: qid, ..
-                } if *qid == queue_id => {
+                WalEntry::Checkpoint { queue_id: qid, .. } if *qid == queue_id => {
                     // After a checkpoint, earlier entries were truncated.
                     // The queue state at this point is what we have.
                 }

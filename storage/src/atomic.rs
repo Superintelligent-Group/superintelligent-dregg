@@ -25,11 +25,17 @@ pub struct QueueTransaction {
 #[derive(Debug, Clone)]
 pub enum QueueOp {
     /// Enqueue an entry to a queue.
-    Enqueue { queue_id: [u8; 32], entry: QueueEntry },
+    Enqueue {
+        queue_id: [u8; 32],
+        entry: QueueEntry,
+    },
     /// Dequeue from a queue.
     Dequeue { queue_id: [u8; 32] },
     /// Conditional: only proceed if queue root matches expected.
-    AssertRoot { queue_id: [u8; 32], expected_root: [u8; 32] },
+    AssertRoot {
+        queue_id: [u8; 32],
+        expected_root: [u8; 32],
+    },
 }
 
 /// Transaction state machine.
@@ -55,7 +61,10 @@ pub enum OpResult {
     /// Enqueue succeeded.
     Enqueued { new_root: [u8; 32] },
     /// Dequeue succeeded.
-    Dequeued { entry: QueueEntry, proof: DequeueProof },
+    Dequeued {
+        entry: QueueEntry,
+        proof: DequeueProof,
+    },
     /// Root assertion passed.
     Asserted,
 }
@@ -68,9 +77,16 @@ pub enum TxError {
     /// A queue referenced by the transaction was not found.
     QueueNotFound { queue_id: [u8; 32] },
     /// Root assertion failed (expected vs actual).
-    RootMismatch { queue_id: [u8; 32], expected: [u8; 32], actual: [u8; 32] },
+    RootMismatch {
+        queue_id: [u8; 32],
+        expected: [u8; 32],
+        actual: [u8; 32],
+    },
     /// A queue operation failed.
-    QueueError { queue_id: [u8; 32], error: QueueError },
+    QueueError {
+        queue_id: [u8; 32],
+        error: QueueError,
+    },
     /// Transaction has no operations.
     EmptyTransaction,
 }
@@ -129,11 +145,15 @@ impl QueueTransaction {
         }
 
         // Snapshot all queues that will be touched, for rollback.
-        let touched_ids: Vec<[u8; 32]> = self.ops.iter().map(|op| match op {
-            QueueOp::Enqueue { queue_id, .. } => *queue_id,
-            QueueOp::Dequeue { queue_id } => *queue_id,
-            QueueOp::AssertRoot { queue_id, .. } => *queue_id,
-        }).collect();
+        let touched_ids: Vec<[u8; 32]> = self
+            .ops
+            .iter()
+            .map(|op| match op {
+                QueueOp::Enqueue { queue_id, .. } => *queue_id,
+                QueueOp::Dequeue { queue_id } => *queue_id,
+                QueueOp::AssertRoot { queue_id, .. } => *queue_id,
+            })
+            .collect();
 
         // Verify all queues exist.
         for id in &touched_ids {
@@ -170,7 +190,10 @@ impl QueueTransaction {
                             // Rollback.
                             self.rollback(queues, &snapshots);
                             self.state = TxState::Aborted;
-                            return Err(TxError::QueueError { queue_id: *queue_id, error: e });
+                            return Err(TxError::QueueError {
+                                queue_id: *queue_id,
+                                error: e,
+                            });
                         }
                     }
                 }
@@ -183,11 +206,17 @@ impl QueueTransaction {
                         Err(e) => {
                             self.rollback(queues, &snapshots);
                             self.state = TxState::Aborted;
-                            return Err(TxError::QueueError { queue_id: *queue_id, error: e });
+                            return Err(TxError::QueueError {
+                                queue_id: *queue_id,
+                                error: e,
+                            });
                         }
                     }
                 }
-                QueueOp::AssertRoot { queue_id, expected_root } => {
+                QueueOp::AssertRoot {
+                    queue_id,
+                    expected_root,
+                } => {
                     let queue = queues.get(queue_id).unwrap();
                     let actual = queue.root();
                     if actual != *expected_root {
@@ -249,7 +278,10 @@ impl QueueTransaction {
                     canonical.extend_from_slice(b"dequeue");
                     canonical.extend_from_slice(queue_id);
                 }
-                QueueOp::AssertRoot { queue_id, expected_root } => {
+                QueueOp::AssertRoot {
+                    queue_id,
+                    expected_root,
+                } => {
                     canonical.extend_from_slice(b"assert_root");
                     canonical.extend_from_slice(queue_id);
                     canonical.extend_from_slice(expected_root);
@@ -302,15 +334,15 @@ mod tests {
 
         let mut queues = HashMap::new();
         let mut qa = MerkleQueue::new(10);
-        qa.enqueue(make_entry(b"transfer_me", [0xAA; 32], 500)).unwrap();
+        qa.enqueue(make_entry(b"transfer_me", [0xAA; 32], 500))
+            .unwrap();
         queues.insert(queue_a_id, qa);
         queues.insert(queue_b_id, MerkleQueue::new(10));
 
         // Atomically: dequeue from A, enqueue to B.
         let entry_to_move = make_entry(b"transfer_me", [0xAA; 32], 500);
         let mut tx = QueueTransaction::new();
-        tx.dequeue(queue_a_id)
-          .enqueue(queue_b_id, entry_to_move);
+        tx.dequeue(queue_a_id).enqueue(queue_b_id, entry_to_move);
 
         let result = tx.execute(&mut queues).unwrap();
         assert_eq!(result.results.len(), 2);
@@ -339,7 +371,7 @@ mod tests {
         let entry = make_entry(b"should_not_land", [0xBB; 32], 200);
         let mut tx = QueueTransaction::new();
         tx.enqueue(queue_b_id, entry)
-          .assert_root(queue_a_id, wrong_root);
+            .assert_root(queue_a_id, wrong_root);
 
         let result = tx.execute(&mut queues);
         assert!(matches!(result, Err(TxError::RootMismatch { .. })));
@@ -361,11 +393,16 @@ mod tests {
 
         let entry = make_entry(b"msg", [0xAA; 32], 100);
         let mut tx = QueueTransaction::new();
-        tx.enqueue(queue_b_id, entry)
-          .dequeue(queue_a_id); // will fail: empty
+        tx.enqueue(queue_b_id, entry).dequeue(queue_a_id); // will fail: empty
 
         let result = tx.execute(&mut queues);
-        assert!(matches!(result, Err(TxError::QueueError { error: QueueError::Empty, .. })));
+        assert!(matches!(
+            result,
+            Err(TxError::QueueError {
+                error: QueueError::Empty,
+                ..
+            })
+        ));
 
         // B should be rolled back (empty).
         assert_eq!(queues.get(&queue_b_id).unwrap().len(), 0);
@@ -376,19 +413,16 @@ mod tests {
         let entry = make_entry(b"hello", [0xAA; 32], 100);
 
         let mut tx1 = QueueTransaction::new();
-        tx1.enqueue([0x01; 32], entry.clone())
-           .dequeue([0x02; 32]);
+        tx1.enqueue([0x01; 32], entry.clone()).dequeue([0x02; 32]);
 
         let mut tx2 = QueueTransaction::new();
-        tx2.enqueue([0x01; 32], entry.clone())
-           .dequeue([0x02; 32]);
+        tx2.enqueue([0x01; 32], entry.clone()).dequeue([0x02; 32]);
 
         assert_eq!(tx1.tx_hash(), tx2.tx_hash());
 
         // Different ops -> different hash.
         let mut tx3 = QueueTransaction::new();
-        tx3.enqueue([0x01; 32], entry)
-           .dequeue([0x03; 32]); // different queue
+        tx3.enqueue([0x01; 32], entry).dequeue([0x03; 32]); // different queue
 
         assert_ne!(tx1.tx_hash(), tx3.tx_hash());
     }
@@ -407,7 +441,7 @@ mod tests {
         let entry = make_entry(b"new_msg", [0xBB; 32], 200);
         let mut tx = QueueTransaction::new();
         tx.assert_root(queue_id, current_root)
-          .enqueue(queue_id, entry);
+            .enqueue(queue_id, entry);
 
         let result = tx.execute(&mut queues).unwrap();
         assert_eq!(result.results.len(), 2);

@@ -15,7 +15,9 @@ use tower::ServiceExt;
 use pyana_storage::blinded::BlindedQueue;
 
 use crate::market::{Market, MarketStatus};
-use crate::oracle::{Oracle, OracleEntry, OracleError, pubkey_of, sign_report, unsigned_report_for_test};
+use crate::oracle::{
+    Oracle, OracleEntry, OracleError, pubkey_of, sign_report, unsigned_report_for_test,
+};
 use crate::server::{AppState, router};
 
 fn hex32(b: &[u8; 32]) -> String {
@@ -32,11 +34,7 @@ fn test_state() -> (AppState, [u8; 32]) {
     (state, signing_key)
 }
 
-async fn json_post(
-    app: axum::Router,
-    uri: &str,
-    body: Value,
-) -> (StatusCode, Value) {
+async fn json_post(app: axum::Router, uri: &str, body: Value) -> (StatusCode, Value) {
     let req = Request::builder()
         .method(Method::POST)
         .uri(uri)
@@ -74,7 +72,11 @@ async fn create_market_via_api(app: axum::Router) -> Value {
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "market creation failed: {body}");
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "market creation failed: {body}"
+    );
     body
 }
 
@@ -152,8 +154,12 @@ async fn winning_bet_via_queue_actually_pays() {
     }
 
     // Settle.
-    let (status, body) = json_post(app.clone(), &format!("/market/{}/settle", market_id_hex), json!({}))
-        .await;
+    let (status, body) = json_post(
+        app.clone(),
+        &format!("/market/{}/settle", market_id_hex),
+        json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "settle failed: {body}");
     let winners = body["winners"].as_array().unwrap();
 
@@ -164,7 +170,10 @@ async fn winning_bet_via_queue_actually_pays() {
         .collect();
     assert!(paid_to.contains(&hex32(&[0xAAu8; 32])), "alice missing");
     assert!(paid_to.contains(&hex32(&[0xCCu8; 32])), "carol missing");
-    assert!(!paid_to.contains(&hex32(&[0xBBu8; 32])), "bob (loser) was paid!");
+    assert!(
+        !paid_to.contains(&hex32(&[0xBBu8; 32])),
+        "bob (loser) was paid!"
+    );
 
     // Total payouts equal total pool (100 + 50 + 200 = 350).
     let total: u64 = winners.iter().map(|w| w["amount"].as_u64().unwrap()).sum();
@@ -410,7 +419,13 @@ async fn oracle_wrong_position_rejected() {
     let skip = sign_report(&signing_key, entry1.clone(), 5);
     let err = oracle.accept_report(&skip).unwrap_err();
     assert!(
-        matches!(err, OracleError::WrongPosition { expected: 1, got: 5 }),
+        matches!(
+            err,
+            OracleError::WrongPosition {
+                expected: 1,
+                got: 5
+            }
+        ),
         "skipping positions must be rejected, got {err:?}"
     );
 
@@ -418,7 +433,13 @@ async fn oracle_wrong_position_rejected() {
     let replay = sign_report(&signing_key, entry0.clone(), 0);
     let err = oracle.accept_report(&replay).unwrap_err();
     assert!(
-        matches!(err, OracleError::WrongPosition { expected: 1, got: 0 }),
+        matches!(
+            err,
+            OracleError::WrongPosition {
+                expected: 1,
+                got: 0
+            }
+        ),
         "replay must be rejected, got {err:?}"
     );
 
@@ -559,16 +580,28 @@ async fn escrow_decrements_for_winners_only() {
     }
 
     // Settle.
-    let (status, _) =
-        json_post(app.clone(), &format!("/market/{}/settle", market_id_hex), json!({})).await;
+    let (status, _) = json_post(
+        app.clone(),
+        &format!("/market/{}/settle", market_id_hex),
+        json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 
     // After settle: alice's escrow goes back to 0 (her stake was released
     // into her payout). Bob's escrow is unchanged (still 50, those funds
     // funded the prize).
     let e = state.escrow.read().await;
-    assert_eq!(e.get(&alice).copied().unwrap_or(0), 0, "alice should have no escrow left");
-    assert_eq!(e.get(&bob).copied().unwrap_or(0), 50, "bob's losing stake should remain locked");
+    assert_eq!(
+        e.get(&alice).copied().unwrap_or(0),
+        0,
+        "alice should have no escrow left"
+    );
+    assert_eq!(
+        e.get(&bob).copied().unwrap_or(0),
+        50,
+        "bob's losing stake should remain locked"
+    );
 }
 
 // ============================================================================
@@ -795,7 +828,11 @@ async fn payouts_endpoint_returns_settled_payouts() {
         "/oracle/report",
         serde_json::to_value(&sign_report(
             &signing_key,
-            OracleEntry { market_id, outcome_id, timestamp: 1 },
+            OracleEntry {
+                market_id,
+                outcome_id,
+                timestamp: 1,
+            },
             0,
         ))
         .unwrap(),
@@ -811,7 +848,12 @@ async fn payouts_endpoint_returns_settled_payouts() {
         )
         .await;
     }
-    json_post(app.clone(), &format!("/market/{}/settle", market_id_hex), json!({})).await;
+    json_post(
+        app.clone(),
+        &format!("/market/{}/settle", market_id_hex),
+        json!({}),
+    )
+    .await;
 
     let (status, payouts) =
         json_get(app.clone(), &format!("/market/{}/payouts", market_id_hex)).await;

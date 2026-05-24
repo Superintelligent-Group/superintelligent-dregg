@@ -14,13 +14,18 @@ pyana-types = { path = "../types" }
 pyana-cell = { path = "../cell" }
 pyana-turn = { path = "../turn" }
 pyana-bridge = { path = "../bridge" }
-pyana-captp = { path = "../captp" }
+# `network` feature: tokio + pyana-wire — non-wasm32 (mio, quinn). Wasm
+# consumers set `default-features = false`; the modules that depend on
+# these (client, embed, discharge, discovery) are `#[cfg]`-gated.
+pyana-wire = { path = "../wire", optional = true }
+# `captp` feature: pyana-captp pulls async runtimes that are non-wasm32.
+# captp_client + names are gated on this.
+pyana-captp = { path = "../captp", optional = true }
 pyana-circuit = { path = "../circuit" }
 pyana-commit = { path = "../commit" }
 pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
 pyana-dsl-tests = { path = "../pyana-dsl-tests" }
 pyana-intent = { path = "../intent" }
-pyana-wire = { path = "../wire" }
 macaroon = { workspace = true, features = ["crypto"] }
 token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 pyana-trace = { path = "../trace" }
@@ -40,13 +45,18 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 reqwest = { version = "0.12", features = ["json"], optional = true }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full"], optional = true }
 tracing = "0.1"
 zeroize = { workspace = true }
 
 [features]
-default = ["federation-client"]
+# Native default keeps full networking surface — backward-compatible. Wasm
+# consumers (and any embedded callers that only want the wallet/runtime)
+# pass `default-features = false`.
+default = ["federation-client", "network", "captp"]
 federation-client = ["dep:reqwest"]
+network = ["dep:pyana-wire", "dep:tokio"]
+captp = ["dep:pyana-captp"]
 dev = ["pyana-circuit/dev"]
 # Enables `DelegationAuthority::Open`, which accepts any well-signed envelope
 # without an authority check. This is a footgun in production and is gated

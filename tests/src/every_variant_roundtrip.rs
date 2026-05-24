@@ -37,14 +37,13 @@
 use std::collections::HashMap;
 
 use pyana_cell::note_bridge::{BridgeReceipt, PortableNoteProof};
-use pyana_types::AttestedRoot;
 use pyana_cell::{
     AuthRequired, CapabilityRef, Cell, CellId, CellMode, Ledger, NoteCommitment, Nullifier,
     Permissions, Preconditions, SealedBox, ValueCommitmentBytes, factory::FactoryCreationParams,
 };
 use pyana_circuit::{CellState as VmCellState, EffectVmAir, generate_effect_vm_trace, stark};
 use pyana_sdk::AgentWallet;
-use pyana_turn::action::{symbol, BearerCapProof, DelegationProofData, QueueTxOp};
+use pyana_turn::action::{BearerCapProof, DelegationProofData, QueueTxOp, symbol};
 use pyana_turn::conditional::ProofCondition;
 use pyana_turn::escrow::{EscrowClaimAuth, EscrowCondition};
 use pyana_turn::eventual::EventualRef;
@@ -52,6 +51,7 @@ use pyana_turn::{
     Action, Authorization, ComputronCosts, DelegationMode, Effect, Event, Turn, TurnExecutor,
     TurnResult,
 };
+use pyana_types::AttestedRoot;
 
 // ---------------------------------------------------------------------------
 // Variant catalogue
@@ -237,6 +237,8 @@ fn all_effect_variants() -> Vec<Variant> {
                         nullifier_set_root: None,
                         height: 0,
                         timestamp: 0,
+                        blocklace_block_id: None,
+                        finality_round: None,
                         quorum_signatures: vec![],
                         threshold_qc: None,
                         threshold: 0,
@@ -1012,14 +1014,7 @@ fn every_variant_summary() {
     eprintln!("{}", "-".repeat(68));
     eprintln!(
         "{} variants total | execute: {} ok, {} panicked | projection: {} ok, {} collapsed | proof: {} verified, {} pending, {} failed",
-        total,
-        exec_ok,
-        exec_panic,
-        proj_ok,
-        proj_collapsed,
-        proof_ok,
-        proof_pending,
-        proof_failed
+        total, exec_ok, exec_panic, proj_ok, proj_collapsed, proof_ok, proof_pending, proof_failed
     );
     eprintln!(
         "Target on full landing: {} verified, 0 pending, 0 collapsed, 0 panicked.",

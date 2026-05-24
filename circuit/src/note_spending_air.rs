@@ -41,6 +41,10 @@
 //! - `merkle_root`: The Merkle tree root (verifier sees this)
 //! - `value`: The note value (verifier sees this — prevents value inflation)
 //! - `asset_type`: The note asset type (verifier sees this — prevents asset substitution)
+//! - `destination_federation`: Target federation identity, as a BabyBear felt
+//!   (prevents cross-federation replay of bridge proofs). For non-bridge spends,
+//!   set this to `BabyBear::ZERO`; the AIR pins the trace column to whatever
+//!   the prover put in pi[4] so the verifier can require a specific value.
 //!
 //! # Security properties
 //!
@@ -84,6 +88,12 @@ pub mod col {
     /// Row type: 0 = commitment row, 1 = Merkle/padding row.
     /// Used to gate constraints appropriately.
     pub const IS_MERKLE: usize = 16;
+    // col 17 is `NULLIFIER_INTERMEDIATE` (DSL two-step nullifier hash).
+    /// Destination-federation column (commitment row only).
+    /// Bound to pi[4] by a boundary constraint so the proof is pinned to a
+    /// single target federation. For non-bridge spends the prover sets this
+    /// (and pi[4]) to BabyBear::ZERO.
+    pub const DESTINATION_FEDERATION: usize = 18;
 }
 
 /// Column indices for Merkle level rows.
@@ -97,6 +107,20 @@ pub mod merkle_col {
 }
 
 /// Public input indices.
+///
+/// PI layout (5 BabyBear felts):
+///   pi[0] = NULLIFIER
+///   pi[1] = MERKLE_ROOT
+///   pi[2] = VALUE
+///   pi[3] = ASSET_TYPE
+///   pi[4] = DESTINATION_FEDERATION  (bridge-replay binding; ZERO for non-bridge spends)
+///
+/// The DESTINATION_FEDERATION slot pins col::DESTINATION_FEDERATION (col 18)
+/// of the commitment row via a boundary constraint, so a proof generated with
+/// federation A cannot be replayed against federation B (cross-federation
+/// inflation prevention). For local (non-bridge) spends, the prover puts
+/// `BabyBear::ZERO` in this slot and the executor passes ZERO as well — the
+/// boundary constraint then trivially holds.
 pub mod pi {
     /// The nullifier (what the verifier sees).
     pub const NULLIFIER: usize = 0;
@@ -106,6 +130,12 @@ pub mod pi {
     pub const VALUE: usize = 2;
     /// The note asset type (what the verifier sees — prevents asset type substitution).
     pub const ASSET_TYPE: usize = 3;
+    /// The destination federation identity (BabyBear felt; ZERO for non-bridge spends).
+    ///
+    /// Bound to `col::DESTINATION_FEDERATION` (col 18) of the commitment row by a
+    /// boundary constraint. This prevents replay of a spending proof against a
+    /// federation the prover did not commit to.
+    pub const DESTINATION_FEDERATION: usize = 4;
 }
 
 /// Witness for a note spending proof.
@@ -132,6 +162,14 @@ pub struct NoteSpendingWitness {
     pub merkle_siblings: Vec<[BabyBear; 3]>,
     /// Merkle path positions (one u8 per level, 0..3).
     pub merkle_positions: Vec<u8>,
+    /// Destination-federation identity for bridge proofs.
+    ///
+    /// Bound to public input `pi[4]` (`pi::DESTINATION_FEDERATION`) and to
+    /// `col::DESTINATION_FEDERATION` of the commitment row via a boundary
+    /// constraint. For non-bridge spends, set to `BabyBear::ZERO`. The
+    /// verifier expects the same value here as the executor passes in the PI
+    /// buffer; otherwise the proof is rejected.
+    pub destination_federation: BabyBear,
 }
 
 /// Convert a 256-bit external spending key (e.g., from BLAKE3) to 8 BabyBear limbs.
@@ -239,7 +277,18 @@ impl NoteSpendingWitness {
             spending_key,
             merkle_siblings,
             merkle_positions,
+            destination_federation: BabyBear::ZERO,
         }
+    }
+
+    /// Builder helper: set the destination federation for a bridge-spend proof.
+    ///
+    /// For local (non-bridge) spends, leave at `BabyBear::ZERO` (the default).
+    /// Verifiers passing a non-zero `pi[4]` reject proofs whose trace column
+    /// `col::DESTINATION_FEDERATION` does not match.
+    pub fn with_destination_federation(mut self, dest: BabyBear) -> Self {
+        self.destination_federation = dest;
+        self
     }
 }
 
@@ -303,6 +352,7 @@ impl NoteSpendingAir {
         row0[col::NULLIFIER] = nullifier;
         row0[col::RANDOMNESS] = witness.randomness;
         row0[col::IS_MERKLE] = BabyBear::ZERO; // This is the commitment row
+        row0[col::DESTINATION_FEDERATION] = witness.destination_federation;
         trace.push(row0);
 
         // Rows 1..depth+1: Merkle membership proof
@@ -352,7 +402,13 @@ impl NoteSpendingAir {
             trace.push(row);
         }
 
-        let public_inputs = vec![nullifier, merkle_root, witness.value, witness.asset_type];
+        let public_inputs = vec![
+            nullifier,
+            merkle_root,
+            witness.value,
+            witness.asset_type,
+            witness.destination_federation,
+        ];
         (trace, public_inputs)
     }
 }
@@ -474,6 +530,20 @@ impl StarkAir for NoteSpendingAir {
         trace_len: usize,
     ) -> Vec<BoundaryConstraint> {
         let mut constraints = vec![];
+        if public_inputs.len() >= 5 {
+            // Row 0, col DESTINATION_FEDERATION (18) = pi[4]
+            // CRITICAL: This prevents cross-federation replay — a spending
+            // proof generated with destination D cannot be presented to any
+            // federation other than D, because the verifier passes its
+            // expected D into pi[4] and the boundary constraint forces the
+            // trace value (col 18) to equal pi[4]. The prover commits to
+            // D at trace-generation time.
+            constraints.push(BoundaryConstraint {
+                row: 0,
+                col: col::DESTINATION_FEDERATION,
+                value: public_inputs[pi::DESTINATION_FEDERATION],
+            });
+        }
         if public_inputs.len() >= 4 {
             // Row 0, col NULLIFIER (14) = public_inputs[0] (nullifier)
             // This binds the trace's computed nullifier to the claimed public input.
@@ -535,13 +605,44 @@ pub fn verify_note_spend(
     asset_type: BabyBear,
     proof: &StarkProof,
 ) -> Result<(), String> {
+    verify_note_spend_with_destination(
+        nullifier,
+        merkle_root,
+        value,
+        asset_type,
+        BabyBear::ZERO,
+        proof,
+    )
+}
+
+/// Verify a note spending proof with an explicit destination federation
+/// public input.
+///
+/// Use `BabyBear::ZERO` for local (non-bridge) spends. For bridge proofs, pass
+/// the destination federation's BabyBear identity; the proof will only verify
+/// if the prover committed to the same value in the trace.
+#[deprecated(note = "Use crate::dsl::note_spending::verify_note_spend_dsl instead")]
+pub fn verify_note_spend_with_destination(
+    nullifier: BabyBear,
+    merkle_root: BabyBear,
+    value: BabyBear,
+    asset_type: BabyBear,
+    destination_federation: BabyBear,
+    proof: &StarkProof,
+) -> Result<(), String> {
     let trace_len = proof.trace_len;
     if trace_len < 4 {
         return Err("Proof trace too short for note spending circuit".to_string());
     }
     let depth = (trace_len - 1).max(MIN_MERKLE_DEPTH);
     let air = NoteSpendingAir::new(depth);
-    let public_inputs = vec![nullifier, merkle_root, value, asset_type];
+    let public_inputs = vec![
+        nullifier,
+        merkle_root,
+        value,
+        asset_type,
+        destination_federation,
+    ];
     stark::verify(&air, proof, &public_inputs)
 }
 
@@ -584,6 +685,7 @@ pub fn create_test_witness(
         spending_key,
         merkle_siblings,
         merkle_positions,
+        destination_federation: BabyBear::ZERO,
     }
 }
 

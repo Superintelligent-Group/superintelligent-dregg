@@ -373,7 +373,8 @@ fn main() {
     let dave_cell = fed_c_ledger.get(&dave_id).unwrap();
     println!(
         "  Balances after: Charlie={}, Dave={}",
-        charlie_cell.state.balance(), dave_cell.state.balance()
+        charlie_cell.state.balance(),
+        dave_cell.state.balance()
     );
     assert_eq!(charlie_cell.state.balance(), 300);
     assert_eq!(dave_cell.state.balance(), 200);

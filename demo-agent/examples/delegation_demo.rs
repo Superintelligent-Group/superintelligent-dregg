@@ -167,7 +167,11 @@ fn main() {
     println!("Step 2: Child uses delegated cap to write to Service A");
 
     // Give child some balance.
-    ledger.get_mut(&child_id).unwrap().state.set_balance(100_000);
+    ledger
+        .get_mut(&child_id)
+        .unwrap()
+        .state
+        .set_balance(100_000);
 
     let value = [0xAA; 32];
     let child_write = Action {

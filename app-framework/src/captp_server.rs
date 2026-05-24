@@ -133,7 +133,10 @@ mod tests {
 
         // URI string should be parseable.
         let uri_str = uri.to_uri_string();
-        assert!(uri_str.starts_with("pyana://"), "URI starts with pyana://: {uri_str}");
+        assert!(
+            uri_str.starts_with("pyana://"),
+            "URI starts with pyana://: {uri_str}"
+        );
         let parsed = PyanaUri::parse(&uri_str).unwrap();
         assert_eq!(parsed.federation_id, fed.0);
         assert_eq!(parsed.cell_id, cell.0);

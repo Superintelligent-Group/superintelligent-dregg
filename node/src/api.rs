@@ -2283,9 +2283,7 @@ async fn post_atomic_proposal(
                 return Ok(Json(AtomicProposalResponse {
                     accepted: false,
                     proposal_id: None,
-                    error: Some(
-                        "participant_pubkeys length must match participants".to_string(),
-                    ),
+                    error: Some("participant_pubkeys length must match participants".to_string()),
                 }));
             }
             let mut map = std::collections::HashMap::with_capacity(participants.len());
@@ -3270,8 +3268,7 @@ async fn post_create_from_factory(
     // authenticated operator-tier caller can't register provenance for cells
     // they don't own.
     {
-        let nonce_bytes =
-            hex_decode_var(&req.nonce).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let nonce_bytes = hex_decode_var(&req.nonce).map_err(|_| StatusCode::BAD_REQUEST)?;
         let mut payload = Vec::with_capacity(32 + 32 + nonce_bytes.len());
         payload.extend_from_slice(&factory_vk);
         payload.extend_from_slice(&owner_pubkey);
@@ -3638,7 +3635,8 @@ fn verify_ed25519_sig(
     let mut msg = Vec::with_capacity(domain.len() + payload.len());
     msg.extend_from_slice(domain);
     msg.extend_from_slice(payload);
-    vk.verify(&msg, &sig).map_err(|_| "signature does not verify")
+    vk.verify(&msg, &sig)
+        .map_err(|_| "signature does not verify")
 }
 
 // =============================================================================
@@ -4146,8 +4144,7 @@ mod tests {
             "initiator": "00".repeat(32),
             "participant_pubkeys": ["aa".repeat(32), "bb".repeat(32)],
         });
-        let req: AtomicProposalRequest =
-            serde_json::from_value(req_json).expect("parses");
+        let req: AtomicProposalRequest = serde_json::from_value(req_json).expect("parses");
         assert_eq!(req.participants.len(), 2);
         assert!(req.participant_pubkeys.is_some());
         assert_eq!(req.participant_pubkeys.as_ref().unwrap().len(), 2);
@@ -4160,8 +4157,7 @@ mod tests {
             "fee": 0,
             "initiator": "00".repeat(32),
         });
-        let req2: AtomicProposalRequest =
-            serde_json::from_value(req2_json).expect("parses");
+        let req2: AtomicProposalRequest = serde_json::from_value(req2_json).expect("parses");
         assert!(req2.participant_pubkeys.is_none());
     }
 
@@ -4222,8 +4218,7 @@ mod tests {
             "nonce": "0011223344556677",
             "signature": "00".repeat(64),
         });
-        let _req: MakeSovereignRequest =
-            serde_json::from_value(req_json).expect("parses");
+        let _req: MakeSovereignRequest = serde_json::from_value(req_json).expect("parses");
 
         // Missing signature must fail at parse time.
         let bad = serde_json::json!({

@@ -313,6 +313,16 @@ function build() {
     }
   }
 
+  // _includes/studio/ — Studio runtime substrate (URI, runtime impls,
+  // inspector custom elements). Copied as a public asset tree because pages
+  // import these as ES modules at runtime, not at build time.
+  const studioSrc = path.join(SRC, '_includes', 'studio');
+  if (fs.existsSync(studioSrc)) {
+    const studioDst = path.join(DIST, '_includes', 'studio');
+    console.log('  Copy: _includes/studio/');
+    copyDir(studioSrc, studioDst);
+  }
+
   console.log('\nDone.');
 }
 

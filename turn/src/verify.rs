@@ -526,10 +526,7 @@ mod tests {
         let bogus = [0x99u8; 32];
         let err = verify_receipt_chain_with_keys(&[receipt.clone()], &[bogus])
             .expect_err("foreign key must not verify");
-        assert!(matches!(
-            err,
-            VerifyError::ExecutorSignatureInvalid { .. }
-        ));
+        assert!(matches!(err, VerifyError::ExecutorSignatureInvalid { .. }));
 
         // If the receipt body fields the canonical message commits to are
         // mutated (e.g. post_state_hash), the signature stops verifying.
@@ -537,10 +534,7 @@ mod tests {
         tampered.post_state_hash = [0xFF; 32];
         let err = verify_receipt_chain_with_keys(&[tampered], &[pk])
             .expect_err("tampered post_state_hash must invalidate executor signature");
-        assert!(matches!(
-            err,
-            VerifyError::ExecutorSignatureInvalid { .. }
-        ));
+        assert!(matches!(err, VerifyError::ExecutorSignatureInvalid { .. }));
     }
 
     #[test]

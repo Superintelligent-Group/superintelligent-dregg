@@ -61,6 +61,7 @@
 
 pub mod checkpoint;
 pub mod epoch;
+pub mod identity;
 pub mod node;
 pub mod receipt;
 pub mod revocation;
@@ -75,6 +76,7 @@ pub use checkpoint::{
     Checkpoint, CheckpointError, DEFAULT_CHECKPOINT_INTERVAL, create_checkpoint,
     finalize_checkpoint, is_checkpoint_height, verify_checkpoint,
 };
+pub use identity::{derive_federation_id, derive_federation_id_with_epoch};
 pub use node::{
     ConsensusConfig, ConsensusError, ConsensusOrchestrator, ConsensusState, Federation,
     FederationNode, PendingStateRoots, ReconfigurationProposal, ReconfigurationVotes,

@@ -128,8 +128,8 @@ impl SubscriberRegistry {
         credential: Option<DelegatedToken>,
     ) -> Result<&Subscription, SubscriberError> {
         if let Some(issuer) = tier.credential_issuer {
-            let envelope = credential
-                .ok_or_else(|| SubscriberError::MissingCredential(tier.id.clone()))?;
+            let envelope =
+                credential.ok_or_else(|| SubscriberError::MissingCredential(tier.id.clone()))?;
             verify_credential_envelope(&envelope, &subscriber, &issuer)?;
         }
 
@@ -209,10 +209,7 @@ impl SubscriberRegistry {
         //     delegatee binding, signature, authority (`TrustedKey`), and
         //     freshness of the binding.
         executor_wallet
-            .receive_signed_delegation(
-                envelope,
-                &DelegationAuthority::TrustedKey(subscriber),
-            )
+            .receive_signed_delegation(envelope, &DelegationAuthority::TrustedKey(subscriber))
             .map_err(SubscriberError::from)?;
 
         let auth = DebitAuthorization {
@@ -227,11 +224,7 @@ impl SubscriberRegistry {
     }
 
     /// All ACTIVE subscriptions for `creator` and `tier_id`.
-    pub fn subscribers_of(
-        &self,
-        creator: PublicKey,
-        tier_id: &str,
-    ) -> Vec<&Subscription> {
+    pub fn subscribers_of(&self, creator: PublicKey, tier_id: &str) -> Vec<&Subscription> {
         self.subscriptions
             .iter()
             .filter(|s| s.active && s.creator == creator && s.tier_id == tier_id)
@@ -448,11 +441,8 @@ mod tests {
             .delegate(&token, &executor_w.public_key(), &restrictions)
             .unwrap();
 
-        let r = reg.receive_debit_delegation(
-            &mut executor_w,
-            alice_w.public_key(),
-            envelope.clone(),
-        );
+        let r =
+            reg.receive_debit_delegation(&mut executor_w, alice_w.public_key(), envelope.clone());
         assert!(r.is_ok(), "valid delegation should be accepted: {:?}", r);
         let auth = r.unwrap();
         assert_eq!(auth.asset_id, 1);

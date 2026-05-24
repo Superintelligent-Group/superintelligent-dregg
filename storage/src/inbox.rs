@@ -35,10 +35,7 @@ pub enum InboxMessage {
         sender: [u8; 32],
     },
     /// A sturdy ref being shared.
-    SturdyRef {
-        uri: String,
-        sender: [u8; 32],
-    },
+    SturdyRef { uri: String, sender: [u8; 32] },
     /// A generic message (encrypted to owner's key).
     Encrypted {
         ciphertext: Vec<u8>,

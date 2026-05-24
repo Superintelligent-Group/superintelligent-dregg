@@ -34,8 +34,7 @@ pub struct SealedFieldIntegrity;
 
 impl Invariant for SealedFieldIntegrity {
     const NAME: &'static str = "sealed_field_integrity";
-    const DESCRIPTION: &'static str =
-        "after any sequence of executor turns, every non-stub cell's id matches derive_raw(public_key, token_id)";
+    const DESCRIPTION: &'static str = "after any sequence of executor turns, every non-stub cell's id matches derive_raw(public_key, token_id)";
 }
 
 /// A turn-shape the property test can emit. We keep the shape small: the
@@ -55,8 +54,11 @@ enum Op {
 
 fn arb_op(n_cells: usize) -> impl Strategy<Value = Op> {
     prop_oneof![
-        (0..n_cells, 0..n_cells, 1u64..1000)
-            .prop_map(|(from_idx, to_idx, amount)| Op::Transfer { from_idx, to_idx, amount }),
+        (0..n_cells, 0..n_cells, 1u64..1000).prop_map(|(from_idx, to_idx, amount)| Op::Transfer {
+            from_idx,
+            to_idx,
+            amount
+        }),
         (0..n_cells).prop_map(|agent_idx| Op::NoOp { agent_idx }),
     ]
 }
