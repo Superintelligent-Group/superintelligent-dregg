@@ -134,10 +134,25 @@ pub fn stark_tier() -> ProofTier {
 
 /// Returns the proof tier for the Kimchi native backend.
 ///
-/// Kimchi over Pasta curves provides IPA-based polynomial commitments with
-/// full soundness. Production-grade.
+/// **DOWNGRADED to Experimental (AUDIT-circuit.md P0-2).** The native Kimchi
+/// backend's Generic gates wire every position to its own row
+/// (`Wire::for_row(r)`) and never thread Poseidon/Merkle gadget outputs into
+/// the cells of dependent binding gates via the Kimchi permutation argument.
+/// Without copy constraints, a malicious prover can fill a binding gate's
+/// witness cells with arbitrary values that match each other on that row but
+/// have NO relationship to the gadget output the gate is supposed to consume.
+/// The honest prover's Rust-side checks (in `prove()`) hide this for honest
+/// inputs, but a prover that bypasses `prove()` and constructs a witness
+/// directly is not constrained.
+///
+/// Wiring proper copy constraints across `derivation.rs`, `predicates.rs`,
+/// `fold.rs`, `non_membership.rs`, `presentation.rs`, `ivc.rs`,
+/// `dsl_backend.rs`, and `from_dsl.rs` is a substantial undertaking (several
+/// thousand LOC), with cascading impact on the Pickles wrap/step circuits.
+/// Until that work lands, this backend MUST NOT be used in production
+/// authorization paths.
 pub fn kimchi_native_tier() -> ProofTier {
-    ProofTier::Production
+    ProofTier::Experimental
 }
 
 /// Returns the proof tier for the Poseidon STARK backend.

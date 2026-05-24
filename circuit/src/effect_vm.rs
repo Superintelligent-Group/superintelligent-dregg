@@ -369,13 +369,29 @@ pub mod pi {
     pub const EFFECTS_HASH_HI: usize = 5;
     /// Number of custom effects in this turn (0 if none).
     pub const CUSTOM_EFFECT_COUNT: usize = 6;
+    // ------------------------------------------------------------------
+    // SOUNDNESS FIX (P0-1): Algebraic binding of net_delta to actual trace
+    // balance deltas. These PIs pin row 0 `state_before.balance_*` and last
+    // row `state_after.balance_*` via boundary constraints, and a per-row
+    // PI-only constraint enforces NET_DELTA matches the actual delta. The
+    // verifier MUST derive these from the same initial/final cell state it
+    // uses to derive OLD_COMMIT/NEW_COMMIT — otherwise the binding leaks.
+    // ------------------------------------------------------------------
+    /// Initial balance low limb (30 bits) — pinned to row 0 state_before.
+    pub const INIT_BAL_LO: usize = 7;
+    /// Initial balance high limb — pinned to row 0 state_before.
+    pub const INIT_BAL_HI: usize = 8;
+    /// Final balance low limb — pinned to last row state_after.
+    pub const FINAL_BAL_LO: usize = 9;
+    /// Final balance high limb — pinned to last row state_after.
+    pub const FINAL_BAL_HI: usize = 10;
     /// Custom proof commitments start here.
     /// For each custom effect i (0..custom_count):
     ///   PI[CUSTOM_PROOFS_BASE + i*8 + 0..4] = custom_program_vk_hash (4 elements)
     ///   PI[CUSTOM_PROOFS_BASE + i*8 + 4..8] = custom_proof_commitment (4 elements)
-    pub const CUSTOM_PROOFS_BASE: usize = 7;
+    pub const CUSTOM_PROOFS_BASE: usize = 11;
     /// Base public inputs (without custom proof data).
-    pub const BASE_COUNT: usize = 7;
+    pub const BASE_COUNT: usize = 11;
     /// Maximum number of custom effects supported per turn.
     pub const MAX_CUSTOM_EFFECTS: usize = 4;
     /// Elements per custom effect entry in PI (4 vk_hash + 4 proof_commit).
@@ -1011,7 +1027,7 @@ impl StarkAir for EffectVmAir {
         &self,
         local: &[BabyBear],
         next: &[BabyBear],
-        _public_inputs: &[BabyBear],
+        public_inputs: &[BabyBear],
         alpha: BabyBear,
     ) -> BabyBear {
         let mut combined = BabyBear::ZERO;
@@ -2065,11 +2081,27 @@ impl StarkAir for EffectVmAir {
         // State: field[4] transitions from source_old_root to source_new_root.
         let s_pipeline = local[sel::PIPELINE_STEP];
         {
-            let _pipeline_id_val = local[PARAM_BASE + param::PIPELINE_ID];
+            let pipeline_id_val = local[PARAM_BASE + param::PIPELINE_ID];
             let source_old = local[PARAM_BASE + param::PIPELINE_SOURCE_OLD_ROOT];
             let source_new = local[PARAM_BASE + param::PIPELINE_SOURCE_NEW_ROOT];
             let sink_new = local[PARAM_BASE + param::PIPELINE_SINK_NEW_ROOT];
             let msg_hash = local[PARAM_BASE + param::PIPELINE_MESSAGE_HASH];
+
+            // P1-5 fix: enforce pipeline_id != 0. Without this, the prover
+            // could claim pipeline_id=0 (an unauthorized null pipeline) and
+            // pass all other constraints. We store pipeline_id^-1 in aux[6]
+            // and require `s_pipeline * (pipeline_id * aux[6] - 1) == 0`.
+            // Branch analysis:
+            //   - s_pipeline = 0 (other selector): constraint trivially holds.
+            //   - s_pipeline = 1 and pipeline_id = 0: forces 0*x - 1 == 0, i.e.,
+            //     -1 == 0, unsatisfiable. ⇒ verifier rejects.
+            //   - s_pipeline = 1 and pipeline_id != 0: requires aux[6] = 1/pipeline_id.
+            // This mirrors the DropRef refcount pattern.
+            let pipeline_id_inv = local[AUX_BASE + 6];
+            let c_pipeline_nonzero =
+                s_pipeline * (pipeline_id_val * pipeline_id_inv - BabyBear::ONE);
+            combined = combined + alpha_pow * c_pipeline_nonzero;
+            alpha_pow = alpha_pow * alpha;
 
             // Source dequeue constraint:
             // source_new_root == hash(source_old_root, message_hash)
@@ -2279,14 +2311,48 @@ impl StarkAir for EffectVmAir {
         //
         // On non-zero rows, aux[3] == 0 (unset), so this constraint is trivially
         // satisfied (0 * (0-1) = 0). On row 0, it enforces sign in {0, 1}.
-        //
-        // This constraint is placed LAST to avoid shifting alpha_pow for existing
-        // constraints (which would change the combined polynomial structure and
-        // could accidentally cause cancellation in adversarial tests).
         {
             let delta_sign = local[AUX_BASE + 3];
             let c_sign_bool = delta_sign * (delta_sign - BabyBear::ONE);
             combined = combined + alpha_pow * c_sign_bool;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // ====================================================================
+        // CONSTRAINT GROUP 6: Algebraic binding of NET_DELTA PI to actual trace
+        // balance deltas (P0-1 fix).
+        //
+        // PIs INIT_BAL_LO/HI and FINAL_BAL_LO/HI are pinned via boundary
+        // constraints to row 0 state_before.balance_* and last_row
+        // state_after.balance_*. This constraint enforces algebraically:
+        //
+        //   (FINAL_BAL_LO - INIT_BAL_LO)
+        //     + (FINAL_BAL_HI - INIT_BAL_HI) * 2^30
+        //     - NET_DELTA_MAG * (1 - 2 * NET_DELTA_SIGN) == 0
+        //
+        // Both sides depend only on PIs, so this evaluates to the same field
+        // element on every row. Non-zero ⇒ no quotient polynomial exists ⇒
+        // verifier rejects.
+        //
+        // The sign bit (PI[NET_DELTA_SIGN]) is constrained boolean (Group 5);
+        // limb ranges are asserted at trace-generation time and should also be
+        // checked externally by the verifier on the bal_* PIs.
+        {
+            let init_lo = public_inputs[pi::INIT_BAL_LO];
+            let init_hi = public_inputs[pi::INIT_BAL_HI];
+            let final_lo = public_inputs[pi::FINAL_BAL_LO];
+            let final_hi = public_inputs[pi::FINAL_BAL_HI];
+            let mag = public_inputs[pi::NET_DELTA_MAG];
+            let sign = public_inputs[pi::NET_DELTA_SIGN];
+
+            let two = BabyBear::ONE + BabyBear::ONE;
+            let two_pow_30 = BabyBear::new(1u32 << 30);
+
+            let actual_delta = (final_lo - init_lo) + (final_hi - init_hi) * two_pow_30;
+            let signed_delta = mag * (BabyBear::ONE - two * sign);
+
+            let c_delta_bind = actual_delta - signed_delta;
+            combined = combined + alpha_pow * c_delta_bind;
             // alpha_pow = alpha_pow * alpha; // not needed after last
         }
 
@@ -2332,6 +2398,37 @@ impl StarkAir for EffectVmAir {
             row: 0,
             col: AUX_BASE + 3,
             value: public_inputs[pi::NET_DELTA_SIGN],
+        });
+
+        // ====================================================================
+        // SOUNDNESS FIX (P0-1): Pin row 0 state_before.balance_* and last_row
+        // state_after.balance_* to public inputs. Combined with the per-effect
+        // arithmetic constraints (which read state_before and write state_after
+        // balance columns), the row-to-row continuity constraint, and the
+        // Group 6 PI-only algebraic check (in eval_constraints), this makes
+        // NET_DELTA_MAG/SIGN cryptographically bound to the actual trace
+        // balance flow. Verifier MUST derive INIT/FINAL_BAL_* from the same
+        // cell state used to derive OLD/NEW_COMMIT.
+        // ====================================================================
+        constraints.push(BoundaryConstraint {
+            row: 0,
+            col: STATE_BEFORE_BASE + state::BALANCE_LO,
+            value: public_inputs[pi::INIT_BAL_LO],
+        });
+        constraints.push(BoundaryConstraint {
+            row: 0,
+            col: STATE_BEFORE_BASE + state::BALANCE_HI,
+            value: public_inputs[pi::INIT_BAL_HI],
+        });
+        constraints.push(BoundaryConstraint {
+            row: last_row,
+            col: STATE_AFTER_BASE + state::BALANCE_LO,
+            value: public_inputs[pi::FINAL_BAL_LO],
+        });
+        constraints.push(BoundaryConstraint {
+            row: last_row,
+            col: STATE_AFTER_BASE + state::BALANCE_HI,
+            value: public_inputs[pi::FINAL_BAL_HI],
         });
 
         // Effects hash binding.
@@ -3012,9 +3109,13 @@ pub fn generate_effect_vm_trace(
                 // aux[0] = hash(source_old_root, message_hash) = expected source_new_root
                 //   (proves dequeue: source_new_root == hash_chain_dequeue(source_old, msg))
                 // aux[1] = sink_new_root (stored for external verification of sink transition)
+                // aux[6] = pipeline_id^-1 (P1-5 fix: forces pipeline_id != 0)
                 let expected_source_new = hash_2_to_1(*source_old_root, *message_hash);
                 row[AUX_BASE + 0] = expected_source_new;
                 row[AUX_BASE + 1] = *sink_new_root;
+                row[AUX_BASE + 6] = pipeline_id
+                    .inverse()
+                    .expect("PipelineStep pipeline_id must be non-zero");
 
                 new_state.nonce += 1;
             }
@@ -3131,6 +3232,16 @@ pub fn generate_effect_vm_trace(
     public_inputs.push(effects_hash_hi);
     // Custom effect count.
     public_inputs.push(BabyBear::new(custom_count as u32));
+
+    // SOUNDNESS FIX (P0-1): Initial and final balance limbs. Boundary-pinned
+    // to row 0 state_before and last_row state_after; algebraically tied to
+    // NET_DELTA_MAG/SIGN by Group 6 in eval_constraints.
+    let (i_lo, i_hi) = split_u64(initial_state.balance);
+    let (f_lo, f_hi) = split_u64(current_state.balance);
+    public_inputs.push(i_lo);
+    public_inputs.push(i_hi);
+    public_inputs.push(f_lo);
+    public_inputs.push(f_hi);
 
     // Custom proof entries (vk_hash + proof_commitment per custom effect).
     for (vk_hash, proof_commit) in &custom_entries {
@@ -3267,6 +3378,72 @@ pub fn verify_state_integrity(state: &CellState) -> Result<(), String> {
         ));
     }
 
+    Ok(())
+}
+
+/// P2-2 / P0-1 helper: range-check the INIT_BAL_* and FINAL_BAL_* PIs that
+/// were added in the P0-1 fix.
+///
+/// The Group 6 algebraic constraint binds `NET_DELTA = FINAL - INIT` over the
+/// BabyBear field. Without range checks on the limbs, a verifier could (in
+/// principle) accept PIs where `INIT_BAL_LO` exceeds 2^30, allowing the
+/// modular subtraction in `actual_delta = (FINAL - INIT) mod p` to wrap and
+/// satisfy a forged `NET_DELTA` value. The honest prover/executor never
+/// produces such PIs (limb ranges are asserted at trace-generation time), but
+/// an untrusted-prover scenario should call this on every received proof.
+///
+/// Returns Ok if the PIs are well-formed, or an Err describing the violation.
+pub fn verify_balance_limb_pis(public_inputs: &[BabyBear]) -> Result<(), String> {
+    if public_inputs.len() < pi::BASE_COUNT {
+        return Err(format!(
+            "PI vector too short: {} < {}",
+            public_inputs.len(),
+            pi::BASE_COUNT
+        ));
+    }
+    for (label, idx) in &[
+        ("INIT_BAL_LO", pi::INIT_BAL_LO),
+        ("FINAL_BAL_LO", pi::FINAL_BAL_LO),
+    ] {
+        let v = public_inputs[*idx].0;
+        if v >= (1u32 << 30) {
+            return Err(format!(
+                "{} out of range: {} >= 2^30 (boundary-pinned balance_lo \
+                 must fit in 30 bits)",
+                label, v
+            ));
+        }
+    }
+    for (label, idx) in &[
+        ("INIT_BAL_HI", pi::INIT_BAL_HI),
+        ("FINAL_BAL_HI", pi::FINAL_BAL_HI),
+    ] {
+        let v = public_inputs[*idx].0;
+        if v >= (1u32 << 31) {
+            return Err(format!(
+                "{} out of range: {} >= 2^31 (exceeds BabyBear field)",
+                label, v
+            ));
+        }
+    }
+    // NET_DELTA_SIGN must be boolean (Group 5 enforces this in-circuit, but
+    // we also check externally for defense-in-depth).
+    let sign = public_inputs[pi::NET_DELTA_SIGN].0;
+    if sign > 1 {
+        return Err(format!(
+            "NET_DELTA_SIGN must be 0 or 1; got {}",
+            sign
+        ));
+    }
+    // NET_DELTA_MAG must fit in 30 bits to match the per-limb subtraction
+    // domain (otherwise modular wrap could occur in the algebraic check).
+    let mag = public_inputs[pi::NET_DELTA_MAG].0;
+    if mag >= (1u32 << 30) {
+        return Err(format!(
+            "NET_DELTA_MAG out of range: {} >= 2^30",
+            mag
+        ));
+    }
     Ok(())
 }
 
@@ -5741,6 +5918,275 @@ mod tests {
             expected_diff,
             "Balance lo should decrease by net_deposit ({})",
             net_deposit
+        );
+    }
+
+    // ========================================================================
+    // P0-1 ADVERSARIAL TESTS: net_delta PI binding
+    // ========================================================================
+    //
+    // The fix introduces:
+    //   - PIs INIT_BAL_LO / INIT_BAL_HI / FINAL_BAL_LO / FINAL_BAL_HI
+    //   - Boundary constraints pinning row 0 state_before.balance_* and
+    //     last_row state_after.balance_* to those PIs
+    //   - A per-row PI-only constraint (Group 6):
+    //     (FINAL_BAL_LO - INIT_BAL_LO) + (FINAL_BAL_HI - INIT_BAL_HI) * 2^30
+    //       - NET_DELTA_MAG * (1 - 2 * NET_DELTA_SIGN) == 0
+
+    /// P0-1: prover claims net_delta=0 on a trace with real delta=-500. Rejected.
+    #[test]
+    fn test_soundness_p0_1_net_delta_forgery_to_zero_rejected() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 500,
+            direction: 1,
+        }];
+
+        let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
+        let air = EffectVmAir::new(trace.len());
+
+        // Sanity: honest PIs verify.
+        let proof_honest = prove(&air, &trace, &public_inputs);
+        assert!(
+            verify(&air, &proof_honest, &public_inputs).is_ok(),
+            "Honest trace must verify before tamper"
+        );
+
+        // Tamper PI: claim no balance change.
+        public_inputs[pi::NET_DELTA_MAG] = BabyBear::ZERO;
+        public_inputs[pi::NET_DELTA_SIGN] = BabyBear::ZERO;
+        // Tamper aux[2]/aux[3] so the aux boundary constraint still passes.
+        let mut tampered_trace = trace.clone();
+        tampered_trace[0][AUX_BASE + 2] = BabyBear::ZERO;
+        tampered_trace[0][AUX_BASE + 3] = BabyBear::ZERO;
+
+        let proof = prove(&air, &tampered_trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "P0-1 SOUNDNESS BUG: prover claimed net_delta=0 but real delta=-500. \
+             Group 6 constraint MUST reject. Got: {:?}",
+            result
+        );
+    }
+
+    /// P0-1: prover flips net_delta sign (claim +500 instead of -500).
+    #[test]
+    fn test_soundness_p0_1_net_delta_sign_flip_rejected() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 500,
+            direction: 1,
+        }];
+
+        let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
+        public_inputs[pi::NET_DELTA_SIGN] = BabyBear::ZERO;
+        let mut tampered_trace = trace.clone();
+        tampered_trace[0][AUX_BASE + 3] = BabyBear::ZERO;
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &tampered_trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "P0-1: sign-flipped net_delta must be rejected. Got: {:?}",
+            result
+        );
+    }
+
+    /// P0-1: prover lies about magnitude (claim mag=100 instead of 500).
+    #[test]
+    fn test_soundness_p0_1_net_delta_magnitude_lie_rejected() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 500,
+            direction: 1,
+        }];
+
+        let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
+        public_inputs[pi::NET_DELTA_MAG] = BabyBear::new(100);
+        let mut tampered_trace = trace.clone();
+        tampered_trace[0][AUX_BASE + 2] = BabyBear::new(100);
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &tampered_trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "P0-1: magnitude-lie net_delta must be rejected. Got: {:?}",
+            result
+        );
+    }
+
+    /// P0-1: verifier-supplied INIT_BAL_LO disagrees with trace — boundary rejects.
+    #[test]
+    fn test_soundness_p0_1_init_bal_pi_tampered_rejected() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 500,
+            direction: 1,
+        }];
+
+        let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
+        public_inputs[pi::INIT_BAL_LO] = BabyBear::new(999);
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "P0-1: lying INIT_BAL_LO must be rejected. Got: {:?}",
+            result
+        );
+    }
+
+    /// P0-1: verifier-supplied FINAL_BAL_LO disagrees with trace — boundary rejects.
+    #[test]
+    fn test_soundness_p0_1_final_bal_pi_tampered_rejected() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 500,
+            direction: 1,
+        }];
+
+        let (trace, mut public_inputs) = generate_effect_vm_trace(&state, &effects);
+        public_inputs[pi::FINAL_BAL_LO] = BabyBear::new(700);
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_err(),
+            "P0-1: lying FINAL_BAL_LO must be rejected. Got: {:?}",
+            result
+        );
+    }
+
+    /// P0-1: positive control — honest trace verifies and delta decodes correctly.
+    #[test]
+    fn test_soundness_p0_1_honest_trace_verifies() {
+        let state = make_initial_state(1000);
+        let effects = vec![Effect::Transfer {
+            amount: 500,
+            direction: 1,
+        }];
+
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "Honest trace must verify after P0-1 fix. Got: {:?}",
+            result
+        );
+
+        let delta = extract_net_delta(&public_inputs).unwrap();
+        assert_eq!(delta, -500);
+    }
+
+    // ========================================================================
+    // P1-5 ADVERSARIAL TEST: PipelineStep pipeline_id non-zero
+    // ========================================================================
+    //
+    // The fix adds an aux column (aux[6] = pipeline_id^-1) and constraint
+    //   s_pipeline * (pipeline_id * aux[6] - 1) == 0
+    // forcing pipeline_id != 0 when the PipelineStep selector is active.
+
+    /// P1-5: PipelineStep with pipeline_id=0 must be rejected.
+    ///
+    /// We build a normal PipelineStep trace and then tamper the trace + PI so
+    /// pipeline_id = 0 in the params column, mirroring the auxiliary witness
+    /// that an adversarial prover would supply. The new aux[6]-inverse
+    /// constraint cannot be satisfied; the verifier rejects.
+    #[test]
+    fn test_soundness_p1_5_pipeline_id_zero_rejected() {
+        let mut state = CellState::new(10_000, 0);
+        let source_old = hash_2_to_1(BabyBear::new(0x50), BabyBear::new(0x51));
+        state.fields[4] = source_old;
+        state.refresh_commitment();
+
+        let msg_hash = BabyBear::new(0xCAFE);
+        let source_new = hash_2_to_1(source_old, msg_hash);
+        let sink_old = hash_2_to_1(BabyBear::new(0x60), BabyBear::new(0x61));
+        let sink_new = hash_2_to_1(sink_old, msg_hash);
+
+        // Build a normal proof with a legitimate pipeline_id, then tamper.
+        let real_pipeline_id = hash_2_to_1(BabyBear::new(0x99), BabyBear::new(0x100));
+        let effects = vec![Effect::PipelineStep {
+            pipeline_id: real_pipeline_id,
+            source_old_root: source_old,
+            source_new_root: source_new,
+            sink_new_root: sink_new,
+            message_hash: msg_hash,
+        }];
+
+        let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+
+        // Tamper: set pipeline_id and its inverse to zero. With pipeline_id=0
+        // there is no inverse, so this models a prover claiming an
+        // unauthorized null pipeline. The constraint
+        // (0 * 0 - 1 == -1 != 0) trips.
+        trace[0][PARAM_BASE + param::PIPELINE_ID] = BabyBear::ZERO;
+        trace[0][AUX_BASE + 6] = BabyBear::ZERO;
+        // Effects-hash boundary still demands the original hash, so this also
+        // fails via the effects_hash binding — but for this test we ensure the
+        // *new* P1-5 constraint independently rejects, by also tampering the
+        // effects hash PI to match.
+        let mut tampered_pi = public_inputs.clone();
+        let (efh_lo, efh_hi) = compute_effects_hash(&[Effect::PipelineStep {
+            pipeline_id: BabyBear::ZERO,
+            source_old_root: source_old,
+            source_new_root: source_new,
+            sink_new_root: sink_new,
+            message_hash: msg_hash,
+        }]);
+        tampered_pi[pi::EFFECTS_HASH_LO] = efh_lo;
+        tampered_pi[pi::EFFECTS_HASH_HI] = efh_hi;
+        trace[0][AUX_BASE + 4] = efh_lo;
+        trace[0][AUX_BASE + 5] = efh_hi;
+
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &tampered_pi);
+        let result = verify(&air, &proof, &tampered_pi);
+        assert!(
+            result.is_err(),
+            "P1-5: PipelineStep with pipeline_id=0 MUST be rejected by the \
+             non-zero constraint. Got: {:?}",
+            result
+        );
+    }
+
+    /// P1-5: positive control — honest PipelineStep with nonzero pipeline_id verifies.
+    #[test]
+    fn test_soundness_p1_5_pipeline_id_nonzero_verifies() {
+        let mut state = CellState::new(10_000, 0);
+        let source_old = hash_2_to_1(BabyBear::new(0x50), BabyBear::new(0x51));
+        state.fields[4] = source_old;
+        state.refresh_commitment();
+
+        let msg_hash = BabyBear::new(0xCAFE);
+        let source_new = hash_2_to_1(source_old, msg_hash);
+        let sink_old = hash_2_to_1(BabyBear::new(0x60), BabyBear::new(0x61));
+        let sink_new = hash_2_to_1(sink_old, msg_hash);
+
+        let pipeline_id = hash_2_to_1(BabyBear::new(0x99), BabyBear::new(0x100));
+        let effects = vec![Effect::PipelineStep {
+            pipeline_id,
+            source_old_root: source_old,
+            source_new_root: source_new,
+            sink_new_root: sink_new,
+            message_hash: msg_hash,
+        }];
+
+        let (trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+        let air = EffectVmAir::new(trace.len());
+        let proof = prove(&air, &trace, &public_inputs);
+        let result = verify(&air, &proof, &public_inputs);
+        assert!(
+            result.is_ok(),
+            "P1-5: honest PipelineStep must still verify. Got: {:?}",
+            result
         );
     }
 }

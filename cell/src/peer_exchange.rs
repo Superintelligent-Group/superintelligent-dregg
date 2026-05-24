@@ -318,6 +318,19 @@ impl PeerExchange {
         let custom_count = BabyBear::new_canonical(
             proof.public_inputs[pyana_circuit::effect_vm::pi::CUSTOM_EFFECT_COUNT],
         );
+        // P0-1 fix: forward bal_* PIs so Group 6 / boundary constraints check.
+        let init_bal_lo = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_LO],
+        );
+        let init_bal_hi = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::INIT_BAL_HI],
+        );
+        let final_bal_lo = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_LO],
+        );
+        let final_bal_hi = BabyBear::new_canonical(
+            proof.public_inputs[pyana_circuit::effect_vm::pi::FINAL_BAL_HI],
+        );
 
         // Build the public inputs vector in Effect VM layout.
         let mut public_inputs: Vec<BabyBear> = Vec::with_capacity(min_pi_count);
@@ -328,6 +341,10 @@ impl PeerExchange {
         public_inputs.push(effects_hash_lo);
         public_inputs.push(effects_hash_hi);
         public_inputs.push(custom_count);
+        public_inputs.push(init_bal_lo);
+        public_inputs.push(init_bal_hi);
+        public_inputs.push(final_bal_lo);
+        public_inputs.push(final_bal_hi);
 
         // Append custom proof entries from the proof's PIs.
         let custom_count_val = custom_count.0 as usize;

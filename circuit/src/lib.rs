@@ -218,7 +218,7 @@ pub use cross_state_derivation::{
 pub use effect_vm::{
     CellState, EFFECT_VM_WIDTH, Effect, EffectVmAir, NUM_EFFECTS, compute_effects_hash,
     encode_net_delta, extract_custom_proof_commitments, extract_net_delta,
-    generate_effect_vm_trace,
+    generate_effect_vm_trace, verify_balance_limb_pis,
 };
 pub use field::BabyBear;
 pub use ivc::{
