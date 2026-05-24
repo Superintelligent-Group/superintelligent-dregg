@@ -21,11 +21,14 @@ const COPY_DIRS = [
   'examples',
   'demos',
   'pkg',
+  'old-site',
 ];
 
-// Files copied from root-level site assets
+// Files copied from root-level site assets.
+// `assets/pyana.pdf` is NOT listed: it is built by CI from paper/pyana.typ
+// (see COPY_BUILT_FILES below) and is gitignored. Local builds without typst
+// will simply not have a PDF in dist/ — that's fine for dev.
 const COPY_FILES = [
-  'assets/pyana.pdf',
   'discovery.json',
 ];
 

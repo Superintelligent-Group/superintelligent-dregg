@@ -71,3 +71,10 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  no-unchecked-auth:
+    name: No-Unchecked-Auth grep guard (P2.F)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/no-unchecked-auth.sh

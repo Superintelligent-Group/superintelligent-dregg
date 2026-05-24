@@ -596,6 +596,20 @@ pub struct TurnExecutor {
     /// AT WRITE TIME, removing the wallet's ability to silently break the
     /// chain by submitting every turn as if it were genesis.
     pub last_receipt_hash: Mutex<HashMap<CellId, [u8; 32]>>,
+    /// Optional 32-byte Ed25519 signing key seed used to populate
+    /// `TurnReceipt::executor_signature` on every committed receipt.
+    ///
+    /// When set, the executor signs each receipt's `receipt_hash()` and
+    /// embeds the 64-byte signature in `receipt.executor_signature`. This is
+    /// R-4 of `EFFECT-VM-SHAPE-A.md`: previously the field existed but was
+    /// never populated, so the federation-exit path could not actually
+    /// authenticate receipts as having come from a known executor.
+    ///
+    /// `None` reproduces the legacy behavior (receipts ship with
+    /// `executor_signature = None`); existing chain-verification code
+    /// (`verify_receipt_chain_with_keys`) treats absent signatures as a
+    /// best-effort property, so the field is opt-in.
+    pub executor_signing_key: Option<[u8; 32]>,
 }
 
 impl TurnExecutor {
@@ -626,6 +640,7 @@ impl TurnExecutor {
             epoch_minter: None,
             queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
             last_receipt_hash: Mutex::new(HashMap::new()),
+            executor_signing_key: None,
         }
     }
 
@@ -660,6 +675,7 @@ impl TurnExecutor {
             epoch_minter: None,
             queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
             last_receipt_hash: Mutex::new(HashMap::new()),
+            executor_signing_key: None,
         }
     }
 
@@ -690,6 +706,7 @@ impl TurnExecutor {
             epoch_minter: None,
             queue_program_registry: crate::queue_programs::QueueProgramRegistry::new(),
             last_receipt_hash: Mutex::new(HashMap::new()),
+            executor_signing_key: None,
         }
     }
 
@@ -701,6 +718,42 @@ impl TurnExecutor {
     /// Set the proof verifier.
     pub fn set_proof_verifier(&mut self, verifier: Box<dyn ProofVerifier>) {
         self.proof_verifier = Some(verifier);
+    }
+
+    /// Equip the executor with an Ed25519 signing key (32-byte seed) used to
+    /// populate `TurnReceipt::executor_signature` on every committed receipt.
+    ///
+    /// This is R-4 of `EFFECT-VM-SHAPE-A.md`. Until this builder is invoked,
+    /// receipts ship with `executor_signature: None` (the legacy behavior);
+    /// once set, every receipt produced by this executor — both the proof-
+    /// carrying fast path and the standard execution path — is signed with
+    /// the given key over the receipt's canonical `receipt_hash()`.
+    ///
+    /// Verification: `turn::verify::verify_receipt_chain_with_keys` walks the
+    /// chain and accepts a receipt only if its `executor_signature` (when
+    /// present) verifies against one of the caller-supplied executor public
+    /// keys.
+    pub fn with_executor_signing_key(mut self, signing_key_seed: [u8; 32]) -> Self {
+        self.executor_signing_key = Some(signing_key_seed);
+        self
+    }
+
+    /// Set the executor signing key after construction.
+    pub fn set_executor_signing_key(&mut self, signing_key_seed: [u8; 32]) {
+        self.executor_signing_key = Some(signing_key_seed);
+    }
+
+    /// Sign `receipt.receipt_hash()` with the executor's signing key if one
+    /// is configured, returning the 64-byte signature bytes for embedding in
+    /// `receipt.executor_signature`. Returns `None` when no key is set —
+    /// callers should leave `executor_signature` as `None` in that case.
+    fn maybe_sign_receipt(&self, receipt: &TurnReceipt) -> Option<Vec<u8>> {
+        let seed = self.executor_signing_key.as_ref()?;
+        let sk = ed25519_dalek::SigningKey::from_bytes(seed);
+        let receipt_hash = receipt.receipt_hash();
+        use ed25519_dalek::Signer;
+        let sig = sk.sign(&receipt_hash);
+        Some(sig.to_bytes().to_vec())
     }
 
     /// Set the current timestamp (used for expiration and precondition checks).
@@ -2450,7 +2503,7 @@ impl TurnExecutor {
                     // zero effects enumeration — the proof IS the validation).
                     let effects_hash = self.compute_effects_hash(&[]);
 
-                    let receipt = TurnReceipt {
+                    let mut receipt = TurnReceipt {
                         turn_hash,
                         forest_hash,
                         pre_state_hash,
@@ -2469,6 +2522,9 @@ impl TurnExecutor {
                         executor_signature: None,
                         finality: crate::turn::Finality::Final,
                     };
+                    // R-4: sign the receipt over its canonical hash if the
+                    // executor has been configured with a signing key.
+                    receipt.executor_signature = self.maybe_sign_receipt(&receipt);
 
                     // Fee distribution (same as normal path).
                     let proposer_share = turn.fee / 2;
@@ -2793,7 +2849,7 @@ impl TurnExecutor {
             self.treasury_cell.as_ref(),
         );
 
-        let receipt = TurnReceipt {
+        let mut receipt = TurnReceipt {
             turn_hash,
             forest_hash,
             pre_state_hash,
@@ -2825,6 +2881,9 @@ impl TurnExecutor {
             executor_signature: None,
             finality: crate::turn::Finality::Final,
         };
+        // R-4: sign the receipt over its canonical hash if the executor has
+        // been configured with a signing key (`with_executor_signing_key`).
+        receipt.executor_signature = self.maybe_sign_receipt(&receipt);
 
         // P0-3: record the new chain-head for this agent.
         self.record_receipt_hash(turn.agent, receipt.receipt_hash());
@@ -10155,5 +10214,82 @@ mod hardening_tests {
         // Both balances UNCHANGED.
         assert_eq!(ledger.get(&victim_id).unwrap().state.balance(), 10_000);
         assert_eq!(ledger.get(&agent_id).unwrap().state.balance(), 100);
+    }
+
+    // ---------------- R-4: executor_signature actually populated -----------
+    //
+    // EFFECT-VM-SHAPE-A.md R-4: previously TurnReceipt.executor_signature was
+    // never set, so the federation-exit path could not authenticate receipts
+    // as having come from a known executor. These tests pin the new behavior:
+    //
+    //   1. Without a signing key configured, receipts keep the legacy None.
+    //   2. With a signing key configured (via `with_executor_signing_key`),
+    //      every committed receipt is signed over receipt_hash().
+    //   3. The signature verifies under the executor's matching public key
+    //      and is rejected under any other key.
+
+    #[test]
+    fn executor_signature_default_none() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(7, 1000);
+        let agent_id = agent.id();
+        ledger.insert_cell(agent).unwrap();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero());
+        let turn = build_noop_turn(agent_id, 0);
+        let result = executor.execute(&turn, &mut ledger);
+        match result {
+            TurnResult::Committed { receipt, .. } => {
+                assert!(
+                    receipt.executor_signature.is_none(),
+                    "without with_executor_signing_key, executor_signature must remain None"
+                );
+            }
+            other => panic!("expected Committed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn executor_signature_populated_and_verifies() {
+        let mut ledger = Ledger::new();
+        let agent = make_permissive_cell(11, 1000);
+        let agent_id = agent.id();
+        ledger.insert_cell(agent).unwrap();
+
+        // Deterministic key seed for the test.
+        let seed: [u8; 32] = *b"pyana-test-executor-sk-r4-fix!!!";
+        let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let pk_bytes = sk.verifying_key().to_bytes();
+
+        let executor = TurnExecutor::new(ComputronCosts::zero()).with_executor_signing_key(seed);
+        let turn = build_noop_turn(agent_id, 0);
+
+        let result = executor.execute(&turn, &mut ledger);
+        let receipt = match result {
+            TurnResult::Committed { receipt, .. } => receipt,
+            other => panic!("expected Committed, got {:?}", other),
+        };
+
+        // Signature is present and exactly 64 bytes.
+        let sig_bytes = receipt
+            .executor_signature
+            .as_ref()
+            .expect("executor_signature must be populated when signing key configured");
+        assert_eq!(sig_bytes.len(), 64);
+
+        // Chain verification accepts the receipt under the matching key.
+        crate::verify::verify_receipt_chain_with_keys(&[receipt.clone()], &[pk_bytes])
+            .expect("receipt chain must verify under the executor's public key");
+
+        // ...and rejects it under any other key.
+        let mut wrong_key = pk_bytes;
+        wrong_key[0] ^= 0x80;
+        let err = crate::verify::verify_receipt_chain_with_keys(&[receipt], &[wrong_key])
+            .expect_err("verification must fail under a foreign key");
+        assert!(
+            matches!(err, crate::verify::VerifyError::ExecutorSignatureInvalid { .. }),
+            "expected ExecutorSignatureInvalid, got {:?}",
+            err
+        );
     }
 }

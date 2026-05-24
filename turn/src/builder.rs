@@ -7,17 +7,140 @@
 //!
 //! The redesigned `ActionBuilder<S>` carries a phantom state marker `S` that
 //! tracks whether the builder has been authorized. Initial state `NeedsAuth`
-//! has *no* `.build()` method; calling one of:
-//!
-//! - [`ActionBuilder::signed_by`]    (Ed25519)
-//! - [`ActionBuilder::with_proof`]   (STARK / ZK)
-//! - [`ActionBuilder::with_breadstuff`] (capability token)
-//! - [`ActionBuilder::bearer_via`]   (bearer-cap proof)
-//!
-//! transitions the builder to an `Authorized` state where `.build()` is
-//! available. `Authorization::Unchecked` is unrepresentable through the
-//! builder; the only path to it is the loudly-named, test-only
+//! has *no* `.build()` method; calling one of the four authorization
+//! transitions below moves the builder into an `Authorized<Mode>` state where
+//! `.build()` becomes available. `Authorization::Unchecked` is unrepresentable
+//! through the builder; the only path to it is the loudly-named, test-only
 //! [`ActionBuilder::new_unchecked_for_tests`] constructor.
+//!
+//! # The four authorization modes (P2.E)
+//!
+//! Every authorized [`ActionBuilder`] is in exactly one of four states, each
+//! corresponding to a distinct production-grade authorization mode. They have
+//! identical surface for adding effects / preconditions / args; they differ
+//! only in *how the executor decides to honor the action*.
+//!
+//! | Mode          | Marker type        | Transition method                  | Authorization stored                             |
+//! |---------------|--------------------|------------------------------------|--------------------------------------------------|
+//! | Signed        | [`Signed`]         | [`ActionBuilder::signed_by`]       | [`Authorization::Signature`] (Ed25519 r, s)      |
+//! | Proved        | [`Proved`]         | [`ActionBuilder::with_proof`]      | [`Authorization::Proof`] (STARK bytes + binding) |
+//! | Breadstuff    | [`Breadstuff`]     | [`ActionBuilder::with_breadstuff`] | [`Authorization::Breadstuff`] (capability token) |
+//! | Bearer        | [`Bearer`]         | [`ActionBuilder::bearer_via`]      | [`Authorization::Bearer`] (cap-delegation proof) |
+//!
+//! ## Signed (Ed25519)
+//!
+//! The most common mode: an Ed25519 signature over the action's canonical
+//! bytes by the caller's primary key. Use when the caller is a wallet-backed
+//! identity that holds a long-lived key.
+//!
+//! ```
+//! use pyana_turn::builder::ActionBuilder;
+//! use pyana_cell::CellId;
+//!
+//! let caller = CellId::from_bytes([1u8; 32]);
+//! let target = CellId::from_bytes([2u8; 32]);
+//!
+//! // 64-byte placeholder signature -- real callers feed a wallet output.
+//! let sig = [0u8; 64];
+//!
+//! let action = ActionBuilder::new(target, "transfer", caller)
+//!     .signed_by(sig)
+//!     .effect_transfer(caller, target, 100)
+//!     .build();
+//! assert_eq!(action.effects.len(), 1);
+//! ```
+//!
+//! ## Proved (STARK / ZK)
+//!
+//! Carries an opaque proof and a `(bound_action, bound_resource)` pair that
+//! the verifier checks the proof binds to. Use when the caller cannot or
+//! does not want to reveal a key — e.g. private membership proofs, sovereign
+//! cell self-attestations, capability-by-proof.
+//!
+//! ```
+//! use pyana_turn::builder::ActionBuilder;
+//! use pyana_cell::CellId;
+//!
+//! let caller = CellId::from_bytes([3u8; 32]);
+//! let target = CellId::from_bytes([4u8; 32]);
+//!
+//! let proof_bytes = vec![0xAB; 16]; // opaque STARK / ZK bytes
+//!
+//! let action = ActionBuilder::new(target, "claim", caller)
+//!     .with_proof(proof_bytes, "claim", "vault://main")
+//!     .effect_emit_event(caller, "claimed", vec![])
+//!     .build();
+//! assert!(matches!(
+//!     action.authorization,
+//!     pyana_turn::action::Authorization::Proof { .. }
+//! ));
+//! ```
+//!
+//! ## Breadstuff (capability token)
+//!
+//! A 32-byte capability token (the "breadstuff" — Pyana's hash-anchored
+//! bearer credential). The executor looks the token up in the target's
+//! capability table and rejects if absent / revoked. Use for delegated
+//! authority where the bearer holds nothing but the token bytes.
+//!
+//! ```
+//! use pyana_turn::builder::ActionBuilder;
+//! use pyana_cell::CellId;
+//!
+//! let caller = CellId::from_bytes([5u8; 32]);
+//! let target = CellId::from_bytes([6u8; 32]);
+//!
+//! let token: [u8; 32] = [0xCD; 32]; // breadstuff hash
+//!
+//! let action = ActionBuilder::new(target, "ping", caller)
+//!     .with_breadstuff(token)
+//!     .effect_increment_nonce(target)
+//!     .build();
+//! assert!(matches!(
+//!     action.authorization,
+//!     pyana_turn::action::Authorization::Breadstuff(_)
+//! ));
+//! ```
+//!
+//! ## Bearer (one-shot delegation proof)
+//!
+//! Carries a [`BearerCapProof`] containing the delegation chain plus an
+//! expiry. Unlike breadstuff, the proof itself encodes the delegation and
+//! never persists in any c-list — it is ephemeral and verified inline. Use
+//! when the delegator cannot pre-grant a capability slot (e.g. immediate
+//! cross-federation introduction).
+//!
+//! ```
+//! use pyana_turn::builder::ActionBuilder;
+//! use pyana_turn::action::BearerCapProof;
+//! use pyana_turn::action::DelegationProofData;
+//! use pyana_cell::{CellId, AuthRequired};
+//!
+//! let caller = CellId::from_bytes([7u8; 32]);
+//! let target = CellId::from_bytes([8u8; 32]);
+//!
+//! let proof = BearerCapProof {
+//!     target,
+//!     permissions: AuthRequired::Signature,
+//!     delegation_proof: DelegationProofData::SignedDelegation {
+//!         delegator_pk: [0xAA; 32],
+//!         signature: [0u8; 64],
+//!         bearer_pk: [0xBB; 32],
+//!     },
+//!     expires_at: 1_000_000,
+//!     revocation_channel: None,
+//!     allowed_effects: None,
+//! };
+//!
+//! let action = ActionBuilder::new(target, "exercise", caller)
+//!     .bearer_via(proof)
+//!     .effect_emit_event(caller, "exercised", vec![])
+//!     .build();
+//! assert!(matches!(
+//!     action.authorization,
+//!     pyana_turn::action::Authorization::Bearer(_)
+//! ));
+//! ```
 
 use std::marker::PhantomData;
 

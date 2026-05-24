@@ -1,4 +1,14 @@
-# apps/
+# BE WARY
+
+MOST OF THESE APPS ARE SIMPLY HELPING ME IRON OUT THE DESIGN
+
+THEY ARE SHAPEFORMS
+
+THEY ARE MANY KNOWN ISSUES WITH ALL OF THEM
+
+(except pyana-discord-bot. we love pyana-discord-bot.)
+
+## apps/
 
 Applications built on pyana. Each demonstrates real cryptographic properties — STARK proofs, Pedersen commitments, garbled circuits, ring membership, capability delegation. No mocks.
 

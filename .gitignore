@@ -1,18 +1,28 @@
 .claude
 .claire
-**/target/
+
 hints/benches/*.bincode
 hints/benches/committee_1024.json
 hints/benches/committee.json
 hints/benches/committee_128.json
+
 site/dist
+site/assets/pyana.pdf
+site/paper/
 paper/*.pdf
 pdfs/
 
+target
 node_modules
-node_modules
+__pycache__
 
-# Devnet secrets (generated locally, not tracked)
+# Devnet secrets
 deploy/genesis/keys/
 deploy/genesis/*.key
 deploy/genesis/secrets/
+demo/two-ai-handoff/state/
+
+CLAUDIT.md
+
+states/
+spec/states

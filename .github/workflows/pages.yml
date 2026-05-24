@@ -9,12 +9,19 @@ on:
       - "paper/**"
       - "extension/**"
       - ".github/workflows/pages.yml"
+  workflow_run:
+    # Re-deploy whenever demos.yml finishes so the site picks up fresh
+    # site/demos/results.json. demos.yml itself does not deploy.
+    workflows: ["Run demos and publish results"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read
 
 concurrency:
   group: pages
@@ -63,6 +70,35 @@ jobs:
               recovery.html recovery.js confirm-intent.html origin-permission.html \
               bip39_english.txt
           fi
+
+      - name: Fetch latest demo results from demos.yml
+        # Pulls the most recent successful demo-results artifact from the
+        # demos.yml workflow on main and drops it at site/demos/results.json.
+        # If no successful run exists yet (first deploy after the split), the
+        # step is a no-op and the site simply ships without results.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p site/demos
+          RUN_ID=$(gh run list \
+            --workflow=demos.yml \
+            --branch=main \
+            --status=success \
+            --limit=1 \
+            --json databaseId \
+            --jq '.[0].databaseId' || true)
+          if [ -z "${RUN_ID:-}" ] || [ "$RUN_ID" = "null" ]; then
+            echo "No successful demos.yml run found; skipping."
+            exit 0
+          fi
+          echo "Downloading demo-results from run $RUN_ID..."
+          gh run download "$RUN_ID" \
+            --name demo-results \
+            --dir site/demos/ \
+            || echo "Artifact download failed (may have expired); skipping."
+          ls -la site/demos/ || true
 
       - name: Install typst
         run: |

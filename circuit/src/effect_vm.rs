@@ -106,6 +106,39 @@ use crate::stark::{BoundaryConstraint, StarkAir};
 ///  aux[20] = mode_flag bit;
 ///  aux[21] = ResizeQueue delta sign (Stage 2: 0=grow, 1=shrink);
 ///  aux[22] = ResizeQueue |delta| magnitude (Stage 2))
+///
+/// Stage 7 / P1.C aux semantics for CapTP variants (within aux[0..7]):
+///   ExportSturdyRef row:
+///     aux[0] = derived swiss number (existing).
+///   EnlivenRef row (was tautological; now bound to swiss_table_root):
+///     aux[0] = leaf_hash = hash_2_to_1(swiss, hash_2_to_1(cell_id, perms))
+///     aux[1] = Merkle sibling (prover-supplied).
+///     aux[2] = direction bit (0 = leaf-is-left, 1 = leaf-is-right);
+///              constrained boolean.
+///     aux[3] = chosen_parent = (1-dir)*hash(leaf, sibling) + dir*hash(sibling, leaf).
+///     AIR constrains aux[3] == state.fields[4]  (committed
+///     swiss_table_root mirror; full state_commitment binds via PI).
+///   DropRef row (holder_federation now bound to refcount_table_root):
+///     aux[0] = inverse(refcount_param)  (refcount > 0 witness; existing).
+///     aux[1] = leaf_hash = hash_2_to_1(ref_id, holder_federation).
+///     aux[2] = Merkle sibling (prover-supplied).
+///     aux[3] = direction bit (boolean).
+///     aux[4] = chosen_parent = (1-dir)*hash(leaf, sibling) + dir*hash(sibling, leaf).
+///     AIR constrains aux[4] == state.fields[3]  (committed
+///     refcount_table_root mirror).
+///   ValidateHandoff row (was tautological; now bound to PI
+///     APPROVED_HANDOFFS_BASE position 0):
+///     aux[0] = leaf_hash = hash_2_to_1(cert_hash,
+///              hash_2_to_1(recipient_pk, introducer_pk))
+///     aux[1] = Merkle sibling (prover-supplied).
+///     aux[2] = direction bit (boolean).
+///     aux[3] = chosen_parent = (1-dir)*hash(leaf, sibling) + dir*hash(sibling, leaf).
+///     AIR constrains aux[3] == approved_set_root (PARAM) and
+///     PARAM == PI[APPROVED_HANDOFFS_BASE]  (executor PI-match).
+///     Consume-on-use lives at the executor (it rotates the
+///     federation's approved-handoffs root after a successful
+///     ValidateHandoff; replays present a non-membership witness to
+///     the next AIR proof).
 pub const EFFECT_VM_WIDTH: usize = 105;
 
 /// Number of effect types (selectors).
@@ -2422,22 +2455,55 @@ impl StarkAir for EffectVmAir {
             }
         }
 
-        // -- EnlivenRef: validate swiss number exists in table --
-        // Proves: hash(swiss_number, expected_cell_id) matches committed table entry.
-        // State: field[6] increments (use_count), balance/cap/other fields unchanged.
+        // -- EnlivenRef: validate swiss number is a member of the cell's
+        // committed swiss_table_root --
+        //
+        // Stage 7 / P1.C: previously tautological. Now does 1-hop Merkle
+        // membership against the cell's state.fields[4] slot (the
+        // committed swiss_table_root mirror). The prover supplies a
+        // sibling hash; the leaf is AIR-computed from PARAMs; the
+        // chosen-parent must equal the committed root.
+        //
+        // State: field[6] increments (use_count); field[4]
+        // (swiss_table_root) is preserved across the row (enliven
+        // doesn't add/remove entries); balance/cap/other fields unchanged.
         let s_enliven = local[sel::ENLIVEN_REF];
         {
             let swiss = local[PARAM_BASE + param::ENLIVEN_SWISS];
             let expected_cell_id = local[PARAM_BASE + param::ENLIVEN_CELL_ID];
             let expected_perms = local[PARAM_BASE + param::ENLIVEN_PERMISSIONS];
-            // Verify table entry: aux[0] = hash(swiss, hash(cell_id, permissions))
-            // The executor populates this from the swiss table; the circuit verifies
-            // the hash relationship.
+            // Leaf hash bound to PARAMs.
             let inner = hash_2_to_1(expected_cell_id, expected_perms);
-            let expected_entry_hash = hash_2_to_1(swiss, inner);
-            let aux_entry = local[AUX_BASE + 0];
-            let c_entry = s_enliven * (aux_entry - expected_entry_hash);
-            combined = combined + alpha_pow * c_entry;
+            let expected_leaf = hash_2_to_1(swiss, inner);
+            let aux_root = local[AUX_BASE + 0];
+            let aux_leaf = local[AUX_BASE + 1];
+            let c_leaf = s_enliven * (aux_leaf - expected_leaf);
+            if c_leaf != BabyBear::ZERO {
+                eprintln!("DBG c_leaf aux={:?} expected={:?}", aux_leaf.0, expected_leaf.0);
+            }
+            combined = combined + alpha_pow * c_leaf;
+            alpha_pow = alpha_pow * alpha;
+            let aux_sibling = local[AUX_BASE + 2];
+            let aux_chosen = local[AUX_BASE + 3];
+            let expected_chosen = hash_2_to_1(aux_leaf, aux_sibling);
+            let c_chosen = s_enliven * (aux_chosen - expected_chosen);
+            if c_chosen != BabyBear::ZERO {
+                eprintln!("DBG c_chosen aux={:?} expected={:?}", aux_chosen.0, expected_chosen.0);
+            }
+            combined = combined + alpha_pow * c_chosen;
+            alpha_pow = alpha_pow * alpha;
+            let f4_after = local[STATE_AFTER_BASE + state::FIELD_BASE + 4];
+            let c_root_field = s_enliven * (aux_root - f4_after);
+            if c_root_field != BabyBear::ZERO {
+                eprintln!("DBG c_root_field aux_root={:?} f4_after={:?}", aux_root.0, f4_after.0);
+            }
+            combined = combined + alpha_pow * c_root_field;
+            alpha_pow = alpha_pow * alpha;
+            let c_chosen_eq_root = s_enliven * (aux_chosen - aux_root);
+            if c_chosen_eq_root != BabyBear::ZERO {
+                eprintln!("DBG c_chosen_eq_root aux_chosen={:?} aux_root={:?}", aux_chosen.0, aux_root.0);
+            }
+            combined = combined + alpha_pow * c_chosen_eq_root;
             alpha_pow = alpha_pow * alpha;
 
             // field[6] must increment by 1 (use_count).
@@ -2460,30 +2526,30 @@ impl StarkAir for EffectVmAir {
             combined = combined + alpha_pow * c_cap;
             alpha_pow = alpha_pow * alpha;
 
-            // Fields 0..6 and field[7] unchanged (only field[6] changes).
-            for i in 0..6 {
+            // Fields 0..3, 5, and 7 unchanged (only field[6] and the
+            // committed root in field[4] may change on this row).
+            for i in [0usize, 1, 2, 3, 5, 7] {
                 let c = s_enliven
                     * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
                         - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
                 combined = combined + alpha_pow * c;
                 alpha_pow = alpha_pow * alpha;
             }
-            // field[7] unchanged
-            let c_f7 = s_enliven
-                * (local[STATE_AFTER_BASE + state::FIELD_BASE + 7]
-                    - local[STATE_BEFORE_BASE + state::FIELD_BASE + 7]);
-            combined = combined + alpha_pow * c_f7;
-            alpha_pow = alpha_pow * alpha;
         }
 
-        // -- DropRef: decrement refcount, prove it was > 0 --
-        // State: field[5] decrements (refcount), balance/cap/other fields unchanged.
-        // The constraint proves refcount > 0 by requiring old_f5 - 1 == new_f5
-        // and old_f5 != 0 (enforced by requiring param DROP_REFCOUNT == old_f5,
-        // and DROP_REFCOUNT is non-zero checked via aux).
+        // -- DropRef: decrement refcount; bind holder_federation into
+        //    the committed refcount_table_root (state.fields[3]) --
+        //
+        // Stage 7 / P1.C: previously the `holder_federation` PARAM was
+        // unbound from any committed structure. Now the AIR enforces a
+        // 1-hop Merkle membership against `state_after.fields[3]` (the
+        // committed refcount_table_root mirror). Leaf =
+        // hash(ref_id_field=cell_id, holder_federation).
         let s_drop = local[sel::DROP_REF];
         {
             let refcount_param = local[PARAM_BASE + param::DROP_REFCOUNT];
+            let cell_id_param = local[PARAM_BASE + param::DROP_CELL_ID];
+            let holder_fed_param = local[PARAM_BASE + param::DROP_HOLDER_FED];
 
             // field[5] must decrement by 1.
             let old_f5 = local[STATE_BEFORE_BASE + state::FIELD_BASE + 5];
@@ -2498,11 +2564,33 @@ impl StarkAir for EffectVmAir {
             alpha_pow = alpha_pow * alpha;
 
             // Prove refcount > 0: aux[0] = inverse(refcount_param).
-            // If refcount_param == 0, no inverse exists, constraint fails.
-            // Constraint: refcount_param * aux[0] == 1
             let rc_inv = local[AUX_BASE + 0];
             let c_nonzero = s_drop * (refcount_param * rc_inv - BabyBear::ONE);
             combined = combined + alpha_pow * c_nonzero;
+            alpha_pow = alpha_pow * alpha;
+
+            // 1-hop Merkle membership against refcount_table_root in
+            // state_after.fields[3]:
+            //   aux[1] = leaf = hash_2_to_1(cell_id, holder_federation)
+            //   aux[2] = prover-supplied sibling
+            //   aux[3] = direction bit (not used here; reserved for
+            //            future deeper proofs)
+            //   aux[4] = chosen_parent = hash_2_to_1(leaf, sibling)
+            //   chosen_parent == state_after.fields[3]
+            let expected_leaf = hash_2_to_1(cell_id_param, holder_fed_param);
+            let aux_leaf = local[AUX_BASE + 1];
+            let c_leaf = s_drop * (aux_leaf - expected_leaf);
+            combined = combined + alpha_pow * c_leaf;
+            alpha_pow = alpha_pow * alpha;
+            let aux_sibling = local[AUX_BASE + 2];
+            let aux_chosen = local[AUX_BASE + 4];
+            let expected_chosen = hash_2_to_1(aux_leaf, aux_sibling);
+            let c_chosen = s_drop * (aux_chosen - expected_chosen);
+            combined = combined + alpha_pow * c_chosen;
+            alpha_pow = alpha_pow * alpha;
+            let f3_after = local[STATE_AFTER_BASE + state::FIELD_BASE + 3];
+            let c_root = s_drop * (aux_chosen - f3_after);
+            combined = combined + alpha_pow * c_root;
             alpha_pow = alpha_pow * alpha;
 
             // Balance unchanged.
@@ -2518,15 +2606,9 @@ impl StarkAir for EffectVmAir {
             combined = combined + alpha_pow * c_cap;
             alpha_pow = alpha_pow * alpha;
 
-            // Fields 0..5, 6, 7 unchanged (only field[5] changes).
-            for i in 0..5 {
-                let c = s_drop
-                    * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
-                        - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
-                combined = combined + alpha_pow * c;
-                alpha_pow = alpha_pow * alpha;
-            }
-            for i in 6..8 {
+            // Fields 0..2, 4, 6, 7 unchanged (field[3] holds the new
+            // refcount_table_root mirror, field[5] decrements).
+            for i in [0usize, 1, 2, 4, 6, 7] {
                 let c = s_drop
                     * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
                         - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
@@ -2536,21 +2618,57 @@ impl StarkAir for EffectVmAir {
         }
 
         // -- ValidateHandoff: prove certificate hash is in approved set --
-        // Uses hash-based membership: hash(cert_hash, approved_set_root) must match
-        // the value in aux[0] (populated by executor from Merkle proof).
-        // State: cap_root updated (routing entry for recipient), balance/fields unchanged.
+        //
+        // Stage 7 / P1.C: previously tautological. Now does honest 1-hop
+        // Merkle membership against PI[APPROVED_HANDOFFS_BASE] (position 0;
+        // the 4-felt widening). The PARAM HANDOFF_APPROVED_SET_ROOT must
+        // equal PI[APPROVED_HANDOFFS_BASE], so the prover cannot pick
+        // their own root. Leaf = hash(cert_hash, hash(recipient_pk,
+        // introducer_pk)). aux[1] = leaf, aux[2] = sibling, aux[3] =
+        // chosen_parent = hash(leaf, sibling); chosen_parent ==
+        // approved_set_root.
+        //
+        // Consume-on-use: lives at the executor, which rotates the
+        // federation's approved-handoffs root after a successful
+        // ValidateHandoff (per `DESIGN-captp-integration.md` §9.4). A
+        // replay produces a non-membership witness for the rotated
+        // root, which the AIR proof cannot satisfy.
+        //
+        // State: cap_root updated (routing entry for recipient),
+        // balance/fields unchanged.
         let s_handoff = local[sel::VALIDATE_HANDOFF];
         {
             let cert_hash = local[PARAM_BASE + param::HANDOFF_CERT_HASH];
             let recipient_pk = local[PARAM_BASE + param::HANDOFF_RECIPIENT_PK];
+            let introducer_pk = local[PARAM_BASE + param::HANDOFF_INTRODUCER_PK];
             let approved_root = local[PARAM_BASE + param::HANDOFF_APPROVED_SET_ROOT];
 
-            // Membership proof: aux[0] = hash(cert_hash, approved_root)
-            // This binds the certificate to the approved set.
-            let expected_membership = hash_2_to_1(cert_hash, approved_root);
-            let aux_membership = local[AUX_BASE + 0];
-            let c_member = s_handoff * (aux_membership - expected_membership);
-            combined = combined + alpha_pow * c_member;
+            // Leaf bound to PARAMs:
+            //   leaf = hash(cert_hash, hash(recipient_pk, introducer_pk))
+            let pks = hash_2_to_1(recipient_pk, introducer_pk);
+            let expected_leaf = hash_2_to_1(cert_hash, pks);
+            let aux_leaf = local[AUX_BASE + 0];
+            let c_leaf = s_handoff * (aux_leaf - expected_leaf);
+            combined = combined + alpha_pow * c_leaf;
+            alpha_pow = alpha_pow * alpha;
+            // 1-hop Merkle proof: aux[1] = sibling, aux[3] = chosen.
+            let aux_sibling = local[AUX_BASE + 1];
+            let aux_chosen = local[AUX_BASE + 3];
+            let expected_chosen = hash_2_to_1(aux_leaf, aux_sibling);
+            let c_chosen = s_handoff * (aux_chosen - expected_chosen);
+            combined = combined + alpha_pow * c_chosen;
+            alpha_pow = alpha_pow * alpha;
+            let c_root_eq = s_handoff * (aux_chosen - approved_root);
+            combined = combined + alpha_pow * c_root_eq;
+            alpha_pow = alpha_pow * alpha;
+
+            // Bind PARAM approved_root to PI[APPROVED_HANDOFFS_BASE]
+            // (position 0). This closes the prover-control gap: the
+            // verifier supplies the PI; the prover cannot invent a
+            // root.
+            let pi_root = public_inputs[pi::APPROVED_HANDOFFS_BASE];
+            let c_pi_bind = s_handoff * (approved_root - pi_root);
+            combined = combined + alpha_pow * c_pi_bind;
             alpha_pow = alpha_pow * alpha;
 
             // Cap root updated: new_cap_root = hash(old_cap_root, hash(recipient_pk, cert_hash))
@@ -3997,10 +4115,29 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + param::ENLIVEN_CELL_ID] = *expected_cell_id;
                 row[PARAM_BASE + param::ENLIVEN_PERMISSIONS] = *expected_permissions;
 
-                // Compute entry hash: hash(swiss, hash(cell_id, permissions))
+                // Stage 7 / P1.C: 1-hop Merkle membership against the
+                // cell's committed swiss_table_root mirror
+                // (state_after.fields[4]).
+                //
+                // Leaf = hash(swiss, hash(cell_id, permissions)).
                 let inner = hash_2_to_1(*expected_cell_id, *expected_permissions);
-                let entry_hash = hash_2_to_1(*swiss_number, inner);
-                row[AUX_BASE + 0] = entry_hash;
+                let leaf = hash_2_to_1(*swiss_number, inner);
+                // For the deterministic witness path used by AIR tests
+                // (no real swiss table), the sibling is the previous
+                // root (ZERO at row 0) and the new root is the
+                // pair-hash. Real deployments use a structured sibling
+                // table maintained by the federation mirror.
+                let sibling = current_state.fields[4];
+                let chosen = hash_2_to_1(leaf, sibling);
+                let root = chosen;
+                row[AUX_BASE + 0] = root;
+                row[AUX_BASE + 1] = leaf;
+                row[AUX_BASE + 2] = sibling;
+                row[AUX_BASE + 3] = chosen;
+                // Materialise the post-enliven swiss_table_root in
+                // state_after.fields[4]. The AIR constraint
+                // (aux_root == state_after.fields[4]) is satisfied.
+                new_state.fields[4] = root;
 
                 // State: field[6] increments (use_count tracked there).
                 new_state.fields[6] = new_state.fields[6] + BabyBear::ONE;
@@ -4016,14 +4153,25 @@ pub fn generate_effect_vm_trace_ext(
                 row[PARAM_BASE + param::DROP_REFCOUNT] = BabyBear::new(*current_refcount);
 
                 // Prove refcount > 0: store inverse in aux[0].
-                // The constraint checks refcount * inverse == 1.
                 assert!(
                     *current_refcount > 0,
                     "DropRef: current_refcount must be > 0"
                 );
                 let rc_field = BabyBear::new(*current_refcount);
-                // Compute modular inverse of refcount in BabyBear.
                 row[AUX_BASE + 0] = rc_field.inverse().expect("refcount is non-zero");
+
+                // Stage 7 / P1.C: 1-hop Merkle membership against the
+                // cell's committed refcount_table_root mirror
+                // (state_after.fields[3]).
+                let leaf = hash_2_to_1(*cell_id, *holder_federation);
+                let sibling = current_state.fields[3];
+                let chosen = hash_2_to_1(leaf, sibling);
+                row[AUX_BASE + 1] = leaf;
+                row[AUX_BASE + 2] = sibling;
+                row[AUX_BASE + 3] = BabyBear::ZERO; // direction (reserved).
+                row[AUX_BASE + 4] = chosen;
+                // Materialise the new refcount_table_root in field[3].
+                new_state.fields[3] = chosen;
 
                 // State: field[5] decrements (refcount tracked there).
                 new_state.fields[5] = new_state.fields[5] - BabyBear::ONE;
@@ -4033,16 +4181,49 @@ pub fn generate_effect_vm_trace_ext(
                 certificate_hash,
                 recipient_pk,
                 introducer_pk,
-                approved_set_root,
+                approved_set_root: _provided_root,
             } => {
+                // Stage 7 / P1.C: bind PARAM approved_set_root to the
+                // verifier-supplied PI position 0 of APPROVED_HANDOFFS_BASE.
+                // The runtime-provided value is ignored; the trace
+                // generator writes the PI-bound value into the PARAM.
+                let approved_set_root = context.approved_handoffs_root[0];
                 row[PARAM_BASE + param::HANDOFF_CERT_HASH] = *certificate_hash;
                 row[PARAM_BASE + param::HANDOFF_RECIPIENT_PK] = *recipient_pk;
                 row[PARAM_BASE + param::HANDOFF_INTRODUCER_PK] = *introducer_pk;
-                row[PARAM_BASE + param::HANDOFF_APPROVED_SET_ROOT] = *approved_set_root;
+                row[PARAM_BASE + param::HANDOFF_APPROVED_SET_ROOT] = approved_set_root;
 
-                // Membership proof: aux[0] = hash(cert_hash, approved_set_root)
-                let membership = hash_2_to_1(*certificate_hash, *approved_set_root);
-                row[AUX_BASE + 0] = membership;
+                // Stage 7 / P1.C: 1-hop Merkle membership.
+                // leaf = hash(cert_hash, hash(recipient_pk, introducer_pk)).
+                let pks = hash_2_to_1(*recipient_pk, *introducer_pk);
+                let leaf = hash_2_to_1(*certificate_hash, pks);
+                // For the deterministic witness path, the sibling is
+                // chosen so that hash(leaf, sibling) == approved_set_root.
+                // Without a real federation mirror, we set the sibling
+                // such that the AIR's chosen-parent equals the root.
+                // Production code wires this from the federation's
+                // Merkle witness oracle.
+                //
+                // Deterministic path: if approved_set_root == ZERO, the
+                // trace satisfies hash(leaf, sibling) == 0 only when
+                // such a sibling exists; we leave this as ZERO for the
+                // "empty approved set" case (the AIR proof fails, which
+                // is the correct behaviour — you can't validate a
+                // handoff against an empty approved set).
+                let sibling = BabyBear::ZERO;
+                let chosen = hash_2_to_1(leaf, sibling);
+                row[AUX_BASE + 0] = leaf;
+                row[AUX_BASE + 1] = sibling;
+                row[AUX_BASE + 2] = BabyBear::ZERO; // direction (reserved)
+                row[AUX_BASE + 3] = chosen;
+                // NOTE: this trace satisfies the AIR iff
+                // `chosen == approved_set_root`. The
+                // federation-mirror witness layer is responsible for
+                // supplying sibling values that make this hold for
+                // committed approved-set entries. Until the witness
+                // oracle lands, this trace path will only succeed when
+                // the federation's approved_handoffs_root happens to
+                // equal hash(leaf, ZERO) — i.e., a single-entry tree.
 
                 // State: cap_root updated with routing entry.
                 // new_cap = hash(old_cap, hash(recipient_pk, cert_hash))

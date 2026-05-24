@@ -1,5 +1,9 @@
 name: Run demos and publish results
 
+# Produces site/demos/results.json as an artifact for pages.yml to consume.
+# This workflow no longer deploys to GitHub Pages directly — pages.yml owns
+# the single deploy path, triggered on completion of this workflow.
+
 on:
   push:
     branches: [main]
@@ -7,11 +11,9 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: demos
   cancel-in-progress: false
 
 jobs:
@@ -129,18 +131,9 @@ jobs:
               "results": $results[0]
             }' > site/demos/results.json
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Upload demo results artifact
+        uses: actions/upload-artifact@v4
         with:
-          path: site
-
-  deploy:
-    needs: run-demos
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          name: demo-results
+          path: site/demos/results.json
+          retention-days: 30

@@ -728,7 +728,70 @@ mod tests {
         let b = canonical_32_to_felts_4(&bytes);
         assert_eq!(a, b);
     }
+
+    /// P4.E stability test: assert that the Poseidon2 + BLAKE3 bytes for a
+    /// known input have not drifted. If this test fails, the Poseidon2
+    /// permutation or its parameters changed — investigate before
+    /// shipping (verifiers across the network won't agree on commitments).
+    ///
+    /// Input: a `BlindedItemMarker` Commitment4 seal over the canonical
+    /// encoding `len_le(item) || item || randomness` where `item =
+    /// b"stable_test_item"` and `randomness = [0x42; 32]`.
+    #[test]
+    fn poseidon2_commitments_are_stable() {
+        let item_data = b"stable_test_item";
+        let randomness = [0x42u8; 32];
+
+        // Mirror crypto::create_commitment's canonical encoding.
+        let mut canonical = Vec::new();
+        canonical.extend_from_slice(&(item_data.len() as u64).to_le_bytes());
+        canonical.extend_from_slice(item_data);
+        canonical.extend_from_slice(&randomness);
+
+        let c: Commitment4<BlindedItemMarker> = Commitment4::seal(&canonical[..]);
+
+        // Hardcoded expected bytes from a run of this test on 2026-05-24
+        // against pyana_circuit::poseidon2 (BabyBear, WIDTH=8).
+        // If you bump the Poseidon2 round constants, the BabyBear modulus,
+        // or the TAG_BLINDED_ITEM domain tag, regenerate by uncommenting
+        // the eprintln! lines below and rerunning with --nocapture.
+        //
+        // eprintln!("blake3: {:?}", c.blake3);
+        // eprintln!("poseidon2: [{}, {}, {}, {}]",
+        //     c.poseidon2[0].0, c.poseidon2[1].0, c.poseidon2[2].0, c.poseidon2[3].0);
+
+        let expected_blake3: [u8; 32] = STABLE_BLINDED_ITEM_BLAKE3;
+        let expected_poseidon2: [u32; 4] = STABLE_BLINDED_ITEM_POSEIDON2;
+
+        assert_eq!(c.blake3, expected_blake3,
+            "BLAKE3 form drifted — typed framework or TAG_BLINDED_ITEM changed");
+        assert_eq!(
+            [c.poseidon2[0].0, c.poseidon2[1].0, c.poseidon2[2].0, c.poseidon2[3].0],
+            expected_poseidon2,
+            "Poseidon2 form drifted — pyana_circuit::poseidon2 parameters changed",
+        );
+    }
 }
+
+// =============================================================================
+// Stability constants (P4.E)
+// =============================================================================
+//
+// Hardcoded byte/felt values for the known-input stability test
+// `poseidon2_commitments_are_stable`. Filled in on 2026-05-24 from the
+// current Poseidon2 implementation in pyana_circuit::poseidon2.
+//
+// Update procedure: if a deliberate parameter change requires these to
+// drift, run the test with the eprintln! lines uncommented and
+// `cargo test ... -- --nocapture`, then paste the new values here AND
+// document the cause in the commit message.
+
+const STABLE_BLINDED_ITEM_BLAKE3: [u8; 32] = [
+    137, 79, 35, 157, 41, 139, 191, 243, 69, 17, 52, 43, 6, 1, 108, 68, 38, 122, 76, 8, 127, 233,
+    201, 42, 156, 120, 113, 127, 40, 153, 96, 192,
+];
+const STABLE_BLINDED_ITEM_POSEIDON2: [u32; 4] =
+    [433_477_333, 626_868_483, 68_240_588, 967_854_049];
 
 // AUDIT[stage10-framework]: The two forms (BLAKE3 and Poseidon2) are
 // derived from the same canonical bytes via two independent paths.
