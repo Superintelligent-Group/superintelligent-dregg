@@ -951,7 +951,7 @@ under the new DSL.
 | App | Status | Notes |
 |-----|--------|-------|
 | `apps/identity` | clean | no `Effect::*` literal calls; uses higher-level wallet API |
-| `apps/discord-bot` | clean | bot framework only; no DSL surface |
+| `discord-bot` (toplevel) | clean | bot framework only; no DSL surface |
 | `apps/privacy-voting` | clean | uses sealed-pair API; will get `effect_create_seal_pair` etc. as a bonus |
 
 ### Apps that need straightforward DSL migration

@@ -67,9 +67,13 @@ Dual escrow (payment + SLA bond). Commit-reveal fulfillment with 3-strike penalt
 
 DAO-controlled capability registry with DFA-based routing. Files stored as nameless writes (content-addressed, no indirection). Route table governed by constitutional threshold vote (propose → vote → atomic DFA swap). Service mesh: mount capabilities at named paths, discover by tags, resolve to sturdy refs (`pyana://` URIs). Auth levels: Anonymous, Member, Admin, Multisig(N) — classified by DFA. The directory is a programmable introduction service: registering = making your services discoverable to the DAO.
 
-### `discord-bot/` — Devnet Interface
+### `discord-bot/` — Devnet Interface (moved to toplevel `/discord-bot`)
 
 19 slash commands: custodial wallet, transfers, gallery bidding, DeFi (swap/lend/borrow), orderbook trading, credentials, federation status, block explorer (activity feed, lookups, watch lists), presence attestation (proof-of-online as dischargeable capability caveat).
+
+**Note:** This crate has been promoted out of `apps/` to the toplevel
+`/discord-bot` — it stands as a peer of `node/`, `sdk/`, etc. rather
+than an app.
 
 ## Shared Architecture
 

@@ -111,7 +111,7 @@ pieces need to land before the demo runs green:
    `pyana_exercise_bearer_cap` validate against the same swiss table
    (or via a `pyana_enliven_handoff` companion tool).
 
-3. **No CapTP HTTP routes on the node.** `apps/discord-bot/src/captp_client.rs`
+3. **No CapTP HTTP routes on the node.** `discord-bot/src/captp_client.rs`
    posts to `/captp/export`, `/captp/enliven`, `/captp/handoff`, but
    `node/src/api.rs` does not implement those endpoints. (Not a blocker
    for this demo as it uses MCP stdio, but worth noting — see #2 for

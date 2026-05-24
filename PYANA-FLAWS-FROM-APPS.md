@@ -291,7 +291,7 @@ Prioritized by leverage. **Bold = unblocks multiple apps.**
 6. **G31 (promote `bridge::present` to `pyana-credentials`).** Cheap; deprecates the broken identity-app reinvention.
 7. **G32 + G33 (Effect::RegisterName + pyana-directory).** Unblocks nameservice and governed-namespace.
 8. **Discord-bot (9k LOC, largest unaudited app)** — likely surfaces the most CapTP / messaging gaps.
-9. **Remaining apps** (amm, prediction-market, governed-namespace, dao-treasury, discord-bot) — audit to confirm the pattern is universal, then move to platform work.
+9. **Remaining apps** (amm, prediction-market, governed-namespace, dao-treasury) — audit to confirm the pattern is universal, then move to platform work. (`discord-bot` moved to toplevel `/discord-bot`.)
 
 ## Open questions for the user
 
