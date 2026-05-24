@@ -138,6 +138,11 @@ def main() -> int:
         except RuntimeError as e:
             print(f"[alice] step 10 (best-effort) skipped: {e}", file=sys.stderr)
 
+        # Snapshot Alice's receipt chain so the demo can verify her grant
+        # turn is recorded and the chain is exportable (per expected.json
+        # receipt_chain.exportable).
+        alice_chain = cli.tool("pyana_get_receipt_chain", {"limit": 50})
+
         # Final result on stdout (the LAST line — run.sh parses this).
         result = {
             "alice_pk": alice_pk,
@@ -154,6 +159,7 @@ def main() -> int:
                 "ok": compress_ok,
                 "result": compress_result,
             },
+            "receipt_chain": alice_chain,
         }
         out_path.write_text(json.dumps(result, indent=2))
         print(json.dumps(result))

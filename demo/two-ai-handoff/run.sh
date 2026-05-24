@@ -217,6 +217,25 @@ ALICE_STUB_OK=0; [ "$ALICE_STUB_BAL" = "999900" ] && ALICE_STUB_OK=1
 add_check "Transfer effect credited bob (net delta -9900 = +100 - 10000 fee)"  "$BOB_DELTA_OK"
 add_check "Transfer effect debited alice stub (1_000_000 -> 999_900)"           "$ALICE_STUB_OK"
 
+# Per-agent receipt chain export: expected.json receipt_chain.exportable
+# requires each agent's chain to include the turn they just committed.
+ALICE_CHAIN_HAS_GRANT=$(echo "$ALICE_OUT" | "$PY" -c '
+import json, sys
+d = json.load(sys.stdin)
+grant = d.get("grant_turn_hash", "")
+chain = d.get("receipt_chain", {}).get("receipts", [])
+print("1" if any(r.get("turn_hash") == grant for r in chain) else "0")
+' 2>/dev/null || echo 0)
+BOB_CHAIN_HAS_EXERCISE=$(echo "$BOB_OUT" | "$PY" -c '
+import json, sys
+d = json.load(sys.stdin)
+ex = d.get("exercise_turn_hash", "")
+chain = d.get("receipt_chain", {}).get("receipts", [])
+print("1" if any(r.get("turn_hash") == ex for r in chain) else "0")
+' 2>/dev/null || echo 0)
+add_check "alice's receipt chain contains the grant turn"     "$ALICE_CHAIN_HAS_GRANT"
+add_check "bob's receipt chain contains the exercise turn"    "$BOB_CHAIN_HAS_EXERCISE"
+
 PASS=1
 for i in "${!CHECKS_LABEL[@]}"; do
     if [ "${CHECKS_OK[$i]}" = "1" ]; then
