@@ -222,6 +222,74 @@ impl Cell {
         }
     }
 
+    /// Create a placeholder cell for a remote peer using their pre-derived
+    /// cell id directly, without re-deriving from a (pk, token_id) pair.
+    ///
+    /// # When to use
+    ///
+    /// Inter-node operations (cross-federation grants, peer introductions,
+    /// gossip of a remote cell's c-list entry) sometimes need a landing site
+    /// for a remote cell whose canonical state lives on another node. The
+    /// remote node has the real `(pk, token_id)`; the local node only sees
+    /// the resulting content-addressed `CellId`. Calling `with_balance` would
+    /// re-derive from a placeholder pk and produce a *different* id; calling
+    /// this constructor preserves the id chosen by the remote node.
+    ///
+    /// # Soundness
+    ///
+    /// The returned cell breaks the invariant `id == derive_raw(public_key,
+    /// token_id)` (the stub's public_key is zeros). This is acceptable because:
+    ///
+    /// 1. The stub cannot sign — its pk is zero — so no local authorization
+    ///    path will accept a Signature(r, s) against it.
+    /// 2. The stub's id is consistent with what the remote node would emit,
+    ///    so cross-node gossip remains coherent.
+    /// 3. The integrity invariant `verify_id_integrity()` will fail on this
+    ///    stub, which is intentional: callers that need a canonical cell
+    ///    must use `Ledger::update_with` and verify integrity there.
+    ///
+    /// In short: this is the escape hatch for "we know the id but not the
+    /// pre-image." Use sparingly.
+    pub fn remote_stub_with_id(id: CellId) -> Self {
+        Self::remote_stub_with_id_and_balance(id, 0)
+    }
+
+    /// Like [`Cell::remote_stub_with_id`] but with an initial balance set on
+    /// the placeholder. Use this when the local node knows the remote cell
+    /// should have at least a certain balance for a turn to commit (for
+    /// example, when a bearer-cap holder needs to issue a Transfer from a
+    /// remote cell whose canonical balance lives on another node — without
+    /// the local balance, the Transfer would hit InsufficientBalance even
+    /// though it would succeed on the canonical node).
+    pub fn remote_stub_with_id_and_balance(id: CellId, balance: u64) -> Self {
+        Self::remote_stub_with_id_pk_balance(id, [0u8; 32], balance)
+    }
+
+    /// Like [`Cell::remote_stub_with_id_and_balance`] but also lets the
+    /// caller specify the remote cell's public key. Required when the
+    /// executor walks the local ledger to find the *delegator* of a bearer
+    /// cap by pk: a zero-pk stub wouldn't match, so the bearer-cap proof
+    /// would be rejected as if the delegator weren't present.
+    pub fn remote_stub_with_id_pk_balance(
+        id: CellId,
+        public_key: [u8; 32],
+        balance: u64,
+    ) -> Self {
+        Cell {
+            id,
+            public_key,
+            state: CellState::new(balance),
+            permissions: Permissions::default(),
+            verification_key: None,
+            delegate: None,
+            delegation: None,
+            token_id: [0u8; 32],
+            capabilities: CapabilitySet::new(),
+            program: CellProgram::None,
+            mode: CellMode::Hosted,
+        }
+    }
+
     /// Create a new cell from a configuration.
     pub fn from_config(public_key: [u8; 32], token_id: [u8; 32], config: CellConfig) -> Self {
         let id = CellId::derive_raw(&public_key, &token_id);

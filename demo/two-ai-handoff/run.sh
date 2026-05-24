@@ -35,18 +35,18 @@ reset_state() {
              "$STATE_DIR/charlie-node-data"
 }
 
-# Build pyana-node, retrying once after 60s on cargo failure
+# Build pyana-node + pyana-verifier, retrying once after 60s on cargo failure
 # (matches the no-worktree concurrent-cargo policy).
 build_node() {
     local log="$LOG_DIR/cargo-build.log"
-    echo "[demo] building pyana-node (logs: $log)…"
-    if ( cd "$REPO_ROOT" && cargo build -p pyana-node ) > "$log" 2>&1; then
+    echo "[demo] building pyana-node + pyana-verifier (logs: $log)…"
+    if ( cd "$REPO_ROOT" && cargo build -p pyana-node -p pyana-verifier ) > "$log" 2>&1; then
         ok "cargo build ok"
         return 0
     fi
     echo "       cargo build failed; sleeping 60s and retrying once (concurrent-cargo policy)"
     sleep 60
-    if ( cd "$REPO_ROOT" && cargo build -p pyana-node ) > "$log" 2>&1; then
+    if ( cd "$REPO_ROOT" && cargo build -p pyana-node -p pyana-verifier ) > "$log" 2>&1; then
         ok "cargo build ok (after retry)"
         return 0
     fi
@@ -69,11 +69,17 @@ if ! build_node; then
     exit 1
 fi
 NODE_BIN="$REPO_ROOT/target/debug/pyana-node"
+VERIFIER_BIN="$REPO_ROOT/target/debug/pyana-verifier"
 if [ ! -x "$NODE_BIN" ]; then
     fail "pyana-node not at $NODE_BIN"
     exit 1
 fi
-ok "node binary: $NODE_BIN"
+if [ ! -x "$VERIFIER_BIN" ]; then
+    fail "pyana-verifier not at $VERIFIER_BIN"
+    exit 1
+fi
+ok "node binary:     $NODE_BIN"
+ok "verifier binary: $VERIFIER_BIN"
 
 # ── Pre-step 2: have Bob create his identity so Alice can grant to it ──────
 # (Step 2 in the spec is "Alice becomes a cell"; but the grant in step 3
@@ -139,14 +145,14 @@ else
 fi
 
 # ── Step 8: charlie verifies both proofs ───────────────────────────────────
-step 8 "charlie verifies both proofs (independent process: charlie-node-data)"
-# TODO: when blockers 4+5 are fixed, populate state/grant.proof.json and
-# state/exercise.proof.json from the receipt chains (or directly from a
-# `pyana_prove_*` MCP tool extension). Today these files do not exist, so
-# charlie's verify_proof returns False and is reported in blocker_notes.
+step 8 "charlie verifies both proofs (independent binary: pyana-verifier)"
+# Alice's grant tool and Bob's exercise tool now emit effect_vm_proof_hex +
+# effect_vm_public_inputs, and the python scripts write them to disk as
+# state/{grant,exercise}.proof.json. Charlie shells out to the pyana-verifier
+# binary (NOT pyana-node) — different binary, different crate dependencies,
+# zero shared prover state.
 CHARLIE_OUT=$("$PY" "$HERE/charlie.py" \
-    --node-bin "$NODE_BIN" \
-    --data-dir "$STATE_DIR/charlie-node-data" \
+    --verifier-bin "$VERIFIER_BIN" \
     --state-dir "$STATE_DIR" 2>"$LOG_DIR/charlie.stderr.log")
 charlie_rc=$?
 if [ $charlie_rc -ne 0 ]; then

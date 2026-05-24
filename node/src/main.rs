@@ -228,8 +228,10 @@ async fn main() {
         .install_default()
         .expect("failed to install rustls CryptoProvider");
 
-    // Initialize tracing.
+    // Initialize tracing. Write to stderr so the MCP stdio subcommand (which
+    // serves JSON-RPC on stdout) doesn't get corrupted by log lines.
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "pyana_node=info".into()),
@@ -659,6 +661,14 @@ async fn run_mcp(data_dir: &str, peers: Vec<String>) {
             std::process::exit(1);
         }
     };
+
+    // MCP stdio mode runs as a single-user CLI — no remote attacker scenario
+    // applies. Start the wallet unlocked so the tools can proceed without an
+    // explicit unlock step. (HTTP mode keeps the passphrase requirement.)
+    {
+        let mut s = node_state.write().await;
+        s.unlocked = true;
+    }
 
     mcp::run_stdio(node_state).await;
 }

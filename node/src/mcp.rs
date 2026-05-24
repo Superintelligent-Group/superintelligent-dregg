@@ -119,6 +119,44 @@ fn build_forest_with_effects(target: CellId, effects: Vec<pyana_turn::Effect>) -
     forest
 }
 
+/// Build a CallForest with a single root action authorized by an Ed25519
+/// signature over the canonical action-signing message. The signature is
+/// produced by `wallet.sign_bytes` against `TurnExecutor::compute_signing_message`
+/// in Full commitment mode using the executor's default federation id
+/// (`[0u8; 32]`) — which matches `TurnExecutor::new(...).local_federation_id`.
+fn build_signed_forest(
+    target: CellId,
+    effects: Vec<pyana_turn::Effect>,
+    wallet: &pyana_sdk::AgentWallet,
+) -> CallForest {
+    let mut action = pyana_turn::Action {
+        target,
+        method: pyana_turn::action::symbol("execute"),
+        args: vec![],
+        authorization: pyana_turn::Authorization::Unchecked,
+        preconditions: pyana_cell::Preconditions::default(),
+        effects,
+        may_delegate: pyana_turn::DelegationMode::None,
+        commitment_mode: pyana_turn::CommitmentMode::Full,
+        balance_change: None,
+    };
+    // Compute the canonical signing message and replace Unchecked with
+    // Authorization::Signature so cells with `delegate: Signature` accept
+    // the action.
+    let federation_id = [0u8; 32];
+    let msg = pyana_turn::TurnExecutor::compute_signing_message(&action, &federation_id);
+    let sig = wallet.sign_bytes(&msg);
+    let mut r = [0u8; 32];
+    let mut s = [0u8; 32];
+    r.copy_from_slice(&sig.0[..32]);
+    s.copy_from_slice(&sig.0[32..]);
+    action.authorization = pyana_turn::Authorization::Signature(r, s);
+
+    let mut forest = CallForest::new();
+    forest.add_root(action);
+    forest
+}
+
 /// Generate an Effect VM STARK proof for a sequence of VM-domain effects.
 ///
 /// Builds a fresh `CellState` from `(initial_balance, initial_nonce)`, runs the
@@ -143,9 +181,16 @@ fn generate_effect_vm_proof(
         pyana_circuit::effect_vm::CellState::new(initial_balance, initial_nonce as u32);
     let (trace, public_inputs) =
         pyana_circuit::effect_vm::generate_effect_vm_trace(&initial_state, vm_effects);
-    let air = pyana_circuit::effect_vm::EffectVmAir::new(vm_effects.len());
+    // The trace generator pads to the next power of two ≥ 2; the AIR must be
+    // sized to the actual trace height, not the raw effect count (passing
+    // `vm_effects.len()` panics when it's less than 2 or not a power of two).
+    let air = pyana_circuit::effect_vm::EffectVmAir::new(trace.len());
     let proof = pyana_circuit::stark::prove(&air, &trace, &public_inputs);
-    let proof_bytes = postcard::to_stdvec(&proof).unwrap_or_default();
+    // Use the canonical PYNA-prefixed byte format that the standalone
+    // pyana-verifier binary deserializes via stark::proof_from_bytes.
+    // postcard's encoding lacks the magic-header and is not what the
+    // verifier accepts on the wire.
+    let proof_bytes = pyana_circuit::stark::proof_to_bytes(&proof);
     let proof_hex = hex_encode(&proof_bytes);
     let public_inputs_u64: Vec<u64> =
         public_inputs.iter().map(|f| f.as_u32() as u64).collect();
@@ -1191,6 +1236,19 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
     };
     let cap_slot = cap.slot;
 
+    // For inter-process / inter-federation grants, the recipient cell may not
+    // yet exist in this node's local ledger (the recipient lives on a peer's
+    // node). Insert a remote-stub placeholder so the GrantCapability effect
+    // has a landing site for the c-list entry. The stub carries the same
+    // content-addressed id the peer would derive; its pk and balance are
+    // placeholders since the canonical state lives on the peer.
+    if s.ledger.get(&to_cell_id).is_none() {
+        let stub = pyana_cell::Cell::remote_stub_with_id(to_cell_id);
+        if let Err(e) = s.ledger.insert_cell(stub) {
+            eprintln!("[pyana_grant_capability] stub recipient insert failed: {e}");
+        }
+    }
+
     let effect = pyana_turn::Effect::GrantCapability {
         from: agent_cell_id,
         to: to_cell_id,
@@ -1201,10 +1259,14 @@ async fn tool_grant_capability(params: &Value, state: &NodeState) -> McpToolResu
     let turn = Turn {
         agent: agent_cell_id,
         nonce,
-        fee: 0,
+        // Cover the executor's computron metering for an Action-base + one
+        // GrantCapability effect (~100 + 50 computrons by default; round up).
+        fee: 10_000,
         memo: Some(format!("grant capability: {permissions}")),
         valid_until: None,
-        call_forest: build_forest_with_effects(agent_cell_id, vec![effect]),
+        // Use a signed action so the cell's `delegate: Signature` permission
+        // accepts it. (Hosted-cell grants require the cell owner's signature.)
+        call_forest: build_signed_forest(agent_cell_id, vec![effect], &s.wallet),
         depends_on: vec![],
         previous_receipt_hash: None,
         conservation_proof: None,
@@ -2302,14 +2364,31 @@ async fn tool_create_bearer_cap(params: &Value, state: &NodeState) -> McpToolRes
         _ => 0xff,
     };
 
-    // Sign the bearer cap delegation chain: delegator signs
-    // "I grant {permissions} on {target} to {bearer_pk} until {expires_at}".
+    // Sign the bearer cap delegation chain using the SAME canonical message
+    // format the executor's verify_bearer_cap recomputes via
+    // TurnExecutor::compute_bearer_delegation_message — domain-separated,
+    // federation-bound, with the perm-byte after the perm-AuthRequired
+    // mapping (not the perm_tag from this tool's local lookup). Without
+    // this match, every exercise turn fails with "delegation signature
+    // verification failed" even though the signing key is correct.
+    let target_cell_arr: [u8; 32] = target_cell_bytes.try_into().expect("32-byte cell id");
+    let bearer_pk_arr: [u8; 32] = bearer_pk_bytes.try_into().expect("32-byte bearer pk");
+    let perm_auth_required = match perm_tag {
+        0 => pyana_cell::AuthRequired::None,
+        1 => pyana_cell::AuthRequired::Signature,
+        2 => pyana_cell::AuthRequired::Proof,
+        3 => pyana_cell::AuthRequired::Either,
+        _ => pyana_cell::AuthRequired::Impossible,
+    };
+    let federation_id = [0u8; 32];
+    let msg = pyana_turn::TurnExecutor::compute_bearer_delegation_message(
+        &pyana_cell::CellId(target_cell_arr),
+        &perm_auth_required,
+        &bearer_pk_arr,
+        expires_at,
+        &federation_id,
+    );
     let signing_key = s.wallet.gossip_signing_key();
-    let mut msg = Vec::with_capacity(32 + 32 + 8 + 1);
-    msg.extend_from_slice(&target_cell_bytes);
-    msg.extend_from_slice(&bearer_pk_bytes);
-    msg.extend_from_slice(&expires_at.to_le_bytes());
-    msg.push(perm_tag);
     let signature = pyana_types::sign(&signing_key, &msg);
 
     let bearer_cap_id = blake3::hash(&signature.0);
@@ -2423,13 +2502,70 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
     let target_cell_id = pyana_cell::CellId(target_cell_bytes);
     let agent_cell_id = pyana_cell::CellId::derive_raw(&s.wallet.public_key().0, &[0u8; 32]);
 
+    // The delegator_pk is the introducer (the cell owner who signed the
+    // bearer cap), NOT this node's wallet. Accept it as a parameter; fall
+    // back to this wallet's pk for the (rare) self-delegation case.
+    // (Parsed early so the stub-insertion below can pair the delegator's pk
+    // with the target cell stub — without that pairing, the executor's
+    // bearer-cap verify walks the ledger by pk and finds nothing.)
+    let delegator_pk: [u8; 32] = match params.get("delegator_pk").and_then(|v| v.as_str()) {
+        Some(hex) => match hex_decode(hex) {
+            Ok(b) => b,
+            Err(_) => {
+                return McpToolResult::error("invalid hex for delegator_pk (expected 64 hex chars)");
+            }
+        },
+        None => s.wallet.public_key().0,
+    };
+
+    // Auto-insert stubs for any cells referenced by the parsed effects that
+    // aren't yet in this node's local ledger. The bearer-cap holder
+    // (typically on a different node than the cell's home) needs the cells
+    // present locally for the executor's ledger.get(...) lookups to succeed.
+    // Give source cells a generous balance so Transfer doesn't trip
+    // InsufficientBalance — the canonical state lives on the remote node.
+    // (cell_id, balance, pk) — the pk slot pairs the stub to the right
+    // delegator when the executor walks the ledger by public_key. The
+    // delegator stub *must* carry the delegator_pk so the bearer-cap
+    // verify path can find it; downstream cells (Bob, intermediaries) just
+    // need balances.
+    let mut cells_to_stub: Vec<(pyana_cell::CellId, u64, [u8; 32])> = Vec::new();
+    if s.ledger.get(&target_cell_id).is_none() {
+        cells_to_stub.push((target_cell_id, 1_000_000, delegator_pk));
+    }
+    for effect in &parsed_effects {
+        match effect {
+            pyana_turn::Effect::Transfer { from, to, amount } => {
+                if s.ledger.get(from).is_none() {
+                    // The 'from' cell of a Transfer is the same as the
+                    // bearer-cap target in the demo flow; tag with delegator_pk.
+                    let pk = if *from == target_cell_id { delegator_pk } else { [0u8; 32] };
+                    cells_to_stub.push((*from, (*amount).saturating_mul(10).max(1_000_000), pk));
+                }
+                if s.ledger.get(to).is_none() {
+                    cells_to_stub.push((*to, 0, [0u8; 32]));
+                }
+            }
+            pyana_turn::Effect::SetField { cell, .. } | pyana_turn::Effect::IncrementNonce { cell } => {
+                if s.ledger.get(cell).is_none() {
+                    cells_to_stub.push((*cell, 0, [0u8; 32]));
+                }
+            }
+            _ => {}
+        }
+    }
+    for (id, bal, pk) in cells_to_stub {
+        let stub = pyana_cell::Cell::remote_stub_with_id_pk_balance(id, pk, bal);
+        if let Err(e) = s.ledger.insert_cell(stub) {
+            let _ = e;
+        }
+    }
+
     // Construct the delegation proof data. Use the first 32 bytes as delegator_pk,
     // the full bytes as the signature, and the bearer_pk from params.
     let mut sig_array = [0u8; 64];
     let copy_len = delegation_chain_bytes.len().min(64);
     sig_array[..copy_len].copy_from_slice(&delegation_chain_bytes[..copy_len]);
-
-    let delegator_pk = s.wallet.public_key().0;
 
     let bearer_proof = pyana_turn::BearerCapProof {
         target: target_cell_id,
@@ -2463,7 +2599,8 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
     let turn = Turn {
         agent: agent_cell_id,
         nonce,
-        fee: 0,
+        // Cover Action-base + per-effect cost for the parsed effects.
+        fee: 10_000,
         memo: Some(format!("bearer cap exercise: {method}")),
         valid_until: None,
         call_forest: forest,

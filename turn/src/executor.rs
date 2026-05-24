@@ -4044,27 +4044,40 @@ impl TurnExecutor {
                     .get(from)
                     .ok_or_else(|| (TurnError::CellNotFound { id: *from }, path.to_vec()))?;
 
-                let held_cap = from_cell
-                    .capabilities
-                    .lookup_by_target(&cap.target)
-                    .ok_or_else(|| {
-                        (
-                            TurnError::CapabilityNotHeld {
-                                actor: *from,
-                                target: cap.target,
+                // A cell implicitly holds the strongest capability over itself:
+                // granting access to its own cell is authorized by the signed
+                // action (the cell's owner consents). For cross-cell grants the
+                // granter must hold an explicit c-list entry pointing at the
+                // target.
+                if cap.target == *from {
+                    // Self-grant: skip c-list lookup; the signature on the
+                    // action proves the cell owner consents to share access
+                    // to their own cell. Attenuation against an implicit
+                    // self-cap is always satisfied (the implicit cap is the
+                    // strongest possible).
+                } else {
+                    let held_cap = from_cell
+                        .capabilities
+                        .lookup_by_target(&cap.target)
+                        .ok_or_else(|| {
+                            (
+                                TurnError::CapabilityNotHeld {
+                                    actor: *from,
+                                    target: cap.target,
+                                },
+                                path.to_vec(),
+                            )
+                        })?;
+
+                    if !pyana_cell::is_attenuation(&held_cap.permissions, &cap.permissions) {
+                        return Err((
+                            TurnError::DelegationDenied {
+                                parent: *from,
+                                child_target: *to,
                             },
                             path.to_vec(),
-                        )
-                    })?;
-
-                if !pyana_cell::is_attenuation(&held_cap.permissions, &cap.permissions) {
-                    return Err((
-                        TurnError::DelegationDenied {
-                            parent: *from,
-                            child_target: *to,
-                        },
-                        path.to_vec(),
-                    ));
+                        ));
+                    }
                 }
 
                 let to_cell = ledger
@@ -6592,6 +6605,13 @@ impl TurnExecutor {
         target: &CellId,
         current_height: u64,
     ) -> bool {
+        // A cell implicitly holds the strongest capability over itself. The
+        // alternative — requiring an explicit c-list entry to one's own id —
+        // forces every newly-created cell to insert a self-grant before it
+        // can be bound into a bearer cap. Treat self-access as inherent.
+        if cell.id() == *target {
+            return true;
+        }
         // Direct capability (height-aware)
         if cell.capabilities.has_access_at(target, current_height) {
             return true;

@@ -44,21 +44,26 @@ def main() -> int:
 
     with McpClient(args.node_bin, args.data_dir, "alice", log_dir) as cli:
         # ── Step 2: Alice becomes a cell ──────────────────────────────────
-        agent = cli.tool("pyana_create_agent", {"name": "alice"})
+        # initial_balance covers the per-turn fee (action_base + per-effect
+        # costs). 1_000_000 is generous enough to cover grant + bearer-cap +
+        # compress without micro-managing fees.
+        agent = cli.tool("pyana_create_agent", {"name": "alice", "initial_balance": 1_000_000})
         alice_pk = agent["public_key"]
-        # The cell ID is derived from the public key + token domain. For now,
-        # we treat alice_pk-derived cell-id as alice's identity. The node
-        # internally derives this via `CellId::derive_raw(pk, [0u8;32])`.
-        # We pass alice_pk where a cell id is needed; if the node distinguishes,
-        # downstream blockers will surface it.
-        alice_cell = alice_pk
-        print(f"[alice] step 2: created agent pk={alice_pk[:16]}…", file=sys.stderr)
+        # The cell ID is content-addressed: BLAKE3(pk || token_id) — distinct
+        # from the pk. Read it from the create_agent response rather than
+        # conflating it with the pk.
+        alice_cell = agent["cell_id"]
+        print(f"[alice] step 2: created agent pk={alice_pk[:16]}… cell={alice_cell[:16]}…",
+              file=sys.stderr)
 
         # ── Step 3: grant Bob TRANSFER_ONLY (modeled as 'signature' perm here) ─
+        # `to_agent` is interpreted by the MCP tool as the recipient cell id
+        # (not the pk). Pass bob_cell (the derived cell ID) so the cap lands
+        # in Bob's c-list rather than a non-existent pk-shaped cell.
         grant = cli.tool(
             "pyana_grant_capability",
             {
-                "to_agent": args.bob_pk,
+                "to_agent": args.bob_cell,
                 "target_cell": alice_cell,
                 "permissions": "signature",
             },
@@ -68,6 +73,24 @@ def main() -> int:
             return 3
         grant_turn_hash = grant["turn_hash"]
         print(f"[alice] step 3: granted, turn_hash={grant_turn_hash[:16]}…", file=sys.stderr)
+
+        # Capture the Effect VM proof emitted by pyana_grant_capability and write
+        # it as a standalone artifact so charlie.py can hand it to pyana-verifier.
+        grant_proof_hex = grant.get("effect_vm_proof_hex")
+        grant_proof_pi = grant.get("effect_vm_public_inputs") or []
+        if grant_proof_hex:
+            (state_dir / "grant.proof.json").write_text(json.dumps({
+                "proof_hex": grant_proof_hex,
+                "public_inputs": grant_proof_pi,
+                "vk_hash": "auto",
+                "source": "pyana_grant_capability",
+            }, indent=2))
+            print(f"[alice] wrote grant proof artifact "
+                  f"({len(grant_proof_hex) // 2} proof bytes, "
+                  f"{len(grant_proof_pi)} public inputs)", file=sys.stderr)
+        else:
+            print("[alice] WARNING: grant turn returned no effect_vm_proof_hex",
+                  file=sys.stderr)
 
         # ── Step 5: create bearer cap (sturdy ref) for Bob ────────────────
         # The expiration is set to a generous block height so the demo

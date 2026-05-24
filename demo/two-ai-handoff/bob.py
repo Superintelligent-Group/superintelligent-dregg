@@ -25,11 +25,9 @@ def run_identity(args) -> int:
     log_dir = state_dir / "logs"
 
     with McpClient(args.node_bin, args.data_dir, "bob.id", log_dir) as cli:
-        agent = cli.tool("pyana_create_agent", {"name": "bob"})
+        agent = cli.tool("pyana_create_agent", {"name": "bob", "initial_balance": 1_000_000})
         bob_pk = agent["public_key"]
-        # Same identity-as-cell-id convention as alice.py. See alice.py for
-        # the caveat — the node derives the real cell id internally.
-        bob_cell = bob_pk
+        bob_cell = agent["cell_id"]
         result = {"bob_pk": bob_pk, "bob_cell": bob_cell}
         (state_dir / "bob.identity.json").write_text(json.dumps(result, indent=2))
         print(json.dumps(result))
@@ -69,9 +67,19 @@ def run_exercise(args) -> int:
         # The current MCP create_agent generates fresh keypairs every call,
         # so we re-create. Identity persistence across MCP sessions is a
         # separate gap (orthogonal to this demo).
-        cli.tool("pyana_create_agent", {"name": "bob"})
+        cli.tool("pyana_create_agent", {"name": "bob", "initial_balance": 1_000_000})
 
         # ── Step 6: enliven + Step 7: exercise (one tool today) ───────────
+        # Bob exercises the bearer cap to perform a Transfer from alice_cell
+        # to bob_cell. The exercise tool now accepts an `effects` parameter
+        # (Task C of the proof-gen wiring) — without it, the turn would be
+        # a no-op and Bob wouldn't actually move any value.
+        transfer_effect = {
+            "type":   "transfer",
+            "from":   payload["target_cell"],   # alice_cell
+            "to":     payload["bearer_pk"],      # bob_cell (pk-as-cell-id convention)
+            "amount": args.amount,
+        }
         exercise = cli.tool(
             "pyana_exercise_bearer_cap",
             {
@@ -81,6 +89,12 @@ def run_exercise(args) -> int:
                 "bearer_pk":        payload["bearer_pk"],
                 "expires_at":       payload["expires_at"],
                 "permissions":      payload["permissions"],
+                "effects":          [transfer_effect],
+                # The delegator is Alice (the cell owner who signed the
+                # bearer cap on her node). Without this, the exercise tool
+                # would default to Bob's pk and signature verification
+                # would fail against the wrong key.
+                "delegator_pk":     payload["introducer_pk"],
             },
         )
 
@@ -88,6 +102,24 @@ def run_exercise(args) -> int:
             print(f"[bob] step 7 FAILED: {exercise}", file=sys.stderr)
             (state_dir / "bob.exercise.json").write_text(json.dumps(exercise, indent=2))
             return 7
+
+        # Capture the Effect VM proof from the exercise response and write
+        # the standalone artifact for charlie.py / pyana-verifier.
+        exercise_proof_hex = exercise.get("effect_vm_proof_hex")
+        exercise_proof_pi = exercise.get("effect_vm_public_inputs") or []
+        if exercise_proof_hex:
+            (state_dir / "exercise.proof.json").write_text(json.dumps({
+                "proof_hex":     exercise_proof_hex,
+                "public_inputs": exercise_proof_pi,
+                "vk_hash":       "auto",
+                "source":        "pyana_exercise_bearer_cap",
+            }, indent=2))
+            print(f"[bob] wrote exercise proof artifact "
+                  f"({len(exercise_proof_hex) // 2} proof bytes, "
+                  f"{len(exercise_proof_pi)} public inputs)", file=sys.stderr)
+        else:
+            print("[bob] WARNING: exercise turn returned no effect_vm_proof_hex",
+                  file=sys.stderr)
 
         # Snapshot Bob's receipt chain so charlie/run.sh can inspect.
         chain = cli.tool("pyana_get_receipt_chain", {"limit": 50})
