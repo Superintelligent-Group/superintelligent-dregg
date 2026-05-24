@@ -235,7 +235,6 @@ function build() {
   // The walker skips _-prefixed directories, but these few files need to be
   // reachable at page time via `<link>` / `<script type="module">`.
   const PUBLIC_INCLUDES = [
-    'design-tokens.css',
     'runtime-bootstrap.js',
     'visualizer-base.js',
     'vizzer.css',

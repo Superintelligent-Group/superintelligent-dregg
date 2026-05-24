@@ -29,9 +29,17 @@
   --accent:    var(--moss);
   --accent-bright: var(--fern);
   --accent-soft: rgba(91, 138, 90, 0.12);
-  --warm:      var(--lantern);
-  --warm-soft: rgba(196, 146, 69, 0.10);
-  --line:      rgba(228, 221, 208, 0.08);
+  --warm:        var(--lantern);
+  --warm-bright: #d99a3f;
+  --warm-soft:   rgba(196, 146, 69, 0.10);
+  --info:        #6ba3c7;
+  --info-soft:   rgba(107, 163, 199, 0.12);
+  --danger:      #d4685c;
+  --danger-soft: rgba(212, 104, 92, 0.12);
+  --success:     var(--fern);
+  --success-soft: rgba(122, 171, 111, 0.12);
+  --bg-elevated: var(--undergrowth);
+  --line:        rgba(228, 221, 208, 0.08);
   --line-strong: rgba(228, 221, 208, 0.15);
 
   /* ---- TYPOGRAPHY ---- */
