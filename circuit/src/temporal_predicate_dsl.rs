@@ -27,6 +27,12 @@ use crate::stark::{self, BoundaryConstraint, StarkAir, StarkProof};
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Column layout constants for the DSL temporal AIR.
+///
+/// **Post AIR-soundness audit (ce1e2def #3)**: added `STATE_ROOT`
+/// column so that the per-step state-root chain can be bound into
+/// public inputs at the trace boundary, closing the
+/// "forge proof.initial_state_root / proof.final_state_root after the
+/// fact" attack. The legacy 37-column layout grew to 38.
 pub const VALUE: usize = 0;
 pub const THRESHOLD: usize = 1;
 pub const DIFF: usize = 2;
@@ -36,28 +42,54 @@ pub const ACCUMULATOR: usize = DIFF_BITS_START + NUM_DIFF_BITS; // 33
 pub const STEP_INDEX: usize = ACCUMULATOR + 1; // 34
 pub const ACC_PLUS_ONE: usize = STEP_INDEX + 1; // 35
 pub const STEP_PLUS_ONE: usize = ACC_PLUS_ONE + 1; // 36
-pub const DSL_TRACE_WIDTH: usize = STEP_PLUS_ONE + 1; // 37
+pub const STATE_ROOT: usize = STEP_PLUS_ONE + 1; // 37
+pub const DSL_TRACE_WIDTH: usize = STATE_ROOT + 1; // 38
 
-/// Public input layout: `[padded_len, threshold]`.
+/// Public input layout:
+/// `[padded_len, threshold, initial_state_root, final_state_root]`.
 ///
-/// **Post AIR-soundness audit (commit `ce1e2def`, finding #3).**
-/// PI[1]=threshold was added to close the "forge proof.threshold after
-/// the fact" attack: previously the only PI was `padded_len` and
-/// `proof.threshold` was a plain serde field that the verifier
-/// compared against the caller's expectation without any STARK binding.
-/// An attacker could honestly prove threshold=0 (trivially satisfiable)
-/// and then mutate `proof.threshold` to any value; the wrapper would
-/// re-compare the mutated field against itself and accept.
+/// **Post AIR-soundness audit (commit `ce1e2def`, finding #3).** The PI
+/// grew from `[padded_len]` to the four-slot layout above to close
+/// three forge-the-metadata attacks:
 ///
-/// Today PI[1]=threshold is bound into row-0 of the THRESHOLD column
-/// via [`TemporalPredicateDsl::boundary_constraints`] and held constant
-/// across the trace by an inter-row constraint in
-/// [`TemporalPredicateDsl::eval_constraints`]. Tampering on
-/// `proof.threshold` makes the verifier's reconstructed PI[1] mismatch
-/// the STARK's boundary commitment and the verify call rejects.
+/// - **PI[1]=threshold**: previously `proof.threshold` was a plain
+///   serde field the verifier compared against itself. An attacker
+///   could honestly prove threshold=0 (trivially satisfiable) and then
+///   mutate `proof.threshold` to any value; the wrapper re-compared
+///   the mutated field against the caller and accepted. Today
+///   PI[1]=threshold is bound into row-0 of the THRESHOLD column via
+///   [`TemporalPredicateDsl::boundary_constraints`] and held constant
+///   across the trace by the T3 inter-row constraint in
+///   [`TemporalPredicateDsl::eval_constraints`]. Tampering on
+///   `proof.threshold` makes the verifier's reconstructed PI[1]
+///   mismatch the STARK's boundary commitment and verify rejects.
+/// - **PI[2]=initial_state_root**, **PI[3]=final_state_root**: same
+///   attack shape — `proof.initial_state_root` and
+///   `proof.final_state_root` were plain serde fields. Today the
+///   prover populates the STATE_ROOT column per row from the witness
+///   (padding rows hold a copy of the final real state root), and
+///   boundary constraints pin row-0 STATE_ROOT to PI[2] and row-(N-1)
+///   STATE_ROOT to PI[3]. The verifier reconstructs PIs from the
+///   caller's expected roots, so any tampering on the proof's
+///   state-root metadata is detected by STARK verification.
+///
+/// # Remaining (documented) gap
+///
+/// The per-step VALUE column is NOT bound into PIs. This is **safe by
+/// contract**: the temporal predicate's promise is "the predicate held
+/// at every step," not "the values were specifically X, Y, Z." The
+/// per-row constraint `diff = value - threshold ≥ 0` plus the
+/// bit-decomposition + high-bit-zero constraints algebraically force
+/// every row's value to satisfy the predicate against the bound
+/// threshold; the verifier never reveals individual values, so binding
+/// them is unnecessary. (If a future caller needs value identity,
+/// binding values via a Poseidon2 chain commitment in a new PI slot
+/// would be the right shape.)
 pub const PI_NUM_STEPS: usize = 0;
 pub const PI_THRESHOLD: usize = 1;
-pub const DSL_PUBLIC_INPUT_COUNT: usize = 2;
+pub const PI_INITIAL_STATE_ROOT: usize = 2;
+pub const PI_FINAL_STATE_ROOT: usize = 3;
+pub const DSL_PUBLIC_INPUT_COUNT: usize = 4;
 
 /// Column index submodule (mirrors the `mod col` in the `#[pyana_circuit]` definition).
 pub mod col {
@@ -70,6 +102,14 @@ pub mod col {
     pub const STEP_INDEX: usize = 34;
     pub const ACC_PLUS_ONE: usize = 35;
     pub const STEP_PLUS_ONE: usize = 36;
+    /// Per-step state-root column (AIR-soundness-audit ce1e2def #3).
+    /// Bound at row 0 to PI[2] (initial_state_root) and at the last
+    /// padded row to PI[3] (final_state_root) — see
+    /// `TemporalPredicateDsl::boundary_constraints`. Padding rows hold
+    /// a copy of the final real state root so the row-N-1 boundary
+    /// constraint binds the prover's claimed final root regardless of
+    /// where padding starts.
+    pub const STATE_ROOT: usize = 37;
 }
 
 /// The DSL-generated temporal predicate AIR struct.
@@ -80,7 +120,7 @@ pub struct TemporalPredicateDsl;
 
 impl StarkAir for TemporalPredicateDsl {
     fn width(&self) -> usize {
-        37
+        DSL_TRACE_WIDTH
     }
 
     fn constraint_degree(&self) -> usize {
@@ -179,8 +219,21 @@ impl StarkAir for TemporalPredicateDsl {
             (0, col::ACCUMULATOR, BabyBear::ONE),
             // First row: step_index = 0
             (0, col::STEP_INDEX, BabyBear::ZERO),
-            // Last row: accumulator = num_steps (pi[0])
+            // Last row: accumulator = padded_len (pi[0])
             (trace_len - 1, col::ACCUMULATOR, pi[0]),
+            // First row: THRESHOLD = pi[1]
+            // (AIR-soundness-audit ce1e2def finding #3). Combined with
+            // the inter-row constancy constraint T3, this binds the
+            // prover's threshold to PI[1] across the entire trace.
+            (0, col::THRESHOLD, pi[1]),
+            // First row: STATE_ROOT = pi[2] (initial_state_root)
+            // (AIR-soundness-audit ce1e2def #3 — state-root binding).
+            (0, col::STATE_ROOT, pi[2]),
+            // Last row: STATE_ROOT = pi[3] (final_state_root).
+            // generate_dsl_trace pads rows num_steps..padded_len with a
+            // copy of the final real state root, so this boundary
+            // catches the final state root regardless of trace padding.
+            (trace_len - 1, col::STATE_ROOT, pi[3]),
         ];
         raw.into_iter()
             .map(|(row, col, value)| BoundaryConstraint { row, col, value })
@@ -282,6 +335,13 @@ pub fn generate_dsl_trace(
 
     let mut trace = Vec::with_capacity(padded_len);
 
+    // Final real state root — used to pad rows num_steps..padded_len so
+    // the row-(N-1) STATE_ROOT boundary constraint binds the prover's
+    // claimed final root regardless of where padding starts. See
+    // AIR-soundness-audit ce1e2def #3.
+    let final_state_root = *witness.state_roots.last().unwrap();
+    let initial_state_root = witness.state_roots[0];
+
     for step in 0..padded_len {
         let mut row = vec![BabyBear::ZERO; DSL_TRACE_WIDTH];
 
@@ -318,10 +378,29 @@ pub fn generate_dsl_trace(
         row[ACC_PLUS_ONE] = BabyBear::new(acc + 1);
         row[STEP_PLUS_ONE] = BabyBear::new(step as u32 + 1);
 
+        // State root: per-step real value within num_steps; padding rows
+        // hold a copy of the final real state root so the row-(N-1)
+        // boundary constraint binds the prover's claimed final root.
+        row[STATE_ROOT] = if step < num_steps {
+            witness.state_roots[step]
+        } else {
+            final_state_root
+        };
+
         trace.push(row);
     }
 
-    let public_inputs = vec![BabyBear::new(padded_len as u32)];
+    // Public inputs: [padded_len, threshold, initial_state_root, final_state_root]
+    // PI[1]=threshold is bound into row-0 THRESHOLD column by
+    // boundary_constraints and held constant across rows by the T3
+    // transition constraint. PI[2]/PI[3] are bound to row-0 / row-(N-1)
+    // STATE_ROOT respectively — see AIR-soundness-audit ce1e2def #3.
+    let public_inputs = vec![
+        BabyBear::new(padded_len as u32),
+        witness.threshold,
+        initial_state_root,
+        final_state_root,
+    ];
     (trace, public_inputs)
 }
 
@@ -438,8 +517,53 @@ pub fn prove_temporal_predicate(
 
 /// Verify a temporal predicate proof.
 ///
-/// The verifier provides the expected parameters and checks the proof is
-/// consistent.
+/// # Soundness contract (post AIR-soundness-audit ce1e2def #3)
+///
+/// The PI vector is now four elements:
+/// `[padded_len, threshold, initial_state_root, final_state_root]`. The
+/// verifier reconstructs PIs from the *caller-supplied* expected values
+/// (not from the proof's plain-field metadata) and runs `stark::verify`
+/// against them. A prover who tampered with any of
+/// `proof.threshold` / `proof.initial_state_root` /
+/// `proof.final_state_root` after the fact will have those PI slots
+/// mismatch the STARK's boundary commitments and STARK verification
+/// rejects.
+///
+/// The plain-field equality pre-checks remain as fast filters that
+/// surface clear error messages on the common case of "wrong arguments
+/// passed by caller," but they are no longer load-bearing — the STARK
+/// boundary commitments are.
+///
+/// # Bound surface (today)
+///
+/// - PI[0]=`padded_len`: enforced via row-(N-1) ACCUMULATOR boundary
+///   (`accumulator = padded_len`).
+/// - PI[1]=`threshold`: row-0 THRESHOLD boundary + inter-row constancy
+///   (T3 transition constraint).
+/// - PI[2]=`initial_state_root`: row-0 STATE_ROOT boundary.
+/// - PI[3]=`final_state_root`: row-(N-1) STATE_ROOT boundary. Padding
+///   rows hold a copy of the final real root (see `generate_dsl_trace`)
+///   so the boundary catches the final root regardless of padding.
+///
+/// # Bound by construction (intentionally not in PI)
+///
+/// - Per-row VALUE: not in PI. The temporal predicate's contract is
+///   "predicate held at every step," not "values were specifically
+///   X, Y, Z." The per-row `diff = value - threshold` constraint plus
+///   bit-decomposition + high-bit-zero forces the predicate's
+///   acceptance against the BOUND threshold, which is sufficient. The
+///   verifier never reveals per-step values, so identifying them in PI
+///   would be a contract change, not a soundness lift.
+///
+/// # Honest gap acknowledgement
+///
+/// The state-root binding pins the **first** and **last** roots only.
+/// A prover could substitute interior state-root values mid-trace
+/// without detection. This is structurally similar to a Merkle
+/// commitment to the state-root sequence; if a future caller wants to
+/// re-execute a specific intermediate root, the right lift is to add
+/// a `state_root_chain_commitment` PI slot (one Poseidon2 chain over
+/// the per-row STATE_ROOT column) and bind it via the IVC primitive.
 pub fn verify_temporal_predicate(
     proof: &TemporalPredicateProof,
     threshold: BabyBear,
@@ -447,7 +571,8 @@ pub fn verify_temporal_predicate(
     initial_state_root: BabyBear,
     final_state_root: BabyBear,
 ) -> bool {
-    // Check claimed parameters match expected.
+    // Fast pre-checks on plain proof fields. Not load-bearing post-
+    // audit — the STARK below is the authoritative gate.
     if proof.threshold != threshold {
         return false;
     }
@@ -468,7 +593,16 @@ pub fn verify_temporal_predicate(
         return false;
     }
 
-    let public_inputs = vec![BabyBear::new(padded_len)];
+    // Reconstruct PI from CALLER-supplied values (not from proof.*).
+    // Tampering on any of proof.threshold / proof.initial_state_root /
+    // proof.final_state_root will produce a PI that mismatches the
+    // STARK's boundary commitments and `stark::verify` rejects.
+    let public_inputs = vec![
+        BabyBear::new(padded_len),
+        threshold,
+        initial_state_root,
+        final_state_root,
+    ];
 
     // Reconstruct a dummy witness for the AIR shape.
     let dummy_witness = TemporalPredicateWitness {
@@ -549,7 +683,10 @@ mod tests {
     #[test]
     fn test_dsl_circuit_struct_exists() {
         let circuit = TemporalPredicateDsl;
-        assert_eq!(circuit.width(), 37);
+        // Width grew 37 → 38 with the STATE_ROOT column addition
+        // (AIR-soundness-audit ce1e2def #3).
+        assert_eq!(circuit.width(), DSL_TRACE_WIDTH);
+        assert_eq!(DSL_TRACE_WIDTH, 38);
         assert_eq!(circuit.constraint_degree(), 2);
         assert_eq!(circuit.air_name(), "pyana-temporal_predicate_dsl-v1");
     }
@@ -942,5 +1079,134 @@ mod tests {
         let wrong_pi = vec![BabyBear::new(8)];
         let result = stark::verify(&circuit, &proof, &wrong_pi);
         assert!(result.is_err(), "Should reject proof with wrong num_steps");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // AIR-soundness-audit (ce1e2def) finding #3 adversarial tests.
+    //
+    // Pre-audit attack (verbatim from the audit doc):
+    //   - Attacker constructs a witness with threshold=0 (trivially
+    //     satisfiable) and arbitrary values + arbitrary state-roots.
+    //   - stark::prove succeeds.
+    //   - Attacker mutates proof.threshold / proof.initial_state_root /
+    //     proof.final_state_root after the fact.
+    //   - Verifier wrapper compared the mutated fields against
+    //     themselves and accepted.
+    //
+    // Post-audit: PI[1]=threshold, PI[2]=initial_state_root,
+    // PI[3]=final_state_root are bound into STARK boundaries; mutating
+    // the proof's plain-field metadata changes nothing about the STARK,
+    // so the verifier reconstructs the PI from the caller's expected
+    // values and STARK verify rejects.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Reconstruct the threshold-forge attack: honest prove for
+    /// threshold=0, then claim threshold=99999. The verifier's
+    /// fast-pre-check guards against this, but to *bypass* the fast
+    /// check the attacker could also lie to the verifier; we simulate
+    /// by passing the LIED threshold as the verifier's expectation.
+    /// The STARK then catches it because PI[1] mismatches the row-0
+    /// THRESHOLD boundary commitment.
+    #[test]
+    fn audit_attack_threshold_forge_rejected_by_stark_binding() {
+        // Honestly prove for threshold=0 (trivially satisfiable).
+        let honest_threshold = BabyBear::new(0);
+        let values: Vec<BabyBear> = vec![10, 20, 30].into_iter().map(BabyBear::new).collect();
+        let state_roots = test_state_roots(3);
+        let mut proof = prove_temporal_predicate(
+            &values,
+            &state_roots,
+            PredicateType::Gte,
+            honest_threshold,
+        )
+        .expect("honest threshold=0 prove succeeds");
+
+        // Tamper the plain field — claim threshold=99999.
+        let forged_threshold = BabyBear::new(99999);
+        proof.threshold = forged_threshold;
+
+        // Now: a verifier who *also* lies (passing forged_threshold as
+        // expected) will fail the STARK check. PI[1] reconstruction =
+        // forged_threshold, but the STARK boundary committed to 0.
+        let valid = verify_temporal_predicate(
+            &proof,
+            forged_threshold,
+            3,
+            state_roots[0],
+            state_roots[2],
+        );
+        assert!(
+            !valid,
+            "tampered threshold must be rejected by STARK PI[1] boundary commitment"
+        );
+    }
+
+    #[test]
+    fn audit_attack_initial_state_root_forge_rejected_by_stark_binding() {
+        // Honest prove with real state roots.
+        let threshold = BabyBear::new(100);
+        let values: Vec<BabyBear> = vec![200, 300, 400].into_iter().map(BabyBear::new).collect();
+        let state_roots = test_state_roots(3);
+        let mut proof =
+            prove_temporal_predicate(&values, &state_roots, PredicateType::Gte, threshold)
+                .expect("honest prove succeeds");
+
+        // Forge the initial state root.
+        let forged_initial = BabyBear::new(123456);
+        proof.initial_state_root = forged_initial;
+
+        // A verifier who consumes proof.initial_state_root as truth
+        // would normally be safe via the plain-field check, but to
+        // simulate the *fully-coordinated* attack we pass the forged
+        // value as expected. The STARK then rejects via PI[2] vs row-0
+        // STATE_ROOT boundary mismatch.
+        let valid =
+            verify_temporal_predicate(&proof, threshold, 3, forged_initial, state_roots[2]);
+        assert!(
+            !valid,
+            "tampered initial_state_root must be rejected by STARK PI[2] boundary commitment"
+        );
+    }
+
+    #[test]
+    fn audit_attack_final_state_root_forge_rejected_by_stark_binding() {
+        let threshold = BabyBear::new(100);
+        let values: Vec<BabyBear> = vec![200, 300, 400].into_iter().map(BabyBear::new).collect();
+        let state_roots = test_state_roots(3);
+        let mut proof =
+            prove_temporal_predicate(&values, &state_roots, PredicateType::Gte, threshold)
+                .expect("honest prove succeeds");
+
+        let forged_final = BabyBear::new(789012);
+        proof.final_state_root = forged_final;
+
+        let valid =
+            verify_temporal_predicate(&proof, threshold, 3, state_roots[0], forged_final);
+        assert!(
+            !valid,
+            "tampered final_state_root must be rejected by STARK PI[3] boundary commitment"
+        );
+    }
+
+    /// Sanity: an honestly-produced proof still verifies under the
+    /// post-audit PI layout. (Regression guard for the boundary /
+    /// constancy constraint additions.)
+    #[test]
+    fn audit_honest_proof_still_verifies_under_new_pi_layout() {
+        let threshold = BabyBear::new(50);
+        let values: Vec<BabyBear> = vec![60, 70, 80, 90, 100]
+            .into_iter()
+            .map(BabyBear::new)
+            .collect();
+        let state_roots = test_state_roots(5);
+        let proof = prove_temporal_predicate(&values, &state_roots, PredicateType::Gte, threshold)
+            .expect("honest prove succeeds");
+        assert!(verify_temporal_predicate(
+            &proof,
+            threshold,
+            5,
+            state_roots[0],
+            state_roots[4]
+        ));
     }
 }
