@@ -1,27 +1,26 @@
 // starbridge-apps/nameservice/pages/inspectors.js
 //
 // Web components for the nameservice starbridge-app's three UI surfaces.
-// Pure custom-element shells: query window.pyana for cell data, render
-// the per-name state machine, and dispatch turn requests via the
-// turn-builder bridge in ./turn-builders.js (which wraps
-// window.pyana.signTurn).
-//
-// All policy lives in Rust (starbridge-apps/nameservice/src/lib.rs); the
-// JS is the thinnest possible UX layer. The three components are:
 //
 //   <pyana-name uri="pyana://cell/..."/>
-//     Read-only view of a single name cell — owner, expiry, target,
-//     revocation status.
+//     Live-binding view of a single name cell — owner, expiry, target,
+//     revocation status, transfer/revoke action buttons.
 //
 //   <pyana-name-registry uri="pyana://cell/..." child-inspector="name"/>
-//     Browseable list of registered names with filter + paginate.
+//     Filterable + paginated list of registered names. Polls the
+//     runtime's nameservice.listEntries(uri) helper.
 //
 //   <pyana-name-register-form registry-uri="pyana://cell/..."/>
 //     Mutation surface — register / renew / transfer / revoke /
-//     set-target — wired to the turn-builder bridge.
+//     set-target — wired to window.pyana.builders.nameservice.* (the
+//     "cipherclerk-named" Action presets in ./turn-builders.js, all of
+//     which terminate in window.pyana.signTurn for wallet-side signing).
 //
-// Each component dispatches CustomEvents so host pages can wire their
-// own analytics or persistence without forking these.
+// All policy lives in Rust (starbridge-apps/nameservice/src/lib.rs); the
+// JS is the thinnest possible UX layer.
+//
+// CSS classes are namespaced under `.pyana-nameservice-*` so they don't
+// collide with peer apps when multiple inspectors mount in the same DOM.
 
 // Slot indices — mirror constants in src/lib.rs.
 const NAME_HASH_SLOT       = 2;
@@ -29,6 +28,8 @@ const OWNER_HASH_SLOT      = 3;
 const EXPIRY_SLOT          = 4;
 const REVOKED_SLOT         = 5;
 const RESOLVE_TARGET_SLOT  = 6;
+
+const POLL_INTERVAL_MS = 5_000;
 
 const TAGS = [
   'pyana-name',
@@ -38,8 +39,14 @@ const TAGS = [
 
 // ─── helpers ─────────────────────────────────────────────────────────────
 
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c]);
+}
+
 function hex32(bytes) {
-  if (!bytes) return '—';
+  if (bytes == null) return '—';
   if (typeof bytes === 'string') return bytes.length > 16 ? `${bytes.slice(0, 8)}…${bytes.slice(-8)}` : bytes;
   if (Array.isArray(bytes) || bytes instanceof Uint8Array) {
     const arr = Array.from(bytes);
@@ -47,6 +54,15 @@ function hex32(bytes) {
     return h.length > 16 ? `${h.slice(0, 8)}…${h.slice(-8)}` : h;
   }
   return String(bytes);
+}
+
+function hexFull(bytes) {
+  if (!bytes) return '';
+  if (typeof bytes === 'string') return bytes;
+  if (Array.isArray(bytes) || bytes instanceof Uint8Array) {
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  return '';
 }
 
 function u64FromBE32(bytes) {
@@ -67,6 +83,46 @@ function isZero32(bytes) {
   return arr.every((b) => b === 0);
 }
 
+async function previewNameHash(name) {
+  if (!name) return '';
+  try {
+    if (typeof window !== 'undefined' && window.pyana?.blake3) {
+      const out = await window.pyana.blake3(new TextEncoder().encode(String(name)));
+      return hexFull(out);
+    }
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(name)));
+    return hexFull(new Uint8Array(buf));
+  } catch {
+    return '';
+  }
+}
+
+// Format an expiry block height as a relative countdown if a tip-height
+// is exposed by the runtime; otherwise just print the absolute height.
+function fmtExpiry(expiryBlock, tipBlock) {
+  const e = Number(expiryBlock ?? 0);
+  if (!e) return '—';
+  if (tipBlock == null) return `block ${e}`;
+  const t = Number(tipBlock);
+  const delta = e - t;
+  if (delta <= 0) return `expired (block ${e})`;
+  return `block ${e}  (+${delta})`;
+}
+
+async function tipHeight() {
+  if (typeof window === 'undefined') return null;
+  if (window.pyana?.blockHeight) {
+    try { return Number(await window.pyana.blockHeight()); } catch { return null; }
+  }
+  if (window.pyana?.federationStatus) {
+    try {
+      const s = await window.pyana.federationStatus();
+      return Number(s?.height ?? null);
+    } catch { return null; }
+  }
+  return null;
+}
+
 // ─── <pyana-name> ────────────────────────────────────────────────────────
 
 class PyanaNameElement extends HTMLElement {
@@ -75,56 +131,171 @@ class PyanaNameElement extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
+    this._poll = null;
+    this._busy = null;       // { mode, message } for in-flight actions
+    this._lastReceipt = null;
+    this._lastError = null;
   }
 
-  connectedCallback() { this.render(); }
+  connectedCallback() {
+    this.render();
+    this._poll = setInterval(() => this.render(), POLL_INTERVAL_MS);
+  }
+  disconnectedCallback() {
+    if (this._poll) clearInterval(this._poll);
+    this._poll = null;
+  }
   attributeChangedCallback() { this.render(); }
 
   async render() {
     const uri = this.getAttribute('uri') || '';
     const nameAttr = this.getAttribute('name') || '';
-    const data = await this.#load(uri);
+    const [data, tip] = await Promise.all([this.#load(uri), tipHeight()]);
     const revoked = !isZero32(data.revoked);
     const expiry = u64FromBE32(data.expiry);
+    const expiryDisp = fmtExpiry(expiry, tip);
+
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; max-width: 480px; }
-        .row { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.25rem 0; }
-        .label { color: #555; }
+        .pyana-nameservice-name-card {
+          border: 1px solid #ddd;
+          border-radius: 6px;
+          padding: 1rem;
+          max-width: 480px;
+          background: #fff;
+        }
+        .pyana-nameservice-name-row {
+          display: flex;
+          justify-content: space-between;
+          gap: 0.5rem;
+          padding: 0.25rem 0;
+        }
+        .pyana-nameservice-name-label { color: #555; }
         code { font-family: ui-monospace, monospace; }
-        .status-ok  { color: #2a8a3e; font-weight: 600; }
-        .status-bad { color: #c43030; font-weight: 600; }
-        .row.actions { margin-top: 0.5rem; gap: 0.5rem; }
-        button { padding: 0.4rem 0.7rem; }
+        .pyana-nameservice-name-status-ok  { color: #2a8a3e; font-weight: 600; }
+        .pyana-nameservice-name-status-bad { color: #c43030; font-weight: 600; }
+        .pyana-nameservice-name-actions {
+          margin-top: 0.5rem;
+          display: flex;
+          gap: 0.4rem;
+          flex-wrap: wrap;
+        }
+        button {
+          padding: 0.4rem 0.7rem;
+          background: #eef;
+          border: 1px solid #ccd;
+          border-radius: 3px;
+          cursor: pointer;
+          font: inherit;
+        }
+        button[disabled] { opacity: 0.45; cursor: not-allowed; }
+        button:hover:not([disabled]) { background: #dde; }
       </style>
-      <div class="card">
-        <h3>${nameAttr || '(name)'}</h3>
-        <div class="row"><span class="label">cell</span><code>${hex32(uri)}</code></div>
-        <div class="row"><span class="label">name-hash</span><code>${hex32(data.name_hash)}</code></div>
-        <div class="row"><span class="label">owner-hash</span><code>${hex32(data.owner_hash)}</code></div>
-        <div class="row"><span class="label">expiry (block)</span><code>${expiry.toString()}</code></div>
-        <div class="row"><span class="label">target</span><code>${isZero32(data.target) ? '—' : hex32(data.target)}</code></div>
-        <div class="row">
-          <span class="label">status</span>
-          <span class="${revoked ? 'status-bad' : 'status-ok'}">${revoked ? 'REVOKED' : 'ACTIVE'}</span>
+      <div class="pyana-nameservice-name-card">
+        <h3>${escapeHtml(nameAttr || '(name)')}</h3>
+        <div class="pyana-nameservice-name-row">
+          <span class="pyana-nameservice-name-label">cell</span>
+          <code>${escapeHtml(hex32(uri))}</code>
         </div>
-        <div class="row actions">
-          <button data-action="renew"     ${revoked ? 'disabled' : ''}>Renew</button>
-          <button data-action="transfer"  ${revoked ? 'disabled' : ''}>Transfer</button>
-          <button data-action="set-target" ${revoked ? 'disabled' : ''}>Set target</button>
-          <button data-action="revoke"    ${revoked ? 'disabled' : ''}>Revoke</button>
+        <div class="pyana-nameservice-name-row">
+          <span class="pyana-nameservice-name-label">name-hash</span>
+          <code>${escapeHtml(hex32(data.name_hash))}</code>
         </div>
+        <div class="pyana-nameservice-name-row">
+          <span class="pyana-nameservice-name-label">owner-hash</span>
+          <code>${escapeHtml(hex32(data.owner_hash))}</code>
+        </div>
+        <div class="pyana-nameservice-name-row">
+          <span class="pyana-nameservice-name-label">expiry</span>
+          <code>${escapeHtml(expiryDisp)}</code>
+        </div>
+        <div class="pyana-nameservice-name-row">
+          <span class="pyana-nameservice-name-label">target</span>
+          <code>${isZero32(data.target) ? '—' : escapeHtml(hex32(data.target))}</code>
+        </div>
+        <div class="pyana-nameservice-name-row">
+          <span class="pyana-nameservice-name-label">status</span>
+          <span class="${revoked ? 'pyana-nameservice-name-status-bad' : 'pyana-nameservice-name-status-ok'}">
+            ${revoked ? 'REVOKED' : 'ACTIVE'}
+          </span>
+        </div>
+        <div class="pyana-nameservice-name-actions">
+          <button data-action="renew"      ${revoked ? 'disabled' : ''}>Renew</button>
+          <button data-action="transfer"   ${revoked ? 'disabled' : ''}>Transfer</button>
+          <button data-action="set_target" ${revoked ? 'disabled' : ''}>Set target</button>
+          <button data-action="revoke"     ${revoked ? 'disabled' : ''}>Revoke</button>
+        </div>
+        <pyana-status-bar
+          state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._lastReceipt ? 'success' : 'idle'))}"
+          message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._lastReceipt ? 'submitted' : ''))}"
+          receipt="${escapeHtml(this._lastReceipt?.id ?? '')}"
+        ></pyana-status-bar>
+        ${this._lastReceipt ? `
+          <div style="margin-top:0.5rem;">
+            <pyana-token-cap
+              kind="receipt"
+              label="${escapeHtml(this._lastReceipt.method ?? 'name-action')}"
+              target="${escapeHtml(uri)}"
+              action="${escapeHtml(this._lastReceipt.method ?? '')}"
+              tag="${escapeHtml(this._lastReceipt.id ?? '')}"
+            ></pyana-token-cap>
+          </div>
+        ` : ''}
       </div>
     `;
+
     this.shadowRoot.querySelectorAll('button[data-action]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        this.dispatchEvent(new CustomEvent('name-action', {
-          bubbles: true, composed: true,
-          detail: { action: btn.dataset.action, uri, name: nameAttr },
-        }));
-      });
+      btn.addEventListener('click', () => this.#onAction(btn.dataset.action, uri, nameAttr, data));
     });
+  }
+
+  async #onAction(action, uri, name, data) {
+    // For mutating actions that need more input (transfer, set_target),
+    // surface a CustomEvent so the host can route to the form. For renew
+    // and revoke we can submit immediately.
+    if (action === 'transfer' || action === 'set_target') {
+      this.dispatchEvent(new CustomEvent('name-action', {
+        bubbles: true, composed: true,
+        detail: { action, uri, name },
+      }));
+      return;
+    }
+    const builders = (typeof window !== 'undefined') ? window.pyana?.builders?.nameservice : null;
+    const fn = builders?.[action];
+    if (!fn) {
+      // Host has no builder wired — fall back to a CustomEvent so the
+      // page can route the request.
+      this.dispatchEvent(new CustomEvent('name-action', {
+        bubbles: true, composed: true,
+        detail: { action, uri, name },
+      }));
+      return;
+    }
+    this._busy = { mode: action, message: `${action}ing ${name}…` };
+    this._lastError = null;
+    this._lastReceipt = null;
+    this.render();
+    try {
+      let receipt;
+      if (action === 'renew') {
+        const currentExpiry = u64FromBE32(data?.expiry);
+        // Default renew: bump by 100_000 blocks. Hosts wanting a custom
+        // expiry should use <pyana-name-register-form mode="renew"/>.
+        const newExpiry = Number(currentExpiry + 100_000n);
+        receipt = await fn(uri, { name, expiry: newExpiry });
+      } else if (action === 'revoke') {
+        receipt = await fn(uri, { name });
+      } else {
+        receipt = await fn(uri, { name });
+      }
+      this._lastReceipt = { ...(receipt ?? {}), method: action };
+      this._busy = null;
+    } catch (e) {
+      this._busy = null;
+      this._lastError = `${action} failed: ${String(e)}`;
+    }
+    this.render();
   }
 
   async #load(uri) {
@@ -133,6 +304,20 @@ class PyanaNameElement extends HTMLElement {
       revoked: null, target: null,
     });
     if (typeof window === 'undefined' || !window.pyana?.cell?.readField) {
+      // Fallback: try readCell which returns full state.
+      if (typeof window !== 'undefined' && window.pyana?.readCell) {
+        try {
+          const cell = await window.pyana.readCell(uri);
+          const f = cell?.state?.fields ?? [];
+          return {
+            name_hash: f[NAME_HASH_SLOT] ?? null,
+            owner_hash: f[OWNER_HASH_SLOT] ?? null,
+            expiry: f[EXPIRY_SLOT] ?? null,
+            revoked: f[REVOKED_SLOT] ?? null,
+            target: f[RESOLVE_TARGET_SLOT] ?? null,
+          };
+        } catch { /* fall through */ }
+      }
       return empty();
     }
     try {
@@ -160,61 +345,143 @@ class PyanaNameRegistryElement extends HTMLElement {
     this.attachShadow({ mode: 'open' });
     this._filter = '';
     this._page = 0;
+    this._poll = null;
+    this._entries = [];
+    this._loading = true;
+    this._error = null;
   }
 
-  connectedCallback() { this.render(); }
-  attributeChangedCallback() { this.render(); }
+  connectedCallback() {
+    this.refresh();
+    this._poll = setInterval(() => this.refresh(), POLL_INTERVAL_MS);
+  }
+  disconnectedCallback() {
+    if (this._poll) clearInterval(this._poll);
+    this._poll = null;
+  }
+  attributeChangedCallback() { this.refresh(); }
 
-  async render() {
+  async refresh() {
+    const uri = this.getAttribute('uri') || '';
+    try {
+      this._entries = await this.#load(uri);
+      this._error = null;
+    } catch (e) {
+      this._error = String(e);
+    }
+    this._loading = false;
+    this.render();
+  }
+
+  render() {
     const uri = this.getAttribute('uri') || '';
     const pageSize = Math.max(1, Number(this.getAttribute('page-size') || 25));
-    const entries = await this.#load(uri);
     const filter = this._filter.trim().toLowerCase();
     const filtered = filter
-      ? entries.filter((e) => (e.name || '').toLowerCase().includes(filter))
-      : entries;
+      ? this._entries.filter((e) => (e.name || '').toLowerCase().includes(filter))
+      : this._entries;
     const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
     if (this._page >= pages) this._page = pages - 1;
+    if (this._page < 0) this._page = 0;
     const start = this._page * pageSize;
     const slice = filtered.slice(start, start + pageSize);
 
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        .toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
-        input[type=search] { padding: 0.4rem; min-width: 240px; }
-        table { border-collapse: collapse; width: 100%; max-width: 760px; }
-        th, td { border-bottom: 1px solid #eee; padding: 0.35rem 0.5rem; text-align: left; }
-        th { background: #fafafa; }
-        tr.revoked td { color: #888; text-decoration: line-through; }
-        .pager { margin-top: 0.5rem; display: flex; gap: 0.4rem; align-items: center; }
-        button { padding: 0.3rem 0.6rem; }
-        .empty { color: #888; padding: 0.5rem; }
+        .pyana-nameservice-registry-toolbar {
+          display: flex;
+          gap: 0.5rem;
+          align-items: center;
+          margin-bottom: 0.5rem;
+          flex-wrap: wrap;
+        }
+        .pyana-nameservice-registry-toolbar input[type=search] {
+          padding: 0.4rem;
+          min-width: 240px;
+          font: inherit;
+        }
+        .pyana-nameservice-registry-list {
+          border-collapse: collapse;
+          width: 100%;
+          max-width: 760px;
+        }
+        .pyana-nameservice-registry-list th,
+        .pyana-nameservice-registry-list td {
+          border-bottom: 1px solid #eee;
+          padding: 0.35rem 0.5rem;
+          text-align: left;
+        }
+        .pyana-nameservice-registry-list th { background: #fafafa; }
+        .pyana-nameservice-registry-list tr.revoked td {
+          color: #888;
+          text-decoration: line-through;
+        }
+        .pyana-nameservice-registry-list a {
+          color: #25439a;
+          text-decoration: none;
+        }
+        .pyana-nameservice-registry-list a:hover { text-decoration: underline; }
+        .pyana-nameservice-registry-pager {
+          margin-top: 0.5rem;
+          display: flex;
+          gap: 0.4rem;
+          align-items: center;
+        }
+        .pyana-nameservice-registry-empty {
+          color: #888;
+          padding: 0.75rem;
+          border: 1px dashed #ddd;
+          border-radius: 4px;
+          background: #fafbfc;
+        }
+        .pyana-nameservice-registry-error {
+          color: #a02020;
+          padding: 0.5rem;
+          background: #fff0f0;
+          border: 1px solid #f0c0c0;
+          border-radius: 4px;
+        }
+        button {
+          padding: 0.3rem 0.6rem;
+          background: #eef;
+          border: 1px solid #ccd;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        button[disabled] { opacity: 0.4; cursor: not-allowed; }
       </style>
-      <div class="toolbar">
-        <input type="search" placeholder="Filter by name…" value="${filter}" />
-        <span>${filtered.length} / ${entries.length}</span>
+      <div class="pyana-nameservice-registry-toolbar">
+        <input type="search" placeholder="Filter by name…" value="${escapeHtml(filter)}" />
+        <span>${filtered.length} / ${this._entries.length}</span>
         <button data-action="register-new">Register new…</button>
+        <button data-action="refresh">↻ Refresh</button>
       </div>
+      ${this._error ? `<div class="pyana-nameservice-registry-error">error: ${escapeHtml(this._error)}</div>` : ''}
+      ${this._loading ? `<pyana-status-bar state="loading" message="loading registry…"></pyana-status-bar>` : ''}
       ${slice.length === 0
-        ? `<div class="empty">No names registered${filter ? ' match the filter.' : '.'}</div>`
+        ? `<div class="pyana-nameservice-registry-empty">No names registered${filter ? ' match the filter.' : '.'}</div>`
         : `
-        <table>
+        <table class="pyana-nameservice-registry-list">
           <thead>
-            <tr><th>Name</th><th>Owner</th><th>Expiry</th><th>Status</th></tr>
+            <tr><th>Name</th><th>Owner</th><th>Expiry (block)</th><th>Status</th></tr>
           </thead>
           <tbody>
             ${slice.map((e) => `
               <tr class="${e.revoked ? 'revoked' : ''}">
-                <td><a href="#" data-uri="${e.uri || ''}" data-name="${e.name || ''}">${e.name || '(unnamed)'}</a></td>
-                <td><code>${hex32(e.owner_hash)}</code></td>
+                <td>
+                  <a href="#" data-uri="${escapeHtml(e.uri || uri)}" data-name="${escapeHtml(e.name || '')}">
+                    ${escapeHtml(e.name || '(unnamed)')}
+                  </a>
+                </td>
+                <td><code>${escapeHtml(hex32(e.owner_hash))}</code></td>
                 <td><code>${e.expiry?.toString() ?? '—'}</code></td>
                 <td>${e.revoked ? 'REVOKED' : 'ACTIVE'}</td>
               </tr>
             `).join('')}
           </tbody>
         </table>
-        <div class="pager">
+        <div class="pyana-nameservice-registry-pager">
           <button data-action="prev" ${this._page === 0 ? 'disabled' : ''}>‹ Prev</button>
           <span>Page ${this._page + 1} / ${pages}</span>
           <button data-action="next" ${this._page >= pages - 1 ? 'disabled' : ''}>Next ›</button>
@@ -222,9 +489,24 @@ class PyanaNameRegistryElement extends HTMLElement {
       `}
     `;
     const inp = this.shadowRoot.querySelector('input[type=search]');
-    inp?.addEventListener('input', (e) => { this._filter = e.target.value; this._page = 0; this.render(); });
-    this.shadowRoot.querySelector('button[data-action=prev]')?.addEventListener('click', () => { this._page -= 1; this.render(); });
-    this.shadowRoot.querySelector('button[data-action=next]')?.addEventListener('click', () => { this._page += 1; this.render(); });
+    inp?.addEventListener('input', (e) => {
+      this._filter = e.target.value;
+      this._page = 0;
+      this.render();
+    });
+    this.shadowRoot.querySelector('button[data-action=prev]')?.addEventListener('click', () => {
+      this._page -= 1;
+      this.render();
+    });
+    this.shadowRoot.querySelector('button[data-action=next]')?.addEventListener('click', () => {
+      this._page += 1;
+      this.render();
+    });
+    this.shadowRoot.querySelector('button[data-action=refresh]')?.addEventListener('click', () => {
+      this._loading = true;
+      this.render();
+      this.refresh();
+    });
     this.shadowRoot.querySelector('button[data-action=register-new]')?.addEventListener('click', () => {
       this.dispatchEvent(new CustomEvent('register-requested', {
         bubbles: true, composed: true, detail: { registryUri: uri },
@@ -242,15 +524,15 @@ class PyanaNameRegistryElement extends HTMLElement {
   }
 
   async #load(uri) {
-    if (typeof window === 'undefined' || !window.pyana?.nameservice?.listEntries) {
-      return [];
-    }
-    try {
+    if (typeof window === 'undefined') return [];
+    if (window.pyana?.nameservice?.listEntries) {
       const entries = await window.pyana.nameservice.listEntries(uri);
       return Array.isArray(entries) ? entries : [];
-    } catch (_) {
-      return [];
     }
+    // No runtime-side enumerator: surface an empty list rather than
+    // making up names. Hosts that want the registry view to populate
+    // must implement `window.pyana.nameservice.listEntries(cellUri)`.
+    return [];
   }
 }
 
@@ -262,6 +544,12 @@ class PyanaNameRegisterFormElement extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
+    this._busy = null;
+    this._lastError = null;
+    this._lastReceipt = null;
+    this._lastMethod = null;
+    this._namePreview = '';
+    this._pendingName = '';
   }
 
   connectedCallback() { this.render(); }
@@ -281,46 +569,153 @@ class PyanaNameRegisterFormElement extends HTMLElement {
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; }
-        form { display: grid; gap: 0.75rem; max-width: 420px; }
-        label { display: grid; gap: 0.25rem; }
-        input, select { padding: 0.4rem; font-size: 1rem; font-family: inherit; }
-        button { padding: 0.5rem; font-weight: 600; }
-        .target { font-size: 0.85rem; color: #666; }
-        nav { display: flex; gap: 0.4rem; margin-bottom: 0.5rem; }
-        nav button { padding: 0.3rem 0.6rem; font-weight: 400; }
-        nav button[aria-current=true] { background: #eef; font-weight: 600; }
+        .pyana-nameservice-form {
+          display: grid;
+          gap: 0.75rem;
+          max-width: 420px;
+        }
+        .pyana-nameservice-form label {
+          display: grid;
+          gap: 0.25rem;
+        }
+        .pyana-nameservice-form input,
+        .pyana-nameservice-form select {
+          padding: 0.4rem;
+          font-size: 1rem;
+          font-family: inherit;
+          border: 1px solid #ccc;
+          border-radius: 3px;
+        }
+        .pyana-nameservice-form button[type=submit] {
+          padding: 0.55rem;
+          font-weight: 600;
+          background: #3956c8;
+          color: #fff;
+          border: 0;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        .pyana-nameservice-form button[type=submit][disabled] {
+          opacity: 0.5;
+          cursor: wait;
+        }
+        .pyana-nameservice-form-target {
+          font-size: 0.85rem;
+          color: #666;
+        }
+        .pyana-nameservice-form-nav {
+          display: flex;
+          gap: 0.4rem;
+          margin-bottom: 0.5rem;
+          flex-wrap: wrap;
+        }
+        .pyana-nameservice-form-nav button {
+          padding: 0.3rem 0.6rem;
+          font-weight: 400;
+          background: #f4f4f8;
+          border: 1px solid #ddd;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        .pyana-nameservice-form-nav button[aria-current=true] {
+          background: #d0d6f5;
+          border-color: #889;
+          font-weight: 600;
+        }
+        .pyana-nameservice-form-hash-preview {
+          font-family: ui-monospace, monospace;
+          font-size: 0.75rem;
+          color: #557;
+          word-break: break-all;
+        }
       </style>
-      <nav>
+      <nav class="pyana-nameservice-form-nav">
         ${['register', 'renew', 'transfer', 'revoke', 'set_target'].map((m) => `
           <button type="button" data-mode="${m}" aria-current="${m === mode}">${m}</button>
         `).join('')}
       </nav>
-      <form>
-        <div class="target">Registry: <code>${registryUri || '(none)'}</code></div>
+      <form class="pyana-nameservice-form">
+        <div class="pyana-nameservice-form-target">
+          Registry: <code>${escapeHtml(registryUri || '(none)')}</code>
+        </div>
         ${showFields.includes('name') ? `
-          <label>Name<input name="name" required placeholder="alice.pyana" /></label>
+          <label>Name
+            <input name="name" required placeholder="alice.pyana" value="${escapeHtml(this._pendingName)}" />
+            <span class="pyana-nameservice-form-hash-preview">
+              blake3 = ${this._namePreview
+                ? escapeHtml(this._namePreview.slice(0, 16) + '…' + this._namePreview.slice(-8))
+                : '—'}
+            </span>
+          </label>
         ` : ''}
         ${showFields.includes('owner') ? `
-          <label>Owner pubkey (hex)<input name="owner" required placeholder="0x…" /></label>
+          <label>Owner pubkey (hex)
+            <input name="owner" required placeholder="0x… or raw hex (64 chars)" />
+          </label>
         ` : ''}
         ${showFields.includes('old_owner') ? `
-          <label>Old owner pubkey (hex)<input name="old_owner" required placeholder="0x…" /></label>
+          <label>Old owner pubkey (hex)
+            <input name="old_owner" required placeholder="0x…" />
+          </label>
         ` : ''}
         ${showFields.includes('new_owner') ? `
-          <label>New owner pubkey (hex)<input name="new_owner" required placeholder="0x…" /></label>
+          <label>New owner pubkey (hex)
+            <input name="new_owner" required placeholder="0x…" />
+          </label>
         ` : ''}
         ${showFields.includes('expiry') ? `
-          <label>Expiry (block height)<input name="expiry" type="number" required min="1" /></label>
+          <label>Expiry (block height)
+            <input name="expiry" type="number" required min="1" placeholder="e.g. 1000000" />
+          </label>
         ` : ''}
         ${showFields.includes('target') ? `
-          <label>Target URI<input name="target" placeholder="pyana://cell/…" /></label>
+          <label>Target URI
+            <input name="target" placeholder="pyana://cell/…" />
+          </label>
         ` : ''}
-        <button type="submit">${mode}</button>
+        <button type="submit" ${this._busy ? 'disabled' : ''}>
+          ${this._busy ? `${mode}ing…` : mode}
+        </button>
       </form>
+      <pyana-status-bar
+        state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._lastReceipt ? 'success' : 'idle'))}"
+        message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._lastReceipt ? `${this._lastMethod} submitted` : ''))}"
+        receipt="${escapeHtml(this._lastReceipt?.id ?? '')}"
+      ></pyana-status-bar>
+      ${this._lastReceipt ? `
+        <div style="margin-top:0.5rem;">
+          <pyana-token-cap
+            kind="receipt"
+            label="${escapeHtml(this._lastMethod)}"
+            target="${escapeHtml(registryUri)}"
+            action="${escapeHtml(this._lastMethod)}"
+            tag="${escapeHtml(this._lastReceipt.id ?? this._lastReceipt.turnId ?? '')}"
+          ></pyana-token-cap>
+        </div>
+      ` : ''}
     `;
+
     this.shadowRoot.querySelectorAll('nav button[data-mode]').forEach((b) => {
-      b.addEventListener('click', () => this.setAttribute('mode', b.dataset.mode));
+      b.addEventListener('click', () => {
+        this._lastError = null;
+        this._lastReceipt = null;
+        this.setAttribute('mode', b.dataset.mode);
+      });
     });
+
+    const nameInput = this.shadowRoot.querySelector('input[name=name]');
+    nameInput?.addEventListener('input', async (e) => {
+      this._pendingName = e.target.value;
+      this._namePreview = await previewNameHash(this._pendingName);
+      // Re-render the preview span only — full re-render would lose focus.
+      const span = this.shadowRoot.querySelector('.pyana-nameservice-form-hash-preview');
+      if (span) {
+        span.textContent = this._namePreview
+          ? `blake3 = ${this._namePreview.slice(0, 16)}…${this._namePreview.slice(-8)}`
+          : 'blake3 = —';
+      }
+    });
+
     this.shadowRoot.querySelector('form').addEventListener('submit', (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
@@ -330,25 +725,39 @@ class PyanaNameRegisterFormElement extends HTMLElement {
   }
 
   async #dispatch(mode, registryUri, data) {
+    this._busy = { mode, message: `submitting ${mode}…` };
+    this._lastError = null;
+    this._lastReceipt = null;
+    this._lastMethod = mode;
+    this.render();
+
     const builders = (typeof window !== 'undefined') ? window.pyana?.builders?.nameservice : null;
     const builder = builders?.[`${mode}_name`] ?? builders?.[mode];
     if (!builder) {
+      this._busy = null;
+      this._lastError = `no builder for "${mode}"; check that turn-builders.js loaded`;
       this.dispatchEvent(new CustomEvent(`${mode}-requested`, {
         bubbles: true, composed: true,
         detail: { registryUri, ...data },
       }));
+      this.render();
       return;
     }
     try {
       const receipt = await builder(registryUri, data);
+      this._busy = null;
+      this._lastReceipt = receipt ?? { ok: true };
       this.dispatchEvent(new CustomEvent(`${mode}-submitted`, {
         bubbles: true, composed: true, detail: { receipt },
       }));
     } catch (err) {
+      this._busy = null;
+      this._lastError = `${mode} failed: ${String(err)}`;
       this.dispatchEvent(new CustomEvent(`${mode}-failed`, {
         bubbles: true, composed: true, detail: { error: String(err) },
       }));
     }
+    this.render();
   }
 }
 
