@@ -90,9 +90,12 @@ impl AppCipherclerk {
     /// and receipt chain. The framework constructs the shared handle
     /// itself in [`EmbeddedExecutor::app_wallet`]; apps rarely need to
     /// call this directly.
-    pub fn from_shared(wallet: Arc<RwLock<AgentCipherclerk>>, federation_id: [u8; 32]) -> Self {
+    pub fn from_shared(
+        cipherclerk: Arc<RwLock<AgentCipherclerk>>,
+        federation_id: [u8; 32],
+    ) -> Self {
         Self {
-            inner: wallet,
+            inner: cipherclerk,
             federation_id,
             domain: "default".to_string(),
         }
