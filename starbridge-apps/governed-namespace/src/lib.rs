@@ -33,7 +33,7 @@
 //! - `AUTHORIZATION-CUSTOM-DESIGN.md` — the `Authorization::Custom` shape
 //!   the `commit_table_update` builder constructs.
 //! - `starbridge-apps/nameservice/` — the pattern anchor (slot layout +
-//!   factory descriptor + turn builders + AppWallet integration).
+//!   factory descriptor + turn builders + AppCipherclerk integration).
 //! - `starbridge-apps/subscription/` — the operation-scoped
 //!   `CellProgram::Cases(_)` pattern with default-deny on unknown
 //!   methods, which this crate adopts.
@@ -160,7 +160,7 @@
 //!    factory + inspector descriptors into a shared host context.
 
 use pyana_app_framework::{
-    Action, AppWallet, AuthRequired, Authorization, CapTarget, CapTemplate, CellId, CellMode,
+    Action, AppCipherclerk, AuthRequired, Authorization, CapTarget, CapTemplate, CellId, CellMode,
     ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
     InspectorDescriptor, StarbridgeAppContext, StateConstraint, symbol,
 };
@@ -633,7 +633,7 @@ pub fn build_governed_router(table: RouteTable) -> GovernedRouter {
 ///
 /// # Parameters
 ///
-/// - `wallet` — the [`AppWallet`] signing the proposal. The wallet's
+/// - `cipherclerk` — the [`AppCipherclerk`] signing the proposal. The cipherclerk's
 ///   public key must be a member of the governance committee
 ///   (verified by `SenderAuthorized` against
 ///   `governance_committee_root` at execution time).
@@ -648,7 +648,7 @@ pub fn build_governed_router(table: RouteTable) -> GovernedRouter {
 ///   Hashed into the `proposal_root` so off-chain indexers can
 ///   resolve the cleartext later.
 pub fn build_propose_table_update_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     namespace_cell: CellId,
     proposed_route_table: &RouteTable,
     dispute_window_height: u64,
@@ -680,7 +680,7 @@ pub fn build_propose_table_update_action(
         },
     ];
 
-    wallet.make_action(namespace_cell, "propose_table_update", effects)
+    cipherclerk.make_action(namespace_cell, "propose_table_update", effects)
 }
 
 /// Build the on-ledger [`Action`] that records a vote on a pending
@@ -692,7 +692,7 @@ pub fn build_propose_table_update_action(
 ///
 /// # Parameters
 ///
-/// - `wallet` — the voting member (`SenderAuthorized` against
+/// - `cipherclerk` — the voting member (`SenderAuthorized` against
 ///   committee root enforces membership).
 /// - `namespace_cell` — the target cell.
 /// - `prior_proposal_root` — the value currently in
@@ -703,13 +703,13 @@ pub fn build_propose_table_update_action(
 ///   one-member-one-vote case; more in weighted-vote constitutions).
 ///   Folded into the proposal root so the tally is auditable.
 pub fn build_vote_on_proposal_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     namespace_cell: CellId,
     prior_proposal_root: FieldElement,
     vote_kind: VoteKind,
     vote_weight: u64,
 ) -> Action {
-    let voter_pk_hash = blake3_field(&wallet.public_key().0);
+    let voter_pk_hash = blake3_field(&cipherclerk.public_key().0);
     let new_proposal_root =
         compose_vote_update(&prior_proposal_root, &voter_pk_hash, vote_kind, vote_weight);
     let weight_field = u64_field(vote_weight);
@@ -730,7 +730,7 @@ pub fn build_vote_on_proposal_action(
         },
     ];
 
-    wallet.make_action(namespace_cell, "vote_on_proposal", effects)
+    cipherclerk.make_action(namespace_cell, "vote_on_proposal", effects)
 }
 
 /// Build the on-ledger [`Action`] that atomically swaps the route
@@ -749,7 +749,7 @@ pub fn build_vote_on_proposal_action(
 ///
 /// # Parameters
 ///
-/// - `wallet` — the carrier (any committee member); the threshold-sig
+/// - `cipherclerk` — the carrier (any committee member); the threshold-sig
 ///   is what authorizes, not the carrier's individual signature.
 /// - `namespace_cell` — the target cell.
 /// - `committed_route_table` — the new route table. Its commitment
@@ -794,7 +794,7 @@ pub fn build_vote_on_proposal_action(
 /// is `threshold_sig_bytes`. The action's three `SetField` effects
 /// plus the event constitute the atomic swap.
 pub fn build_commit_table_update_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     namespace_cell: CellId,
     committed_route_table: &RouteTable,
     new_version: u64,
@@ -832,12 +832,12 @@ pub fn build_commit_table_update_action(
 
     // Build the unsigned action with `Authorization::Custom` carrying
     // the governance predicate, then attach the threshold-sig as a
-    // witness blob. We use `wallet.make_action` to build the canonical
+    // witness blob. We use `cipherclerk.make_action` to build the canonical
     // shape (so the action carries the correct target/method/effects
     // and a default signature) and then OVERWRITE the authorization
-    // with the `Custom` variant — the wallet's signature is not the
+    // with the `Custom` variant — the cipherclerk's signature is not the
     // load-bearing auth here; the threshold-sig is.
-    let mut action = wallet.make_action(namespace_cell, "commit_table_update", effects);
+    let mut action = cipherclerk.make_action(namespace_cell, "commit_table_update", effects);
 
     // The witness-blob index for the threshold-sig is 0 (first blob).
     // The blob carries `WitnessKind::ProofBytes` — the canonical kind
@@ -872,14 +872,14 @@ pub fn build_commit_table_update_action(
 ///
 /// # Parameters
 ///
-/// - `wallet` — the registering caller (any sender; the DFA's
+/// - `cipherclerk` — the registering caller (any sender; the DFA's
 ///   classification of `path` determines whether the dispatch is
 ///   accepted by downstream consumers).
 /// - `namespace_cell` — the target governed-namespace cell.
 /// - `path` — the path being registered (e.g. `"/treasury/main"`).
 /// - `target_cell` — the cell ID the path resolves to.
 pub fn build_register_service_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     namespace_cell: CellId,
     path: &str,
     target_cell: CellId,
@@ -892,7 +892,7 @@ pub fn build_register_service_action(
         event: Event::new(symbol("service-registered"), vec![path_hash, target_field]),
     }];
 
-    wallet.make_action(namespace_cell, "register_service", effects)
+    cipherclerk.make_action(namespace_cell, "register_service", effects)
 }
 
 // =============================================================================
@@ -1129,17 +1129,17 @@ fn hex_encode(bytes: &[u8; 32]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_app_framework::{AgentWallet, EmbeddedExecutor};
+    use pyana_app_framework::{AgentCipherclerk, EmbeddedExecutor};
     use pyana_cell::program::{TransitionGuard, TransitionMeta};
 
-    fn test_wallet() -> AppWallet {
-        AppWallet::new(AgentWallet::new(), [42u8; 32])
+    fn test_cipherclerk() -> AppCipherclerk {
+        AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32])
     }
 
     fn test_context() -> StarbridgeAppContext {
-        let wallet = test_wallet();
-        let executor = EmbeddedExecutor::new(&wallet, "default");
-        StarbridgeAppContext::new(wallet, executor)
+        let cipherclerk = test_cipherclerk();
+        let executor = EmbeddedExecutor::new(&cipherclerk, "default");
+        StarbridgeAppContext::new(cipherclerk, executor)
     }
 
     fn test_cell() -> CellId {
@@ -1414,11 +1414,11 @@ mod tests {
 
     #[test]
     fn propose_action_shape() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cell = test_cell();
         let table = dummy_route_table(&[("/treasury/*", "treasury_v2")]);
         let action =
-            build_propose_table_update_action(&wallet, cell, &table, 10_000, "rotate keys");
+            build_propose_table_update_action(&cipherclerk, cell, &table, 10_000, "rotate keys");
 
         assert_eq!(action.target, cell);
         assert_eq!(action.method, symbol("propose_table_update"));
@@ -1436,10 +1436,10 @@ mod tests {
 
     #[test]
     fn vote_action_shape() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cell = test_cell();
         let prior_root = blake3_field(b"prior-proposal-root");
-        let action = build_vote_on_proposal_action(&wallet, cell, prior_root, VoteKind::Approve, 1);
+        let action = build_vote_on_proposal_action(&cipherclerk, cell, prior_root, VoteKind::Approve, 1);
 
         assert_eq!(action.method, symbol("vote_on_proposal"));
         assert_eq!(action.effects.len(), 2);
@@ -1456,13 +1456,13 @@ mod tests {
 
     #[test]
     fn commit_action_uses_authorization_custom_with_governance_vk() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cell = test_cell();
         let table = dummy_route_table(&[("/treasury/*", "treasury_v2")]);
         let committee = dummy_committee_root();
         let proof = b"threshold-sig-bytes-stub".to_vec();
         let action =
-            build_commit_table_update_action(&wallet, cell, &table, 1, proof.clone(), committee);
+            build_commit_table_update_action(&cipherclerk, cell, &table, 1, proof.clone(), committee);
 
         assert_eq!(action.method, symbol("commit_table_update"));
         assert_eq!(action.effects.len(), 4, "3 SetField + 1 EmitEvent");
@@ -1519,10 +1519,10 @@ mod tests {
 
     #[test]
     fn register_service_action_shape() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cell = test_cell();
         let target = CellId::from_bytes([77u8; 32]);
-        let action = build_register_service_action(&wallet, cell, "/treasury/main", target);
+        let action = build_register_service_action(&cipherclerk, cell, "/treasury/main", target);
 
         assert_eq!(action.method, symbol("register_service"));
         assert_eq!(action.effects.len(), 1);
@@ -1539,10 +1539,10 @@ mod tests {
 
     #[test]
     fn propose_action_carries_real_signature() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cell = test_cell();
         let table = dummy_route_table(&[("/x", "y")]);
-        let action = build_propose_table_update_action(&wallet, cell, &table, 1, "d");
+        let action = build_propose_table_update_action(&cipherclerk, cell, &table, 1, "d");
         match action.authorization {
             Authorization::Signature(a, b) => {
                 assert!(
@@ -1555,13 +1555,13 @@ mod tests {
     }
 
     #[test]
-    fn different_wallets_produce_different_vote_signatures() {
-        let w1 = AppWallet::new(AgentWallet::new(), [1u8; 32]);
-        let w2 = AppWallet::new(AgentWallet::new(), [1u8; 32]);
+    fn different_cipherclerks_produce_different_vote_signatures() {
+        let cc1 = AppCipherclerk::new(AgentCipherclerk::new(), [1u8; 32]);
+        let cc2 = AppCipherclerk::new(AgentCipherclerk::new(), [1u8; 32]);
         let cell = test_cell();
         let prior = blake3_field(b"prior");
-        let a1 = build_vote_on_proposal_action(&w1, cell, prior, VoteKind::Approve, 1);
-        let a2 = build_vote_on_proposal_action(&w2, cell, prior, VoteKind::Approve, 1);
+        let a1 = build_vote_on_proposal_action(&cc1, cell, prior, VoteKind::Approve, 1);
+        let a2 = build_vote_on_proposal_action(&cc2, cell, prior, VoteKind::Approve, 1);
         // Signatures differ even though logical input is identical.
         let (Authorization::Signature(r1, _), Authorization::Signature(r2, _)) =
             (&a1.authorization, &a2.authorization)
@@ -1570,9 +1570,9 @@ mod tests {
         };
         assert_ne!(
             r1, r2,
-            "different wallets must produce different signatures"
+            "different cipherclerks must produce different signatures"
         );
-        // Vote roots also differ (each wallet folds in its own pk hash).
+        // Vote roots also differ (each cipherclerk folds in its own pk hash).
         let (v1, v2) = match (&a1.effects[0], &a2.effects[0]) {
             (Effect::SetField { value: v1, .. }, Effect::SetField { value: v2, .. }) => (*v1, *v2),
             _ => panic!("expected SetField effects"),

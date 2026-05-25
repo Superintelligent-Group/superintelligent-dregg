@@ -20,7 +20,7 @@
 //! [`subscription_factory_descriptor`] that anyone can audit by
 //! hashing. The executor enforces the constraints on every turn.
 //! Publish, consume, and the two grant operations are
-//! [`AppWallet`]-signed [`Action`]s composed only of existing
+//! [`AppCipherclerk`]-signed [`Action`]s composed only of existing
 //! `Effect::SetField` and `Effect::EmitEvent` variants. No new Effect
 //! is introduced; no storage-side enforcement loop survives.
 //!
@@ -152,7 +152,7 @@
 //! state. See the README for the dependency note.
 
 use pyana_app_framework::{
-    Action, AppWallet, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, ChildVkStrategy,
+    Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, ChildVkStrategy,
     Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement, InspectorDescriptor,
     StarbridgeAppContext, StateConstraint, canonical_program_vk, symbol,
 };
@@ -518,14 +518,14 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 /// The action carries three `SetField` effects (head advances,
 /// message_root advances, latest_payload slot updated) plus an
 /// `EmitEvent("subscription-published", ...)` for off-chain
-/// indexers. The wallet's `make_action` produces a real
+/// indexers. The cipherclerk's `make_action` produces a real
 /// `Authorization::Signature(..)`; the executor checks the
 /// `publish`-case constraints against the (old, new) state pair
 /// and the action's sender on every turn.
 ///
 /// # Parameters
 ///
-/// - `wallet` — the [`AppWallet`] signing the publish (must hold a
+/// - `cipherclerk` — the [`AppCipherclerk`] signing the publish (must hold a
 ///   publisher cap or have its public key under
 ///   `authorized_publishers_root`).
 /// - `subscription_cell` — the target subscription cell.
@@ -537,7 +537,7 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 ///   verbatim in slot 7 as `latest_payload_hash`; also published in
 ///   the event payload for indexers.
 pub fn build_publish_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     subscription_cell: CellId,
     new_head: FieldElement,
     new_message_root: FieldElement,
@@ -568,7 +568,7 @@ pub fn build_publish_action(
         },
     ];
 
-    wallet.make_action(subscription_cell, "publish", effects)
+    cipherclerk.make_action(subscription_cell, "publish", effects)
 }
 
 /// Build the on-ledger [`Action`] that records a `consume`.
@@ -581,7 +581,7 @@ pub fn build_publish_action(
 ///
 /// # Parameters
 ///
-/// - `wallet` — the [`AppWallet`] signing the consume (must hold a
+/// - `cipherclerk` — the [`AppCipherclerk`] signing the consume (must hold a
 ///   consumer cap or have its public key under
 ///   `authorized_consumers_root`).
 /// - `subscription_cell` — the target subscription cell.
@@ -592,7 +592,7 @@ pub fn build_publish_action(
 ///   written to state (per the `consume` case's `Immutable` set on
 ///   slot 7).
 pub fn build_consume_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     subscription_cell: CellId,
     new_tail: FieldElement,
     consumed_payload_hash: FieldElement,
@@ -612,7 +612,7 @@ pub fn build_consume_action(
         },
     ];
 
-    wallet.make_action(subscription_cell, "consume", effects)
+    cipherclerk.make_action(subscription_cell, "consume", effects)
 }
 
 /// Build the on-ledger [`Action`] that adds a new publisher to the
@@ -626,7 +626,7 @@ pub fn build_consume_action(
 ///
 /// # Parameters
 ///
-/// - `wallet` — the [`AppWallet`] signing the grant. Must be the
+/// - `cipherclerk` — the [`AppCipherclerk`] signing the grant. Must be the
 ///   owner of the subscription cell (the `owner_pk_hash` slot's
 ///   preimage); the per-cell capability layer enforces this.
 /// - `subscription_cell` — the target subscription cell.
@@ -635,7 +635,7 @@ pub fn build_consume_action(
 ///   from the prior root + the new pubkey.
 /// - `new_publisher_pk` — the pubkey being added (for the event).
 pub fn build_grant_publisher_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     subscription_cell: CellId,
     new_publishers_root: FieldElement,
     new_publisher_pk: [u8; 32],
@@ -655,7 +655,7 @@ pub fn build_grant_publisher_action(
         },
     ];
 
-    wallet.make_action(subscription_cell, "grant_publisher", effects)
+    cipherclerk.make_action(subscription_cell, "grant_publisher", effects)
 }
 
 /// Build the on-ledger [`Action`] that adds a new consumer to the
@@ -663,7 +663,7 @@ pub fn build_grant_publisher_action(
 ///
 /// Symmetric to [`build_grant_publisher_action`].
 pub fn build_grant_consumer_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     subscription_cell: CellId,
     new_consumers_root: FieldElement,
     new_consumer_pk: [u8; 32],
@@ -683,7 +683,118 @@ pub fn build_grant_consumer_action(
         },
     ];
 
-    wallet.make_action(subscription_cell, "grant_consumer", effects)
+    cipherclerk.make_action(subscription_cell, "grant_consumer", effects)
+}
+
+// =============================================================================
+// Cross-app composition: bounty-state notifications
+// =============================================================================
+//
+// A subscription cell is a generic publish/consume queue, but the
+// canonical cross-app load it carries in the cross-app-e2e composition
+// story is **bounty-state notifications**: when a bounty's state
+// transitions (posted → claimed → fulfilled → settled), the bounty's
+// posting cell wants to notify subscribers (the original poster, the
+// claimant, watchers) without leaking the bounty body cleartext.
+//
+// The integration is data-only: the bounty app computes a canonical
+// `bounty_state_payload_hash` over the (bounty_id, prior_state,
+// new_state, actor_pk_hash) tuple and publishes it via
+// [`build_publish_action`]. Subscribers consume the event stream and
+// resolve the payload body out-of-band from a content store keyed by
+// the published hash.
+
+/// Canonical bounty lifecycle states. Used to seed the state-change
+/// payload hash so each transition is uniquely identifiable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BountyState {
+    /// Bounty has been posted; no claimant yet.
+    Posted,
+    /// A worker has claimed the bounty; fulfillment pending.
+    Claimed,
+    /// A fulfillment proof has been submitted; pending dispute window.
+    Fulfilled,
+    /// Settlement has occurred — bounty paid (or refunded on dispute).
+    Settled,
+    /// Bounty was canceled before fulfillment.
+    Canceled,
+}
+
+impl BountyState {
+    /// Single-byte canonical tag for the state. Used inside the payload
+    /// hash and surfaced as a 32-byte event datum so off-chain indexers
+    /// can filter by state without parsing the full payload.
+    pub fn tag(self) -> u8 {
+        match self {
+            BountyState::Posted => 1,
+            BountyState::Claimed => 2,
+            BountyState::Fulfilled => 3,
+            BountyState::Settled => 4,
+            BountyState::Canceled => 5,
+        }
+    }
+
+    /// Encode the state tag as a 32-byte `FieldElement` (zero-padded
+    /// LSB-style). Suitable as a fact term in event data.
+    pub fn tag_field(self) -> FieldElement {
+        let mut out = [0u8; 32];
+        out[31] = self.tag();
+        out
+    }
+}
+
+/// Compute the canonical payload hash for a bounty-state transition.
+///
+/// `blake3_derive_key("pyana-bounty-state-v1") || bounty_id ||
+/// prior_state.tag() || new_state.tag() || actor_pk_hash`. Distinct
+/// (bounty_id, prior, new, actor) tuples produce distinct payload
+/// hashes — replay-safe at the commitment level. The matching
+/// fulfillment / settlement payloads carry the same shape so the
+/// receipt chain composes deterministically.
+///
+/// Returns a 32-byte `FieldElement` ready to feed into
+/// [`build_publish_action`]'s `payload_hash` argument.
+pub fn bounty_state_payload_hash(
+    bounty_id: &[u8; 32],
+    prior_state: BountyState,
+    new_state: BountyState,
+    actor_pk_hash: &[u8; 32],
+) -> FieldElement {
+    let mut hasher = blake3::Hasher::new_derive_key("pyana-bounty-state-v1");
+    hasher.update(bounty_id);
+    hasher.update(&[prior_state.tag()]);
+    hasher.update(&[new_state.tag()]);
+    hasher.update(actor_pk_hash);
+    *hasher.finalize().as_bytes()
+}
+
+/// Convenience: build a `publish` action that notifies a subscription
+/// cell of a bounty state change.
+///
+/// Wraps [`build_publish_action`] with [`bounty_state_payload_hash`] so
+/// callers compose the cross-app pipeline in one call. The caller still
+/// supplies `new_head` (the advanced cursor) and `new_message_root`
+/// (the advanced root) — these are queue invariants the executor's
+/// `publish`-case constraints enforce regardless of payload contents.
+pub fn build_bounty_state_publish_action(
+    cipherclerk: &AppCipherclerk,
+    subscription_cell: CellId,
+    new_head: FieldElement,
+    new_message_root: FieldElement,
+    bounty_id: &[u8; 32],
+    prior_state: BountyState,
+    new_state: BountyState,
+    actor_pk_hash: &[u8; 32],
+) -> Action {
+    let payload_hash =
+        bounty_state_payload_hash(bounty_id, prior_state, new_state, actor_pk_hash);
+    build_publish_action(
+        cipherclerk,
+        subscription_cell,
+        new_head,
+        new_message_root,
+        payload_hash,
+    )
 }
 
 // =============================================================================
@@ -756,16 +867,16 @@ fn hex_encode(bytes: &[u8; 32]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_app_framework::{AgentWallet, Authorization, EmbeddedExecutor};
+    use pyana_app_framework::{AgentCipherclerk, Authorization, EmbeddedExecutor};
 
-    fn test_wallet() -> AppWallet {
-        AppWallet::new(AgentWallet::new(), [42u8; 32])
+    fn test_cipherclerk() -> AppCipherclerk {
+        AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32])
     }
 
     fn test_context() -> StarbridgeAppContext {
-        let wallet = test_wallet();
-        let executor = EmbeddedExecutor::new(&wallet, "default");
-        StarbridgeAppContext::new(wallet, executor)
+        let cipherclerk = test_cipherclerk();
+        let executor = EmbeddedExecutor::new(&cipherclerk, "default");
+        StarbridgeAppContext::new(cipherclerk, executor)
     }
 
     fn test_cell() -> CellId {
@@ -912,12 +1023,12 @@ mod tests {
 
     #[test]
     fn publish_action_shape() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cell = test_cell();
         let new_head = u64_field(1);
         let new_root = blake3_field(b"root-after-1");
         let payload = blake3_field(b"payload");
-        let action = build_publish_action(&wallet, cell, new_head, new_root, payload);
+        let action = build_publish_action(&cipherclerk, cell, new_head, new_root, payload);
 
         assert_eq!(action.target, cell);
         assert_eq!(action.method, symbol("publish"));
@@ -939,9 +1050,9 @@ mod tests {
 
     #[test]
     fn consume_action_shape() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cell = test_cell();
-        let action = build_consume_action(&wallet, cell, u64_field(1), blake3_field(b"payload"));
+        let action = build_consume_action(&cipherclerk, cell, u64_field(1), blake3_field(b"payload"));
 
         assert_eq!(action.method, symbol("consume"));
         assert_eq!(action.effects.len(), 2);
@@ -954,10 +1065,10 @@ mod tests {
 
     #[test]
     fn grant_publisher_action_shape() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cell = test_cell();
         let new_root = blake3_field(b"publishers-root-v1");
-        let action = build_grant_publisher_action(&wallet, cell, new_root, [9u8; 32]);
+        let action = build_grant_publisher_action(&cipherclerk, cell, new_root, [9u8; 32]);
 
         assert_eq!(action.method, symbol("grant_publisher"));
         assert_eq!(action.effects.len(), 2);
@@ -970,10 +1081,10 @@ mod tests {
 
     #[test]
     fn grant_consumer_action_shape() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cell = test_cell();
         let new_root = blake3_field(b"consumers-root-v1");
-        let action = build_grant_consumer_action(&wallet, cell, new_root, [11u8; 32]);
+        let action = build_grant_consumer_action(&cipherclerk, cell, new_root, [11u8; 32]);
 
         assert_eq!(action.method, symbol("grant_consumer"));
         assert_eq!(action.effects.len(), 2);
@@ -987,19 +1098,19 @@ mod tests {
     #[test]
     fn actions_carry_real_signatures() {
         // No `[0u8; 64]` placeholders anywhere.
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cell = test_cell();
         let actions = [
             build_publish_action(
-                &wallet,
+                &cipherclerk,
                 cell,
                 u64_field(1),
                 blake3_field(b"r"),
                 blake3_field(b"p"),
             ),
-            build_consume_action(&wallet, cell, u64_field(1), blake3_field(b"p")),
-            build_grant_publisher_action(&wallet, cell, blake3_field(b"r"), [9u8; 32]),
-            build_grant_consumer_action(&wallet, cell, blake3_field(b"r"), [11u8; 32]),
+            build_consume_action(&cipherclerk, cell, u64_field(1), blake3_field(b"p")),
+            build_grant_publisher_action(&cipherclerk, cell, blake3_field(b"r"), [9u8; 32]),
+            build_grant_consumer_action(&cipherclerk, cell, blake3_field(b"r"), [11u8; 32]),
         ];
         for a in &actions {
             match &a.authorization {
@@ -1015,13 +1126,13 @@ mod tests {
     }
 
     #[test]
-    fn different_wallets_produce_different_signatures() {
-        let w1 = AppWallet::new(AgentWallet::new(), [42u8; 32]);
-        let w2 = AppWallet::new(AgentWallet::new(), [42u8; 32]);
+    fn different_cipherclerks_produce_different_signatures() {
+        let cc1 = AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32]);
+        let cc2 = AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32]);
         let cell = test_cell();
         let payload = blake3_field(b"payload");
-        let a1 = build_publish_action(&w1, cell, u64_field(1), blake3_field(b"r"), payload);
-        let a2 = build_publish_action(&w2, cell, u64_field(1), blake3_field(b"r"), payload);
+        let a1 = build_publish_action(&cc1, cell, u64_field(1), blake3_field(b"r"), payload);
+        let a2 = build_publish_action(&cc2, cell, u64_field(1), blake3_field(b"r"), payload);
         let (Authorization::Signature(r1, _), Authorization::Signature(r2, _)) =
             (&a1.authorization, &a2.authorization)
         else {
@@ -1029,7 +1140,7 @@ mod tests {
         };
         assert_ne!(
             r1, r2,
-            "different wallets must produce different signatures"
+            "different cipherclerks must produce different signatures"
         );
     }
 
@@ -1165,5 +1276,134 @@ mod tests {
         register(&ctx);
         register(&ctx);
         assert_eq!(ctx.factory_registry().len(), 1);
+    }
+
+    // ── Cross-app composition: bounty-state notifications ───────────────
+
+    #[test]
+    fn bounty_state_payload_hash_is_deterministic() {
+        let id = [9u8; 32];
+        let actor = [11u8; 32];
+        let a = bounty_state_payload_hash(&id, BountyState::Posted, BountyState::Claimed, &actor);
+        let b = bounty_state_payload_hash(&id, BountyState::Posted, BountyState::Claimed, &actor);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn bounty_state_payload_hash_distinguishes_transitions() {
+        let id = [9u8; 32];
+        let actor = [11u8; 32];
+        let claim = bounty_state_payload_hash(
+            &id,
+            BountyState::Posted,
+            BountyState::Claimed,
+            &actor,
+        );
+        let fulfill = bounty_state_payload_hash(
+            &id,
+            BountyState::Claimed,
+            BountyState::Fulfilled,
+            &actor,
+        );
+        let settle = bounty_state_payload_hash(
+            &id,
+            BountyState::Fulfilled,
+            BountyState::Settled,
+            &actor,
+        );
+        assert_ne!(claim, fulfill);
+        assert_ne!(fulfill, settle);
+        assert_ne!(claim, settle);
+    }
+
+    #[test]
+    fn bounty_state_payload_hash_distinguishes_actors() {
+        let id = [9u8; 32];
+        let a1 = bounty_state_payload_hash(
+            &id,
+            BountyState::Posted,
+            BountyState::Claimed,
+            &[1u8; 32],
+        );
+        let a2 = bounty_state_payload_hash(
+            &id,
+            BountyState::Posted,
+            BountyState::Claimed,
+            &[2u8; 32],
+        );
+        assert_ne!(a1, a2);
+    }
+
+    #[test]
+    fn bounty_state_payload_hash_distinguishes_bounties() {
+        let actor = [11u8; 32];
+        let h1 = bounty_state_payload_hash(
+            &[1u8; 32],
+            BountyState::Posted,
+            BountyState::Claimed,
+            &actor,
+        );
+        let h2 = bounty_state_payload_hash(
+            &[2u8; 32],
+            BountyState::Posted,
+            BountyState::Claimed,
+            &actor,
+        );
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn build_bounty_state_publish_action_emits_bounty_payload_hash() {
+        let cipherclerk = test_cipherclerk();
+        let cell = test_cell();
+        let bounty_id = blake3_field(b"CVE-2025-1234");
+        let actor_hash = blake3_field(b"dan-pk");
+        let new_head = u64_field(1);
+        let new_root = blake3_field(b"queue-root-1");
+
+        let action = build_bounty_state_publish_action(
+            &cipherclerk,
+            cell,
+            new_head,
+            new_root,
+            &bounty_id,
+            BountyState::Claimed,
+            BountyState::Fulfilled,
+            &actor_hash,
+        );
+
+        assert_eq!(action.method, symbol("publish"));
+        // Payload-bearing SetField is the third effect (LATEST_PAYLOAD_SLOT).
+        match &action.effects[2] {
+            Effect::SetField { index, value, .. } => {
+                assert_eq!(*index, LATEST_PAYLOAD_SLOT as usize);
+                assert_eq!(
+                    *value,
+                    bounty_state_payload_hash(
+                        &bounty_id,
+                        BountyState::Claimed,
+                        BountyState::Fulfilled,
+                        &actor_hash
+                    )
+                );
+            }
+            other => panic!("expected SetField on LATEST_PAYLOAD_SLOT, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bounty_state_tag_field_distinguishes_states() {
+        let states = [
+            BountyState::Posted,
+            BountyState::Claimed,
+            BountyState::Fulfilled,
+            BountyState::Settled,
+            BountyState::Canceled,
+        ];
+        for i in 0..states.len() {
+            for j in (i + 1)..states.len() {
+                assert_ne!(states[i].tag_field(), states[j].tag_field());
+            }
+        }
     }
 }

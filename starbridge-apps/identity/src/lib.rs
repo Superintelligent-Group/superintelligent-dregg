@@ -71,7 +71,7 @@
 #![forbid(unsafe_code)]
 
 use pyana_app_framework::{
-    Action, AppWallet, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
+    Action, AppCipherclerk, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
     ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
     InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk, symbol,
 };
@@ -342,7 +342,7 @@ pub fn schema_commitment(schema: &CredentialSchema) -> FieldElement {
 /// have an on-ledger witness that the issuer published the credential
 /// under their `ISSUER_AUTH_ROOT_SLOT`.
 pub fn build_issue_credential_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     issuer_cell: CellId,
     credential: &Credential,
     new_counter: u64,
@@ -370,7 +370,7 @@ pub fn build_issue_credential_action(
             ),
         },
     ];
-    wallet.make_action(issuer_cell, "issue_credential", effects)
+    cipherclerk.make_action(issuer_cell, "issue_credential", effects)
 }
 
 /// Build the `Action` recording a credential revocation.
@@ -393,7 +393,7 @@ pub fn build_issue_credential_action(
 /// `RevocationProof.revoked` boolean (see
 /// [`build_verify_presentation_action`]).
 pub fn build_revoke_credential_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     issuer_cell: CellId,
     credential_id: [u8; 32],
     new_root: [u8; 32],
@@ -409,7 +409,7 @@ pub fn build_revoke_credential_action(
             event: Event::new(symbol("credential-revoked"), vec![credential_id, new_root]),
         },
     ];
-    wallet.make_action(issuer_cell, "revoke_credential", effects)
+    cipherclerk.make_action(issuer_cell, "revoke_credential", effects)
 }
 
 /// Build the `Action` recording that a holder produced a credential
@@ -430,7 +430,7 @@ pub fn build_revoke_credential_action(
 /// a cell-bound audit trail of their own presentations without exposing
 /// the contents.
 pub fn build_present_credential_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     holder_cell: CellId,
     presentation: &Presentation,
 ) -> Action {
@@ -451,7 +451,7 @@ pub fn build_present_credential_action(
             vec![revealed_facts_commitment, holder_commitment, anonymous_flag],
         ),
     }];
-    wallet.make_action(holder_cell, "present_credential", effects)
+    cipherclerk.make_action(holder_cell, "present_credential", effects)
 }
 
 /// Build the `Action` recording that a verifier accepted or rejected a
@@ -477,7 +477,7 @@ pub fn build_present_credential_action(
 /// the `RevocationProof`, and supplying it here. When G39 lands the
 /// non-revocation STARK directly, this hand-wiring goes away.
 pub fn build_verify_presentation_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     verifier_cell: CellId,
     presentation: &Presentation,
     options: &VerificationOptions,
@@ -501,7 +501,7 @@ pub fn build_verify_presentation_action(
             vec![revealed_facts_commitment, accept_field, pred_count],
         ),
     }];
-    wallet.make_action(verifier_cell, "verify_presentation", effects)
+    cipherclerk.make_action(verifier_cell, "verify_presentation", effects)
 }
 
 // =============================================================================
@@ -589,6 +589,84 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
 }
 
 // =============================================================================
+// Cross-app composition
+// =============================================================================
+//
+// The integrations below let other starbridge-apps consume credentials
+// issued by an identity-issuer cell *without* importing the credential
+// internals. They reduce a (issuer_cell, schema) pair to either:
+//
+//   1. An `AuthorizedSet::CredentialSet` clause that cell-programs can
+//      bake into their `StateConstraint::SenderAuthorized` set (so an
+//      app can require "sender holds a kyc-v1 credential from issuer X"
+//      directly at the executor / cell-program layer); or
+//
+//   2. A `WitnessedPredicate::BlindedSet` that an `Action` carries in
+//      `witness_blobs[i]` to discharge the constraint at turn time.
+//
+// The pair compose deterministically: the constraint's commitment is the
+// same 32 bytes the witness predicate carries, derived from
+// (issuer_cell, schema_commitment). Cross-app code on either side can
+// reproduce the value without depending on private hashing routines.
+
+/// Reduce an `(issuer_cell, schema)` pair to a stable 32-byte commitment
+/// other apps can bake into `AuthorizedSet::CredentialSet` constraints.
+///
+/// Reads through to [`AuthorizedSet::credential_set_commitment`] so the
+/// cell-program executor and the userspace builders agree on the byte
+/// shape. The value is `blake3_derive_key("pyana-credential-set-v1") ||
+/// issuer_cell || schema_commitment`.
+pub fn credential_set_commitment(issuer_cell: CellId, schema: &CredentialSchema) -> [u8; 32] {
+    let schema_id = schema_commitment(schema);
+    AuthorizedSet::credential_set_commitment(issuer_cell.as_bytes(), &schema_id)
+}
+
+/// Build a `StateConstraint::SenderAuthorized` clause whose authorized
+/// set is "holders of a credential matching `schema` issued by
+/// `issuer_cell`".
+///
+/// Cross-app callers (e.g. `starbridge-governed-namespace` for
+/// credential-gated voting; `starbridge-nameservice` for
+/// identity-attested tiers) drop the returned `StateConstraint` into a
+/// cell-program case. The executor's
+/// `WitnessedPredicateRegistry` dispatches the matching credential
+/// proof carried in the action's `witness_blobs`.
+pub fn credential_set_constraint(
+    issuer_cell: CellId,
+    schema: &CredentialSchema,
+) -> StateConstraint {
+    StateConstraint::SenderAuthorized {
+        set: AuthorizedSet::CredentialSet {
+            issuer_cell: *issuer_cell.as_bytes(),
+            credential_schema_id: schema_commitment(schema),
+        },
+    }
+}
+
+/// Build the witnessed-predicate shape an `Action` carries to discharge
+/// a [`credential_set_constraint`].
+///
+/// The returned predicate names the same commitment a matching
+/// `AuthorizedSet::CredentialSet` resolves to on the executor side
+/// (per [`credential_set_commitment`]), so dispatch is deterministic.
+/// `proof_witness_index` names the slot in the action's
+/// `witness_blobs` carrying the `Presentation` proof bytes (kind
+/// `ProofBytes`).
+pub fn credential_set_predicate(
+    issuer_cell: CellId,
+    schema: &CredentialSchema,
+    proof_witness_index: usize,
+) -> pyana_cell::predicate::WitnessedPredicate {
+    use pyana_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
+    WitnessedPredicate {
+        kind: WitnessedPredicateKind::BlindedSet,
+        commitment: credential_set_commitment(issuer_cell, schema),
+        input_ref: InputRef::Sender,
+        proof_witness_index,
+    }
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
@@ -639,10 +717,10 @@ fn hex_encode(bytes: &[u8; 32]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_app_framework::{AgentWallet, Authorization, EmbeddedExecutor};
+    use pyana_app_framework::{AgentCipherclerk, Authorization, EmbeddedExecutor};
 
-    fn test_wallet() -> AppWallet {
-        AppWallet::new(AgentWallet::new(), [42u8; 32])
+    fn test_cipherclerk() -> AppCipherclerk {
+        AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32])
     }
 
     fn test_cell() -> CellId {
@@ -650,9 +728,9 @@ mod tests {
     }
 
     fn test_context() -> StarbridgeAppContext {
-        let wallet = test_wallet();
-        let executor = EmbeddedExecutor::new(&wallet, "default");
-        StarbridgeAppContext::new(wallet, executor)
+        let cipherclerk = test_cipherclerk();
+        let executor = EmbeddedExecutor::new(&cipherclerk, "default");
+        StarbridgeAppContext::new(cipherclerk, executor)
     }
 
     fn test_issuer() -> IssuerKeys {
@@ -856,9 +934,9 @@ mod tests {
 
     #[test]
     fn issue_action_records_counter_event_and_revocation_root() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cred = test_credential();
-        let action = build_issue_credential_action(&wallet, test_cell(), &cred, 1, [0u8; 32]);
+        let action = build_issue_credential_action(&cipherclerk, test_cell(), &cred, 1, [0u8; 32]);
         assert_eq!(action.effects.len(), 3);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
@@ -876,10 +954,10 @@ mod tests {
 
     #[test]
     fn revoke_action_records_new_root_and_event() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let new_root = [0xa5u8; 32];
         let credential_id = [0x55u8; 32];
-        let action = build_revoke_credential_action(&wallet, test_cell(), credential_id, new_root);
+        let action = build_revoke_credential_action(&cipherclerk, test_cell(), credential_id, new_root);
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { value, index, .. } => {
@@ -892,9 +970,9 @@ mod tests {
 
     #[test]
     fn issue_action_carries_real_signature() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let cred = test_credential();
-        let action = build_issue_credential_action(&wallet, test_cell(), &cred, 1, [0u8; 32]);
+        let action = build_issue_credential_action(&cipherclerk, test_cell(), &cred, 1, [0u8; 32]);
         match action.authorization {
             Authorization::Signature(a, b) => {
                 assert!(
@@ -948,5 +1026,59 @@ mod tests {
         register(&ctx);
         register(&ctx);
         assert_eq!(ctx.factory_registry().len(), 1);
+    }
+
+    // ── Cross-app composition ────────────────────────────────────────────
+
+    #[test]
+    fn credential_set_commitment_is_stable_and_distinguishes() {
+        let issuer_a = CellId::from_bytes([1u8; 32]);
+        let issuer_b = CellId::from_bytes([2u8; 32]);
+        let c1 = credential_set_commitment(issuer_a, &kyc_schema());
+        let c2 = credential_set_commitment(issuer_a, &kyc_schema());
+        let c3 = credential_set_commitment(issuer_b, &kyc_schema());
+        let c4 = credential_set_commitment(issuer_a, &gov_id_schema());
+        assert_eq!(c1, c2, "commitment is deterministic");
+        assert_ne!(c1, c3, "different issuer cells produce distinct commitments");
+        assert_ne!(c1, c4, "different schemas produce distinct commitments");
+    }
+
+    #[test]
+    fn credential_set_constraint_uses_credential_set_variant() {
+        let issuer = CellId::from_bytes([7u8; 32]);
+        let constraint = credential_set_constraint(issuer, &kyc_schema());
+        match constraint {
+            StateConstraint::SenderAuthorized {
+                set:
+                    AuthorizedSet::CredentialSet {
+                        issuer_cell,
+                        credential_schema_id,
+                    },
+            } => {
+                assert_eq!(issuer_cell, *CellId::from_bytes([7u8; 32]).as_bytes());
+                assert_eq!(credential_schema_id, schema_commitment(&kyc_schema()));
+            }
+            other => panic!("expected CredentialSet variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn credential_set_predicate_matches_constraint_commitment() {
+        // Cross-app dispatch contract: the witness-predicate commitment
+        // an Action carries MUST equal the AuthorizedSet commitment the
+        // cell program resolves to. Otherwise the executor cannot
+        // dispatch deterministically.
+        let issuer = CellId::from_bytes([11u8; 32]);
+        let schema = kyc_schema();
+        let pred = credential_set_predicate(issuer, &schema, 0);
+        let cset_commit = credential_set_commitment(issuer, &schema);
+        assert_eq!(pred.commitment, cset_commit);
+
+        // And it also matches the cell-side AuthorizedSet helper.
+        let from_authset = AuthorizedSet::credential_set_commitment(
+            issuer.as_bytes(),
+            &schema_commitment(&schema),
+        );
+        assert_eq!(pred.commitment, from_authset);
     }
 }

@@ -13,6 +13,7 @@ description = "Starbridge userspace nameservice — FactoryDescriptors and turn 
 [dependencies]
 pyana-app-framework = { path = "../../app-framework" }
 pyana-cell = { path = "../../cell", default-features = false }
+pyana-turn = { path = "../../turn" }
 pyana-types = { path = "../../types" }
 
 blake3 = "1"

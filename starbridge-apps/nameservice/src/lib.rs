@@ -83,6 +83,8 @@ use pyana_app_framework::{
     ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
     InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk, symbol,
 };
+use pyana_cell::predicate::{InputRef, WitnessedPredicate, WitnessedPredicateKind};
+use pyana_cell::program::AuthorizedSet;
 
 // =============================================================================
 // State schema (per-registry-cell field-slot layout)
@@ -305,8 +307,8 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 ///    data=[name_hash, owner_hash, expiry])` — surfaces the
 ///    registration for off-chain indexers.
 ///
-/// The action is signed by the framework's [`AppWallet`]; the
-/// signature binds to the wallet's `federation_id`.
+/// The action is signed by the framework's [`AppCipherclerk`]; the
+/// signature binds to the cipherclerk's `federation_id`.
 ///
 /// # Slot-caveat enforcement
 ///
@@ -321,7 +323,7 @@ pub fn factory_descriptors() -> Vec<FactoryDescriptor> {
 /// `SLOT-CAVEATS-EVALUATION.md` for the Lane G design that landed
 /// these.
 pub fn build_register_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     registry_cell: CellId,
     name: &str,
     owner: [u8; 32],
@@ -356,7 +358,7 @@ pub fn build_register_action(
         },
     ];
 
-    wallet.make_action(registry_cell, "register_name", effects)
+    cipherclerk.make_action(registry_cell, "register_name", effects)
 }
 
 /// Build the on-ledger [`Action`] that extends a name's rent.
@@ -369,7 +371,7 @@ pub fn build_register_action(
 /// lands on the cell program, an off-by-one will be rejected at
 /// execution time.
 pub fn build_renew_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     registry_cell: CellId,
     name: &str,
     new_expiry_height: u64,
@@ -389,7 +391,7 @@ pub fn build_renew_action(
         },
     ];
 
-    wallet.make_action(registry_cell, "renew_name", effects)
+    cipherclerk.make_action(registry_cell, "renew_name", effects)
 }
 
 /// Build the on-ledger [`Action`] that records a name-owner transfer.
@@ -404,7 +406,7 @@ pub fn build_renew_action(
 /// owner's. Composing them at the call-site (rather than
 /// hard-coding the pair here) keeps the helper pure-state.
 pub fn build_transfer_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     registry_cell: CellId,
     name: &str,
     old_owner: [u8; 32],
@@ -429,7 +431,7 @@ pub fn build_transfer_action(
         },
     ];
 
-    wallet.make_action(registry_cell, "transfer_name", effects)
+    cipherclerk.make_action(registry_cell, "transfer_name", effects)
 }
 
 /// Build the on-ledger [`Action`] that revokes a name.
@@ -446,7 +448,7 @@ pub fn build_transfer_action(
 /// one-way: once the slot transitions from `FIELD_ZERO` to a tombstone,
 /// the executor rejects any subsequent write. A revoked name cannot be
 /// "un-revoked" by the owner, nor moved to a different tombstone.
-pub fn build_revoke_action(wallet: &AppWallet, registry_cell: CellId, name: &str) -> Action {
+pub fn build_revoke_action(cipherclerk: &AppCipherclerk, registry_cell: CellId, name: &str) -> Action {
     let name_hash = blake3_field(name.as_bytes());
     let tombstone = revoked_tombstone(name);
 
@@ -462,7 +464,7 @@ pub fn build_revoke_action(wallet: &AppWallet, registry_cell: CellId, name: &str
         },
     ];
 
-    wallet.make_action(registry_cell, "revoke_name", effects)
+    cipherclerk.make_action(registry_cell, "revoke_name", effects)
 }
 
 /// Build the on-ledger [`Action`] that re-points a name's resolve target.
@@ -479,7 +481,7 @@ pub fn build_revoke_action(wallet: &AppWallet, registry_cell: CellId, name: &str
 /// `cell -> target` is mutable — exactly the semantics a hierarchical
 /// nameservice wants.
 pub fn build_set_target_action(
-    wallet: &AppWallet,
+    cipherclerk: &AppCipherclerk,
     registry_cell: CellId,
     name: &str,
     target: FieldElement,
@@ -498,7 +500,7 @@ pub fn build_set_target_action(
         },
     ];
 
-    wallet.make_action(registry_cell, "set_name_target", effects)
+    cipherclerk.make_action(registry_cell, "set_name_target", effects)
 }
 
 /// Compute the canonical revocation tombstone for a name.
@@ -571,16 +573,16 @@ pub fn resolve_target(uri: &str) -> FieldElement {
 ///
 /// ```ignore
 /// use pyana_app_framework::{
-///     AgentWallet, AppServer, AppConfig, AppWallet, EmbeddedExecutor,
+///     AgentCipherclerk, AppServer, AppConfig, AppCipherclerk, EmbeddedExecutor,
 ///     StarbridgeAppContext,
 /// };
 ///
 /// #[tokio::main]
 /// async fn main() {
 ///     let federation_id = [42u8; 32];
-///     let wallet = AppWallet::new(AgentWallet::new(), federation_id);
-///     let executor = EmbeddedExecutor::new(&wallet, "default");
-///     let ctx = StarbridgeAppContext::new(wallet.clone(), executor.clone());
+///     let cipherclerk = AppCipherclerk::new(AgentCipherclerk::new(), federation_id);
+///     let executor = EmbeddedExecutor::new(&cipherclerk, "default");
+///     let ctx = StarbridgeAppContext::new(cipherclerk.clone(), executor.clone());
 ///
 ///     // Each starbridge-app contributes its factories + inspectors.
 ///     starbridge_nameservice::register(&ctx);
@@ -591,7 +593,7 @@ pub fn resolve_target(uri: &str) -> FieldElement {
 ///         .service_name("starbridge-host")
 ///         .with_health()
 ///         .with_cors()
-///         .with_wallet(wallet)
+///         .with_cipherclerk(cipherclerk)
 ///         .with_embedded_executor(executor)
 ///         .with_starbridge(ctx)
 ///         .serve()
@@ -601,7 +603,7 @@ pub fn resolve_target(uri: &str) -> FieldElement {
 /// ```
 ///
 /// Per-handler use: extract `axum::Extension<StarbridgeAppContext>`
-/// and reach `ctx.wallet()`, `ctx.executor()`, or
+/// and reach `ctx.cipherclerk()`, `ctx.executor()`, or
 /// `ctx.factory_registry()` uniformly across all starbridge-apps
 /// mounted on the same host.
 pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
@@ -681,6 +683,148 @@ fn hex_encode(bytes: &[u8; 32]) -> String {
 }
 
 // =============================================================================
+// Cross-app composition: identity-attested registration tier
+// =============================================================================
+//
+// Some federations want a *gated* registration tier: only callers who
+// present a verifiable credential of a pinned schema, issued by a known
+// identity-issuer cell, may register names. The substrate primitive that
+// enables this is `AuthorizedSet::CredentialSet` (cell/src/program.rs);
+// the userspace integration is the helper triple below — a tier
+// constraint, a registration action that carries the credential proof
+// in `witness_blobs`, and a deterministic predicate identifier the
+// executor's `WitnessedPredicateRegistry` dispatches against.
+//
+// The composition is data-only: nameservice does not import the
+// identity crate's credential internals. Callers wire the two by
+// passing in the issuer cell and a schema commitment (computed via
+// `starbridge_identity::schema_commitment`); the resulting constraint
+// and predicate agree on the same 32-byte commitment by construction
+// (see `AuthorizedSet::credential_set_commitment`).
+
+/// Build the `StateConstraint` clause an identity-attested tier of the
+/// nameservice imposes on registration turns.
+///
+/// Drop this into a `CellProgram::Cases` operation case for
+/// `register_name` (or a tier-specific method symbol) when the tier
+/// only admits callers who can present a credential of
+/// `credential_schema_id` issued by `issuer_cell`. The accompanying
+/// `Action` is built with [`build_register_with_credential_action`],
+/// which carries the `Presentation` proof bytes in
+/// `witness_blobs[proof_witness_index]`.
+///
+/// The constraint's `AuthorizedSet::CredentialSet { issuer_cell,
+/// credential_schema_id }` resolves on the executor side to
+/// `blake3_derive_key("pyana-credential-set-v1") || issuer_cell ||
+/// credential_schema_id` (per
+/// [`AuthorizedSet::credential_set_commitment`]); the matching
+/// witness predicate this crate emits names the same commitment so
+/// dispatch is deterministic.
+pub fn identity_attested_tier_constraint(
+    issuer_cell: CellId,
+    credential_schema_id: [u8; 32],
+) -> StateConstraint {
+    StateConstraint::SenderAuthorized {
+        set: AuthorizedSet::CredentialSet {
+            issuer_cell: *issuer_cell.as_bytes(),
+            credential_schema_id,
+        },
+    }
+}
+
+/// Build the witness-predicate shape an `Action` carries to discharge
+/// an [`identity_attested_tier_constraint`].
+///
+/// The returned predicate's `commitment` agrees with the constraint's
+/// `AuthorizedSet::CredentialSet` resolution, and `input_ref` is
+/// [`InputRef::Sender`] so the executor binds the sender pubkey to
+/// the credential's holder commitment via the registered
+/// `WitnessedPredicateKind::BlindedSet` verifier.
+pub fn identity_attested_witness_predicate(
+    issuer_cell: CellId,
+    credential_schema_id: [u8; 32],
+    proof_witness_index: usize,
+) -> WitnessedPredicate {
+    WitnessedPredicate {
+        kind: WitnessedPredicateKind::BlindedSet,
+        commitment: AuthorizedSet::credential_set_commitment(
+            issuer_cell.as_bytes(),
+            &credential_schema_id,
+        ),
+        input_ref: InputRef::Sender,
+        proof_witness_index,
+    }
+}
+
+/// Build the `Action` recording a credential-gated name registration.
+///
+/// Behaves like [`build_register_action`] (same four-effect shape: name
+/// hash, owner hash, expiry, event) but additionally:
+///
+/// 1. Attaches `credential_presentation_proof_bytes` as
+///    `witness_blobs[0]` (kind `ProofBytes`). The bytes are typically
+///    the postcard-serialized `pyana_credentials::Presentation` whose
+///    `WitnessedPredicateKind::BlindedSet` verifier accepts against
+///    the issuer cell's revocation root + schema commitment.
+/// 2. Emits an additional `name-registered-attested` event whose data
+///    fields [name_hash, owner_hash, issuer_cell, schema_commitment]
+///    pin the credential attestation in the receipt chain.
+/// 3. Tags the action's method as `register_name_attested` so the
+///    cell-program's `MethodIs`-guarded credential-gated case fires
+///    rather than the unattested `register_name` case.
+///
+/// The companion cell-program case for `register_name_attested` should
+/// install [`identity_attested_tier_constraint`] in its constraints
+/// (so the executor rejects callers without a matching credential
+/// proof).
+pub fn build_register_with_credential_action(
+    cipherclerk: &AppCipherclerk,
+    registry_cell: CellId,
+    name: &str,
+    owner: [u8; 32],
+    expiry_height: u64,
+    issuer_cell: CellId,
+    credential_schema_id: [u8; 32],
+    credential_presentation_proof_bytes: Vec<u8>,
+) -> Action {
+    let name_hash_val = blake3_field(name.as_bytes());
+    let owner_hash = blake3_field(&owner);
+    let expiry_field = u64_field(expiry_height);
+    let issuer_field = *issuer_cell.as_bytes();
+
+    let effects = vec![
+        Effect::SetField {
+            cell: registry_cell,
+            index: NAME_HASH_SLOT,
+            value: name_hash_val,
+        },
+        Effect::SetField {
+            cell: registry_cell,
+            index: OWNER_HASH_SLOT,
+            value: owner_hash,
+        },
+        Effect::SetField {
+            cell: registry_cell,
+            index: EXPIRY_SLOT,
+            value: expiry_field,
+        },
+        Effect::EmitEvent {
+            cell: registry_cell,
+            event: Event::new(
+                symbol("name-registered-attested"),
+                vec![name_hash_val, owner_hash, issuer_field, credential_schema_id],
+            ),
+        },
+    ];
+
+    let mut action = cipherclerk.make_action(registry_cell, "register_name_attested", effects);
+    action.witness_blobs = vec![pyana_turn::action::WitnessBlob::proof(
+        credential_presentation_proof_bytes,
+    )];
+    action
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
@@ -709,16 +853,16 @@ fn u64_field(value: u64) -> FieldElement {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyana_app_framework::{AgentWallet, Authorization, EmbeddedExecutor};
+    use pyana_app_framework::{AgentCipherclerk, Authorization, EmbeddedExecutor};
 
-    fn test_wallet() -> AppWallet {
-        AppWallet::new(AgentWallet::new(), [42u8; 32])
+    fn test_cipherclerk() -> AppCipherclerk {
+        AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32])
     }
 
     fn test_context() -> StarbridgeAppContext {
-        let wallet = test_wallet();
-        let executor = EmbeddedExecutor::new(&wallet, "default");
-        StarbridgeAppContext::new(wallet, executor)
+        let cipherclerk = test_cipherclerk();
+        let executor = EmbeddedExecutor::new(&cipherclerk, "default");
+        StarbridgeAppContext::new(cipherclerk, executor)
     }
 
     fn test_cell() -> CellId {
@@ -998,8 +1142,8 @@ mod tests {
 
     #[test]
     fn register_action_writes_three_slots_and_emits_event() {
-        let wallet = test_wallet();
-        let action = build_register_action(&wallet, test_cell(), "alice.pyana", [3u8; 32], 1_000);
+        let cipherclerk = test_cipherclerk();
+        let action = build_register_action(&cipherclerk, test_cell(), "alice.pyana", [3u8; 32], 1_000);
 
         assert_eq!(action.effects.len(), 4);
         assert!(matches!(
@@ -1021,8 +1165,8 @@ mod tests {
     fn register_action_carries_real_signature() {
         // The whole point of the userspace stance: actions carry a real
         // framework-issued signature, not a `[0u8; 64]` placeholder.
-        let wallet = test_wallet();
-        let action = build_register_action(&wallet, test_cell(), "alice.pyana", [3u8; 32], 1_000);
+        let cipherclerk = test_cipherclerk();
+        let action = build_register_action(&cipherclerk, test_cell(), "alice.pyana", [3u8; 32], 1_000);
         match action.authorization {
             Authorization::Signature(a, b) => {
                 assert!(
@@ -1036,20 +1180,20 @@ mod tests {
 
     #[test]
     fn different_names_produce_different_name_hashes() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let pick = |action: &Action| match &action.effects[0] {
             Effect::SetField { value, .. } => *value,
             _ => panic!("first effect is not SetField"),
         };
-        let a = build_register_action(&wallet, test_cell(), "alice.pyana", [3u8; 32], 1_000);
-        let b = build_register_action(&wallet, test_cell(), "bob.pyana", [3u8; 32], 1_000);
+        let a = build_register_action(&cipherclerk, test_cell(), "alice.pyana", [3u8; 32], 1_000);
+        let b = build_register_action(&cipherclerk, test_cell(), "bob.pyana", [3u8; 32], 1_000);
         assert_ne!(pick(&a), pick(&b));
     }
 
     #[test]
     fn renew_action_updates_expiry_slot_and_emits_event() {
-        let wallet = test_wallet();
-        let action = build_renew_action(&wallet, test_cell(), "alice.pyana", 2_000);
+        let cipherclerk = test_cipherclerk();
+        let action = build_renew_action(&cipherclerk, test_cell(), "alice.pyana", 2_000);
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
@@ -1063,10 +1207,10 @@ mod tests {
 
     #[test]
     fn transfer_action_updates_owner_slot_and_emits_event() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let old = [3u8; 32];
         let new = [4u8; 32];
-        let action = build_transfer_action(&wallet, test_cell(), "alice.pyana", old, new);
+        let action = build_transfer_action(&cipherclerk, test_cell(), "alice.pyana", old, new);
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
@@ -1188,8 +1332,8 @@ mod tests {
 
     #[test]
     fn revoke_action_writes_revoked_slot_and_emits_event() {
-        let wallet = test_wallet();
-        let action = build_revoke_action(&wallet, test_cell(), "alice.pyana");
+        let cipherclerk = test_cipherclerk();
+        let action = build_revoke_action(&cipherclerk, test_cell(), "alice.pyana");
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
@@ -1216,9 +1360,9 @@ mod tests {
 
     #[test]
     fn set_target_action_writes_resolve_slot_and_emits_event() {
-        let wallet = test_wallet();
+        let cipherclerk = test_cipherclerk();
         let target = resolve_target("pyana://cell/abc123");
-        let action = build_set_target_action(&wallet, test_cell(), "alice.pyana", target);
+        let action = build_set_target_action(&cipherclerk, test_cell(), "alice.pyana", target);
         assert_eq!(action.effects.len(), 2);
         match &action.effects[0] {
             Effect::SetField { index, value, .. } => {
@@ -1329,16 +1473,129 @@ mod tests {
         );
     }
 
+    // ── Cross-app composition: identity-attested registration ───────────
+
     #[test]
-    fn wallet_identity_binds_into_signature() {
-        // Two different wallets sign the same logical action with
-        // different signatures — confirms the wallet's identity is
+    fn identity_attested_tier_constraint_matches_predicate_commitment() {
+        // The constraint and predicate MUST agree on the 32-byte
+        // commitment, otherwise the executor cannot dispatch.
+        let issuer = CellId::from_bytes([42u8; 32]);
+        let schema_id = blake3_field(b"verified-developer-v1");
+        let constraint = identity_attested_tier_constraint(issuer, schema_id);
+        let predicate = identity_attested_witness_predicate(issuer, schema_id, 0);
+
+        let constraint_commit = match constraint {
+            StateConstraint::SenderAuthorized {
+                set:
+                    AuthorizedSet::CredentialSet {
+                        issuer_cell,
+                        credential_schema_id,
+                    },
+            } => AuthorizedSet::credential_set_commitment(&issuer_cell, &credential_schema_id),
+            other => panic!("expected CredentialSet, got {other:?}"),
+        };
+        assert_eq!(predicate.commitment, constraint_commit);
+        assert_eq!(predicate.kind, WitnessedPredicateKind::BlindedSet);
+        assert_eq!(predicate.input_ref, InputRef::Sender);
+    }
+
+    #[test]
+    fn build_register_with_credential_attaches_proof_witness_blob() {
+        let cipherclerk = test_cipherclerk();
+        let issuer = CellId::from_bytes([42u8; 32]);
+        let schema_id = blake3_field(b"verified-developer-v1");
+        let presentation_bytes = b"presentation-proof-stub".to_vec();
+        let action = build_register_with_credential_action(
+            &cipherclerk,
+            test_cell(),
+            "bob.dev",
+            [3u8; 32],
+            1_000,
+            issuer,
+            schema_id,
+            presentation_bytes.clone(),
+        );
+
+        assert_eq!(action.method, symbol("register_name_attested"));
+        assert_eq!(action.effects.len(), 4);
+        // First three SetFields parallel build_register_action.
+        assert!(matches!(
+            &action.effects[0],
+            Effect::SetField { index, .. } if *index == NAME_HASH_SLOT
+        ));
+        // Fourth effect is the attested event with issuer + schema fields.
+        match &action.effects[3] {
+            Effect::EmitEvent { event, .. } => {
+                assert_eq!(event.topic, symbol("name-registered-attested"));
+                assert_eq!(event.data.len(), 4);
+                assert_eq!(event.data[2], *issuer.as_bytes());
+                assert_eq!(event.data[3], schema_id);
+            }
+            other => panic!("expected EmitEvent, got {other:?}"),
+        }
+        // Witness blob present and kind ProofBytes.
+        assert_eq!(action.witness_blobs.len(), 1);
+        assert_eq!(action.witness_blobs[0].bytes, presentation_bytes);
+        assert_eq!(
+            action.witness_blobs[0].kind,
+            pyana_turn::action::WitnessKind::ProofBytes
+        );
+    }
+
+    #[test]
+    fn identity_attested_tier_distinguishes_issuers_and_schemas() {
+        // Different issuer cells or different schemas must produce
+        // different constraint commitments so the executor can route
+        // proofs to the correct registered verifier instance.
+        let issuer_a = CellId::from_bytes([1u8; 32]);
+        let issuer_b = CellId::from_bytes([2u8; 32]);
+        let schema_a = blake3_field(b"verified-developer-v1");
+        let schema_b = blake3_field(b"verified-developer-v2");
+        let c1 = match identity_attested_tier_constraint(issuer_a, schema_a) {
+            StateConstraint::SenderAuthorized {
+                set:
+                    AuthorizedSet::CredentialSet {
+                        issuer_cell,
+                        credential_schema_id,
+                    },
+            } => AuthorizedSet::credential_set_commitment(&issuer_cell, &credential_schema_id),
+            _ => panic!(),
+        };
+        let c2 = match identity_attested_tier_constraint(issuer_b, schema_a) {
+            StateConstraint::SenderAuthorized {
+                set:
+                    AuthorizedSet::CredentialSet {
+                        issuer_cell,
+                        credential_schema_id,
+                    },
+            } => AuthorizedSet::credential_set_commitment(&issuer_cell, &credential_schema_id),
+            _ => panic!(),
+        };
+        let c3 = match identity_attested_tier_constraint(issuer_a, schema_b) {
+            StateConstraint::SenderAuthorized {
+                set:
+                    AuthorizedSet::CredentialSet {
+                        issuer_cell,
+                        credential_schema_id,
+                    },
+            } => AuthorizedSet::credential_set_commitment(&issuer_cell, &credential_schema_id),
+            _ => panic!(),
+        };
+        assert_ne!(c1, c2);
+        assert_ne!(c1, c3);
+        assert_ne!(c2, c3);
+    }
+
+    #[test]
+    fn cipherclerk_identity_binds_into_signature() {
+        // Two different cipherclerks sign the same logical action with
+        // different signatures — confirms the cipherclerk's identity is
         // actually bound in.
-        let w1 = AppWallet::new(AgentWallet::new(), [42u8; 32]);
-        let w2 = AppWallet::new(AgentWallet::new(), [42u8; 32]);
+        let cc1 = AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32]);
+        let cc2 = AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32]);
         let cell = test_cell();
-        let a1 = build_register_action(&w1, cell, "alice", [3u8; 32], 1_000);
-        let a2 = build_register_action(&w2, cell, "alice", [3u8; 32], 1_000);
+        let a1 = build_register_action(&cc1, cell, "alice", [3u8; 32], 1_000);
+        let a2 = build_register_action(&cc2, cell, "alice", [3u8; 32], 1_000);
         let (Authorization::Signature(r1, _), Authorization::Signature(r2, _)) =
             (&a1.authorization, &a2.authorization)
         else {
@@ -1346,7 +1603,7 @@ mod tests {
         };
         assert_ne!(
             r1, r2,
-            "different wallets must produce different signatures"
+            "different cipherclerks must produce different signatures"
         );
     }
 }

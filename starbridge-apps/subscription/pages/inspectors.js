@@ -2,26 +2,28 @@
 //
 // Web components for the starbridge-subscription app:
 //
-//   <pyana-subscription uri="...">             — head-of-queue summary view
-//   <pyana-subscription-publish-form>          — publisher's compose-and-send UI
-//   <pyana-subscription-feed>                  — consumer's live feed
+//   <pyana-subscription uri="...">
+//     Live head/tail/capacity summary view. Polls every 5s and also
+//     subscribes to subscription-published / subscription-consumed
+//     events for instant updates.
 //
-// All three components resolve URIs through `window.pyana` (the in-browser
-// PyanaRuntime — see wasm/src/runtime.rs) and produce signed turns via
-// `window.pyana.signTurn(turnSpec)` (the extension wallet API — see
-// extension/src/page.ts). No app-domain enforcement runs here; the
-// cell-program (`subscription_program` in src/lib.rs) is the enforcement
-// loop. The web components only assemble turn specs and render state.
+//   <pyana-subscription-publish-form uri="...">
+//     Compose-and-send UI; submits via
+//     window.pyana.builders.subscription.publish (the cipherclerk-named
+//     Action preset that terminates in window.pyana.signTurn).
 //
-// Slot indices mirror the constants in `src/lib.rs`. Keep in sync:
-//   SEQ_HEAD_SLOT          = 0
-//   SEQ_TAIL_SLOT          = 1
-//   CAPACITY_SLOT          = 2
-//   PUBLISHERS_ROOT_SLOT   = 3
-//   CONSUMERS_ROOT_SLOT    = 4
-//   OWNER_PK_HASH_SLOT     = 5
-//   MESSAGE_ROOT_SLOT      = 6
-//   LATEST_PAYLOAD_SLOT    = 7
+//   <pyana-subscription-feed uri="...">
+//     Consumer's live message feed driven by the
+//     subscription-published event stream. Includes a Consume button
+//     that advances tail by 1 via the consume builder.
+//
+//   <pyana-subscription-grant-form uri="...">
+//     Owner UI for adding publishers / consumers (extends the
+//     authorized-set merkle root via grant_publisher / grant_consumer).
+//
+// All policy lives in Rust (starbridge-apps/subscription/src/lib.rs);
+// the JS layer is a thin shim that assembles turn specs and renders
+// state. Slot indices mirror constants in src/lib.rs.
 
 const SEQ_HEAD_SLOT = 0;
 const SEQ_TAIL_SLOT = 1;
@@ -32,23 +34,21 @@ const OWNER_PK_HASH_SLOT = 5;
 const MESSAGE_ROOT_SLOT = 6;
 const LATEST_PAYLOAD_SLOT = 7;
 
-function u64BE(n) {
-  // Big-endian-padded 32-byte field element. Matches the Rust
-  // `u64_field` helper in src/lib.rs and pyana_cell::program::field_from_u64_be.
-  const out = new Uint8Array(32);
-  let v = BigInt(n);
-  for (let i = 31; i >= 24 && v > 0n; i--) {
-    out[i] = Number(v & 0xffn);
-    v >>= 8n;
-  }
-  return out;
+const POLL_INTERVAL_MS = 5_000;
+const MAX_FEED_ITEMS = 50;
+
+// ─── helpers ─────────────────────────────────────────────────────────────
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c]);
 }
 
 function fieldToU64BE(bytes) {
-  // Decode a big-endian-padded u64 field element back to a Number.
   let v = 0n;
   for (let i = 24; i < 32; i++) {
-    v = (v << 8n) | BigInt(bytes[i] ?? 0);
+    v = (v << 8n) | BigInt(bytes?.[i] ?? 0);
   }
   return Number(v);
 }
@@ -57,193 +57,367 @@ function hex(bytes) {
   return Array.from(bytes ?? [], (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+function shortHex(bytes, head = 8, tail = 4) {
+  const h = hex(bytes);
+  if (h.length <= head + tail + 1) return h;
+  return `${h.slice(0, head)}…${h.slice(-tail)}`;
+}
+
+async function previewPayloadHash(text) {
+  if (!text) return '';
+  try {
+    if (typeof window !== 'undefined' && window.pyana?.blake3) {
+      const out = await window.pyana.blake3(new TextEncoder().encode(String(text)));
+      return Array.from(out).map((b) => b.toString(16).padStart(2, '0')).join('');
+    }
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(text)));
+    return hex(new Uint8Array(buf));
+  } catch {
+    return '';
+  }
+}
+
 // =========================================================================
-// <pyana-subscription> — head-of-queue summary view
+// <pyana-subscription> — live head-of-queue summary
 // =========================================================================
 
 class SubscriptionInspector extends HTMLElement {
-  static get observedAttributes() {
-    return ['uri'];
-  }
+  static get observedAttributes() { return ['uri']; }
+
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
     this._state = null;
-    this._unsubscribe = null;
+    this._error = null;
+    this._loading = true;
+    this._poll = null;
+    this._unsubPublished = null;
+    this._unsubConsumed = null;
   }
+
   connectedCallback() {
-    this.render();
     this.refresh();
+    this._poll = setInterval(() => this.refresh(), POLL_INTERVAL_MS);
+    this.#bindEvents();
   }
+
   disconnectedCallback() {
-    if (this._unsubscribe) this._unsubscribe();
+    if (this._poll) clearInterval(this._poll);
+    this._poll = null;
+    this._unsubPublished?.();
+    this._unsubConsumed?.();
   }
+
   attributeChangedCallback() {
+    this._unsubPublished?.();
+    this._unsubConsumed?.();
     this.refresh();
+    this.#bindEvents();
   }
+
+  #bindEvents() {
+    const uri = this.getAttribute('uri');
+    if (!uri || !window.pyana?.subscribeEvents) return;
+    this._unsubPublished = window.pyana.subscribeEvents(uri, 'subscription-published', () => this.refresh());
+    this._unsubConsumed  = window.pyana.subscribeEvents(uri, 'subscription-consumed',  () => this.refresh());
+  }
+
   async refresh() {
     const uri = this.getAttribute('uri');
-    if (!uri || !window.pyana?.readCell) return;
+    if (!uri || !window.pyana?.readCell) {
+      this._loading = false;
+      this.render();
+      return;
+    }
     try {
       const cell = await window.pyana.readCell(uri);
       this._state = cell?.state ?? null;
-      this.render();
+      this._error = null;
     } catch (e) {
       this._error = String(e);
-      this.render();
     }
+    this._loading = false;
+    this.render();
   }
+
   render() {
     const f = this._state?.fields;
     const head = f ? fieldToU64BE(f[SEQ_HEAD_SLOT]) : '—';
     const tail = f ? fieldToU64BE(f[SEQ_TAIL_SLOT]) : '—';
     const cap = f ? fieldToU64BE(f[CAPACITY_SLOT]) : '—';
-    const inflight = typeof head === 'number' && typeof tail === 'number' ? head - tail : '—';
-    const owner = f ? hex(f[OWNER_PK_HASH_SLOT]).slice(0, 16) : '—';
-    const mroot = f ? hex(f[MESSAGE_ROOT_SLOT]).slice(0, 16) : '—';
-    const latest = f ? hex(f[LATEST_PAYLOAD_SLOT]).slice(0, 16) : '—';
+    const inflight = (typeof head === 'number' && typeof tail === 'number') ? head - tail : '—';
+    const inflightPct = (typeof inflight === 'number' && typeof cap === 'number' && cap > 0)
+      ? Math.min(100, Math.round((inflight / cap) * 100)) : 0;
+
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; padding: 1em; }
-        .row { display: grid; grid-template-columns: 200px 1fr; gap: 4px; margin: 2px 0; }
-        .label { color: #666; }
-        .err { color: #c00; }
+        .pyana-subscription-summary-row {
+          display: grid;
+          grid-template-columns: 240px 1fr;
+          gap: 4px;
+          margin: 2px 0;
+        }
+        .pyana-subscription-summary-label { color: #666; }
+        .pyana-subscription-summary-error  { color: #c00; }
+        .pyana-subscription-summary-gauge {
+          background: #eef;
+          border-radius: 3px;
+          height: 1.2rem;
+          position: relative;
+          overflow: hidden;
+          max-width: 240px;
+        }
+        .pyana-subscription-summary-gauge-fill {
+          background: linear-gradient(90deg, #6b86ee, #3c5cd6);
+          height: 100%;
+          transition: width 0.3s ease;
+        }
+        .pyana-subscription-summary-gauge-label {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          color: #fff;
+          font-size: 0.78rem;
+          font-weight: 600;
+          mix-blend-mode: difference;
+        }
+        code { font-family: ui-monospace, monospace; }
       </style>
       <article>
         <h3>Subscription</h3>
-        ${this._error ? `<div class="err">error: ${this._error}</div>` : ''}
-        <div class="row"><span class="label">URI</span><code>${this.getAttribute('uri') ?? ''}</code></div>
-        <div class="row"><span class="label">head (next publish seq)</span><span>${head}</span></div>
-        <div class="row"><span class="label">tail (next consume seq)</span><span>${tail}</span></div>
-        <div class="row"><span class="label">in-flight</span><span>${inflight} / ${cap}</span></div>
-        <div class="row"><span class="label">owner (prefix)</span><code>${owner}…</code></div>
-        <div class="row"><span class="label">message_root (prefix)</span><code>${mroot}…</code></div>
-        <div class="row"><span class="label">latest_payload (prefix)</span><code>${latest}…</code></div>
+        ${this._loading ? `<pyana-status-bar state="loading" message="reading cell…"></pyana-status-bar>` : ''}
+        ${this._error ? `<div class="pyana-subscription-summary-error">error: ${escapeHtml(this._error)}</div>` : ''}
+        <div class="pyana-subscription-summary-row">
+          <span class="pyana-subscription-summary-label">URI</span>
+          <code>${escapeHtml(this.getAttribute('uri') ?? '')}</code>
+        </div>
+        <div class="pyana-subscription-summary-row">
+          <span class="pyana-subscription-summary-label">head (next publish seq)</span>
+          <span>${head}</span>
+        </div>
+        <div class="pyana-subscription-summary-row">
+          <span class="pyana-subscription-summary-label">tail (next consume seq)</span>
+          <span>${tail}</span>
+        </div>
+        <div class="pyana-subscription-summary-row">
+          <span class="pyana-subscription-summary-label">in-flight / capacity</span>
+          <div>
+            <div class="pyana-subscription-summary-gauge">
+              <div class="pyana-subscription-summary-gauge-fill" style="width:${inflightPct}%"></div>
+              <div class="pyana-subscription-summary-gauge-label">${inflight} / ${cap}</div>
+            </div>
+          </div>
+        </div>
+        <div class="pyana-subscription-summary-row">
+          <span class="pyana-subscription-summary-label">owner (prefix)</span>
+          <code>${escapeHtml(f ? shortHex(f[OWNER_PK_HASH_SLOT]) : '—')}</code>
+        </div>
+        <div class="pyana-subscription-summary-row">
+          <span class="pyana-subscription-summary-label">publishers_root</span>
+          <code>${escapeHtml(f ? shortHex(f[PUBLISHERS_ROOT_SLOT]) : '—')}</code>
+        </div>
+        <div class="pyana-subscription-summary-row">
+          <span class="pyana-subscription-summary-label">consumers_root</span>
+          <code>${escapeHtml(f ? shortHex(f[CONSUMERS_ROOT_SLOT]) : '—')}</code>
+        </div>
+        <div class="pyana-subscription-summary-row">
+          <span class="pyana-subscription-summary-label">message_root</span>
+          <code>${escapeHtml(f ? shortHex(f[MESSAGE_ROOT_SLOT]) : '—')}</code>
+        </div>
+        <div class="pyana-subscription-summary-row">
+          <span class="pyana-subscription-summary-label">latest_payload</span>
+          <code>${escapeHtml(f ? shortHex(f[LATEST_PAYLOAD_SLOT]) : '—')}</code>
+        </div>
       </article>
     `;
   }
 }
 
 // =========================================================================
-// <pyana-subscription-publish-form> — publisher's compose-and-send UI
+// <pyana-subscription-publish-form>
 // =========================================================================
 
 class SubscriptionPublishForm extends HTMLElement {
-  static get observedAttributes() {
-    return ['uri'];
-  }
+  static get observedAttributes() { return ['uri']; }
+
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
+    this._busy = null;
+    this._lastReceipt = null;
+    this._lastError = null;
+    this._hashPreview = '';
   }
-  connectedCallback() {
-    this.render();
-  }
-  attributeChangedCallback() {
-    this.render();
-  }
+
+  connectedCallback() { this.render(); }
+  attributeChangedCallback() { this.render(); }
+
   render() {
     const uri = this.getAttribute('uri') ?? '';
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; padding: 1em; }
-        textarea { width: 100%; min-height: 6em; font-family: ui-monospace, monospace; }
-        button { margin-top: 0.5em; padding: 0.5em 1em; }
-        .status { margin-top: 0.5em; min-height: 1.2em; }
-        .ok { color: #060; }
-        .err { color: #c00; }
+        .pyana-subscription-publish-form-textarea {
+          width: 100%;
+          min-height: 6em;
+          font: 0.9rem ui-monospace, monospace;
+          padding: 0.4rem;
+          border: 1px solid #ccc;
+          border-radius: 3px;
+        }
+        button {
+          margin-top: 0.5em;
+          padding: 0.5em 1em;
+          font: inherit;
+          background: #3956c8;
+          color: #fff;
+          border: 0;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        button[disabled] { opacity: 0.5; cursor: wait; }
+        .pyana-subscription-publish-form-hash {
+          font: 0.75rem ui-monospace, monospace;
+          color: #557;
+          word-break: break-all;
+          margin-top: 0.4rem;
+        }
       </style>
       <article>
         <h3>Publish</h3>
-        <p>Send a payload into <code>${uri}</code>. The turn-builder
-           composes <code>SetField(head, +1)</code> +
-           <code>SetField(message_root, …)</code> +
-           <code>SetField(latest_payload, …)</code> +
-           <code>EmitEvent("subscription-published")</code> into a
-           single signed Action.</p>
-        <textarea id="payload" placeholder="payload bytes (utf-8 or hex)"></textarea>
-        <button id="send">Publish</button>
-        <div class="status" id="status"></div>
+        <p>Send a payload into <code>${escapeHtml(uri)}</code>.
+           The cipherclerk publish builder composes
+           <code>SetField(head, +1)</code>,
+           <code>SetField(message_root, fold(old, payload))</code>,
+           <code>SetField(latest_payload, payload_hash)</code>, and
+           <code>EmitEvent("subscription-published")</code> into a single
+           signed turn.</p>
+        <textarea class="pyana-subscription-publish-form-textarea"
+                  id="payload"
+                  placeholder="payload bytes (utf-8 or hex)"></textarea>
+        <div class="pyana-subscription-publish-form-hash">
+          blake3(payload) = ${this._hashPreview
+            ? escapeHtml(this._hashPreview.slice(0, 16) + '…' + this._hashPreview.slice(-8))
+            : '—'}
+        </div>
+        <button id="send" ${this._busy ? 'disabled' : ''}>${this._busy ? 'publishing…' : 'Publish'}</button>
+        <pyana-status-bar
+          state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._lastReceipt ? 'success' : 'idle'))}"
+          message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._lastReceipt ? 'published' : ''))}"
+          receipt="${escapeHtml(this._lastReceipt?.id ?? this._lastReceipt?.turnId ?? '')}"
+        ></pyana-status-bar>
+        ${this._lastReceipt ? `
+          <div style="margin-top:0.5rem;">
+            <pyana-token-cap
+              kind="receipt"
+              label="publish"
+              target="${escapeHtml(uri)}"
+              action="publish"
+              tag="${escapeHtml(this._lastReceipt.id ?? this._lastReceipt.turnId ?? '')}"
+            ></pyana-token-cap>
+          </div>
+        ` : ''}
       </article>
     `;
+
+    const payloadEl = this.shadowRoot.getElementById('payload');
+    payloadEl?.addEventListener('input', async (e) => {
+      this._hashPreview = await previewPayloadHash(e.target.value);
+      const hashEl = this.shadowRoot.querySelector('.pyana-subscription-publish-form-hash');
+      if (hashEl) {
+        hashEl.textContent = `blake3(payload) = ${this._hashPreview
+          ? this._hashPreview.slice(0, 16) + '…' + this._hashPreview.slice(-8)
+          : '—'}`;
+      }
+    });
     this.shadowRoot.getElementById('send').onclick = () => this.publish();
   }
+
   async publish() {
     const uri = this.getAttribute('uri');
-    const statusEl = this.shadowRoot.getElementById('status');
     const payload = this.shadowRoot.getElementById('payload').value;
-    statusEl.className = '';
-    statusEl.textContent = 'publishing…';
-    try {
-      // Read cell to compute the new head + message_root.
-      const cell = await window.pyana.readCell(uri);
-      const oldHead = fieldToU64BE(cell.state.fields[SEQ_HEAD_SLOT]);
-      const newHead = u64BE(oldHead + 1);
-      // The browser doesn't have Poseidon2 wired; we use a BLAKE3-style
-      // fold for the placeholder root (matches the Rust test helper).
-      const payloadBytes = new TextEncoder().encode(payload);
-      const payloadHash = new Uint8Array(
-        await crypto.subtle.digest('SHA-256', payloadBytes),
-      );
-      const rootInput = new Uint8Array(64);
-      rootInput.set(cell.state.fields[MESSAGE_ROOT_SLOT], 0);
-      rootInput.set(payloadHash, 32);
-      const newRoot = new Uint8Array(
-        await crypto.subtle.digest('SHA-256', rootInput),
-      );
-      // Hand the assembled turnSpec to the extension wallet.
-      const receipt = await window.pyana.signTurn({
-        target: uri,
-        method: 'publish',
-        effects: [
-          { kind: 'SetField', cell: uri, index: SEQ_HEAD_SLOT, value: Array.from(newHead) },
-          { kind: 'SetField', cell: uri, index: MESSAGE_ROOT_SLOT, value: Array.from(newRoot) },
-          { kind: 'SetField', cell: uri, index: LATEST_PAYLOAD_SLOT, value: Array.from(payloadHash) },
-          {
-            kind: 'EmitEvent',
-            cell: uri,
-            topic: 'subscription-published',
-            data: [Array.from(newHead), Array.from(newRoot), Array.from(payloadHash)],
-          },
-        ],
-      });
-      statusEl.className = 'ok';
-      statusEl.textContent = `published (receipt: ${hex(receipt?.id ?? []).slice(0, 16)}…)`;
-    } catch (e) {
-      statusEl.className = 'err';
-      statusEl.textContent = `error: ${e}`;
+    if (!payload) {
+      this._lastError = 'payload is empty';
+      this.render();
+      return;
     }
+    this._busy = { message: 'publishing payload…' };
+    this._lastError = null;
+    this._lastReceipt = null;
+    this.render();
+    try {
+      const builder = window.pyana?.builders?.subscription?.publish;
+      let receipt;
+      if (builder) {
+        receipt = await builder(uri, payload);
+      } else {
+        // Fallback inline path (signTurn directly) — kept for hosts
+        // that don't preload turn-builders.js.
+        const cell = await window.pyana.readCell(uri);
+        const oldHead = fieldToU64BE(cell.state.fields[SEQ_HEAD_SLOT]);
+        const newHead = new Uint8Array(32);
+        const bn = BigInt(oldHead + 1);
+        for (let i = 0; i < 8; i += 1) newHead[31 - i] = Number((bn >> BigInt(i * 8)) & 0xffn);
+        const payloadBytes = new TextEncoder().encode(payload);
+        const payloadHash = new Uint8Array(await crypto.subtle.digest('SHA-256', payloadBytes));
+        const rootInput = new Uint8Array(64);
+        rootInput.set(cell.state.fields[MESSAGE_ROOT_SLOT], 0);
+        rootInput.set(payloadHash, 32);
+        const newRoot = new Uint8Array(await crypto.subtle.digest('SHA-256', rootInput));
+        receipt = await window.pyana.signTurn({
+          target: uri,
+          method: 'publish',
+          effects: [
+            { kind: 'SetField', cell: uri, index: SEQ_HEAD_SLOT,       value: Array.from(newHead) },
+            { kind: 'SetField', cell: uri, index: MESSAGE_ROOT_SLOT,   value: Array.from(newRoot) },
+            { kind: 'SetField', cell: uri, index: LATEST_PAYLOAD_SLOT, value: Array.from(payloadHash) },
+            { kind: 'EmitEvent', cell: uri, topic: 'subscription-published',
+              data: [Array.from(newHead), Array.from(newRoot), Array.from(payloadHash)] },
+          ],
+        });
+      }
+      this._busy = null;
+      this._lastReceipt = receipt ?? { ok: true };
+    } catch (e) {
+      this._busy = null;
+      this._lastError = `publish failed: ${String(e)}`;
+    }
+    this.render();
   }
 }
 
 // =========================================================================
-// <pyana-subscription-feed> — consumer's live feed
+// <pyana-subscription-feed> — live consumer feed
 // =========================================================================
 
 class SubscriptionFeed extends HTMLElement {
-  static get observedAttributes() {
-    return ['uri'];
-  }
+  static get observedAttributes() { return ['uri']; }
+
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
     this._messages = [];
     this._unsubscribe = null;
+    this._busy = null;
+    this._lastReceipt = null;
+    this._lastError = null;
   }
+
   connectedCallback() {
     this.render();
     this.subscribe();
   }
   disconnectedCallback() {
-    if (this._unsubscribe) this._unsubscribe();
+    this._unsubscribe?.();
   }
   attributeChangedCallback() {
-    if (this._unsubscribe) {
-      this._unsubscribe();
-      this._unsubscribe = null;
-    }
+    this._unsubscribe?.();
+    this._unsubscribe = null;
     this.subscribe();
   }
+
   subscribe() {
     const uri = this.getAttribute('uri');
     if (!uri || !window.pyana?.subscribeEvents) return;
@@ -252,76 +426,107 @@ class SubscriptionFeed extends HTMLElement {
       'subscription-published',
       (event) => {
         this._messages.unshift({
-          seq: fieldToU64BE(event.data[0]),
-          root: hex(event.data[1]).slice(0, 16),
-          payload: hex(event.data[2]).slice(0, 16),
+          seq: fieldToU64BE(event.data?.[0]),
+          root: shortHex(event.data?.[1]),
+          payload: shortHex(event.data?.[2]),
+          received_at: Date.now(),
         });
-        if (this._messages.length > 50) this._messages.length = 50;
+        if (this._messages.length > MAX_FEED_ITEMS) this._messages.length = MAX_FEED_ITEMS;
         this.render();
       },
     );
   }
+
   async consume() {
     const uri = this.getAttribute('uri');
-    const statusEl = this.shadowRoot.getElementById('status');
-    statusEl.className = '';
-    statusEl.textContent = 'consuming…';
+    this._busy = { message: 'consuming next…' };
+    this._lastError = null;
+    this._lastReceipt = null;
+    this.render();
     try {
-      const cell = await window.pyana.readCell(uri);
-      const oldTail = fieldToU64BE(cell.state.fields[SEQ_TAIL_SLOT]);
-      const newTail = u64BE(oldTail + 1);
-      const latestPayload = cell.state.fields[LATEST_PAYLOAD_SLOT];
-      const receipt = await window.pyana.signTurn({
-        target: uri,
-        method: 'consume',
-        effects: [
-          { kind: 'SetField', cell: uri, index: SEQ_TAIL_SLOT, value: Array.from(newTail) },
-          {
-            kind: 'EmitEvent',
-            cell: uri,
-            topic: 'subscription-consumed',
-            data: [Array.from(newTail), Array.from(latestPayload)],
-          },
-        ],
-      });
-      statusEl.className = 'ok';
-      statusEl.textContent = `consumed (receipt: ${hex(receipt?.id ?? []).slice(0, 16)}…)`;
+      const builder = window.pyana?.builders?.subscription?.consume;
+      const receipt = builder
+        ? await builder(uri)
+        : await window.pyana.signTurn({ target: uri, method: 'consume', effects: [] });
+      this._busy = null;
+      this._lastReceipt = receipt ?? { ok: true };
     } catch (e) {
-      statusEl.className = 'err';
-      statusEl.textContent = `error: ${e}`;
+      this._busy = null;
+      this._lastError = `consume failed: ${String(e)}`;
     }
+    this.render();
   }
+
   render() {
     const uri = this.getAttribute('uri') ?? '';
-    const rows = this._messages
-      .map(
-        (m) => `<tr><td>${m.seq}</td><td><code>${m.root}…</code></td><td><code>${m.payload}…</code></td></tr>`,
-      )
-      .join('');
+    const rows = this._messages.map((m) => `
+      <tr>
+        <td>${m.seq}</td>
+        <td><code>${escapeHtml(m.root)}</code></td>
+        <td><code>${escapeHtml(m.payload)}</code></td>
+        <td>${new Date(m.received_at).toLocaleTimeString()}</td>
+      </tr>
+    `).join('');
+
     this.shadowRoot.innerHTML = `
       <style>
         :host { display: block; font-family: system-ui, sans-serif; padding: 1em; }
-        table { width: 100%; border-collapse: collapse; margin-top: 0.5em; }
-        th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #eee; }
-        button { margin: 0.5em 0; padding: 0.5em 1em; }
-        .status { min-height: 1.2em; }
-        .ok { color: #060; }
-        .err { color: #c00; }
-        .empty { color: #999; padding: 1em; text-align: center; }
+        .pyana-subscription-feed-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-top: 0.5em;
+        }
+        .pyana-subscription-feed-table th,
+        .pyana-subscription-feed-table td {
+          text-align: left;
+          padding: 4px 8px;
+          border-bottom: 1px solid #eee;
+        }
+        .pyana-subscription-feed-table th {
+          background: #fafafa;
+          font-size: 0.85rem;
+        }
+        button {
+          margin: 0.5em 0;
+          padding: 0.5em 1em;
+          font: inherit;
+          background: #3956c8;
+          color: #fff;
+          border: 0;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        button[disabled] { opacity: 0.5; cursor: wait; }
+        .pyana-subscription-feed-empty {
+          color: #999;
+          padding: 1em;
+          text-align: center;
+          border: 1px dashed #ddd;
+          border-radius: 4px;
+        }
+        code { font-family: ui-monospace, monospace; }
       </style>
       <article>
         <h3>Feed</h3>
-        <p>Live <code>subscription-published</code> events from <code>${uri}</code>.
-           Click <em>Consume</em> to advance tail by 1 (the consume
-           turn-builder writes <code>SetField(tail, +1)</code> +
-           <code>EmitEvent("subscription-consumed")</code>).</p>
-        <button id="consume">Consume next</button>
-        <div class="status" id="status"></div>
-        ${
-          rows
-            ? `<table><thead><tr><th>seq</th><th>message_root</th><th>payload</th></tr></thead><tbody>${rows}</tbody></table>`
-            : '<div class="empty">(no events yet)</div>'
-        }
+        <p>Live <code>subscription-published</code> events from
+           <code>${escapeHtml(uri)}</code>. Click <em>Consume</em> to
+           advance tail by 1.</p>
+        <button id="consume" ${this._busy ? 'disabled' : ''}>
+          ${this._busy ? 'consuming…' : 'Consume next'}
+        </button>
+        <pyana-status-bar
+          state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._lastReceipt ? 'success' : 'idle'))}"
+          message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._lastReceipt ? 'consumed' : ''))}"
+          receipt="${escapeHtml(this._lastReceipt?.id ?? this._lastReceipt?.turnId ?? '')}"
+        ></pyana-status-bar>
+        ${rows ? `
+          <table class="pyana-subscription-feed-table">
+            <thead>
+              <tr><th>seq</th><th>message_root</th><th>payload</th><th>received</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        ` : `<div class="pyana-subscription-feed-empty">(no events yet — waiting for publishers)</div>`}
       </article>
     `;
     const btn = this.shadowRoot.getElementById('consume');
@@ -330,28 +535,150 @@ class SubscriptionFeed extends HTMLElement {
 }
 
 // =========================================================================
+// <pyana-subscription-grant-form>
+// =========================================================================
+
+class SubscriptionGrantForm extends HTMLElement {
+  static get observedAttributes() { return ['uri', 'role']; }
+
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+    this._busy = null;
+    this._lastReceipt = null;
+    this._lastError = null;
+  }
+  connectedCallback() { this.render(); }
+  attributeChangedCallback() { this.render(); }
+
+  render() {
+    const uri = this.getAttribute('uri') || '';
+    const role = (this.getAttribute('role') || 'publisher').toLowerCase();
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; font-family: system-ui, sans-serif; padding: 1em; }
+        .pyana-subscription-grant-form {
+          display: grid;
+          gap: 0.75rem;
+          max-width: 420px;
+        }
+        .pyana-subscription-grant-form label {
+          display: grid;
+          gap: 0.25rem;
+        }
+        .pyana-subscription-grant-form input,
+        .pyana-subscription-grant-form select {
+          padding: 0.4rem;
+          font: inherit;
+          border: 1px solid #ccc;
+          border-radius: 3px;
+        }
+        button[type=submit] {
+          padding: 0.55rem;
+          font-weight: 600;
+          background: #3956c8;
+          color: #fff;
+          border: 0;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        button[disabled] { opacity: 0.5; cursor: wait; }
+      </style>
+      <form class="pyana-subscription-grant-form">
+        <h3 style="margin: 0;">Grant ${escapeHtml(role)} access</h3>
+        <div>Subscription: <code>${escapeHtml(uri)}</code></div>
+        <label>Role
+          <select name="role">
+            <option value="publisher" ${role === 'publisher' ? 'selected' : ''}>publisher</option>
+            <option value="consumer" ${role === 'consumer' ? 'selected' : ''}>consumer</option>
+          </select>
+        </label>
+        <label>Public key (32 bytes, hex)
+          <input name="pk" required placeholder="0x… or 64 hex chars" />
+        </label>
+        <button type="submit" ${this._busy ? 'disabled' : ''}>
+          ${this._busy ? 'granting…' : `Grant ${role}`}
+        </button>
+      </form>
+      <pyana-status-bar
+        state="${this._busy ? 'loading' : (this._lastError ? 'error' : (this._lastReceipt ? 'success' : 'idle'))}"
+        message="${escapeHtml(this._busy?.message ?? this._lastError ?? (this._lastReceipt ? 'granted' : ''))}"
+        receipt="${escapeHtml(this._lastReceipt?.id ?? this._lastReceipt?.turnId ?? '')}"
+      ></pyana-status-bar>
+      ${this._lastReceipt ? `
+        <pyana-token-cap
+          kind="cap"
+          label="grant_${escapeHtml(role)}"
+          target="${escapeHtml(uri)}"
+          action="grant_${escapeHtml(role)}"
+          tag="${escapeHtml(this._lastReceipt.id ?? this._lastReceipt.turnId ?? '')}"
+        ></pyana-token-cap>
+      ` : ''}
+    `;
+
+    this.shadowRoot.querySelector('select[name=role]')?.addEventListener('change', (e) => {
+      this.setAttribute('role', e.target.value);
+    });
+    this.shadowRoot.querySelector('form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      this.#grant(fd.get('role'), fd.get('pk'));
+    });
+  }
+
+  async #grant(role, pkHex) {
+    const uri = this.getAttribute('uri');
+    this._busy = { message: `granting ${role}…` };
+    this._lastError = null;
+    this._lastReceipt = null;
+    this.render();
+    try {
+      const method = role === 'consumer' ? 'grant_consumer' : 'grant_publisher';
+      const builder = window.pyana?.builders?.subscription?.[method];
+      if (!builder) throw new Error(`no ${method} builder loaded`);
+      const pk = parseHex(pkHex);
+      const receipt = await builder(uri, pk);
+      this._busy = null;
+      this._lastReceipt = receipt ?? { ok: true };
+    } catch (e) {
+      this._busy = null;
+      this._lastError = `grant failed: ${String(e)}`;
+    }
+    this.render();
+  }
+}
+
+function parseHex(s) {
+  const t = (s || '').trim().replace(/^0x/, '');
+  if (!/^[0-9a-fA-F]+$/.test(t)) throw new Error('invalid hex');
+  const out = new Uint8Array(t.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = parseInt(t.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+// =========================================================================
 // Register components
 // =========================================================================
 
+const COMPONENTS = {
+  'pyana-subscription':              SubscriptionInspector,
+  'pyana-subscription-publish-form': SubscriptionPublishForm,
+  'pyana-subscription-feed':         SubscriptionFeed,
+  'pyana-subscription-grant-form':   SubscriptionGrantForm,
+};
+
 if (typeof window !== 'undefined' && typeof customElements !== 'undefined') {
-  if (!customElements.get('pyana-subscription')) {
-    customElements.define('pyana-subscription', SubscriptionInspector);
+  for (const [tag, ctor] of Object.entries(COMPONENTS)) {
+    if (!customElements.get(tag)) customElements.define(tag, ctor);
+    window.pyana?.register?.(tag, ctor);
   }
-  if (!customElements.get('pyana-subscription-publish-form')) {
-    customElements.define('pyana-subscription-publish-form', SubscriptionPublishForm);
-  }
-  if (!customElements.get('pyana-subscription-feed')) {
-    customElements.define('pyana-subscription-feed', SubscriptionFeed);
-  }
-  // Mirror into the shared inspector registry so the Studio's
-  // <pyana-app> can resolve URIs to these components.
-  window.pyana?.register?.('pyana-subscription', SubscriptionInspector);
-  window.pyana?.register?.('pyana-subscription-publish-form', SubscriptionPublishForm);
-  window.pyana?.register?.('pyana-subscription-feed', SubscriptionFeed);
 }
 
 export {
   SubscriptionInspector,
   SubscriptionPublishForm,
   SubscriptionFeed,
+  SubscriptionGrantForm,
 };

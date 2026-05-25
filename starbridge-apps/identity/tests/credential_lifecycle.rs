@@ -24,7 +24,7 @@
 //!    forged predicate is rejected and the builder emits a
 //!    `presentation-rejected` event.
 
-use pyana_app_framework::{AgentWallet, AppWallet, CellId, Effect};
+use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, Effect};
 use pyana_token::AuthRequest;
 
 use starbridge_identity::{
@@ -35,8 +35,8 @@ use starbridge_identity::{
     schema_commitment, verify,
 };
 
-fn fixture_wallet() -> AppWallet {
-    AppWallet::new(AgentWallet::new(), [42u8; 32])
+fn fixture_cipherclerk() -> AppCipherclerk {
+    AppCipherclerk::new(AgentCipherclerk::new(), [42u8; 32])
 }
 
 fn fixture_cell(seed: u8) -> CellId {
@@ -86,9 +86,9 @@ fn roundtrip_issue_present_verify() {
         issue(&issuer, &schema, holder, attrs, 1_700_000_000, None).expect("issuance must succeed");
 
     // Userspace anchor: emit the issuance action on the issuer cell.
-    let wallet = fixture_wallet();
+    let cipherclerk = fixture_cipherclerk();
     let issuer_cell = fixture_cell(1);
-    let action = build_issue_credential_action(&wallet, issuer_cell, &credential, 1, [0u8; 32]);
+    let action = build_issue_credential_action(&cipherclerk, issuer_cell, &credential, 1, [0u8; 32]);
     assert_eq!(action.effects.len(), 3, "expected 3 effects");
     // First effect bumps the issuance counter (slot 3).
     match &action.effects[0] {
@@ -109,7 +109,7 @@ fn roundtrip_issue_present_verify() {
 
     // Userspace anchor: holder records the presentation on their cell.
     let holder_cell = fixture_cell(9);
-    let pres_action = build_present_credential_action(&wallet, holder_cell, &presentation);
+    let pres_action = build_present_credential_action(&cipherclerk, holder_cell, &presentation);
     assert_eq!(pres_action.effects.len(), 1);
 
     // Verify the presentation against the verifier's expectations.
@@ -151,10 +151,10 @@ fn revoked_credential_rejected() {
     assert!(revocation_proof.revoked, "credential must be revoked");
 
     // Userspace anchor: record revocation on the issuer cell.
-    let wallet = fixture_wallet();
+    let cipherclerk = fixture_cipherclerk();
     let issuer_cell = fixture_cell(1);
     let rev_action =
-        build_revoke_credential_action(&wallet, issuer_cell, credential.id(), registry.root());
+        build_revoke_credential_action(&cipherclerk, issuer_cell, credential.id(), registry.root());
     assert_eq!(rev_action.effects.len(), 2);
 
     // Holder presents the revoked credential.
@@ -176,7 +176,7 @@ fn revoked_credential_rejected() {
     // The verifier turn-builder records the rejection on the verifier cell.
     let verifier_cell = fixture_cell(2);
     let action =
-        build_verify_presentation_action(&wallet, verifier_cell, &presentation, &verify_opts);
+        build_verify_presentation_action(&cipherclerk, verifier_cell, &presentation, &verify_opts);
     match &action.effects[0] {
         Effect::EmitEvent { event, .. } => {
             // Event topic is "presentation-rejected" — encoded as a symbol,
@@ -298,9 +298,9 @@ fn verify_action_records_accept_event() {
         expected_disclosure: vec!["verification_level".into()],
         ..Default::default()
     };
-    let wallet = fixture_wallet();
+    let cipherclerk = fixture_cipherclerk();
     let action =
-        build_verify_presentation_action(&wallet, fixture_cell(2), &presentation, &verify_opts);
+        build_verify_presentation_action(&cipherclerk, fixture_cell(2), &presentation, &verify_opts);
     match &action.effects[0] {
         Effect::EmitEvent { event, .. } => {
             assert_eq!(event.data.len(), 3);
@@ -343,9 +343,9 @@ fn verify_action_records_reject_event() {
         )],
         ..Default::default()
     };
-    let wallet = fixture_wallet();
+    let cipherclerk = fixture_cipherclerk();
     let action =
-        build_verify_presentation_action(&wallet, fixture_cell(2), &presentation, &verify_opts);
+        build_verify_presentation_action(&cipherclerk, fixture_cell(2), &presentation, &verify_opts);
     match &action.effects[0] {
         Effect::EmitEvent { event, .. } => {
             assert_eq!(event.data[1][31], 0, "accept flag must be zero on reject");

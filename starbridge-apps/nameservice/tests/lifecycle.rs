@@ -11,7 +11,7 @@
 //!   - Expiry decrement (Monotonic on EXPIRY_SLOT)
 //!   - Double revocation (WriteOnce on REVOKED_SLOT)
 //! - **Authorization adversarial**: an `Authorization::Unchecked` action
-//!   does *not* round-trip through `build_*_action` — the AppWallet path
+//!   does *not* round-trip through `build_*_action` — the AppCipherclerk path
 //!   always carries a real Ed25519 signature. We exercise that here as
 //!   the regression guard for the `[0u8; 64]` pattern.
 //!
@@ -25,7 +25,7 @@
 //! together) — duplicating that wiring here would just couple this
 //! crate to an executor it does not depend on.
 
-use pyana_app_framework::{AgentWallet, AppWallet, Authorization, CellId, Effect, FieldElement};
+use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, Authorization, CellId, Effect, FieldElement};
 use pyana_cell::{CellProgram, ProgramError, StateConstraint};
 use starbridge_nameservice::{
     EXPIRY_SLOT, NAME_FACTORY_VK, NAME_HASH_SLOT, OWNER_HASH_SLOT, RESOLVE_TARGET_SLOT,
@@ -38,8 +38,8 @@ use starbridge_nameservice::{
 // Helpers
 // =============================================================================
 
-fn wallet_with_seed(seed_byte: u8) -> AppWallet {
-    AppWallet::new(AgentWallet::new(), [seed_byte; 32])
+fn wallet_with_seed(seed_byte: u8) -> AppCipherclerk {
+    AppCipherclerk::new(AgentCipherclerk::new(), [seed_byte; 32])
 }
 
 fn registry_cell() -> CellId {
@@ -75,7 +75,7 @@ fn project_setfield(action: &pyana_app_framework::Action, slot: usize) -> Option
 #[test]
 fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
     let program = fresh_program();
-    let wallet = wallet_with_seed(0x10);
+    let cipherclerk = wallet_with_seed(0x10);
     let cell = registry_cell();
     let owner = [0xAAu8; 32];
     let new_owner = [0xBBu8; 32];
@@ -83,7 +83,7 @@ fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
 
     // ── Step 1: register (creation; old = empty). ────────────────────
     let initial_expiry: u64 = 1_000;
-    let register_action = build_register_action(&wallet, cell, name, owner, initial_expiry);
+    let register_action = build_register_action(&cipherclerk, cell, name, owner, initial_expiry);
     let mut state_after_register = empty_state();
     state_after_register.fields[NAME_HASH_SLOT] =
         project_setfield(&register_action, NAME_HASH_SLOT).unwrap();
@@ -99,7 +99,7 @@ fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
 
     // ── Step 2: set-target (no slot caveat applies). ────────────────
     let target = resolve_target("pyana://cell/alices-document");
-    let set_target_action = build_set_target_action(&wallet, cell, name, target);
+    let set_target_action = build_set_target_action(&cipherclerk, cell, name, target);
     let mut state_after_set_target = state_after_register.clone();
     state_after_set_target.fields[RESOLVE_TARGET_SLOT] =
         project_setfield(&set_target_action, RESOLVE_TARGET_SLOT).unwrap();
@@ -111,7 +111,7 @@ fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
 
     // ── Step 3: renew (extend expiry forward — Monotonic permits). ──
     let new_expiry: u64 = 5_000;
-    let renew_action = build_renew_action(&wallet, cell, name, new_expiry);
+    let renew_action = build_renew_action(&cipherclerk, cell, name, new_expiry);
     let mut state_after_renew = state_after_set_target.clone();
     state_after_renew.fields[EXPIRY_SLOT] = project_setfield(&renew_action, EXPIRY_SLOT).unwrap();
     state_after_renew.set_nonce(3);
@@ -124,7 +124,7 @@ fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
     );
 
     // ── Step 4: transfer (owner change, no other slot moves). ───────
-    let transfer_action = build_transfer_action(&wallet, cell, name, owner, new_owner);
+    let transfer_action = build_transfer_action(&cipherclerk, cell, name, owner, new_owner);
     let mut state_after_transfer = state_after_renew.clone();
     state_after_transfer.fields[OWNER_HASH_SLOT] =
         project_setfield(&transfer_action, OWNER_HASH_SLOT).unwrap();
@@ -134,7 +134,7 @@ fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
         .expect("transfer: only OWNER_HASH_SLOT moves; no caveat is violated");
 
     // ── Step 5: revoke (REVOKED_SLOT zero → tombstone — WriteOnce permits). ──
-    let revoke_action = build_revoke_action(&wallet, cell, name);
+    let revoke_action = build_revoke_action(&cipherclerk, cell, name);
     let mut state_after_revoke = state_after_transfer.clone();
     state_after_revoke.fields[REVOKED_SLOT] =
         project_setfield(&revoke_action, REVOKED_SLOT).unwrap();
@@ -256,8 +256,8 @@ fn adversarial_double_revoke_rejected_by_write_once_on_revoked_slot() {
 
 #[test]
 fn auth_register_action_carries_real_signature() {
-    let wallet = wallet_with_seed(0xAA);
-    let action = build_register_action(&wallet, registry_cell(), "alice.pyana", [3u8; 32], 1_000);
+    let cipherclerk = wallet_with_seed(0xAA);
+    let action = build_register_action(&cipherclerk, registry_cell(), "alice.pyana", [3u8; 32], 1_000);
     match action.authorization {
         Authorization::Signature(a, b) => {
             assert!(
@@ -272,23 +272,23 @@ fn auth_register_action_carries_real_signature() {
 #[test]
 fn auth_all_lifecycle_actions_carry_real_signatures() {
     // Every entry point must emit an Authorization::Signature.
-    let wallet = wallet_with_seed(0xCC);
+    let cipherclerk = wallet_with_seed(0xCC);
     let cell = registry_cell();
     let name = "alice.pyana";
     let actions = vec![
         (
             "register",
-            build_register_action(&wallet, cell, name, [3u8; 32], 1_000),
+            build_register_action(&cipherclerk, cell, name, [3u8; 32], 1_000),
         ),
-        ("renew", build_renew_action(&wallet, cell, name, 5_000)),
+        ("renew", build_renew_action(&cipherclerk, cell, name, 5_000)),
         (
             "transfer",
-            build_transfer_action(&wallet, cell, name, [3u8; 32], [4u8; 32]),
+            build_transfer_action(&cipherclerk, cell, name, [3u8; 32], [4u8; 32]),
         ),
-        ("revoke", build_revoke_action(&wallet, cell, name)),
+        ("revoke", build_revoke_action(&cipherclerk, cell, name)),
         (
             "set_target",
-            build_set_target_action(&wallet, cell, name, resolve_target("pyana://cell/x")),
+            build_set_target_action(&cipherclerk, cell, name, resolve_target("pyana://cell/x")),
         ),
     ];
     for (name, action) in actions {
@@ -339,7 +339,7 @@ fn auth_different_wallets_produce_different_signatures_on_same_logical_action() 
 ///    of `signer_pubkey == owner_pubkey` (or, equivalently, a
 ///    `StateConstraint::SenderAuthorized { set: AuthorizedSet::PublicRoot { set_root_index: OWNER_HASH_SLOT } }`
 ///    once the witness-blob plumbing is wired through
-///    `AppWallet::make_action`) refuses the impostor.
+///    `AppCipherclerk::make_action`) refuses the impostor.
 ///
 /// 2. **The slot caveats alone do not enforce owner-only writes.** The
 ///    `name_factory_descriptor` carries `WriteOnce(NAME_HASH_SLOT)`,
@@ -352,7 +352,7 @@ fn auth_different_wallets_produce_different_signatures_on_same_logical_action() 
 ///
 /// TODO(owner-auth): install
 /// `StateConstraint::SenderAuthorized { set: AuthorizedSet::PublicRoot { .. } }`
-/// on `name_factory_descriptor()` once `AppWallet::make_action`
+/// on `name_factory_descriptor()` once `AppCipherclerk::make_action`
 /// emits the Merkle-membership witness blob the constraint requires.
 /// Until then, owner-only enforcement is the action-authorization
 /// layer's job (signature verification + caller-vs-owner equality
@@ -447,8 +447,8 @@ fn factory_descriptor_hash_changes_with_state_constraints() {
 
 #[test]
 fn register_function_is_idempotent_across_repeated_calls() {
-    let wallet = wallet_with_seed(0x42);
-    let executor = pyana_app_framework::EmbeddedExecutor::new(&wallet, "default");
+    let cipherclerk = wallet_with_seed(0x42);
+    let executor = pyana_app_framework::EmbeddedExecutor::new(&cipherclerk, "default");
     let ctx = pyana_app_framework::StarbridgeAppContext::new(wallet, executor);
     let vk1 = register(&ctx);
     let vk2 = register(&ctx);
