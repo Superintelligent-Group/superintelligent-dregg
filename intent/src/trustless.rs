@@ -742,17 +742,58 @@ pub struct TrustlessIntentEngine {
 }
 
 impl TrustlessIntentEngine {
-    /// Create a new engine with default configuration.
+    /// Create a new engine with **fail-closed production-posture defaults**
+    /// (P0 #82 fix).
     ///
-    /// The default verifier is a [`WitnessedProofVerifier`] backed by
-    /// the stub registry — submissions without a `witnessed_predicate`
-    /// pass the structural check (preserving the legacy mock path),
-    /// while submissions that *do* carry one dispatch through the
-    /// canonical [`WitnessedPredicateRegistry`]. Production deployments
-    /// should build their own registry (with real STARK / Schnorr /
-    /// Bulletproof verifiers wired in) and hand it to
-    /// [`Self::with_verifier`] or use [`WitnessedProofVerifier::strict`].
+    /// The default verifier is
+    /// `WitnessedProofVerifier::new(WitnessedPredicateRegistry::default_builtins())`:
+    ///
+    /// - Submissions that carry a `witnessed_predicate` dispatch through the
+    ///   canonical registry. Built-in kinds (`Dfa`, `Temporal`,
+    ///   `MerkleMembership`, `BlindedSet`, `BridgePredicate`,
+    ///   `PedersenEquality`) are wired to
+    ///   [`pyana_cell::predicate::WitnessedPredicateRegistry::default_builtins`],
+    ///   which installs `NotYetWiredVerifier` for kinds whose real algebra
+    ///   adapter has not been registered on the host. These verifiers
+    ///   **reject** with a "not yet wired" reason — they do not silently
+    ///   accept, which was the pre-fix behavior under the stub registry.
+    /// - `NonMembership` ships a real `SortedNeighborNonMembershipVerifier`
+    ///   in the cell crate, so genuine non-membership claims succeed out
+    ///   of the box.
+    ///
+    /// Production deployments wishing to verify real proofs must install
+    /// adapters via
+    /// [`pyana_cell::predicate::WitnessedPredicateRegistry::register_builtin`]
+    /// before handing the registry to [`Self::with_verifier`].
+    ///
+    /// Tests that depend on the prior permissive-stub behavior should use
+    /// [`Self::with_stub_verifier`] (or construct an explicit verifier and
+    /// pass it to [`Self::with_verifier`]).
     pub fn new(decrypt_threshold: usize, num_validators: usize) -> Self {
+        let registry = WitnessedPredicateRegistry::default_builtins();
+        Self {
+            current_batch: IntentBatch::new(0),
+            batch_interval: DEFAULT_BATCH_INTERVAL,
+            challenge_window: DEFAULT_CHALLENGE_WINDOW,
+            min_solver_bond: DEFAULT_MIN_SOLVER_BOND,
+            decrypt_threshold,
+            num_validators,
+            current_height: 0,
+            verifier: Box::new(WitnessedProofVerifier::new(registry)),
+            next_batch_id: 1,
+            settled_batches: HashMap::new(),
+            bond_escrow: BondEscrow::new(),
+        }
+    }
+
+    /// Test-only constructor: install the legacy stub-registry verifier
+    /// (accepts any non-empty proof against any built-in kind). Use this
+    /// in plumbing-coverage tests where the surface contract matters but
+    /// the proof algebra is out of scope; never in production paths.
+    ///
+    /// Renamed from `Self::new` (pre-#82): the implicit-stub default in
+    /// the old `new()` was a silent-bypass of witnessed predicates.
+    pub fn with_stub_verifier(decrypt_threshold: usize, num_validators: usize) -> Self {
         Self {
             current_batch: IntentBatch::new(0),
             batch_interval: DEFAULT_BATCH_INTERVAL,
@@ -2273,8 +2314,11 @@ mod tests {
 
     #[test]
     fn witnessed_verifier_accepts_dfa_kind_with_stub_registry() {
+        // Plumbing test: use the explicit stub-verifier constructor.
+        // The new `new()` default installs NotYetWiredVerifier (P0 #82),
+        // which would reject this submission.
         let (key, key_shares) = make_test_keys(2, 3);
-        let mut engine = TrustlessIntentEngine::new(2, 3);
+        let mut engine = TrustlessIntentEngine::with_stub_verifier(2, 3);
         let intents = vec![make_intent(1), make_intent(2)];
         drive_to_solving(&mut engine, &key, &key_shares, &intents, 10);
 
@@ -2290,6 +2334,69 @@ mod tests {
             .submit_solution(sub)
             .expect("DFA stub verifier accepts non-empty proof bytes");
         assert_eq!(engine.winning_score(), Some(5.0));
+    }
+
+    /// P0 #82 adversarial test: a production-style engine constructed via
+    /// `TrustlessIntentEngine::new` (the default constructor) must NOT
+    /// silently accept a witnessed predicate against a kind whose real
+    /// verifier has not been installed. Pre-fix the default used the
+    /// permissive stub registry, which accepted any non-empty proof bytes
+    /// against any built-in kind. After the fix the default installs
+    /// `NotYetWiredVerifier` for non-NonMembership built-ins, which rejects
+    /// with a clear "not yet wired" reason.
+    #[test]
+    fn p0_82_default_engine_rejects_witnessed_predicate_not_yet_wired() {
+        let (key, key_shares) = make_test_keys(2, 3);
+        let mut engine = TrustlessIntentEngine::new(2, 3);
+        let intents = vec![make_intent(1), make_intent(2)];
+        drive_to_solving(&mut engine, &key, &key_shares, &intents, 10);
+
+        // Submit a DFA witnessed-predicate with non-empty proof bytes.
+        // Under the pre-fix stub default, this would be silently accepted.
+        // Under the strict default (default_builtins → NotYetWiredVerifier),
+        // it must reject with a clear "not yet wired" reason.
+        let sub = make_witnessed_submission(
+            0xAA,
+            &intents,
+            5.0,
+            11,
+            WitnessedPredicateKind::Dfa,
+            vec![0x01, 0x02, 0x03],
+        );
+        let result = engine.submit_solution(sub);
+        match result {
+            Err(EngineError::InvalidProof { reason }) => {
+                assert!(
+                    reason.contains("not yet wired") || reason.contains("not yet installed"),
+                    "expected 'not yet wired' surface from NotYetWiredVerifier, got: {reason}"
+                );
+            }
+            other => panic!(
+                "default engine must NOT silently accept a not-yet-wired witnessed predicate, got: {other:?}"
+            ),
+        }
+    }
+
+    /// P0 #82: same adversarial check for `IntentPredicateVerifier::default()`
+    /// — the programmatic-defaults surface used by app callers must also
+    /// fail-closed on a not-yet-wired kind.
+    #[test]
+    fn p0_82_default_predicate_verifier_rejects_dfa_kind() {
+        use crate::predicate::IntentPredicateVerifier;
+        use pyana_cell::predicate::ResourceDfa;
+
+        let verifier = IntentPredicateVerifier::default();
+        let dfa = ResourceDfa::new([0x11; 32], vec![0xAB, 0xCD]);
+        let result = verifier.matches_resource(&dfa, "documents/x");
+        assert!(
+            result.is_err(),
+            "default IntentPredicateVerifier must reject DFA proof (not-yet-wired)"
+        );
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("not yet wired") || err.contains("not yet installed"),
+            "expected not-yet-wired reason, got: {err}"
+        );
     }
 
     #[test]

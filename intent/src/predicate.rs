@@ -280,8 +280,25 @@ impl IntentPredicateVerifier {
 }
 
 impl Default for IntentPredicateVerifier {
+    /// **Fail-closed default** (P0 #82 fix).
+    ///
+    /// `Default::default()` now installs the cell crate's
+    /// [`WitnessedPredicateRegistry::default_builtins`] — every built-in
+    /// kind whose real algebra adapter has not been installed maps to a
+    /// `NotYetWiredVerifier` that **rejects** with a clear
+    /// "real verifier not yet installed" reason. `NonMembership` ships
+    /// a real (Silver-Sound) `SortedNeighborNonMembershipVerifier`.
+    ///
+    /// Pre-fix the default used `with_stub_registry`, which accepted any
+    /// non-empty proof bytes against any built-in kind — a silent bypass
+    /// of witnessed predicates for any caller that defaulted the verifier.
+    ///
+    /// Tests that depend on the prior permissive-stub behavior should
+    /// switch to the explicit [`Self::with_stub_registry`] constructor.
     fn default() -> Self {
-        Self::with_stub_registry()
+        Self {
+            registry: Arc::new(WitnessedPredicateRegistry::default_builtins()),
+        }
     }
 }
 
@@ -370,9 +387,33 @@ mod tests {
     }
 
     #[test]
-    fn default_verifier_uses_stubs() {
-        // Sanity: the Default impl uses stubs (so tests can construct
-        // a verifier without spelling out registry configuration).
-        let _ = IntentPredicateVerifier::default();
+    fn default_verifier_uses_default_builtins_and_rejects_dfa() {
+        // P0 #82: the Default impl now installs `default_builtins`, which
+        // wraps not-yet-wired built-in kinds with `NotYetWiredVerifier`.
+        // A DFA proof against the default-constructed verifier must reject.
+        let verifier = IntentPredicateVerifier::default();
+        let dfa = ResourceDfa::new([0x11; 32], vec![0xAB, 0xCD]);
+        let result = verifier.matches_resource(&dfa, "documents/x");
+        assert!(
+            result.is_err(),
+            "Default IntentPredicateVerifier must reject DFA (not-yet-wired)"
+        );
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("not yet wired") || msg.contains("not yet installed"),
+            "expected not-yet-wired reason, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn stub_constructor_still_available_for_plumbing_tests() {
+        // Plumbing tests can still opt-in to the stub-registry behavior via
+        // the explicit `with_stub_registry` constructor.
+        let verifier = IntentPredicateVerifier::with_stub_registry();
+        let dfa = ResourceDfa::new([0x11; 32], vec![0xAB, 0xCD]);
+        assert!(
+            verifier.matches_resource(&dfa, "documents/x").is_ok(),
+            "stub verifier accepts non-empty proof"
+        );
     }
 }
