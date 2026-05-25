@@ -1091,6 +1091,12 @@ fn check_index(index: u8) -> Result<usize, ProgramError> {
 /// Forwards to [`evaluate_constraint_full`] with an empty bundle so
 /// witness-dependent variants surface the same `WitnessedPredicateRequiresExecutor` /
 /// `WitnessedPredicateWitnessMissing` sentinel as before.
+///
+/// Retained for backwards-compatibility with callers that hold a
+/// constraint without a witness bundle; the `AnyOf` evaluator now goes
+/// through [`evaluate_simple_constraint`] so the Heyting-fragment `Not`
+/// short-circuit can fire.
+#[allow(dead_code)]
 fn evaluate_constraint(
     constraint: &StateConstraint,
     new_state: &CellState,
@@ -2916,11 +2922,14 @@ mod tests {
         };
         let proof_bytes = proof.to_bytes();
         let registry = crate::predicate::WitnessedPredicateRegistry::with_stubs();
-        let mut blobs: [WitnessBlobView<'_>; 1] = [WitnessBlobView {
+        let blobs: [WitnessBlobView<'_>; 1] = [WitnessBlobView {
             kind: WitnessKindTag::ProofBytes,
             bytes: &proof_bytes,
         }];
-        let bundle = renunciation_bundle(&proof_bytes, &mut blobs, &registry);
+        let bundle = WitnessBundle {
+            blobs: &blobs,
+            registry: Some(&registry),
+        };
 
         let p = CellProgram::Predicate(vec![StateConstraint::Renounced {
             set: RenouncedSet::PublicRoot { set_root_index: 3 },
