@@ -71,9 +71,9 @@
 #![forbid(unsafe_code)]
 
 use pyana_app_framework::{
-    Action, AppWallet, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, ChildVkStrategy,
-    Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement, InspectorDescriptor,
-    StarbridgeAppContext, StateConstraint, symbol,
+    Action, AppWallet, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
+    ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
+    InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk, symbol,
 };
 use pyana_cell::program::AuthorizedSet;
 
@@ -169,14 +169,51 @@ pub const DEFAULT_ISSUER_BUDGET: u64 = 100_000;
 /// constant once the program AIR lands is a single-line change.
 pub const ISSUER_FACTORY_VK: [u8; 32] = *b"starbridge-identity-issuer-fact!";
 
+/// The cell-program installed on per-issuer cells.
+///
+/// Per `VK-AS-RE-EXECUTION-RECIPE.md` §2.1: every cell produced by
+/// [`issuer_factory_descriptor`] inherits this program. Validators
+/// re-execute it against the cell's transition stream until plonky3
+/// recursion lands and the program becomes a real recursive AIR.
+///
+/// The constraint set:
+/// - `Immutable(SCHEMA_COMMITMENT_SLOT)` — schema cannot change.
+/// - `MonotonicSequence(ISSUANCE_COUNTER_SLOT)` — strictly +1 per turn.
+/// - `Monotonic(REVOCATION_ROOT_SLOT)` — revocation set is append-only.
+/// - `SenderAuthorized(PublicRoot { ISSUER_AUTH_ROOT_SLOT })` — only
+///   authorized issuer pubkeys may submit issuance turns.
+pub fn issuer_program() -> CellProgram {
+    CellProgram::always(vec![
+        StateConstraint::Immutable {
+            index: SCHEMA_COMMITMENT_SLOT as u8,
+        },
+        StateConstraint::MonotonicSequence {
+            seq_index: ISSUANCE_COUNTER_SLOT as u8,
+        },
+        StateConstraint::Monotonic {
+            index: REVOCATION_ROOT_SLOT as u8,
+        },
+        StateConstraint::SenderAuthorized {
+            set: AuthorizedSet::PublicRoot {
+                set_root_index: ISSUER_AUTH_ROOT_SLOT as u8,
+            },
+        },
+    ])
+}
+
 /// The child cell program VK installed on per-issuer cells.
 ///
-/// Real program: enforces `Immutable(SCHEMA_COMMITMENT_SLOT)`,
-/// `MonotonicSequence(ISSUANCE_COUNTER_SLOT)`,
-/// `Monotonic(REVOCATION_ROOT_SLOT)`, and
-/// `SenderAuthorized(ISSUER_AUTH_ROOT_SLOT)` in-circuit. Placeholder until
-/// `circuit/src/dsl/identity.rs` lands the AIR.
-pub const ISSUER_CHILD_PROGRAM_VK: [u8; 32] = *b"starbridge-identity-issuer-prog!";
+/// Computed canonically per `VK-AS-RE-EXECUTION-RECIPE.md` §2.1:
+/// `canonical_program_vk(&issuer_program())`. A validator with the
+/// program in hand can confirm the VK binds to a program they can
+/// re-execute against witness data.
+///
+/// Previously a byte-string placeholder
+/// (`*b"starbridge-identity-issuer-prog!"`); the canonical version
+/// makes the substrate honest pre-recursion.
+pub fn issuer_child_program_vk() -> [u8; 32] {
+    canonical_program_vk(&issuer_program())
+}
 
 // =============================================================================
 // FactoryDescriptor
@@ -187,7 +224,7 @@ pub const ISSUER_CHILD_PROGRAM_VK: [u8; 32] = *b"starbridge-identity-issuer-prog
 /// Pins the constructor contract anyone can audit by hashing the
 /// descriptor:
 ///
-/// - `child_program_vk = ISSUER_CHILD_PROGRAM_VK` — the
+/// - `child_program_vk = issuer_child_program_vk()` — the
 ///   credential-issuance state machine.
 /// - `default_mode = Sovereign` — issuers live as their own cells.
 /// - `creation_budget = DEFAULT_ISSUER_BUDGET` — rate-limits per-epoch
@@ -214,8 +251,8 @@ pub const ISSUER_CHILD_PROGRAM_VK: [u8; 32] = *b"starbridge-identity-issuer-prog
 pub fn issuer_factory_descriptor() -> FactoryDescriptor {
     FactoryDescriptor {
         factory_vk: ISSUER_FACTORY_VK,
-        child_program_vk: Some(ISSUER_CHILD_PROGRAM_VK),
-        child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(ISSUER_CHILD_PROGRAM_VK))),
+        child_program_vk: Some(issuer_child_program_vk()),
+        child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(issuer_child_program_vk()))),
         allowed_cap_templates: vec![CapTemplate {
             target: CapTarget::SelfCell,
             max_permissions: AuthRequired::Signature,
@@ -503,7 +540,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
             "uri_prefix": "pyana://credential/",
             "summary_fields": ["schema", "holder_id", "issued_at", "not_after", "status"],
             "factory_vk_hex": factory_vk_hex,
-            "child_program_vk_hex": hex_encode(&ISSUER_CHILD_PROGRAM_VK),
+            "child_program_vk_hex": hex_encode(&issuer_child_program_vk()),
         }),
     });
 
@@ -670,9 +707,70 @@ mod tests {
     fn issuer_factory_pins_program_vk_and_mode() {
         let d = issuer_factory_descriptor();
         assert_eq!(d.factory_vk, ISSUER_FACTORY_VK);
-        assert_eq!(d.child_program_vk, Some(ISSUER_CHILD_PROGRAM_VK));
+        assert_eq!(d.child_program_vk, Some(issuer_child_program_vk()));
         assert_eq!(d.default_mode, CellMode::Sovereign);
         assert_eq!(d.creation_budget, Some(DEFAULT_ISSUER_BUDGET));
+    }
+
+    #[test]
+    fn issuer_child_program_vk_is_canonical_recipe() {
+        // Per VK-AS-RE-EXECUTION-RECIPE.md §2.1, the child program VK
+        // is the canonical hash of the program text. Validators with
+        // the program can re-derive the VK.
+        let expected = pyana_app_framework::canonical_program_vk(&issuer_program());
+        assert_eq!(
+            issuer_child_program_vk(),
+            expected,
+            "issuer_child_program_vk must equal canonical_program_vk(&issuer_program())"
+        );
+    }
+
+    #[test]
+    fn issuer_child_program_vk_is_not_placeholder_bytes() {
+        // The pre-recipe placeholder was `*b"starbridge-identity-issuer-prog!"`.
+        let old_placeholder: [u8; 32] = *b"starbridge-identity-issuer-prog!";
+        assert_ne!(
+            issuer_child_program_vk(),
+            old_placeholder,
+            "canonical VK must differ from the pre-recipe placeholder"
+        );
+    }
+
+    #[test]
+    fn factory_descriptor_validates_against_canonical_program() {
+        let d = issuer_factory_descriptor();
+        let program = issuer_program();
+        d.validate_child_vk_canonical(&program)
+            .expect("descriptor's child_program_vk must bind to issuer_program()");
+    }
+
+    #[test]
+    fn issuer_program_carries_expected_caveats() {
+        let p = issuer_program();
+        let constraints = match p {
+            CellProgram::Cases(cases) => cases
+                .into_iter()
+                .flat_map(|c| c.constraints)
+                .collect::<Vec<_>>(),
+            other => panic!("expected CellProgram::Cases, got {other:?}"),
+        };
+        assert_eq!(constraints.len(), 4);
+        assert!(constraints.iter().any(|c| matches!(
+            c,
+            StateConstraint::Immutable { index } if *index == SCHEMA_COMMITMENT_SLOT as u8
+        )));
+        assert!(constraints.iter().any(|c| matches!(
+            c,
+            StateConstraint::MonotonicSequence { seq_index } if *seq_index == ISSUANCE_COUNTER_SLOT as u8
+        )));
+        assert!(constraints.iter().any(|c| matches!(
+            c,
+            StateConstraint::Monotonic { index } if *index == REVOCATION_ROOT_SLOT as u8
+        )));
+        assert!(constraints.iter().any(|c| matches!(
+            c,
+            StateConstraint::SenderAuthorized { .. }
+        )));
     }
 
     #[test]

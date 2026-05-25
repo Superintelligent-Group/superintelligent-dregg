@@ -43,6 +43,60 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Compute the canonical VK hash for an app-defined custom predicate.
+///
+/// Per `VK-AS-RE-EXECUTION-RECIPE.md` §2.2: the `vk_hash` inside
+/// [`WitnessedPredicateKind::Custom`] (and the matching
+/// `Authorization::Custom` / `Effect::Custom` carriers) commits to a
+/// canonical encoding of the predicate's executable bytes — DSL AST
+/// postcard, WASM bytecode, AIR descriptor, or whatever authoring
+/// representation the app chose. The encoder treats the bytes as
+/// opaque and produces a domain-keyed BLAKE3 hash:
+///
+/// ```text
+/// vk_hash = BLAKE3_keyed("pyana-witnessed-predicate-vk-v1",
+///                        len(bytes) || bytes)
+/// ```
+///
+/// The length prefix makes the encoding unambiguous against
+/// concatenation: two predicates whose bytes happen to share a prefix
+/// produce different vk_hashes.
+///
+/// # Why opaque bytes?
+///
+/// Custom predicates may be authored in many representations: pyana-DSL
+/// IR, WASM, raw AIR descriptors, Pickles circuit serializations, etc.
+/// The platform does not pick the language; it picks the *commitment
+/// shape*. Apps using the same language interoperate transparently;
+/// apps using different languages get distinct vk_hashes by virtue of
+/// distinct byte representations.
+///
+/// # Re-execution contract
+///
+/// Any validator with the canonical bytes (pulled from a program
+/// registry or carried inline on a receipt) can:
+/// 1. Verify `canonical_predicate_vk(bytes) == vk_hash`.
+/// 2. Decode the bytes into the predicate's authoring representation.
+/// 3. Re-execute against witness data + the resolved input.
+/// 4. Compare its acceptance bit to the executor's claimed bit.
+///
+/// # Boundary contract
+///
+/// Same as `canonical_program_vk`:
+/// - Cleartext-inside:  predicate author + validators.
+/// - Commitment-inside: receipt observers.
+/// - Acceptance-inside: post-recursion validators.
+/// - Out-of-band:       everyone else.
+/// Enforced by: BLAKE3 keyed-hash binding canonical bytes to vk_hash.
+/// Failure mode if violated: validator's re-execution disagrees with
+/// the executor's acceptance bit; soundness failure.
+pub fn canonical_predicate_vk(predicate_bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("pyana-witnessed-predicate-vk-v1");
+    hasher.update(&(predicate_bytes.len() as u64).to_le_bytes());
+    hasher.update(predicate_bytes);
+    *hasher.finalize().as_bytes()
+}
+
 /// A witness-attached predicate declaration.
 ///
 /// Carries the *shape* (kind), the *commitment* binding the predicate's
@@ -731,6 +785,60 @@ mod tests {
             let back: InputRef = postcard::from_bytes(&bytes).expect("deserialize");
             assert_eq!(back, ir);
         }
+    }
+
+    // ─── Canonical predicate VK tests (VK-AS-RE-EXECUTION-RECIPE.md §2.2)
+
+    #[test]
+    fn canonical_predicate_vk_is_deterministic() {
+        let bytes = b"some-dsl-ast-bytes";
+        let h1 = canonical_predicate_vk(bytes);
+        let h2 = canonical_predicate_vk(bytes);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn canonical_predicate_vk_differs_for_different_inputs() {
+        let h1 = canonical_predicate_vk(b"predicate-a");
+        let h2 = canonical_predicate_vk(b"predicate-b");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn canonical_predicate_vk_distinguishes_empty_from_other() {
+        // Empty bytes must hash to something distinct from any non-empty
+        // input (the length prefix achieves this regardless of BLAKE3's
+        // own collision resistance).
+        let empty = canonical_predicate_vk(b"");
+        let non_empty = canonical_predicate_vk(b"\x00");
+        assert_ne!(empty, non_empty);
+    }
+
+    #[test]
+    fn canonical_predicate_vk_length_prefix_disambiguates_concatenation() {
+        // Without the length prefix, `concat(a, b)` could collide with
+        // alternative splits. With the prefix, distinct splits hash
+        // distinctly.
+        let h1 = canonical_predicate_vk(b"ab");
+        let h2 = canonical_predicate_vk(b"abc");
+        let h3 = canonical_predicate_vk(b"abcd");
+        assert_ne!(h1, h2);
+        assert_ne!(h2, h3);
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn canonical_predicate_vk_keyed_domain_independence() {
+        // The same opaque bytes used at different layers produce
+        // distinct hashes because of the BLAKE3 keyed-derive domain.
+        // We can't test this against `canonical_program_vk` here (it
+        // takes a `CellProgram`, not bytes), but we can confirm the
+        // predicate-VK hash is *not* equal to a vanilla BLAKE3 of the
+        // same bytes — the domain key must be in play.
+        let bytes = b"hello-world";
+        let predicate_vk = canonical_predicate_vk(bytes);
+        let raw = *blake3::hash(bytes).as_bytes();
+        assert_ne!(predicate_vk, raw);
     }
 
     #[test]

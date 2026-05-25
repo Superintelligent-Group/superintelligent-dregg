@@ -143,6 +143,7 @@ pub use wallet::{EmbeddedExecutor, ExecutorSubmitError};
 // so starbridge-apps only need pyana-app-framework in their Cargo.toml
 // to construct factory descriptors.
 pub use pyana_cell::{
-    AuthRequired, CapGrant, CapTarget, CapTemplate, CellMode, ChildVkStrategy, FactoryDescriptor,
-    FieldConstraint, StateConstraint,
+    AuthRequired, CapGrant, CapTarget, CapTemplate, CellMode, CellProgram, ChildVkStrategy,
+    FactoryDescriptor, FieldConstraint, StateConstraint, canonical_predicate_vk,
+    canonical_program_vk,
 };

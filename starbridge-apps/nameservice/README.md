@@ -105,7 +105,8 @@ The `FactoryDescriptor` for the per-name sovereign-cell factory. Pins
 the constructor-transparency contract anyone can audit by hashing the
 descriptor:
 
-- `child_program_vk = NAME_CHILD_PROGRAM_VK`
+- `child_program_vk = name_child_program_vk()` (canonical hash of
+  `name_cell_program()` per `VK-AS-RE-EXECUTION-RECIPE.md`)
 - `default_mode = CellMode::Sovereign`
 - `creation_budget = 10_000` per epoch (Sybil rate-limit)
 - `allowed_cap_templates = [owner_cap]` — single attenuatable

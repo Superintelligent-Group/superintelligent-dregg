@@ -75,7 +75,7 @@ pub use facet::{
 };
 pub use factory::{
     CapGrant, CapTarget, CapTemplate, ChildVkStrategy, FactoryCreationParams, FactoryDescriptor,
-    FactoryError, FactoryRegistry, FieldConstraint, Provenance,
+    FactoryError, FactoryRegistry, FieldConstraint, Provenance, canonical_program_vk,
 };
 pub use id::CellId;
 pub use ledger::{
@@ -105,7 +105,7 @@ pub use preconditions::{
 };
 pub use predicate::{
     InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
-    WitnessedPredicateRegistry, WitnessedPredicateVerifier,
+    WitnessedPredicateRegistry, WitnessedPredicateVerifier, canonical_predicate_vk,
 };
 pub use program::{CellProgram, ProgramError, StateConstraint, field_from_u64, field_from_u64_be};
 pub use revocation_channel::{

@@ -79,9 +79,9 @@
 //! CLIs use.
 
 use pyana_app_framework::{
-    Action, AppWallet, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, ChildVkStrategy,
-    Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement, InspectorDescriptor,
-    StarbridgeAppContext, StateConstraint, symbol,
+    Action, AppWallet, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, CellProgram,
+    ChildVkStrategy, Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement,
+    InspectorDescriptor, StarbridgeAppContext, StateConstraint, canonical_program_vk, symbol,
 };
 
 // =============================================================================
@@ -154,13 +154,50 @@ pub const DEFAULT_CREATION_BUDGET: u64 = 10_000;
 /// constant change.
 pub const NAME_FACTORY_VK: [u8; 32] = *b"starbridge-nameservice-factory!!";
 
+/// The child cell-program installed on per-name cells.
+///
+/// Per `VK-AS-RE-EXECUTION-RECIPE.md` §2.1: every cell produced by
+/// [`name_factory_descriptor`] carries this `CellProgram` (or, more
+/// precisely, the AIR that enforces it post-recursion). The VK
+/// returned by [`name_child_program_vk`] is the canonical hash of
+/// this program's postcard encoding; any validator with the program
+/// can re-derive the VK and re-execute against witness data.
+///
+/// The constraint set:
+/// - `WriteOnce(NAME_HASH_SLOT)` — names cannot be re-bound.
+/// - `Monotonic(EXPIRY_SLOT)`     — rent extensions only push forward.
+/// - `WriteOnce(REVOKED_SLOT)`    — revocations are one-way.
+///
+/// Lifted as an `Always`-guarded `CellProgram::Cases` so future
+/// operation-scoped cases can be added without restructuring.
+pub fn name_cell_program() -> CellProgram {
+    CellProgram::always(vec![
+        StateConstraint::WriteOnce {
+            index: NAME_HASH_SLOT as u8,
+        },
+        StateConstraint::Monotonic {
+            index: EXPIRY_SLOT as u8,
+        },
+        StateConstraint::WriteOnce {
+            index: REVOKED_SLOT as u8,
+        },
+    ])
+}
+
 /// The child cell program VK installed on per-name cells.
 ///
-/// As above, a stable placeholder. The real VK is the verifying key
-/// of the (yet-to-be-written) `name_program.rs` AIR that enforces
-/// `WriteOnce(NAME_HASH_SLOT)` and `FieldDelta(EXPIRY_SLOT, +epoch)`
-/// in-circuit.
-pub const NAME_CHILD_PROGRAM_VK: [u8; 32] = *b"starbridge-nameservice-childprog";
+/// Computed canonically per `VK-AS-RE-EXECUTION-RECIPE.md` §2.1:
+/// `canonical_program_vk(&name_cell_program())`. This makes the VK a
+/// re-execution recipe — any validator with [`name_cell_program`] in
+/// scope can confirm the VK binds to a program they can execute
+/// against witness data.
+///
+/// Previously a byte-string placeholder
+/// (`*b"starbridge-nameservice-childprog"`); the canonical version
+/// makes the substrate honest pre-recursion.
+pub fn name_child_program_vk() -> [u8; 32] {
+    canonical_program_vk(&name_cell_program())
+}
 
 // =============================================================================
 // FactoryDescriptors (the constructor transparency)
@@ -171,7 +208,7 @@ pub const NAME_CHILD_PROGRAM_VK: [u8; 32] = *b"starbridge-nameservice-childprog"
 /// Pins the constructor contract anyone can audit by hashing the
 /// descriptor:
 ///
-/// - `child_program_vk = NAME_CHILD_PROGRAM_VK` — the rent +
+/// - `child_program_vk = name_child_program_vk()` — the rent +
 ///   ownership state machine.
 /// - `default_mode = Sovereign` — names live as their own cells, not
 ///   inside a host.
@@ -200,8 +237,8 @@ pub const NAME_CHILD_PROGRAM_VK: [u8; 32] = *b"starbridge-nameservice-childprog"
 pub fn name_factory_descriptor() -> FactoryDescriptor {
     FactoryDescriptor {
         factory_vk: NAME_FACTORY_VK,
-        child_program_vk: Some(NAME_CHILD_PROGRAM_VK),
-        child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(NAME_CHILD_PROGRAM_VK))),
+        child_program_vk: Some(name_child_program_vk()),
+        child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(name_child_program_vk()))),
         allowed_cap_templates: vec![CapTemplate {
             target: CapTarget::SelfCell,
             max_permissions: AuthRequired::Signature,
@@ -591,7 +628,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
                 "target":      RESOLVE_TARGET_SLOT,
             },
             "factory_vk_hex": hex_encode(&factory_vk),
-            "child_program_vk_hex": hex_encode(&NAME_CHILD_PROGRAM_VK),
+            "child_program_vk_hex": hex_encode(&name_child_program_vk()),
         }),
     });
 
@@ -700,10 +737,75 @@ mod tests {
     #[test]
     fn factory_descriptor_pins_program_vk() {
         let d = name_factory_descriptor();
-        assert_eq!(d.child_program_vk, Some(NAME_CHILD_PROGRAM_VK));
+        assert_eq!(d.child_program_vk, Some(name_child_program_vk()));
         assert_eq!(d.factory_vk, NAME_FACTORY_VK);
         assert_eq!(d.default_mode, CellMode::Sovereign);
         assert_eq!(d.creation_budget, Some(DEFAULT_CREATION_BUDGET));
+    }
+
+    #[test]
+    fn name_child_program_vk_is_canonical_recipe() {
+        // Per VK-AS-RE-EXECUTION-RECIPE.md §2.1, the child program VK is
+        // the canonical hash of the program. A validator with both in
+        // hand must be able to confirm the binding.
+        let expected = pyana_app_framework::canonical_program_vk(&name_cell_program());
+        assert_eq!(
+            name_child_program_vk(),
+            expected,
+            "name_child_program_vk must equal canonical_program_vk(&name_cell_program())"
+        );
+        // The descriptor's child_program_vk binds to the canonical program.
+        let d = name_factory_descriptor();
+        let program = name_cell_program();
+        let canonical = pyana_app_framework::canonical_program_vk(&program);
+        assert_eq!(d.child_program_vk, Some(canonical));
+    }
+
+    #[test]
+    fn name_child_program_vk_is_not_placeholder_bytes() {
+        // The pre-recipe placeholder was `*b"starbridge-nameservice-childprg"`.
+        // The canonical VK MUST differ — otherwise we did not migrate.
+        let old_placeholder: [u8; 32] = *b"starbridge-nameservice-childprg";
+        assert_ne!(
+            name_child_program_vk(),
+            old_placeholder,
+            "canonical VK must differ from the pre-recipe placeholder"
+        );
+    }
+
+    #[test]
+    fn factory_descriptor_validates_against_canonical_program() {
+        let d = name_factory_descriptor();
+        let program = name_cell_program();
+        d.validate_child_vk_canonical(&program)
+            .expect("descriptor's child_program_vk must bind to name_cell_program()");
+    }
+
+    #[test]
+    fn name_cell_program_carries_expected_caveats() {
+        // Sanity: the program text actually contains the three slot caveats
+        // the factory advertises in `state_constraints`.
+        let p = name_cell_program();
+        let constraints = match p {
+            CellProgram::Cases(cases) => cases
+                .into_iter()
+                .flat_map(|c| c.constraints)
+                .collect::<Vec<_>>(),
+            other => panic!("expected CellProgram::Cases, got {other:?}"),
+        };
+        assert_eq!(constraints.len(), 3);
+        assert!(constraints.iter().any(|c| matches!(
+            c,
+            StateConstraint::WriteOnce { index } if *index == NAME_HASH_SLOT as u8
+        )));
+        assert!(constraints.iter().any(|c| matches!(
+            c,
+            StateConstraint::Monotonic { index } if *index == EXPIRY_SLOT as u8
+        )));
+        assert!(constraints.iter().any(|c| matches!(
+            c,
+            StateConstraint::WriteOnce { index } if *index == REVOKED_SLOT as u8
+        )));
     }
 
     #[test]
@@ -970,7 +1072,7 @@ mod tests {
             .get(&NAME_FACTORY_VK)
             .expect("factory descriptor registered");
         assert_eq!(got.factory_vk, NAME_FACTORY_VK);
-        assert_eq!(got.child_program_vk, Some(NAME_CHILD_PROGRAM_VK));
+        assert_eq!(got.child_program_vk, Some(name_child_program_vk()));
         assert_eq!(got.default_mode, CellMode::Sovereign);
     }
 

@@ -154,7 +154,7 @@
 use pyana_app_framework::{
     Action, AppWallet, AuthRequired, CapTarget, CapTemplate, CellId, CellMode, ChildVkStrategy,
     Effect, Event, FactoryDescriptor, FieldConstraint, FieldElement, InspectorDescriptor,
-    StarbridgeAppContext, StateConstraint, symbol,
+    StarbridgeAppContext, StateConstraint, canonical_program_vk, symbol,
 };
 use pyana_cell::program::{AuthorizedSet, CellProgram, TransitionCase, TransitionGuard};
 
@@ -197,9 +197,17 @@ pub const SUBSCRIPTION_FACTORY_VK: [u8; 32] = *b"starbridge-subscription-factory
 
 /// The child cell-program VK installed on per-subscription cells.
 ///
-/// Stable placeholder, as above. The real VK is the verifying key of
-/// the AIR enforcing [`subscription_program`]'s `CellProgram::Cases`.
-pub const SUBSCRIPTION_CHILD_PROGRAM_VK: [u8; 32] = *b"starbridge-subscription-childprg";
+/// Per `VK-AS-RE-EXECUTION-RECIPE.md` §2.1: computed canonically as
+/// `canonical_program_vk(&subscription_program())`. A validator with
+/// [`subscription_program`] in scope can re-derive the VK and
+/// re-execute the program against witness data.
+///
+/// Previously a byte-string placeholder
+/// (`*b"starbridge-subscription-childprg"`); the canonical version
+/// makes the substrate honest pre-recursion.
+pub fn subscription_child_program_vk() -> [u8; 32] {
+    canonical_program_vk(&subscription_program())
+}
 
 /// Method symbol for `publish`.
 pub fn publish_method_symbol() -> [u8; 32] {
@@ -386,7 +394,7 @@ pub fn subscription_program() -> CellProgram {
 /// The descriptor pins the constructor-transparency contract anyone
 /// can audit by hashing:
 ///
-/// - `child_program_vk = SUBSCRIPTION_CHILD_PROGRAM_VK` — the
+/// - `child_program_vk = subscription_child_program_vk()` — the
 ///   operation-scoped cell-program (`subscription_program`).
 /// - `default_mode = Hosted` — subscription queues are naturally
 ///   federation-hosted (the federation sees cleartext events for
@@ -418,8 +426,8 @@ pub fn subscription_program() -> CellProgram {
 pub fn subscription_factory_descriptor() -> FactoryDescriptor {
     FactoryDescriptor {
         factory_vk: SUBSCRIPTION_FACTORY_VK,
-        child_program_vk: Some(SUBSCRIPTION_CHILD_PROGRAM_VK),
-        child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(SUBSCRIPTION_CHILD_PROGRAM_VK))),
+        child_program_vk: Some(subscription_child_program_vk()),
+        child_vk_strategy: Some(ChildVkStrategy::Fixed(Some(subscription_child_program_vk()))),
         allowed_cap_templates: vec![
             // Owner cap — full control over publisher/consumer grants.
             CapTemplate {
@@ -702,7 +710,7 @@ pub fn register(ctx: &StarbridgeAppContext) -> [u8; 32] {
                 "latest_payload_hash",
             ],
             "factory_vk_hex": hex_encode(&factory_vk),
-            "child_program_vk_hex": hex_encode(&SUBSCRIPTION_CHILD_PROGRAM_VK),
+            "child_program_vk_hex": hex_encode(&subscription_child_program_vk()),
         }),
     });
 
@@ -785,9 +793,41 @@ mod tests {
     fn factory_descriptor_pins_program_vk() {
         let d = subscription_factory_descriptor();
         assert_eq!(d.factory_vk, SUBSCRIPTION_FACTORY_VK);
-        assert_eq!(d.child_program_vk, Some(SUBSCRIPTION_CHILD_PROGRAM_VK));
+        assert_eq!(d.child_program_vk, Some(subscription_child_program_vk()));
         assert_eq!(d.default_mode, CellMode::Hosted);
         assert_eq!(d.creation_budget, Some(DEFAULT_CREATION_BUDGET));
+    }
+
+    #[test]
+    fn subscription_child_program_vk_is_canonical_recipe() {
+        // Per VK-AS-RE-EXECUTION-RECIPE.md §2.1: validators with
+        // `subscription_program()` in scope re-derive the VK and re-execute.
+        let expected = pyana_app_framework::canonical_program_vk(&subscription_program());
+        assert_eq!(
+            subscription_child_program_vk(),
+            expected,
+            "subscription_child_program_vk must equal canonical_program_vk(&subscription_program())"
+        );
+    }
+
+    #[test]
+    fn subscription_child_program_vk_is_not_placeholder_bytes() {
+        let old_placeholder: [u8; 32] = *b"starbridge-subscription-childprg";
+        assert_ne!(
+            subscription_child_program_vk(),
+            old_placeholder,
+            "canonical VK must differ from the pre-recipe placeholder"
+        );
+    }
+
+    #[test]
+    fn factory_descriptor_validates_against_canonical_program() {
+        // `FactoryDescriptor::validate_child_vk_canonical` confirms the
+        // descriptor's claimed VK actually binds to the program text.
+        let d = subscription_factory_descriptor();
+        let program = subscription_program();
+        d.validate_child_vk_canonical(&program)
+            .expect("descriptor's child_program_vk must bind to subscription_program()");
     }
 
     #[test]
@@ -1083,7 +1123,7 @@ mod tests {
             .get(&SUBSCRIPTION_FACTORY_VK)
             .expect("subscription factory registered");
         assert_eq!(got.factory_vk, SUBSCRIPTION_FACTORY_VK);
-        assert_eq!(got.child_program_vk, Some(SUBSCRIPTION_CHILD_PROGRAM_VK));
+        assert_eq!(got.child_program_vk, Some(subscription_child_program_vk()));
         assert_eq!(got.default_mode, CellMode::Hosted);
     }
 

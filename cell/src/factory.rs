@@ -13,6 +13,47 @@ use serde::{Deserialize, Serialize};
 use crate::cell::CellMode;
 use crate::id::CellId;
 use crate::permissions::AuthRequired;
+use crate::program::CellProgram;
+
+/// Compute the canonical VK hash for a [`CellProgram`].
+///
+/// Per `VK-AS-RE-EXECUTION-RECIPE.md` §2.1: a `child_program_vk`
+/// (and any other `[u8; 32]` VK identifier naming a `CellProgram`)
+/// is the BLAKE3-keyed hash of the program's canonical postcard
+/// serialization under the domain `"pyana-cellprogram-vk-v1"`.
+///
+/// This makes the VK a *re-execution recipe*: any validator with the
+/// `CellProgram` value can recompute this hash and verify the binding.
+/// Pre-recursion, the validator population is expected to re-execute
+/// the program against witness data; the VK is the cryptographic name
+/// of "the bytes the validator runs."
+///
+/// # Determinism
+///
+/// `postcard::to_allocvec` is deterministic given a stable `Serialize`
+/// impl. `CellProgram` and its constituent types (`StateConstraint`,
+/// `TransitionCase`, `WitnessedPredicate`, …) derive `Serialize` via
+/// `serde`, so the encoding is determined by the variant layout in
+/// source. A breaking change to `CellProgram`'s shape requires bumping
+/// the domain string to `-vk-v2` so old and new VKs do not collide.
+///
+/// # Boundary contract
+///
+/// - Cleartext-inside:  VK author + validators (they hold the program).
+/// - Commitment-inside: receipt observers (see vk_hash but not program).
+/// - Acceptance-inside: post-recursion validators (acceptance bit only).
+/// - Out-of-band:       everyone else.
+/// Enforced by: BLAKE3 keyed-hash binding canonical bytes to vk_hash.
+/// Failure mode if violated: re-execution disagrees with executor's
+/// claimed acceptance bit; soundness failure.
+pub fn canonical_program_vk(program: &CellProgram) -> [u8; 32] {
+    let serialized = postcard::to_allocvec(program)
+        .expect("CellProgram postcard serialization is infallible for v1 encoding");
+    let mut hasher = blake3::Hasher::new_derive_key("pyana-cellprogram-vk-v1");
+    hasher.update(&(serialized.len() as u64).to_le_bytes());
+    hasher.update(&serialized);
+    *hasher.finalize().as_bytes()
+}
 
 /// Strategy for determining the child cell's program VK at creation time.
 ///
@@ -301,6 +342,34 @@ impl FactoryDescriptor {
         }
 
         Ok(())
+    }
+
+    /// Validate that this descriptor's `child_program_vk` is the
+    /// canonical VK hash of the supplied `CellProgram` per the
+    /// re-execution-recipe contract (`VK-AS-RE-EXECUTION-RECIPE.md` §2.1).
+    ///
+    /// Used by validators with both a `FactoryDescriptor` and the
+    /// canonical `CellProgram` text in hand to confirm the descriptor's
+    /// claimed VK actually binds to the program. Returns
+    /// `Ok(())` when `self.child_program_vk == Some(canonical_program_vk(program))`,
+    /// or a `FactoryError::ProgramMismatch` describing the disagreement.
+    ///
+    /// Sovereign factories that install `child_program_vk = None`
+    /// (no program; transitions governed by the cell-owner's witness)
+    /// reject this check — there is no program to canonicalize.
+    /// Callers that want to permit `None` should not invoke this method.
+    pub fn validate_child_vk_canonical(
+        &self,
+        program: &CellProgram,
+    ) -> Result<(), FactoryError> {
+        let expected = canonical_program_vk(program);
+        match self.child_program_vk {
+            Some(got) if got == expected => Ok(()),
+            other => Err(FactoryError::ProgramMismatch {
+                expected: Some(expected),
+                got: other,
+            }),
+        }
     }
 
     /// Check that a capability grant is within at least one template.
@@ -1248,5 +1317,151 @@ mod tests {
         });
         let h2 = desc.hash();
         assert_ne!(h1, h2);
+    }
+
+    // =========================================================================
+    // Canonical program VK tests (VK-AS-RE-EXECUTION-RECIPE.md §2.1)
+    // =========================================================================
+
+    fn canonical_test_program() -> CellProgram {
+        use crate::program::{StateConstraint, TransitionCase, TransitionGuard};
+        CellProgram::Cases(vec![TransitionCase {
+            guard: TransitionGuard::Always,
+            constraints: vec![
+                StateConstraint::WriteOnce { index: 2 },
+                StateConstraint::Monotonic { index: 4 },
+            ],
+        }])
+    }
+
+    #[test]
+    fn canonical_program_vk_is_deterministic() {
+        let p = canonical_test_program();
+        let h1 = canonical_program_vk(&p);
+        let h2 = canonical_program_vk(&p);
+        assert_eq!(h1, h2, "canonical VK must be deterministic");
+    }
+
+    #[test]
+    fn canonical_program_vk_changes_with_program_shape() {
+        use crate::program::{StateConstraint, TransitionCase, TransitionGuard};
+        let p1 = canonical_test_program();
+        // Same shape but with one additional constraint — must hash differently.
+        let p2 = CellProgram::Cases(vec![TransitionCase {
+            guard: TransitionGuard::Always,
+            constraints: vec![
+                StateConstraint::WriteOnce { index: 2 },
+                StateConstraint::Monotonic { index: 4 },
+                StateConstraint::Immutable { index: 5 },
+            ],
+        }]);
+        assert_ne!(canonical_program_vk(&p1), canonical_program_vk(&p2));
+    }
+
+    #[test]
+    fn canonical_program_vk_changes_with_constraint_index() {
+        use crate::program::{StateConstraint, TransitionCase, TransitionGuard};
+        let p1 = CellProgram::Cases(vec![TransitionCase {
+            guard: TransitionGuard::Always,
+            constraints: vec![StateConstraint::WriteOnce { index: 2 }],
+        }]);
+        // Same shape, different index value — must hash differently.
+        let p2 = CellProgram::Cases(vec![TransitionCase {
+            guard: TransitionGuard::Always,
+            constraints: vec![StateConstraint::WriteOnce { index: 3 }],
+        }]);
+        assert_ne!(canonical_program_vk(&p1), canonical_program_vk(&p2));
+    }
+
+    #[test]
+    fn canonical_program_vk_none_program_has_stable_hash() {
+        // Even the trivial program has a stable canonical VK — apps that
+        // pin child_program_vk to `canonical_program_vk(&CellProgram::None)`
+        // get a real cryptographic identifier, not a placeholder.
+        let p = CellProgram::None;
+        let h = canonical_program_vk(&p);
+        // Non-zero (BLAKE3 of any input is non-zero w.h.p.).
+        assert_ne!(h, [0u8; 32]);
+        // Deterministic.
+        assert_eq!(h, canonical_program_vk(&CellProgram::None));
+    }
+
+    #[test]
+    fn canonical_program_vk_distinguishes_none_from_empty_cases() {
+        // `CellProgram::None` and `CellProgram::Cases(vec![])` are
+        // semantically very different (the second default-denies every
+        // transition); their canonical VKs must differ.
+        let none_vk = canonical_program_vk(&CellProgram::None);
+        let empty_cases_vk = canonical_program_vk(&CellProgram::Cases(vec![]));
+        assert_ne!(none_vk, empty_cases_vk);
+    }
+
+    #[test]
+    fn validate_child_vk_canonical_accepts_canonical_program() {
+        let program = canonical_test_program();
+        let vk = canonical_program_vk(&program);
+        let desc = FactoryDescriptor {
+            factory_vk: test_factory_vk(),
+            child_program_vk: Some(vk),
+            child_vk_strategy: None,
+            allowed_cap_templates: vec![],
+            field_constraints: vec![],
+            state_constraints: vec![],
+            default_mode: CellMode::Hosted,
+            creation_budget: None,
+        };
+        desc.validate_child_vk_canonical(&program)
+            .expect("descriptor's VK must validate against its canonical program");
+    }
+
+    #[test]
+    fn validate_child_vk_canonical_rejects_mismatched_program() {
+        use crate::program::{StateConstraint, TransitionCase, TransitionGuard};
+        let program = canonical_test_program();
+        let vk = canonical_program_vk(&program);
+        let desc = FactoryDescriptor {
+            factory_vk: test_factory_vk(),
+            child_program_vk: Some(vk),
+            child_vk_strategy: None,
+            allowed_cap_templates: vec![],
+            field_constraints: vec![],
+            state_constraints: vec![],
+            default_mode: CellMode::Hosted,
+            creation_budget: None,
+        };
+        // A different program — the descriptor's VK should not bind to it.
+        let other = CellProgram::Cases(vec![TransitionCase {
+            guard: TransitionGuard::Always,
+            constraints: vec![StateConstraint::Immutable { index: 7 }],
+        }]);
+        let err = desc
+            .validate_child_vk_canonical(&other)
+            .expect_err("mismatched program must be rejected");
+        assert!(matches!(err, FactoryError::ProgramMismatch { .. }));
+    }
+
+    #[test]
+    fn validate_child_vk_canonical_rejects_none_child_vk() {
+        let program = canonical_test_program();
+        let desc = FactoryDescriptor {
+            factory_vk: test_factory_vk(),
+            child_program_vk: None,
+            child_vk_strategy: None,
+            allowed_cap_templates: vec![],
+            field_constraints: vec![],
+            state_constraints: vec![],
+            default_mode: CellMode::Sovereign,
+            creation_budget: None,
+        };
+        let err = desc
+            .validate_child_vk_canonical(&program)
+            .expect_err("descriptor with None child_program_vk cannot validate any program");
+        assert!(matches!(
+            err,
+            FactoryError::ProgramMismatch {
+                got: None,
+                expected: Some(_)
+            }
+        ));
     }
 }
