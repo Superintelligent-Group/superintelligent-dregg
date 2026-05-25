@@ -332,7 +332,7 @@ pub enum TurnError {
         /// state-mutating effect.
         cell: CellId,
         /// Human-readable name of the conflicting effect for triage.
-        conflicting_effect: &'static str,
+        conflicting_effect: String,
     },
 }
 

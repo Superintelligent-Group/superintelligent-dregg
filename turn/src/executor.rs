@@ -5240,7 +5240,7 @@ impl TurnExecutor {
                         return Err((
                             TurnError::RefusalConflictsWithMutation {
                                 cell: *ref_cell,
-                                conflicting_effect: name,
+                                conflicting_effect: name.to_string(),
                             },
                             path,
                         ));
@@ -13882,7 +13882,7 @@ mod hardening_tests {
                 reason:
                     TurnError::RefusalConflictsWithMutation {
                         cell,
-                        conflicting_effect,
+                        ref conflicting_effect,
                     },
                 ..
             } => {
