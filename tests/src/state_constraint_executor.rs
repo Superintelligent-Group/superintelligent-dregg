@@ -62,7 +62,7 @@ fn build_set_field_turn(
         preconditions: Default::default(),
         effects: vec![Effect::SetField {
             cell: agent,
-            index: field_idx,
+            index: field_idx as usize,
             value,
         }],
         may_delegate: DelegationMode::None,

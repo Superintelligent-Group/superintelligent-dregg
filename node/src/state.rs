@@ -939,7 +939,6 @@ impl NodeStateInner {
             Some(pyana_federation::LocalSeat {
                 index: 0, // re-indexed by Federation::from_committee
                 signing_key,
-                #[cfg(feature = "runtime")]
                 bls_secret: None,
             })
         } else {

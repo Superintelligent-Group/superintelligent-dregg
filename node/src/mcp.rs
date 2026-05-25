@@ -2040,6 +2040,19 @@ fn describe_cell_program(program: &pyana_cell::CellProgram) -> serde_json::Value
             "state_constraints": [],
             "note": "circuit-program: post-state validity is enforced by the AIR proof in the action authorization",
         }),
+        pyana_cell::CellProgram::Cases(cases) => {
+            // Cav-Codex Block 4: operation-scoped cases. Each case has a
+            // `TransitionGuard` naming which transitions it applies to and
+            // a constraint list that must hold when the guard matches.
+            let cs: serde_json::Value =
+                serde_json::to_value(cases).unwrap_or(serde_json::Value::Array(Vec::new()));
+            serde_json::json!({
+                "kind": "Cases",
+                "cases": cs,
+                "case_count": cases.len(),
+                "note": "operation-scoped program: each case's constraints AND together when its guard matches; if no case matches, the transition is default-denied",
+            })
+        }
     }
 }
 
@@ -4061,7 +4074,7 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
             pyana_types::SigningKey::from_bytes(&seed)
         }
     };
-    let introducer_pk_bytes = introducer_sk.verifying_key_bytes();
+    let introducer_pk_bytes = *introducer_sk.public_key().as_bytes();
 
     let introducer_federation_bytes: [u8; 32] =
         match params.get("introducer_federation").and_then(|v| v.as_str()) {

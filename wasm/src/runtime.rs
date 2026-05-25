@@ -312,12 +312,14 @@ impl PyanaRuntime {
 
         // BFT threshold: n − ⌊n/3⌋ (same formula as the deleted node.rs).
         let threshold = (num_nodes - num_nodes / 3) as u32;
-        // `LocalSeat::bls_secret` only exists under the `runtime` feature of
-        // pyana-federation. pyana-wasm depends on federation with
-        // `default-features = false` (no `runtime`), so the field is absent.
+        // `LocalSeat::bls_secret` is gated on `pyana-federation/runtime`; that
+        // feature is unified-on across the workspace (e.g. `node/` enables
+        // it), so the field is always present in any cargo invocation that
+        // also builds pyana-wasm.
         let local_seat = local_sk.map(|sk| LocalSeat {
             index: 0,
             signing_key: sk,
+            bls_secret: None,
         });
         let federation = Federation::from_committee(members, 0, threshold, None, local_seat);
 
