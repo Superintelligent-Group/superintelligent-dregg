@@ -1990,6 +1990,92 @@ fn hex_decode_32(hex: &str) -> Result<[u8; 32], String> {
 }
 
 // ============================================================================
+// Canonical encrypted-intent post (postEncryptedIntent canonical path)
+// ============================================================================
+
+/// Build an `EncryptedIntent` via the canonical SDK path
+/// (`AgentWallet::post_encrypted_intent`). The wallet's Ed25519 identity
+/// is the source of the `commitment_id` field; the intent body is sealed
+/// with a fresh ephemeral keypair (per `EncryptedIntent::create`).
+///
+/// JSON input:
+/// ```json
+/// {
+///   "sender_privkey": [32 bytes as number[]],
+///   "match_spec": { /* canonical MatchSpec JSON */ },
+///   "kind": "Need" | "Offer" | "Query",
+///   "expiry": null | <unix-seconds>
+/// }
+/// ```
+///
+/// `match_spec` is parsed via the canonical `pyana_intent::MatchSpec`
+/// serde shape, so the field names are exactly those of the Rust type.
+/// The extension already coerces its inbound MatchSpec to this shape
+/// for `pyana:postIntent` / `compute_intent_id`, so the same payload
+/// flows through here.
+///
+/// Returns JSON: `{ intent_id: <hex>, encrypted_intent_bytes: Uint8Array,
+/// expiry: u64|null }`. `encrypted_intent_bytes` is the postcard-serialized
+/// `EncryptedIntent`, ready for gossip propagation or for the extension
+/// to forward to `/intents/encrypted` (or equivalent transport).
+#[wasm_bindgen]
+pub fn wallet_post_encrypted_intent(spec_json: &str) -> Result<JsValue, JsError> {
+    use pyana_intent::{IntentKind, MatchSpec};
+    use pyana_sdk::AgentWallet;
+    use zeroize::Zeroizing;
+
+    #[derive(serde::Deserialize)]
+    struct Spec {
+        sender_privkey: Vec<u8>,
+        match_spec: MatchSpec,
+        kind: String,
+        #[serde(default)]
+        expiry: Option<u64>,
+    }
+
+    let spec: Spec = serde_json::from_str(spec_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+    if spec.sender_privkey.len() != 32 {
+        return Err(JsError::new("sender_privkey must be exactly 32 bytes"));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&spec.sender_privkey);
+
+    let kind = match spec.kind.as_str() {
+        "Need" | "need" => IntentKind::Need,
+        "Offer" | "offer" => IntentKind::Offer,
+        "Query" | "query" => IntentKind::Query,
+        other => return Err(JsError::new(&format!("unknown intent kind: {other}"))),
+    };
+
+    let wallet = AgentWallet::from_key_bytes(Zeroizing::new(seed));
+    let encrypted = wallet.post_encrypted_intent(&spec.match_spec, kind, spec.expiry);
+
+    let bytes = postcard::to_allocvec(&encrypted)
+        .map_err(|e| JsError::new(&format!("postcard serialization failed: {e}")))?;
+    let json = serde_json::to_string(&encrypted)
+        .map_err(|e| JsError::new(&format!("json serialization failed: {e}")))?;
+
+    #[derive(Serialize)]
+    struct Out {
+        intent_id: String,
+        encrypted_intent_bytes: Vec<u8>,
+        encrypted_intent_json: String,
+        expiry: Option<u64>,
+        encrypted: bool,
+    }
+
+    let out = Out {
+        intent_id: hex_encode(&encrypted.id),
+        encrypted_intent_bytes: bytes,
+        encrypted_intent_json: json,
+        expiry: encrypted.expiry,
+        encrypted: true,
+    };
+    serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 

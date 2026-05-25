@@ -2360,7 +2360,61 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       return { id: message.id, result: wallet.stealthNotes || [] };
     }
 
-    case "pyana:postEncryptedIntent":
+    case "pyana:postEncryptedIntent": {
+      requireWasm("postEncryptedIntent");
+      const w = wasm!;
+      const wallet = await loadState();
+      if (wallet.locked) return { id: message.id, error: "Wallet is locked" };
+      if (!wallet.secretKey) return { id: message.id, error: "Wallet secret key not available" };
+      const matchSpec = (message.matchSpec as MatchSpec) || {};
+      const options = (message.options as { expiry?: number; kind?: string } | undefined) || {};
+      const kind = options.kind || "need";
+      // The canonical Rust `MatchSpec` shape uses snake_case field names
+      // (resource_pattern, min_budget). Coerce the camelCase form that the
+      // extension's TS types use over to the canonical shape.
+      const canonicalMatchSpec = {
+        actions: (matchSpec.actions || []).map(a => ({ action: a.action || null, resource: a.resource || null })),
+        constraints: (matchSpec.constraints || []).map((c: IntentConstraint) => {
+          if (c.type === "appId") return { AppId: c.value };
+          if (c.type === "service") return { Service: c.value };
+          if (c.type === "userId") return { UserId: c.value };
+          if (c.type === "notExpiredAt") return { NotExpiredAt: c.value };
+          if (c.type === "feature") return { Feature: c.value };
+          if (c.type === "oauthProvider") return { OAuthProvider: c.value };
+          return { Custom: { predicate: String(c.type || ""), value: String(c.value ?? "") } };
+        }),
+        min_budget: matchSpec.minBudget ?? null,
+        resource_pattern: matchSpec.resourcePattern ?? null,
+        compound: null,
+        predicate_requirements: [],
+        strict_resource_matching: false,
+      };
+      const expiry = options.expiry ?? null;
+      try {
+        const result = w.wallet_post_encrypted_intent(JSON.stringify({
+          sender_privkey: wallet.secretKey,
+          match_spec: canonicalMatchSpec,
+          kind: kind === "offer" ? "Offer" : kind === "query" ? "Query" : "Need",
+          expiry,
+        }));
+        // Forward the canonical `EncryptedIntent` JSON to the node for
+        // gossip propagation. The wasm binding emits both the
+        // postcard bytes (for direct-peer use) and an axum-compatible
+        // JSON form for the `/intents/encrypted` HTTP endpoint.
+        const resp = await nodeRequest(nodeConfig, "/intents/encrypted", {
+          method: "POST",
+          body: result.encrypted_intent_json,
+          headers: { "Content-Type": "application/json" },
+        });
+        const submitted = resp.ok;
+        resetLockTimer();
+        return { id: message.id, result: { intentId: result.intent_id, expiry: result.expiry, encrypted: true, submitted, submitError: submitted ? undefined : resp.error } };
+      } catch (e: unknown) {
+        const err = e as Error;
+        return { id: message.id, error: err.message || "post_encrypted_intent failed" };
+      }
+    }
+
     case "pyana:privateTransfer":
       return { id: message.id, result: { error: "Requires WASM module -- not yet migrated" } };
 

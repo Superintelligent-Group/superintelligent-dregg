@@ -570,6 +570,21 @@ export interface PyanaWasm {
     ephemeral_pubkey: Uint8Array;
     nonce: Uint8Array;
   };
+  /**
+   * Canonical encrypted-intent post path. Routes through
+   * `AgentWallet::post_encrypted_intent` in the SDK so the resulting
+   * `EncryptedIntent`'s `commitment_id` is bound to the wallet's
+   * Ed25519 public key. Returns the postcard-encoded `EncryptedIntent`
+   * bytes alongside the content-addressed intent id (hex) and the
+   * (optional) expiry that was set.
+   */
+  wallet_post_encrypted_intent(specJson: string): {
+    intent_id: string;
+    encrypted_intent_bytes: Uint8Array;
+    encrypted_intent_json: string;
+    expiry: number | null;
+    encrypted: boolean;
+  };
 }
 
 // ---------------------------------------------------------------------------
