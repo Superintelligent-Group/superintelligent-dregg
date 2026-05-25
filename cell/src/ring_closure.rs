@@ -671,5 +671,17 @@ mod tests {
         let back: RingClosureAttestation = postcard::from_bytes(&bytes).expect("deserialize");
         assert_eq!(back, att);
         back.verify().expect("post-serde verification");
+
+        // Truncated bytes must fail to decode.
+        assert!(
+            postcard::from_bytes::<RingClosureAttestation>(&bytes[..bytes.len().saturating_sub(4)])
+                .is_err(),
+            "truncated attestation must fail to decode"
+        );
+        // Garbage bytes must fail.
+        assert!(
+            postcard::from_bytes::<RingClosureAttestation>(&[0xAB; 32]).is_err(),
+            "garbage bytes must fail to decode"
+        );
     }
 }

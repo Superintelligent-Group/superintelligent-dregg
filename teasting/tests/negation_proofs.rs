@@ -135,31 +135,4 @@ fn test_non_membership_empty_set() {
 }
 
 // ─── Temporal absence tests (disabled: temporal_absence_air removed) ─────────
-
-#[test]
-#[ignore = "temporal_absence_air module was removed; needs DSL rewrite"]
-fn test_temporal_absence_valid_gap_proof() {}
-
-#[test]
-#[ignore = "temporal_absence_air module was removed; needs DSL rewrite"]
-fn test_temporal_absence_non_adjacent_fails() {}
-
-#[test]
-#[ignore = "temporal_absence_air module was removed; needs DSL rewrite"]
-fn test_temporal_absence_wrong_params_rejected() {}
-
-#[test]
-#[ignore = "temporal_absence_air module was removed; needs DSL rewrite"]
-fn test_temporal_absence_entry_before_after_t1_fails() {}
-
-#[test]
-#[ignore = "temporal_absence_air module was removed; needs DSL rewrite"]
-fn test_temporal_absence_exact_boundaries() {}
-
-#[test]
-#[ignore = "temporal_absence_air module was removed; needs DSL rewrite"]
-fn test_temporal_absence_dsl_valid_gap() {}
-
-#[test]
-#[ignore = "temporal_absence_air module was removed; needs DSL rewrite"]
-fn test_temporal_absence_dsl_wrong_params_rejected() {}
+// NOTE: removed 7 empty #[ignore] placeholder tests that provided zero runtime value.

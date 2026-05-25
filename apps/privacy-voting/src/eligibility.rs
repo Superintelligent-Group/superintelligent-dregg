@@ -147,70 +147,51 @@ mod tests {
     }
 
     #[test]
-    fn forged_signature_rejected() {
-        // Adversarial: an attacker who fabricates a credential with random
-        // signature bytes cannot pass verification.
+    fn tampered_credential_rejected() {
+        // Adversarial: credentials with a forged signature or a tampered
+        // envelope must both fail verification.
         let mut issuer = AgentCipherclerk::new();
         let issuer_pk = issuer.public_key();
         let voter = AgentCipherclerk::new();
-        let mut cred = issue_credential(&mut issuer, voter.public_key());
+        let auth = EligibilityAuthority::Single(issuer_pk);
 
-        // Tamper: replace the signature with garbage.
+        let mut cred = issue_credential(&mut issuer, voter.public_key());
         cred.delegator_signature = pyana_types::Signature([0xAB; 64]);
-
-        let auth = EligibilityAuthority::Single(issuer_pk);
         let r = verify_eligibility(&auth, &cred);
-        assert!(matches!(r, Err(EligibilityError::InvalidSignature(_))));
-    }
+        assert!(
+            matches!(r, Err(EligibilityError::InvalidSignature(_))),
+            "forged signature must be rejected"
+        );
 
-    #[test]
-    fn tampered_envelope_rejected() {
-        // Adversarial: an attacker who flips a bit in the envelope (e.g.,
-        // re-targets it to a different delegatee) breaks the signature.
-        let mut issuer = AgentCipherclerk::new();
-        let issuer_pk = issuer.public_key();
-        let voter = AgentCipherclerk::new();
         let mut cred = issue_credential(&mut issuer, voter.public_key());
-
-        // Tamper: swap the delegatee — the signed message hash now changes,
-        // but the original signature stays the same, so verification fails.
         cred.delegatee = PublicKey([0xCC; 32]);
-
-        let auth = EligibilityAuthority::Single(issuer_pk);
         let r = verify_eligibility(&auth, &cred);
-        assert!(matches!(r, Err(EligibilityError::InvalidSignature(_))));
+        assert!(
+            matches!(r, Err(EligibilityError::InvalidSignature(_))),
+            "tampered envelope must be rejected"
+        );
     }
 
     #[test]
-    fn federation_accepts_any_member() {
+    fn federation_membership_checked() {
         let mut iss_a = AgentCipherclerk::new();
         let iss_b = AgentCipherclerk::new();
-        let voter = AgentCipherclerk::new();
-        let cred = issue_credential(&mut iss_a, voter.public_key());
-
-        let mut set = HashSet::new();
-        set.insert(iss_a.public_key());
-        set.insert(iss_b.public_key());
-        let auth = EligibilityAuthority::Federation(set);
-        verify_eligibility(&auth, &cred).expect("must accept federation member");
-    }
-
-    #[test]
-    fn federation_rejects_outsiders() {
         let mut rogue = AgentCipherclerk::new();
-        let iss_a = AgentCipherclerk::new();
-        let iss_b = AgentCipherclerk::new();
         let voter = AgentCipherclerk::new();
-        let cred = issue_credential(&mut rogue, voter.public_key());
 
         let mut set = HashSet::new();
         set.insert(iss_a.public_key());
         set.insert(iss_b.public_key());
         let auth = EligibilityAuthority::Federation(set);
+
+        let cred = issue_credential(&mut iss_a, voter.public_key());
+        verify_eligibility(&auth, &cred).expect("federation member must be accepted");
+
+        let cred = issue_credential(&mut rogue, voter.public_key());
         let r = verify_eligibility(&auth, &cred);
-        assert!(matches!(
-            r,
-            Err(EligibilityError::UnauthorizedIssuer { .. })
-        ));
+        assert!(
+            matches!(r, Err(EligibilityError::UnauthorizedIssuer { .. })),
+            "outsider must be rejected"
+        );
     }
 }

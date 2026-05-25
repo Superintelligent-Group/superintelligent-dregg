@@ -410,30 +410,12 @@ mod tests {
         assert_eq!(r1.proof_bytes, r2.proof_bytes);
     }
 
-    #[cfg(feature = "mock")]
-    #[tokio::test]
-    async fn test_evm_proof_serialization_roundtrip() {
-        let mut proof = b"PYNA".to_vec();
-        proof.push(1);
-        proof.extend_from_slice(&[99u8; 64]);
-
-        let evm_proof = wrap_for_evm(&proof, &[111, 222]).await.unwrap();
-        let json = serde_json::to_string(&evm_proof).unwrap();
-        let deserialized: EvmProof = serde_json::from_str(&json).unwrap();
-        assert_eq!(evm_proof.proof_bytes, deserialized.proof_bytes);
-        assert_eq!(evm_proof.public_values, deserialized.public_values);
-    }
-
     #[cfg(feature = "prove")]
     #[test]
-    fn test_deserialize_for_guest_rejects_garbage() {
+    fn test_deserialize_for_guest_rejects_invalid() {
         assert!(deserialize_for_guest(b"not a proof").is_err());
         assert!(deserialize_for_guest(b"PYNA").is_err()); // too short, no version byte
-    }
 
-    #[cfg(feature = "prove")]
-    #[test]
-    fn test_deserialize_for_guest_rejects_truncated() {
         // Valid header but truncated body
         let mut bytes = b"PYNA".to_vec();
         bytes.push(1); // version

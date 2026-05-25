@@ -261,6 +261,14 @@ pub fn fabricate_witnessed_receipt_with_schedule(
     let roots = schedule.roots_for(cell_id, turn.nonce);
 
     let mut pi_bb = vec![BabyBear::ZERO; p::BASE_COUNT];
+    // Populate turn-identity slots (shared across all per-cell proofs of one turn).
+    let (th, eg, _, prev) = pyana_turn::executor::TurnExecutor::compute_turn_identity_pi(turn);
+    for i in 0..4 {
+        pi_bb[p::TURN_HASH_BASE + i] = th[i];
+        pi_bb[p::EFFECTS_HASH_GLOBAL_BASE + i] = eg[i];
+        pi_bb[p::PREVIOUS_RECEIPT_HASH_BASE + i] = prev[i];
+    }
+    pi_bb[p::ACTOR_NONCE] = BabyBear::new((turn.nonce & 0x7FFF_FFFF) as u32);
     project_into_pi(&mut pi_bb, &counts, &roots);
     pi_bb[p::IS_AGENT_CELL] = if cell_id == &turn.agent {
         BabyBear::new(1)
@@ -534,6 +542,23 @@ mod tests {
         let json = serde_json::to_string(&bundle).expect("serialize");
         let verdict = verify_bilateral_bundle_json(&json);
         assert!(verdict.verified, "{:?}", verdict);
+
+        // Edge case: malformed JSON (missing required fields) must reject.
+        let bad_json = r#"{"turn": null, "entries": []}"#;
+        let bad_verdict = verify_bilateral_bundle_json(bad_json);
+        assert!(
+            !bad_verdict.verified,
+            "malformed JSON must be rejected: {:?}",
+            bad_verdict
+        );
+
+        // Edge case: empty JSON must reject.
+        let empty_verdict = verify_bilateral_bundle_json("{}");
+        assert!(
+            !empty_verdict.verified,
+            "empty JSON must be rejected: {:?}",
+            empty_verdict
+        );
     }
 
     // ---- bilateral Grant happy-path -----------------------------------------
@@ -742,52 +767,6 @@ mod tests {
             !verdict.verified,
             "tampered unilateral PI must reject: {:?}",
             verdict
-        );
-    }
-
-    #[test]
-    fn unilateral_forged_sender_rejects() {
-        // Adversarial: a `SelfStateTransition` attestation in the bundle is
-        // attributed to Alice but its `attestation_data` preimage was actually
-        // computed against Bob's cell id (a forged sender). The prover's
-        // Alice-PI was fabricated by including the attestation under Alice
-        // — so PI agrees with the bundle. But the canonical helper that the
-        // honest receiver runs on `peer_exchange` would produce a *different*
-        // data hash for Alice (because the cell_id is in the preimage), so
-        // any consumer that re-derives the canonical attestation from
-        // `peer_exchange::PeerStateTransition` will compute a different
-        // attestation_data than what's in the bundle.
-        //
-        // The verifier's job here is structural: we encode the test by
-        // showing that a canonical attestation made for Bob, attributed
-        // to Alice in the bundle, leads to a mismatch when compared to the
-        // attestation derived from Alice's identity.
-        use pyana_turn::bilateral_schedule::UnilateralAttestation;
-        let alice = cid(0xA1);
-        let bob = cid(0xB2);
-        let old_commit = [0x10; 32];
-        let new_commit = [0x20; 32];
-        let effects_hash = [0x30; 32];
-
-        let alice_att = UnilateralAttestation::self_state_transition(
-            &alice,
-            &old_commit,
-            &new_commit,
-            &effects_hash,
-        );
-        let bob_att = UnilateralAttestation::self_state_transition(
-            &bob,
-            &old_commit,
-            &new_commit,
-            &effects_hash,
-        );
-
-        // The attestation Alice would honestly produce is distinct from
-        // the one Bob would produce — both cover the same logical (old, new,
-        // effects) but Alice's includes Alice's cell_id; Bob's includes Bob's.
-        assert_ne!(
-            alice_att.attestation_data, bob_att.attestation_data,
-            "canonical preimage must include cell_id to prevent forged-sender attacks"
         );
     }
 

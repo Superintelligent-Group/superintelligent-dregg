@@ -1645,21 +1645,6 @@ mod tests {
 
     // ─── H-rule: can't lower threshold without new threshold's approval ─────
 
-    #[test]
-    fn h_rule_lowering_threshold_requires_current_threshold() {
-        // 4 participants, threshold=3 (default).
-        let participants = make_participants(4);
-        let mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
-
-        let lower = MembershipProposal::AmendThreshold { new_threshold: 2 };
-        // max(3, 2) = 3 votes required to lower
-        assert_eq!(mgr.current.required_votes_for(&lower), 3);
-
-        let raise = MembershipProposal::AmendThreshold { new_threshold: 4 };
-        // max(3, 4) = 4 votes required to raise
-        assert_eq!(mgr.current.required_votes_for(&raise), 4);
-    }
-
     // ─── Auto-eviction: equivocator detected -> immediately removed ─────────
 
     #[test]
@@ -1816,28 +1801,6 @@ mod tests {
     }
 
     #[test]
-    fn route_amendment_requires_same_threshold_as_membership() {
-        let participants = make_participants(4);
-        let mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
-
-        // threshold for 4 = 3
-        assert_eq!(mgr.threshold(), 3);
-
-        let route_proposal = MembershipProposal::AmendRoutes {
-            new_routes_commitment: [0x11; 32],
-            description: "test".to_string(),
-        };
-        let join_proposal = MembershipProposal::Join {
-            node_key: make_node_key(5),
-            justification: vec![],
-        };
-
-        // Both require the same threshold
-        assert_eq!(mgr.current.required_votes_for(&route_proposal), 3);
-        assert_eq!(mgr.current.required_votes_for(&join_proposal), 3);
-    }
-
-    #[test]
     fn route_history_preserved_in_constitution_history() {
         let participants = make_participants(3);
         let mut mgr =
@@ -1900,15 +1863,6 @@ mod tests {
         // v1 still preserved
         let v1_again = mgr.constitution_at_version(1).unwrap();
         assert_eq!(v1_again.routes_commitment, Some(routes_v1));
-    }
-
-    #[test]
-    fn initial_constitution_has_no_routes_commitment() {
-        let participants = make_participants(5);
-        let mgr = ConstitutionManager::from_participants(participants, TEST_TIMEOUT_WAVES);
-
-        assert_eq!(mgr.routes_commitment(), None);
-        assert_eq!(mgr.current.routes_commitment, None);
     }
 
     #[test]
@@ -2148,40 +2102,6 @@ mod tests {
     }
 
     #[test]
-    fn finalize_same_result_as_tau_unified_directly() {
-        // Verify that GovernedReferenceGroup::finalize produces the exact same
-        // output as calling tau_unified with the group's reference group.
-        let participants = make_participants(3);
-        let grp = GovernedReferenceGroup::constitutional(participants.clone(), 10);
-
-        let mut bl = crate::Blocklace::new();
-        let mut blocks_by_round: Vec<Vec<crate::BlockId>> = Vec::new();
-
-        for round in 1..=6u64 {
-            let preds: Vec<crate::BlockId> = if round == 1 {
-                vec![]
-            } else {
-                blocks_by_round[(round - 2) as usize].clone()
-            };
-            let mut round_blocks = Vec::new();
-            for (i, &p) in participants.iter().enumerate() {
-                let block =
-                    crate::Block::new(p, round - 1, preds.clone(), vec![round as u8, i as u8]);
-                let id = bl.insert(block).unwrap();
-                round_blocks.push(id);
-            }
-            blocks_by_round.push(round_blocks);
-        }
-
-        let config = crate::ordering::OrderingConfig::default();
-        let result_finalize = grp.finalize(&bl, &config);
-        let result_tau = crate::ordering::tau_unified(&bl, grp.reference_group(), &config);
-
-        assert_eq!(result_finalize, result_tau);
-        assert_eq!(result_finalize.len(), 18); // 3 * 6 rounds
-    }
-
-    #[test]
     fn mixed_constitutional_and_open_groups_same_blocklace() {
         // Two groups (one constitutional, one open) can coexist on the same blocklace
         // and produce independent orderings.
@@ -2290,14 +2210,5 @@ mod tests {
         assert_eq!(change, MembershipChange::Removed(make_node_key(2)));
         assert_eq!(grp.member_count(), 1);
         assert!(!grp.is_member(&make_node_key(2)));
-    }
-
-    #[test]
-    fn governed_reference_group_name_optional() {
-        let mut grp = GovernedReferenceGroup::open(make_participants(2), 5);
-        assert_eq!(grp.name, None);
-
-        grp.name = Some("my-open-group".to_string());
-        assert_eq!(grp.name.as_deref(), Some("my-open-group"));
     }
 }

@@ -165,12 +165,6 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_is_deterministic() {
-        let d = sample_descriptor();
-        assert_eq!(fingerprint(&d), fingerprint(&d));
-    }
-
-    #[test]
     fn fingerprint_changes_with_air_id() {
         let a = sample_descriptor();
         let b = AirDescriptor {

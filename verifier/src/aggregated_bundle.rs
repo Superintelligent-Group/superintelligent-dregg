@@ -117,7 +117,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_verdict_happy_path() {
+    fn cli_verdict_happy_and_reject() {
         let alice = cid(0xA1);
         let bob = cid(0xB2);
 
@@ -128,6 +128,7 @@ mod tests {
         builder.add_action(action);
         let turn = builder.fee(0).build();
 
+        // Happy path: two entries for Alice and Bob.
         let entries = vec![
             (alice, fabricate_wr(&turn, &alice)),
             (bob, fabricate_wr(&turn, &bob)),
@@ -139,5 +140,16 @@ mod tests {
         assert!(verdict.verified, "{:?}", verdict);
         assert_eq!(verdict.n_cells, 2);
         assert_eq!(verdict.transfer_count, 1);
+
+        // Rejection path: missing Bob's entry → bundle incomplete.
+        let incomplete_entries = vec![(alice, fabricate_wr(&turn, &alice))];
+        let incomplete_bundle = prove_aggregated_bundle(&turn, &incomplete_entries).expect("prove");
+        let incomplete_json = incomplete_bundle.to_json().expect("serialise");
+        let incomplete_verdict = verify_aggregated_bundle_json(&incomplete_json);
+        assert!(
+            !incomplete_verdict.verified,
+            "incomplete bundle (missing peer) must be rejected: {:?}",
+            incomplete_verdict
+        );
     }
 }

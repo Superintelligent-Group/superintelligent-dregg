@@ -527,24 +527,6 @@ mod tests {
     }
 
     #[test]
-    fn canonical_bytes_retrievable_after_register() {
-        let (reg, vk_hash, bytes) = registry_with_one_entry();
-        assert_eq!(reg.canonical_bytes(&vk_hash), Some(bytes.as_slice()));
-    }
-
-    #[test]
-    fn canonical_bytes_none_for_register_without_bytes() {
-        let mut reg = CustomEffectRegistry::empty();
-        let vk = [0x42u8; 32];
-        let verifier = Arc::new(StubCustomEffectVerifier::new(vk, "no-bytes"));
-        let returned = reg.register_without_bytes(verifier);
-        assert_eq!(returned, vk);
-        assert!(reg.contains(&vk));
-        // No canonical bytes were stored.
-        assert!(reg.canonical_bytes(&vk).is_none());
-    }
-
-    #[test]
     fn tampered_verifier_proof_bytes_rejected_via_kind_verifier() {
         // Register a verifier that *checks* its proof bytes (parses a
         // length-prefixed header). Tampered proof bytes get rejected

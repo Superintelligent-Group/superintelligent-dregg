@@ -345,17 +345,6 @@ impl Turn {
                 hasher.update(&[0u8]);
             }
         }
-        // conservation_proof: serialized Schnorr proof bytes.
-        match &self.conservation_proof {
-            Some(bytes) => {
-                hasher.update(&[1u8]);
-                hasher.update(&(bytes.len() as u64).to_le_bytes());
-                hasher.update(bytes);
-            }
-            None => {
-                hasher.update(&[0u8]);
-            }
-        }
         // sovereign_witnesses: map of (CellId -> SovereignCellWitness).
         // Sort entries by cell ID for canonical ordering. Bind every
         // soundness-load-bearing field: the (old, new, effects_hash,

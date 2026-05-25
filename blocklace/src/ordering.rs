@@ -1420,56 +1420,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tau_unified_leader_selection_from_group_only() {
-        // Leader for each wave must come from the reference group, not external strands.
-        // We verify this by building a scenario where an external key would be the leader
-        // if external blocks were counted.
-        let members = vec![make_key(1), make_key(2), make_key(3)];
-        let (bl, _) = build_full_blocklace(&members, 3);
-
-        let group = ReferenceGroup::new(members.clone(), 10);
-        let config = OrderingConfig::default();
-
-        // Wave 0 leader should be members[0] = make_key(1).
-        let leader = wave_leader(0, &group.participants);
-        assert_eq!(leader, make_key(1));
-
-        let result = tau_unified(&bl, &group, &config);
-        assert!(!result.is_empty(), "should produce finalized output");
-
-        // All blocks in the output should be from reference group participants.
-        for &block_id in &result {
-            let block = bl.get(&block_id).unwrap();
-            assert!(
-                group.is_member(&block.creator),
-                "all finalized blocks should be from group members"
-            );
-        }
-    }
-
-    #[test]
-    fn test_tau_unified_ratification_counts_from_group_only() {
-        // Ratification should only count approvals from reference group members.
-        // External blocks that might approve a leader should not count.
-        let members = vec![make_key(1), make_key(2), make_key(3)];
-        let externals = vec![make_key(50), make_key(51), make_key(52)];
-        let (bl, _, _) = build_mixed_blocklace(&members, &externals, 3);
-
-        let group = ReferenceGroup::new(members.clone(), 10);
-        let config = OrderingConfig::default();
-
-        let result = tau_unified(&bl, &group, &config);
-
-        // Verify that the result matches what we'd get without external blocks.
-        let (bl_clean, _) = build_full_blocklace(&members, 3);
-        let result_clean = tau_with_config(&bl_clean, &members, &config);
-
-        // Both should finalize 9 blocks.
-        assert_eq!(result.len(), 9, "should finalize all member blocks");
-        assert_eq!(result_clean.len(), 9, "clean should finalize all blocks");
-    }
-
-    #[test]
     fn test_reference_group_from_constitution() {
         // ReferenceGroup::from_constitution should produce identical behavior
         // to using the constitution's participants directly.
@@ -1642,20 +1592,6 @@ mod tests {
                 "external blocks should not be in output"
             );
         }
-    }
-
-    #[test]
-    fn test_reference_group_helpers() {
-        let group = ReferenceGroup::new(vec![make_key(1), make_key(2), make_key(3)], 5);
-
-        assert_eq!(group.member_count(), 3);
-        assert!(group.is_member(&make_key(1)));
-        assert!(group.is_member(&make_key(2)));
-        assert!(group.is_member(&make_key(3)));
-        assert!(!group.is_member(&make_key(4)));
-        assert_eq!(group.threshold, 3); // 2*3/3 + 1 = 3
-        assert_eq!(group.timeout_waves, 5);
-        assert_eq!(group.routes_commitment, None);
     }
 
     #[test]

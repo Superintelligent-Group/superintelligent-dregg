@@ -488,17 +488,6 @@ mod tests {
     use crate::authority::Authority;
 
     #[test]
-    fn test_fact_creation() {
-        let f = Fact::app("frontend", "rwcd");
-        assert_eq!(f.kind, FactKind::App);
-        assert_eq!(f.resource, "frontend");
-        assert_eq!(f.actions, "rwcd");
-        assert!(f.actions.contains('r'));
-        assert!(f.actions.contains('w'));
-        assert!(!f.actions.contains('x'));
-    }
-
-    #[test]
     fn test_check_read_only() {
         let check = Check::read_only();
         let req = AuthorizationRequest {

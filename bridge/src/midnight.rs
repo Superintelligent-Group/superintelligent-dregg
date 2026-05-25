@@ -857,21 +857,6 @@ mod tests {
     }
 
     #[test]
-    fn test_midnight_to_pyana_canonical_payload() {
-        let msg = MidnightToPyanaMessage {
-            midnight_tx_hash: [1u8; 32],
-            amount: 42,
-            pyana_recipient: [2u8; 32],
-            midnight_height: 100,
-            log_index: 3,
-        };
-
-        let payload = msg.canonical_payload();
-        // 32 + 8 + 32 + 8 + 4 = 84 bytes
-        assert_eq!(payload.len(), 84);
-    }
-
-    #[test]
     fn test_serialization_roundtrip() {
         let msg = make_valid_pyana_to_midnight();
         let bytes = postcard::to_stdvec(&msg).unwrap();

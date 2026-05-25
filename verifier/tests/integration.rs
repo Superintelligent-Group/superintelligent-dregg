@@ -217,19 +217,17 @@ fn test_verify_multi_effect_turn_accepted() {
 }
 
 // ---------------------------------------------------------------------------
-// Binary subprocess test
+// Binary subprocess tests (file-args + stdin modes, plus negative cases)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_binary_cli_accept() {
+fn test_binary_cli() {
     use std::io::Write;
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
-    // Build the binary first — this is a no-op if already built.
-    // We rely on the test harness having been invoked via `cargo test` which
-    // ensures the binary is built. Use CARGO_BIN_EXE_ env if present.
     let binary = env!("CARGO_BIN_EXE_pyana-verifier");
 
+    // ---- 1. File-arg mode (happy path) ----
     let (proof_bytes, pi_u32) = make_proof_and_pi(
         300,
         &[Effect::Transfer {
@@ -237,10 +235,8 @@ fn test_binary_cli_accept() {
             direction: 0,
         }],
     );
-
     let pi_json = serde_json::to_string(&pi_u32).expect("pi serialisation");
 
-    // Write proof to a temp file.
     let mut proof_file = tempfile::NamedTempFile::new().expect("tempfile");
     proof_file.write_all(&proof_bytes).expect("write proof");
     proof_file.flush().expect("flush proof");
@@ -266,30 +262,21 @@ fn test_binary_cli_accept() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-
     let result: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("valid JSON output");
     assert_eq!(result["verified"], true, "expected verified=true");
-}
 
-#[test]
-fn test_binary_stdin_json_accept() {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-
-    let binary = env!("CARGO_BIN_EXE_pyana-verifier");
-
-    let (proof_bytes, pi_u32) = make_proof_and_pi(
+    // ---- 2. Stdin JSON mode (happy path) ----
+    let (proof_bytes2, pi_u32_2) = make_proof_and_pi(
         150,
         &[Effect::Transfer {
             amount: 15,
             direction: 1,
         }],
     );
-
     let request = serde_json::json!({
-        "proof_hex": hex::encode(&proof_bytes),
-        "public_inputs": pi_u32,
+        "proof_hex": hex::encode(&proof_bytes2),
+        "public_inputs": pi_u32_2,
         "vk_hash": AUTO_DETECT_VK_HASH,
     });
     let request_json = serde_json::to_string(&request).expect("serialise request");
@@ -300,14 +287,12 @@ fn test_binary_stdin_json_accept() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn binary");
-
     child
         .stdin
         .as_mut()
         .expect("stdin")
         .write_all(request_json.as_bytes())
         .expect("write stdin");
-
     let out = child.wait_with_output().expect("wait");
 
     assert_eq!(
@@ -317,6 +302,37 @@ fn test_binary_stdin_json_accept() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let result: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid JSON output");
-    assert_eq!(result["verified"], true);
+    let result2: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("valid JSON output");
+    assert_eq!(result2["verified"], true);
+
+    // ---- 3. Negative: missing required args ----
+    let bad_output = Command::new(binary)
+        .output()
+        .expect("run binary with no args");
+    assert_ne!(
+        bad_output.status.code(),
+        Some(0),
+        "binary must fail when invoked without arguments"
+    );
+
+    // ---- 4. Negative: invalid stdin JSON ----
+    let mut bad_child = Command::new(binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn binary");
+    bad_child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"not-valid-json")
+        .expect("write stdin");
+    let bad_out = bad_child.wait_with_output().expect("wait");
+    assert_ne!(
+        bad_out.status.code(),
+        Some(0),
+        "binary must reject malformed stdin JSON"
+    );
 }

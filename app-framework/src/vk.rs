@@ -161,12 +161,6 @@ mod tests {
     use pyana_cell::CellProgram;
 
     #[test]
-    fn canonical_program_vk_v2_is_deterministic() {
-        let p = CellProgram::None;
-        assert_eq!(canonical_program_vk(&p), canonical_program_vk(&p));
-    }
-
-    #[test]
     fn canonical_program_vk_v2_changes_with_program() {
         let p1 = CellProgram::None;
         let p2 = CellProgram::Cases(vec![]);
@@ -187,19 +181,6 @@ mod tests {
         let b = effect_vm_air_fingerprint();
         assert_eq!(a, b);
         assert_ne!(a, [0u8; 32]);
-    }
-
-    #[test]
-    fn effect_vm_verifier_fingerprint_is_stable() {
-        let a = effect_vm_verifier_fingerprint();
-        let b = effect_vm_verifier_fingerprint();
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn canonical_predicate_vk_v2_is_deterministic() {
-        let bytes = b"some-dsl";
-        assert_eq!(canonical_predicate_vk(bytes), canonical_predicate_vk(bytes));
     }
 
     #[test]

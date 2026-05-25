@@ -162,32 +162,27 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_mock_verify_accepts_valid_proof() {
+    async fn test_mock_verify_cases() {
         let public_values =
             bincode::serialize(&(true, vec![12345u32, 67890])).unwrap();
 
-        let proof = EvmProof {
+        let valid_proof = EvmProof {
             proof_bytes: vec![1, 2, 3, 4],
             public_values,
             vkey: "deadbeef".repeat(4),
             verifier_address: crate::contracts::BASE_MAINNET.to_string(),
         };
-
-        let result = verify_on_chain(&proof, "http://localhost:8545", &proof.verifier_address).await;
+        let result = verify_on_chain(&valid_proof, "http://localhost:8545", &valid_proof.verifier_address).await;
         assert!(result.is_ok());
         assert!(result.unwrap());
-    }
 
-    #[tokio::test]
-    async fn test_mock_verify_rejects_empty_proof() {
-        let proof = EvmProof {
+        let empty_proof = EvmProof {
             proof_bytes: vec![],
             public_values: vec![1],
             vkey: "aa".repeat(32),
             verifier_address: crate::contracts::BASE_MAINNET.to_string(),
         };
-
-        let result = verify_on_chain(&proof, "http://localhost:8545", &proof.verifier_address).await;
+        let result = verify_on_chain(&empty_proof, "http://localhost:8545", &empty_proof.verifier_address).await;
         assert!(result.is_err());
     }
 

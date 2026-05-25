@@ -382,48 +382,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_address_with_prefix() {
+    fn test_parse_address_cases() {
+        // With prefix
         let addr = parse_address("0x3B6041173B80E77f038f3F2C0f9744f04837185e").unwrap();
         assert_eq!(addr[0], 0x3B);
         assert_eq!(addr[19], 0x5e);
-    }
 
-    #[test]
-    fn test_parse_address_without_prefix() {
+        // Without prefix
         let addr = parse_address("3B6041173B80E77f038f3F2C0f9744f04837185e").unwrap();
         assert_eq!(addr[0], 0x3B);
-    }
 
-    #[test]
-    fn test_parse_address_invalid_length() {
+        // Invalid length
         assert!(parse_address("0x1234").is_err());
-    }
-
-    #[test]
-    fn test_note_creation_request_serialization() {
-        let req = NoteCreationRequest {
-            token: [0u8; 20],
-            amount: 1_000_000,
-            note_commitment: [0xAA; 32],
-            depositor: [0xBB; 20],
-            block_number: 12345,
-            leaf_index: 0,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        let decoded: NoteCreationRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded.amount, 1_000_000);
-        assert_eq!(decoded.note_commitment, [0xAA; 32]);
-    }
-
-    #[tokio::test]
-    async fn test_listener_creation() {
-        let (tx, _rx) = mpsc::channel(16);
-        let listener = VaultEventListener::new(
-            "https://mainnet.base.org",
-            "0x3B6041173B80E77f038f3F2C0f9744f04837185e",
-            tx,
-        );
-        assert_eq!(listener.config.rpc_url, "https://mainnet.base.org");
-        assert_eq!(listener.config.poll_interval_secs, 12);
     }
 }

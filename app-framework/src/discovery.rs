@@ -122,10 +122,4 @@ mod tests {
         assert_eq!(decoded.tags, reg.tags);
         assert_eq!(decoded.target_uri, reg.target_uri);
     }
-
-    #[test]
-    fn client_new_stores_base_url() {
-        let client = NameserviceClient::new("http://example.test:1234");
-        assert_eq!(client.base_url, "http://example.test:1234");
-    }
 }

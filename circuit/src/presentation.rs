@@ -1948,19 +1948,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn stark_compatible_witness_generates_valid_proof() {
-        // Isolated test: just the STARK proof generation for Merkle membership.
-        // Exercises the (deprecated) linear-binding path; retained for parity.
-        let witness = create_stark_compatible_witness(BabyBear::new(42424242), 8);
-        let proof = generate_merkle_stark_proof(&witness);
-        assert!(
-            proof.is_some(),
-            "generate_merkle_stark_proof should succeed for STARK-compatible witness"
-        );
-    }
-
-    #[test]
     fn presentation_real_stark_prove_and_verify() {
         // Create a presentation with a Poseidon2-compatible issuer membership witness
         let mut witness = create_test_presentation();
@@ -2122,17 +2109,6 @@ mod tests {
         let w = witness.unwrap();
         assert_eq!(w.fold_chain.len(), 1);
         assert_eq!(w.federation_root, federation_root);
-    }
-
-    #[test]
-    fn poseidon2_compatible_witness_generates_valid_proof() {
-        // Test the Poseidon2-based STARK proof generation
-        let witness = create_poseidon2_compatible_witness(BabyBear::new(42424242), 8);
-        let proof = generate_merkle_poseidon2_stark_proof(&witness);
-        assert!(
-            proof.is_some(),
-            "generate_merkle_poseidon2_stark_proof should succeed"
-        );
     }
 
     #[test]

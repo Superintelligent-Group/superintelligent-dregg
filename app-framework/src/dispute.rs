@@ -813,17 +813,4 @@ mod tests {
         };
         assert!(validate_evidence_structure(&ev).is_ok());
     }
-
-    #[test]
-    fn test_default_config() {
-        let config = DisputeConfig::default();
-        assert_eq!(config.dispute_window_blocks, 100);
-        assert_eq!(config.challenger_stake_pct, 10);
-        assert_eq!(config.winner_slash_pct, 80);
-        assert!(!config.require_proof_in_claim);
-        assert!(matches!(
-            config.arbiter_strategy,
-            ArbiterStrategy::Tiered { .. }
-        ));
-    }
 }

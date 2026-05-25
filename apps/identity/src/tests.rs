@@ -77,34 +77,6 @@ fn create_bank_statement(issuer: &mut IssuerRegistry, holder_id: [u8; 32]) -> Cr
 }
 
 // ============================================================================
-// Test: Issue credential -> holder stores
-// ============================================================================
-
-#[test]
-fn test_issue_and_store() {
-    let (issuer_id, holder_id) = test_ids();
-    let mut issuer = IssuerRegistry::new(issuer_id);
-    let mut cclerk = CredentialWallet::new(holder_id);
-
-    let cred = create_government_id(&mut issuer, holder_id);
-
-    // Credential has correct fields.
-    assert_eq!(cred.schema_name, "GovernmentID");
-    assert_eq!(cred.issuer_id, issuer_id);
-    assert_eq!(cred.holder_id, holder_id);
-    assert!(cred.get_attribute("age").is_some());
-    assert_eq!(
-        cred.get_attribute("age"),
-        Some(&AttributeValue::Integer(34))
-    );
-
-    // Store in cclerk.
-    cclerk.store(cred.clone());
-    assert_eq!(cclerk.len(), 1);
-    assert!(cclerk.get(&cred.id).is_some());
-}
-
-// ============================================================================
 // Test: Present with selective disclosure -> verifier accepts
 // ============================================================================
 
@@ -134,60 +106,39 @@ fn test_selective_disclosure() {
 }
 
 // ============================================================================
-// Test: Predicate proof (age >= 18) -> passes
+// Test: Predicate proof (age >= threshold) -> various outcomes
 // ============================================================================
 
 #[test]
-fn test_predicate_age_gte_18_passes() {
+fn test_predicate_age_gte_various() {
     let (issuer_id, holder_id) = test_ids();
     let mut issuer = IssuerRegistry::new(issuer_id);
 
-    let cred = create_government_id(&mut issuer, holder_id);
-    // age = 34
+    let cases = vec![
+        (34, 18, true, "age >= 18 should verify (age is 34)"),
+        (30, 65, false, "age >= 65 should NOT verify (age is 30)"),
+    ];
 
-    let mut builder = PresentationBuilder::new();
-    let idx = builder.add_credential(cred);
-    builder.add_predicate(idx, "age", PredicateType::Gte, 18);
+    for (age, threshold, expected_verified, msg) in cases {
+        let mut attrs = BTreeMap::new();
+        attrs.insert("age".to_string(), AttributeValue::Integer(age));
+        let cred = issuer
+            .issue("GovernmentID", holder_id, attrs, 20000, 0)
+            .expect("issue");
 
-    let presentation = builder.build().expect("build presentation");
+        let mut builder = PresentationBuilder::new();
+        let idx = builder.add_credential(cred);
+        builder.add_predicate(idx, "age", PredicateType::Gte, threshold);
 
-    // Age is NOT revealed.
-    assert!(!presentation.revealed_attributes.contains_key("age"));
-    // Predicate proof verifies.
-    assert_eq!(presentation.predicate_results.len(), 1);
-    let result = &presentation.predicate_results[0];
-    assert_eq!(result.attribute_name, "age");
-    assert_eq!(result.predicate_type, PredicateType::Gte);
-    assert_eq!(result.threshold, 18);
-    assert!(result.verified, "age >= 18 should verify (age is 34)");
-}
+        let presentation = builder.build().expect("build presentation");
 
-// ============================================================================
-// Test: Predicate proof (age >= 65 when holder is 30) -> fails
-// ============================================================================
-
-#[test]
-fn test_predicate_age_gte_65_fails() {
-    let (issuer_id, holder_id) = test_ids();
-    let mut issuer = IssuerRegistry::new(issuer_id);
-
-    // Create a credential with age = 30.
-    let mut attrs = BTreeMap::new();
-    attrs.insert("age".to_string(), AttributeValue::Integer(30));
-    let cred = issuer
-        .issue("GovernmentID", holder_id, attrs, 20000, 0)
-        .expect("issue");
-
-    let mut builder = PresentationBuilder::new();
-    let idx = builder.add_credential(cred);
-    builder.add_predicate(idx, "age", PredicateType::Gte, 65);
-
-    let presentation = builder.build().expect("build presentation");
-
-    // Predicate proof should fail (30 < 65).
-    assert_eq!(presentation.predicate_results.len(), 1);
-    let result = &presentation.predicate_results[0];
-    assert!(!result.verified, "age >= 65 should NOT verify (age is 30)");
+        assert_eq!(presentation.predicate_results.len(), 1);
+        let result = &presentation.predicate_results[0];
+        assert_eq!(result.attribute_name, "age");
+        assert_eq!(result.predicate_type, PredicateType::Gte);
+        assert_eq!(result.threshold, threshold);
+        assert_eq!(result.verified, expected_verified, "{msg}");
+    }
 }
 
 // ============================================================================

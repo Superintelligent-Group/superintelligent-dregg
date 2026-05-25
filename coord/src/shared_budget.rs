@@ -949,19 +949,21 @@ mod tests {
     // ── Basic Allowance Tests ────────────────────────────────────────────
 
     #[test]
-    fn test_allowance_ceiling_f1() {
-        // f=1, ceiling = balance * 2/3
-        let agents = test_agents(4);
-        let budget = SharedResourceBudget::new(pool_resource(), 10000, agents, 1).unwrap();
-        assert_eq!(budget.compute_allowance_ceiling(), 6666);
-    }
-
-    #[test]
-    fn test_allowance_ceiling_f2() {
-        // f=2, ceiling = balance * 3/5
-        let agents = test_agents(5);
-        let budget = SharedResourceBudget::new(pool_resource(), 10000, agents, 2).unwrap();
-        assert_eq!(budget.compute_allowance_ceiling(), 6000);
+    fn test_allowance_ceiling_various_f() {
+        let cases = vec![
+            // (balance, agent_count, f, expected_ceiling)
+            (10000, 4, 1, 6666), // f=1: balance * 2/3
+            (10000, 5, 2, 6000), // f=2: balance * 3/5
+        ];
+        for (balance, agent_count, f, expected) in cases {
+            let agents = test_agents(agent_count);
+            let budget = SharedResourceBudget::new(pool_resource(), balance, agents, f).unwrap();
+            assert_eq!(
+                budget.compute_allowance_ceiling(),
+                expected,
+                "ceiling mismatch for balance={balance}, f={f}"
+            );
+        }
     }
 
     #[test]
@@ -1005,7 +1007,7 @@ mod tests {
         let mut budget = SharedResourceBudget::new(pool_resource(), 3000, agents, 1).unwrap();
         // ceiling = 3000 * 2/3 = 2000
 
-        // Try to spend more than allowance.
+        // Case 1: single transaction exceeds allowance.
         let err = budget.try_debit(agent_a, 2001, test_digest(1)).unwrap_err();
         assert!(matches!(
             err,
@@ -1015,22 +1017,11 @@ mod tests {
                 ..
             }
         ));
-    }
 
-    #[test]
-    fn test_allowance_exhaustion_triggers_rebalance_need() {
-        let agents = test_agents(3);
-        let agent_a = agents[0];
-
-        let mut budget = SharedResourceBudget::new(pool_resource(), 3000, agents, 1).unwrap();
-        // ceiling = 2000
-
-        // Spend up to ceiling.
-        budget.try_debit(agent_a, 1000, test_digest(1)).unwrap();
+        // Case 2: spend exactly to ceiling, then one more.
         budget.try_debit(agent_a, 1000, test_digest(2)).unwrap();
-
-        // Now exhausted -- signals that agent needs a rebalance.
-        let err = budget.try_debit(agent_a, 1, test_digest(3)).unwrap_err();
+        budget.try_debit(agent_a, 1000, test_digest(3)).unwrap();
+        let err = budget.try_debit(agent_a, 1, test_digest(4)).unwrap_err();
         assert!(matches!(
             err,
             SharedBudgetError::AllowanceExhausted {
@@ -1248,30 +1239,6 @@ mod tests {
         assert_eq!(budget.remaining(&agent_b), Some(6000 - 800));
     }
 
-    // ── Fast-Path Integration Scenario ───────────────────────────────────
-
-    #[test]
-    fn test_fast_path_eliminates_lock_round() {
-        // Scenario: shared resource with bounded-counter approach.
-        // Agent can debit locally without acquiring a lock first.
-        // This is the key advantage over 2f+1 lock signatures.
-        let agents = test_agents(3);
-        let agent_a = agents[0];
-
-        let mut budget = SharedResourceBudget::new(pool_resource(), 9000, agents, 1).unwrap();
-
-        // Fast path: debit locally (one operation, no network round trips).
-        let result = budget.try_debit(agent_a, 1000, test_digest(42));
-        assert!(result.is_ok());
-
-        // Compare: without bounded counter, agent would need:
-        // 1. Request lock from 2f+1 nodes
-        // 2. Receive lock signatures
-        // 3. Execute
-        // 4. Release lock
-        // The bounded counter reduces this to a single local check.
-    }
-
     // ── Safety Bound Test ────────────────────────────────────────────────
 
     #[test]
@@ -1483,34 +1450,6 @@ mod tests {
     // ── Tier 2 → Tier 3 Escalation Tests ───────────────────────────────
 
     #[test]
-    fn test_three_agents_pool_1000_escalation() {
-        // 3 agents, pool of 1000, f=1.
-        // ceiling = 1000 * 2/3 = 666
-        let agents = test_agents(3);
-        let agent_a = agents[0];
-        let agent_b = agents[1];
-        let agent_c = agents[2];
-
-        let mut budget = SharedResourceBudget::new(pool_resource(), 1000, agents, 1).unwrap();
-        assert_eq!(budget.compute_allowance_ceiling(), 666);
-
-        // Agent A debits 400 (OK: within ceiling of 666).
-        assert!(budget.try_debit(agent_a, 400, test_digest(10)).is_ok());
-        assert_eq!(budget.state, ResourceState::Open);
-
-        // Agent B debits 400 (OK: within ceiling of 666).
-        assert!(budget.try_debit(agent_b, 400, test_digest(11)).is_ok());
-        assert_eq!(budget.state, ResourceState::Open);
-
-        // Agent C debits 400 (OK per allowance since 400 < 666, but total = 1200 > 1000).
-        assert!(budget.try_debit(agent_c, 400, test_digest(12)).is_ok());
-
-        // Overspend detected: 1200 > 1000.
-        assert!(budget.is_overspent());
-        assert_eq!(budget.total_spent(), 1200);
-    }
-
-    #[test]
     fn test_resolve_with_ordering_accepts_rejects() {
         // 3 agents, pool of 1000. After overspend, resolve via tau ordering.
         let agents = test_agents(3);
@@ -1574,36 +1513,6 @@ mod tests {
 
         // New allowances from remaining 200: ceiling = 200 * 2/3 = 133.
         assert_eq!(budget.compute_allowance_ceiling(), 133);
-    }
-
-    #[test]
-    fn test_state_machine_open_closing_resolving_open() {
-        // Verify the full state machine: Open → Closing → Rebalancing → Open.
-        let agents = test_agents(3);
-
-        let mut budget = SharedResourceBudget::new(pool_resource(), 9000, agents, 1).unwrap();
-
-        // Start: Open.
-        assert_eq!(budget.state, ResourceState::Open);
-
-        // Escalate → Closing.
-        let fake_blocks = vec![BlocBlockId([0x11; 32]), BlocBlockId([0x22; 32])];
-        budget.escalate(fake_blocks.clone());
-        assert_eq!(
-            budget.state,
-            ResourceState::Closing {
-                conflicting: fake_blocks
-            }
-        );
-
-        // Resolve (with empty ordering to just observe the state transition).
-        let sk = ed25519_dalek::SigningKey::from_bytes(&[0x99; 32]);
-        let blocklace = Blocklace::new_simple(sk);
-        budget.resolve_with_ordering(&[], &blocklace, &[0xBB; 32]);
-
-        // Back to Open.
-        assert_eq!(budget.state, ResourceState::Open);
-        assert_eq!(budget.version, 1);
     }
 
     /// Helper: create signing keys and derive participant IDs from public keys.

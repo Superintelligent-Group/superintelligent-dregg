@@ -16,7 +16,7 @@ mod report;
 
 use std::time::Instant;
 
-use report::{PreflightReport, SubsystemResult, run_subsystem};
+use report::{CheckResult, PreflightReport, SubsystemResult, run_subsystem};
 
 fn run_all_subsystems() -> Vec<SubsystemResult> {
     vec![
@@ -74,216 +74,140 @@ fn main() {
 mod tests {
     use super::*;
 
+    fn assert_all_passed(name: &str, results: Vec<CheckResult>) {
+        for r in &results {
+            assert!(r.passed, "{name}::{} failed: {:?}", r.name, r.error);
+        }
+    }
+
     #[test]
     fn preflight_boot() {
-        let results = checks::boot::run();
-        for r in &results {
-            assert!(r.passed, "boot::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("boot", checks::boot::run());
     }
 
     #[test]
     fn preflight_cells() {
-        let results = checks::cells::run();
-        for r in &results {
-            assert!(r.passed, "cells::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("cells", checks::cells::run());
     }
 
     #[test]
     fn preflight_turns() {
-        let results = checks::turns::run();
-        for r in &results {
-            assert!(r.passed, "turns::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("turns", checks::turns::run());
     }
 
     #[test]
     fn preflight_proofs() {
-        let results = checks::proofs::run();
-        for r in &results {
-            assert!(r.passed, "proofs::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("proofs", checks::proofs::run());
     }
 
     #[test]
     fn preflight_privacy() {
-        let results = checks::privacy::run();
-        for r in &results {
-            assert!(r.passed, "privacy::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("privacy", checks::privacy::run());
     }
 
     #[test]
     fn preflight_caps() {
-        let results = checks::caps::run();
-        for r in &results {
-            assert!(r.passed, "caps::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("caps", checks::caps::run());
     }
 
     #[test]
     fn preflight_intents() {
-        let results = checks::intents::run();
-        for r in &results {
-            assert!(r.passed, "intents::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("intents", checks::intents::run());
     }
 
     #[test]
     fn preflight_apps() {
-        let results = checks::apps::run();
-        for r in &results {
-            assert!(r.passed, "apps::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("apps", checks::apps::run());
     }
 
     #[test]
     fn preflight_composition() {
-        let results = checks::composition::run();
-        for r in &results {
-            assert!(r.passed, "composition::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("composition", checks::composition::run());
     }
 
     #[test]
     fn preflight_federation() {
-        let results = checks::federation::run();
-        for r in &results {
-            assert!(r.passed, "federation::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("federation", checks::federation::run());
     }
 
     #[test]
     fn preflight_sovereign() {
-        let results = checks::sovereign::run();
-        for r in &results {
-            assert!(r.passed, "sovereign::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("sovereign", checks::sovereign::run());
     }
 
     #[test]
     fn preflight_effect_vm() {
-        let results = checks::effect_vm::run();
-        for r in &results {
-            assert!(r.passed, "effect_vm::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("effect_vm", checks::effect_vm::run());
     }
 
     #[test]
     fn preflight_blocklace() {
-        let results = checks::blocklace::run();
-        for r in &results {
-            assert!(r.passed, "blocklace::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("blocklace", checks::blocklace::run());
     }
 
     #[test]
     fn preflight_backends() {
-        let results = checks::backends::run();
-        for r in &results {
-            assert!(r.passed, "backends::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("backends", checks::backends::run());
     }
 
     #[test]
     fn preflight_captp() {
-        let results = checks::captp::run();
-        for r in &results {
-            assert!(r.passed, "captp::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("captp", checks::captp::run());
     }
 
     #[test]
     fn preflight_routing() {
-        let results = checks::routing::run();
-        for r in &results {
-            assert!(r.passed, "routing::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("routing", checks::routing::run());
     }
 
     #[test]
     fn preflight_storage() {
-        let results = checks::storage::run();
-        for r in &results {
-            assert!(r.passed, "storage::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("storage", checks::storage::run());
     }
 
     #[test]
     fn preflight_nameservice() {
-        let results = checks::nameservice::run();
-        for r in &results {
-            assert!(r.passed, "nameservice::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("nameservice", checks::nameservice::run());
     }
 
     #[test]
     fn preflight_relay() {
-        let results = checks::relay::run();
-        for r in &results {
-            assert!(r.passed, "relay::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("relay", checks::relay::run());
     }
 
     #[test]
     fn preflight_cli() {
-        let results = checks::cli::run();
-        for r in &results {
-            assert!(r.passed, "cli::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("cli", checks::cli::run());
     }
 
     #[test]
     fn preflight_node() {
-        let results = checks::node::run();
-        for r in &results {
-            assert!(r.passed, "node::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("node", checks::node::run());
     }
 
     #[test]
     fn preflight_wire() {
-        let results = checks::wire::run();
-        for r in &results {
-            assert!(r.passed, "wire::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("wire", checks::wire::run());
     }
 
     #[test]
     fn preflight_solver() {
-        let results = checks::solver::run();
-        for r in &results {
-            assert!(r.passed, "solver::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("solver", checks::solver::run());
     }
 
     #[test]
     fn preflight_bridges() {
-        let results = checks::bridges::run();
-        for r in &results {
-            assert!(r.passed, "bridges::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("bridges", checks::bridges::run());
     }
 
     #[test]
     fn preflight_demo_agent() {
-        let results = checks::demo_agent::run();
-        for r in &results {
-            assert!(r.passed, "demo_agent::{} failed: {:?}", r.name, r.error);
-        }
+        assert_all_passed("demo_agent", checks::demo_agent::run());
     }
 
     #[test]
     fn preflight_state_constraints() {
-        let results = checks::state_constraints::run();
-        for r in &results {
-            assert!(
-                r.passed,
-                "state_constraints::{} failed: {:?}",
-                r.name, r.error
-            );
-        }
+        assert_all_passed("state_constraints", checks::state_constraints::run());
     }
 
     /// The golden master: ALL checks in one pass.

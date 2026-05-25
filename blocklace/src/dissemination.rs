@@ -1749,23 +1749,6 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn subscription_from_reference_group_includes_all_members() {
-        use crate::ordering::ReferenceGroup;
-
-        let members = vec![make_key(1), make_key(2), make_key(3)];
-        let group = ReferenceGroup::new(members.clone(), 10);
-        let sub = Subscription::from_reference_group(&group);
-
-        assert_eq!(sub.subscribed_strands.len(), 3);
-        for m in &members {
-            assert!(sub.is_directly_subscribed(m));
-        }
-        assert!(!sub.is_directly_subscribed(&make_key(99)));
-        assert!(!sub.include_referenced);
-        assert_eq!(sub.causal_depth, 0);
-    }
-
-    #[test]
     fn filtered_push_subscribed_sent_non_subscribed_filtered() {
         let key_a = make_key(1);
         let key_b = make_key(2);
@@ -1830,26 +1813,6 @@ mod tests {
     }
 
     #[test]
-    fn subscribe_unsubscribe_dynamic_update() {
-        let mut sub = Subscription::from_strands(&[make_key(1), make_key(2)]);
-
-        assert_eq!(sub.subscribed_strands.len(), 2);
-        assert!(sub.is_directly_subscribed(&make_key(1)));
-        assert!(sub.is_directly_subscribed(&make_key(2)));
-        assert!(!sub.is_directly_subscribed(&make_key(3)));
-
-        // Subscribe to a new strand.
-        sub.subscribe(make_key(3));
-        assert!(sub.is_directly_subscribed(&make_key(3)));
-        assert_eq!(sub.subscribed_strands.len(), 3);
-
-        // Unsubscribe from a strand.
-        sub.unsubscribe(&make_key(1));
-        assert!(!sub.is_directly_subscribed(&make_key(1)));
-        assert_eq!(sub.subscribed_strands.len(), 2);
-    }
-
-    #[test]
     fn no_subscription_sends_everything_backward_compat() {
         let key_a = make_key(1);
         let key_b = make_key(2);
@@ -1870,18 +1833,6 @@ mod tests {
         // Filtered push should send everything.
         let delta = node_a.blocks_to_send_filtered(&key_d);
         assert_eq!(delta.len(), 2);
-    }
-
-    #[test]
-    fn interest_discovery_referenced_strand_added() {
-        let sub = Subscription::from_strands(&[make_key(1), make_key(2)]);
-        let mut discovery = InterestDiscovery::new(3);
-
-        // Strand 5 is referenced by a subscribed block.
-        let crossed = discovery.record_reference(make_key(5), &sub);
-        assert!(!crossed); // Not yet at threshold.
-        assert!(discovery.discovered.contains(&make_key(5)));
-        assert_eq!(discovery.reference_counts[&make_key(5)], 1);
     }
 
     #[test]

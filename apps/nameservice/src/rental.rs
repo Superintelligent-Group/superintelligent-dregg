@@ -162,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn rental_status_active() {
+    fn rental_status_transitions() {
         let policy = RentalPolicy::default();
         let entry = NameEntry {
             name: "alice".into(),
@@ -176,49 +176,21 @@ mod tests {
             rent_rate: 100,
         };
 
-        let status = rental_status(&entry, 150, &policy);
-        assert!(matches!(
-            status.status,
-            NameStatus::Active { funded_until: 200 }
-        ));
-    }
+        let cases = [
+            (150, NameStatus::Active { funded_until: 200 }),
+            (205, NameStatus::Grace { grace_expires: 210 }),
+            (211, NameStatus::Expired),
+        ];
 
-    #[test]
-    fn rental_status_grace() {
-        let policy = RentalPolicy::default();
-        let entry = NameEntry {
-            name: "alice".into(),
-            target: "pyana://x".into(),
-            owner: [0x01; 32],
-            registered_at: 100,
-            expires_at: 200,
-            delegation: DelegationAuthority::None,
-            version: 1,
-            rent_paid_until: 200,
-            rent_rate: 100,
-        };
-
-        let status = rental_status(&entry, 205, &policy);
-        assert!(matches!(status.status, NameStatus::Grace { .. }));
-    }
-
-    #[test]
-    fn rental_status_expired() {
-        let policy = RentalPolicy::default();
-        let entry = NameEntry {
-            name: "alice".into(),
-            target: "pyana://x".into(),
-            owner: [0x01; 32],
-            registered_at: 100,
-            expires_at: 200,
-            delegation: DelegationAuthority::None,
-            version: 1,
-            rent_paid_until: 200,
-            rent_rate: 100,
-        };
-
-        let status = rental_status(&entry, 211, &policy);
-        assert!(matches!(status.status, NameStatus::Expired));
+        for (epoch, expected) in cases {
+            let status = rental_status(&entry, epoch, &policy);
+            assert!(
+                matches!(&status.status, s if std::mem::discriminant(s) == std::mem::discriminant(&expected)),
+                "epoch {epoch}: expected {:?}, got {:?}",
+                expected,
+                status.status
+            );
+        }
     }
 
     #[tokio::test]

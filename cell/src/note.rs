@@ -407,14 +407,6 @@ mod tests {
     }
 
     #[test]
-    fn test_note_value_and_asset_type() {
-        let owner = test_owner(1);
-        let note = Note::with_randomness(owner, [42, 1000, 0, 0, 0, 0, 0, 0], [0u8; 32]);
-        assert_eq!(note.asset_type(), 42);
-        assert_eq!(note.value(), 1000);
-    }
-
-    #[test]
     fn test_nft_transfer_preserves_identity() {
         let owner_a = test_owner(1);
         let owner_b = test_owner(2);

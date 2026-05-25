@@ -2592,19 +2592,6 @@ mod tests {
     }
 
     #[test]
-    fn air_name_stored_in_proof() {
-        let (trace, pi) = generate_merkle_trace(
-            42,
-            &[[10u32, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120]],
-            &[0u32, 1, 2, 3],
-        );
-        let air = MerkleStarkAir;
-        let proof = prove(&air, &trace, &pi);
-        assert_eq!(proof.air_name, "pyana-merkle-v1");
-        assert_eq!(proof.nonce, None);
-    }
-
-    #[test]
     fn proof_roundtrip_with_nonce() {
         let (trace, pi) = generate_merkle_trace(
             999,

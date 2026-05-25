@@ -574,7 +574,7 @@ proptest! {
         let executor = TurnExecutor::new(ComputronCosts::zero());
 
         // SpawnWithDelegation turn.
-        {
+        let spawn_receipt_hash = {
             let nonce = ledger.get(&parent_id).unwrap().state.nonce();
             let mut forest = CallForest::new();
             let action = Action {
@@ -604,20 +604,21 @@ proptest! {
                 valid_until: None,
                 previous_receipt_hash: None,
                 depends_on: vec![],
-            conservation_proof: None,
-            sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
-            custom_program_proofs: None,
-            effect_binding_proofs: Vec::new(),
-            cross_effect_dependencies: Vec::new(),
-            effect_witness_index_map: Vec::new(),
+                conservation_proof: None,
+                sovereign_witnesses: std::collections::HashMap::new(),
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: Vec::new(),
+                cross_effect_dependencies: Vec::new(),
+                effect_witness_index_map: Vec::new(),
             };
 
             let result = executor.execute(&turn, &mut ledger);
             prop_assert!(result.is_committed(), "SpawnWithDelegation should succeed");
-        }
+            result.unwrap_committed().1.receipt_hash()
+        };
 
         // Verify initial delegation snapshot matches parent's c-list at spawn time.
         {
@@ -673,21 +674,21 @@ proptest! {
                 fee: 0,
                 memo: None,
                 valid_until: None,
-                previous_receipt_hash: None,
+                previous_receipt_hash: Some(spawn_receipt_hash),
                 depends_on: vec![],
-            conservation_proof: None,
-            sovereign_witnesses: std::collections::HashMap::new(),
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
-            custom_program_proofs: None,
-            effect_binding_proofs: Vec::new(),
-            cross_effect_dependencies: Vec::new(),
-            effect_witness_index_map: Vec::new(),
+                conservation_proof: None,
+                sovereign_witnesses: std::collections::HashMap::new(),
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: Vec::new(),
+                cross_effect_dependencies: Vec::new(),
+                effect_witness_index_map: Vec::new(),
             };
 
             let result = executor.execute(&turn, &mut ledger);
-            prop_assert!(result.is_committed(), "RevokeDelegation should succeed");
+            prop_assert!(result.is_committed(), "RevokeDelegation should succeed: {:?}", result);
 
             // INVARIANT: After RevokeDelegation, child's delegation is None.
             let child = ledger.get(&child_id).unwrap();

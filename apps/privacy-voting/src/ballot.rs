@@ -107,27 +107,31 @@ mod tests {
     }
 
     #[test]
-    fn reveal_rejects_wrong_vote() {
-        // Adversarial: a voter cannot change their vote at reveal time without
-        // also changing the commitment.
+    fn reveal_rejects_tampered_ballot() {
+        // Adversarial: a voter cannot change their vote or randomness at reveal
+        // time without also changing the commitment.
         let pid = [9u8; 32];
         let r = [42u8; 32];
         let c = commit(&pid, 1, &r);
-        let bad = BallotReveal {
-            option_index: 0,
-            randomness: r,
-        };
-        assert!(!verify_reveal(&pid, &c, &bad));
-    }
 
-    #[test]
-    fn reveal_rejects_wrong_randomness() {
-        let pid = [9u8; 32];
-        let c = commit(&pid, 1, &[42u8; 32]);
-        let bad = BallotReveal {
-            option_index: 1,
-            randomness: [43u8; 32],
-        };
-        assert!(!verify_reveal(&pid, &c, &bad));
+        let cases = [
+            (
+                "wrong vote",
+                BallotReveal {
+                    option_index: 0,
+                    randomness: r,
+                },
+            ),
+            (
+                "wrong randomness",
+                BallotReveal {
+                    option_index: 1,
+                    randomness: [43u8; 32],
+                },
+            ),
+        ];
+        for (label, bad) in cases {
+            assert!(!verify_reveal(&pid, &c, &bad), "{label}");
+        }
     }
 }

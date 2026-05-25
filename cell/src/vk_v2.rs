@@ -238,13 +238,6 @@ mod tests {
     }
 
     #[test]
-    fn canonical_vk_v2_is_deterministic() {
-        let bytes = b"hello-program";
-        let c = sample_components(bytes);
-        assert_eq!(canonical_vk_v2(&c), canonical_vk_v2(&c));
-    }
-
-    #[test]
     fn canonical_vk_v2_changes_with_program_bytes() {
         let a = canonical_vk_v2(&sample_components(b"prog-a"));
         let b = canonical_vk_v2(&sample_components(b"prog-b"));

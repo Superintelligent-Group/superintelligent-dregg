@@ -2802,76 +2802,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_two_bidders_higher_wins_pays_lower() {
-        let mut auction = PrivateVickreyAuction::new([0xAA; 32], 2);
+    fn test_vickrey_evaluate_cases() {
+        let cases: Vec<(u8, usize, &[u32], usize, u32, &str)> = vec![
+            (
+                0xAA,
+                2,
+                &[1000, 2000],
+                1,
+                1000,
+                "higher bid wins, pays lower",
+            ),
+            (0xBB, 2, &[5000, 3000], 0, 3000, "first bidder wins"),
+            (0xCC, 4, &[500, 1200, 800, 1500], 3, 1200, "four bidders"),
+            (0xDD, 2, &[1000, 1000], 0, 1000, "tie: lower index wins"),
+            (0xEE, 4, &[777, 777, 777, 777], 0, 777, "all same bid"),
+        ];
 
-        // Bidder 0 bids 1000, bidder 1 bids 2000.
-        auction.register_bid_simulated(0, 1000);
-        auction.register_bid_simulated(1, 2000);
-
-        let result = auction.evaluate(&[1000, 2000]).unwrap();
-
-        assert_eq!(result.winner_index, 1, "bidder 1 (2000) should win");
-        assert_eq!(result.second_price, 1000, "winner pays second price (1000)");
-    }
-
-    #[test]
-    fn test_two_bidders_first_wins() {
-        let mut auction = PrivateVickreyAuction::new([0xBB; 32], 2);
-
-        // Bidder 0 bids 5000, bidder 1 bids 3000.
-        auction.register_bid_simulated(0, 5000);
-        auction.register_bid_simulated(1, 3000);
-
-        let result = auction.evaluate(&[5000, 3000]).unwrap();
-
-        assert_eq!(result.winner_index, 0, "bidder 0 (5000) should win");
-        assert_eq!(result.second_price, 3000, "winner pays second price (3000)");
-    }
-
-    #[test]
-    fn test_four_bidders_correct_winner_and_second_price() {
-        let mut auction = PrivateVickreyAuction::new([0xCC; 32], 4);
-
-        let bids = [500, 1200, 800, 1500];
-        for (i, &bid) in bids.iter().enumerate() {
-            auction.register_bid_simulated(i, bid);
+        for (seed, num_bidders, bids, expected_winner, expected_second, desc) in &cases {
+            let mut auction = PrivateVickreyAuction::new([*seed; 32], *num_bidders);
+            for (i, &bid) in bids.iter().enumerate() {
+                auction.register_bid_simulated(i, bid);
+            }
+            let result = auction.evaluate(bids).unwrap();
+            assert_eq!(
+                result.winner_index, *expected_winner as usize,
+                "{desc}: winner"
+            );
+            assert_eq!(
+                result.second_price, *expected_second as u64,
+                "{desc}: second price"
+            );
         }
-
-        let result = auction.evaluate(&bids).unwrap();
-
-        // Bidder 3 has highest bid (1500), second highest is 1200 (bidder 1).
-        assert_eq!(result.winner_index, 3, "bidder 3 (1500) should win");
-        assert_eq!(result.second_price, 1200, "winner pays second price (1200)");
-    }
-
-    #[test]
-    fn test_tied_bids_lower_index_wins() {
-        let mut auction = PrivateVickreyAuction::new([0xDD; 32], 2);
-
-        // Both bid 1000. Tiebreak: lower index wins.
-        auction.register_bid_simulated(0, 1000);
-        auction.register_bid_simulated(1, 1000);
-
-        let result = auction.evaluate(&[1000, 1000]).unwrap();
-
-        assert_eq!(result.winner_index, 0, "lower index (0) wins on tie");
-        assert_eq!(result.second_price, 1000, "pays the tied amount");
-    }
-
-    #[test]
-    fn test_all_same_bid() {
-        let mut auction = PrivateVickreyAuction::new([0xEE; 32], 4);
-
-        let bids = [777, 777, 777, 777];
-        for (i, &bid) in bids.iter().enumerate() {
-            auction.register_bid_simulated(i, bid);
-        }
-
-        let result = auction.evaluate(&bids).unwrap();
-
-        assert_eq!(result.winner_index, 0, "index 0 wins when all tied");
-        assert_eq!(result.second_price, 777, "pays the common bid amount");
     }
 
     #[test]
@@ -2934,25 +2895,23 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_comparison_matrix_3_bidders() {
-        // 3 bidders: comparisons are (0,1), (0,2), (1,2)
-        // Bids: [100, 300, 200]
-        // 0 >= 1? No. 0 >= 2? No. 1 >= 2? Yes.
-        let results = vec![false, false, true];
-        let (winner, second) = decode_comparison_matrix(3, &results);
-        assert_eq!(winner, 1); // bidder 1 beats both 0 and 2
-        assert_eq!(second, 2); // bidder 2 beats bidder 0
-    }
+    fn test_decode_comparison_matrix() {
+        let cases = vec![
+            // 3 bidders: comparisons are (0,1), (0,2), (1,2)
+            // Bids: [100, 300, 200]
+            // 0 >= 1? No. 0 >= 2? No. 1 >= 2? Yes.
+            (3, vec![false, false, true], 1, 2),
+            // 4 bidders: comparisons (0,1),(0,2),(0,3),(1,2),(1,3),(2,3)
+            // Bids: [500, 1200, 800, 1500]
+            // 0>=1? No. 0>=2? No. 0>=3? No. 1>=2? Yes. 1>=3? No. 2>=3? No.
+            (4, vec![false, false, false, true, false, false], 3, 1),
+        ];
 
-    #[test]
-    fn test_decode_comparison_matrix_4_bidders() {
-        // 4 bidders: comparisons (0,1),(0,2),(0,3),(1,2),(1,3),(2,3)
-        // Bids: [500, 1200, 800, 1500]
-        // 0>=1? No. 0>=2? No. 0>=3? No. 1>=2? Yes. 1>=3? No. 2>=3? No.
-        let results = vec![false, false, false, true, false, false];
-        let (winner, second) = decode_comparison_matrix(4, &results);
-        assert_eq!(winner, 3); // bidder 3 (1500) beats everyone
-        assert_eq!(second, 1); // bidder 1 (1200) beats 0 and 2
+        for (num_bidders, results, expected_winner, expected_second) in &cases {
+            let (winner, second) = decode_comparison_matrix(*num_bidders, results);
+            assert_eq!(winner, *expected_winner, "{num_bidders} bidders: winner");
+            assert_eq!(second, *expected_second, "{num_bidders} bidders: second");
+        }
     }
 
     #[test]
@@ -3359,62 +3318,79 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_anti_sniping_bid_in_last_2_blocks_extends() {
-        let config = AntiSnipingConfig::default();
-        let deadline = 100;
+    fn test_anti_sniping_cases() {
+        let cases: Vec<(&str, AntiSnipingConfig, u64, u64, Option<u64>)> = vec![
+            (
+                "default, block 99 extends",
+                AntiSnipingConfig::default(),
+                100,
+                99,
+                Some(103),
+            ),
+            (
+                "default, block 98 extends",
+                AntiSnipingConfig::default(),
+                100,
+                98,
+                Some(103),
+            ),
+            (
+                "default, block 97 no extend",
+                AntiSnipingConfig::default(),
+                100,
+                97,
+                None,
+            ),
+            (
+                "default, block 50 no extend",
+                AntiSnipingConfig::default(),
+                100,
+                50,
+                None,
+            ),
+            (
+                "default, block 100 no extend",
+                AntiSnipingConfig::default(),
+                100,
+                100,
+                None,
+            ),
+            (
+                "default, block 101 no extend",
+                AntiSnipingConfig::default(),
+                100,
+                101,
+                None,
+            ),
+            (
+                "custom, block 96 extends",
+                AntiSnipingConfig {
+                    snipe_window_blocks: 5,
+                    extension_blocks: 10,
+                },
+                100,
+                96,
+                Some(110),
+            ),
+            (
+                "custom, block 94 no extend",
+                AntiSnipingConfig {
+                    snipe_window_blocks: 5,
+                    extension_blocks: 10,
+                },
+                100,
+                94,
+                None,
+            ),
+        ];
 
-        // Bid at block 99 (1 block remaining <= 2 window).
-        let new_deadline = check_anti_sniping(99, deadline, &config);
-        assert_eq!(new_deadline, Some(103)); // extended by 3
-
-        // Bid at block 98 (2 blocks remaining <= 2 window).
-        let new_deadline = check_anti_sniping(98, deadline, &config);
-        assert_eq!(new_deadline, Some(103));
-    }
-
-    #[test]
-    fn test_anti_sniping_bid_outside_window_no_extension() {
-        let config = AntiSnipingConfig::default();
-        let deadline = 100;
-
-        // Bid at block 97 (3 blocks remaining > 2 window).
-        let new_deadline = check_anti_sniping(97, deadline, &config);
-        assert_eq!(new_deadline, None);
-
-        // Bid at block 50 (50 blocks remaining).
-        let new_deadline = check_anti_sniping(50, deadline, &config);
-        assert_eq!(new_deadline, None);
-    }
-
-    #[test]
-    fn test_anti_sniping_bid_after_deadline_no_extension() {
-        let config = AntiSnipingConfig::default();
-        let deadline = 100;
-
-        // Bid at block 100 (at deadline).
-        let new_deadline = check_anti_sniping(100, deadline, &config);
-        assert_eq!(new_deadline, None);
-
-        // Bid at block 101 (past deadline).
-        let new_deadline = check_anti_sniping(101, deadline, &config);
-        assert_eq!(new_deadline, None);
-    }
-
-    #[test]
-    fn test_anti_sniping_custom_config() {
-        let config = AntiSnipingConfig {
-            snipe_window_blocks: 5,
-            extension_blocks: 10,
-        };
-        let deadline = 100;
-
-        // Bid at block 96 (4 blocks remaining <= 5 window).
-        let new_deadline = check_anti_sniping(96, deadline, &config);
-        assert_eq!(new_deadline, Some(110)); // extended by 10
-
-        // Bid at block 94 (6 blocks remaining > 5 window).
-        let new_deadline = check_anti_sniping(94, deadline, &config);
-        assert_eq!(new_deadline, None);
+        for (name, config, deadline, block, expected) in &cases {
+            assert_eq!(
+                check_anti_sniping(*block, *deadline, config),
+                *expected,
+                "case: {name}"
+            );
+        }
     }
 
     // ========================================================================
@@ -3750,58 +3726,43 @@ mod tests {
     }
 
     #[test]
-    fn test_phase3_encryption_roundtrip() {
+    fn test_phase3_encryption() {
         let key = test_winner_key(6);
         let plaintext = b"hello vickrey phase 3";
         let ciphertext = encrypt_to_winner(&key, "test", plaintext);
+
+        // Roundtrip with correct key.
         let recovered = decrypt_from_winner(&key, "test", &ciphertext).unwrap();
         assert_eq!(recovered, plaintext);
-    }
 
-    #[test]
-    fn test_phase3_encryption_wrong_key_fails() {
-        let key = test_winner_key(7);
-        let wrong_key = test_winner_key(8);
-        let ciphertext = encrypt_to_winner(&key, "test", b"secret");
+        // Wrong key should fail.
+        let wrong_key = test_winner_key(99);
         let result = decrypt_from_winner(&wrong_key, "test", &ciphertext);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_phase3_equality_proof_standalone() {
-        // Direct test of prove/verify commitment equality.
-        let value = 42u64;
+    fn test_phase3_equality_proof() {
         let r1 = Scalar::from(100u64);
         let r2 = Scalar::from(200u64);
 
-        let c1 = ValueCommitment::commit(value, &r1);
-        let c2 = ValueCommitment::commit(value, &r2);
-
+        // Same value with different blindings should verify.
+        let c1 = ValueCommitment::commit(42u64, &r1);
+        let c2 = ValueCommitment::commit(42u64, &r2);
         let c1_bytes = c1.point.compress().to_bytes();
-
         let proof = prove_commitment_equality(&c1_bytes, &r1, &c2, &r2);
         assert!(
             verify_commitment_equality(&c1_bytes, &c2, &proof),
             "equality proof should verify for same-value commitments"
         );
-    }
 
-    #[test]
-    fn test_phase3_equality_proof_different_values_fails() {
-        // If the values differ, the proof should not verify (even with "correct" blindings
-        // for each commitment individually, the difference is not purely on H).
-        let r1 = Scalar::from(100u64);
-        let r2 = Scalar::from(200u64);
-
-        let c1 = ValueCommitment::commit(42, &r1);
-        let c2 = ValueCommitment::commit(99, &r2); // different value!
-
-        let c1_bytes = c1.point.compress().to_bytes();
-
-        // The prover "honestly" provides their blindings, but values differ.
-        let proof = prove_commitment_equality(&c1_bytes, &r1, &c2, &r2);
+        // Different values should fail even with "correct" blindings.
+        let c1_diff = ValueCommitment::commit(42, &r1);
+        let c2_diff = ValueCommitment::commit(99, &r2);
+        let c1_diff_bytes = c1_diff.point.compress().to_bytes();
+        let proof_diff = prove_commitment_equality(&c1_diff_bytes, &r1, &c2_diff, &r2);
         assert!(
-            !verify_commitment_equality(&c1_bytes, &c2, &proof),
+            !verify_commitment_equality(&c1_diff_bytes, &c2_diff, &proof_diff),
             "equality proof should fail when values differ"
         );
     }
@@ -3847,70 +3808,41 @@ mod tests {
     }
 
     #[test]
-    fn test_phase4_winner_knowledge_proof_valid() {
-        // Prove knowledge of commitment opening
+    fn test_phase4_winner_knowledge_cases() {
         let price = 500u64;
         let blinding = Scalar::from(12345u64);
         let commitment = ValueCommitment::commit(price, &blinding);
         let commitment_bytes = commitment.point.compress().to_bytes();
 
+        // Valid: correct price, blinding, and context.
         let proof =
             prove_winner_knowledge(&commitment_bytes, price, &blinding, b"test-auction").unwrap();
-
         assert!(
             verify_winner_knowledge(&commitment_bytes, &proof, b"test-auction"),
             "valid winner knowledge proof should verify"
         );
-    }
 
-    #[test]
-    fn test_phase4_winner_knowledge_wrong_price_fails() {
-        let price = 500u64;
-        let blinding = Scalar::from(12345u64);
-        let commitment = ValueCommitment::commit(price, &blinding);
-        let commitment_bytes = commitment.point.compress().to_bytes();
-
-        // Prover claims a different price
-        let wrong_price = 999u64;
+        // Wrong price.
         let proof =
-            prove_winner_knowledge(&commitment_bytes, wrong_price, &blinding, b"test-auction")
-                .unwrap();
-
+            prove_winner_knowledge(&commitment_bytes, 999, &blinding, b"test-auction").unwrap();
         assert!(
             !verify_winner_knowledge(&commitment_bytes, &proof, b"test-auction"),
             "wrong price should not verify"
         );
-    }
 
-    #[test]
-    fn test_phase4_winner_knowledge_wrong_blinding_fails() {
-        let price = 500u64;
-        let blinding = Scalar::from(12345u64);
-        let commitment = ValueCommitment::commit(price, &blinding);
-        let commitment_bytes = commitment.point.compress().to_bytes();
-
-        // Prover uses wrong blinding
+        // Wrong blinding.
         let wrong_blinding = Scalar::from(99999u64);
         let proof =
             prove_winner_knowledge(&commitment_bytes, price, &wrong_blinding, b"test-auction")
                 .unwrap();
-
         assert!(
             !verify_winner_knowledge(&commitment_bytes, &proof, b"test-auction"),
             "wrong blinding should not verify"
         );
-    }
 
-    #[test]
-    fn test_phase4_winner_knowledge_wrong_context_fails() {
-        let price = 500u64;
-        let blinding = Scalar::from(12345u64);
-        let commitment = ValueCommitment::commit(price, &blinding);
-        let commitment_bytes = commitment.point.compress().to_bytes();
-
+        // Wrong context.
         let proof =
             prove_winner_knowledge(&commitment_bytes, price, &blinding, b"auction-1").unwrap();
-
         assert!(
             !verify_winner_knowledge(&commitment_bytes, &proof, b"auction-2"),
             "wrong context should not verify"
@@ -3918,11 +3850,10 @@ mod tests {
     }
 
     #[test]
-    fn test_phase4_ring_proof_valid_bidder_passes() {
+    fn test_phase4_ring_proof() {
+        // Valid member should verify.
         let leaf = BabyBear::new(42424242);
         let blinding = BabyBear::new(987654);
-
-        // Simple ring: 4 leaves
         let leaves = vec![
             BabyBear::new(11111),
             leaf,
@@ -3930,24 +3861,16 @@ mod tests {
             BabyBear::new(44444),
         ];
         let ring_root = compute_ring_root(&leaves);
-
-        // Compute path for leaf at index 1
         let (siblings, positions) = compute_leaf_path(&leaves, 1, 1);
-
         let proof = prove_ring_membership(leaf, &siblings, &positions, blinding, ring_root)
             .expect("ring proof generation should succeed");
-
         let blinded_leaf = hash_fact(leaf, &[blinding]);
         assert!(
             verify_ring_membership(&proof, blinded_leaf, ring_root),
             "valid ring member should verify"
         );
-    }
 
-    #[test]
-    fn test_phase4_ring_proof_non_bidder_fails() {
-        // A non-member cannot produce a valid ring proof with the correct ring_root.
-        // We verify that a proof made against a DIFFERENT root doesn't verify against the real one.
+        // Non-member proof against a different root should fail.
         let real_leaves = vec![
             BabyBear::new(11111),
             BabyBear::new(22222),
@@ -3955,8 +3878,6 @@ mod tests {
             BabyBear::new(44444),
         ];
         let real_root = compute_ring_root(&real_leaves);
-
-        // Fake leaves (attacker's tree)
         let fake_leaf = BabyBear::new(99999);
         let fake_leaves = vec![
             fake_leaf,
@@ -3965,18 +3886,14 @@ mod tests {
             BabyBear::new(44444),
         ];
         let fake_root = compute_ring_root(&fake_leaves);
-
-        // Attacker generates proof against their fake tree
-        let blinding = BabyBear::new(111);
-        let (siblings, positions) = compute_leaf_path(&fake_leaves, 0, 1);
-        let proof = prove_ring_membership(fake_leaf, &siblings, &positions, blinding, fake_root)
-            .expect("proof gen succeeds against fake tree");
-
-        let blinded_leaf = hash_fact(fake_leaf, &[blinding]);
-
-        // Verify against the REAL root -- should fail
+        let fake_blinding = BabyBear::new(111);
+        let (fake_sibs, fake_pos) = compute_leaf_path(&fake_leaves, 0, 1);
+        let fake_proof =
+            prove_ring_membership(fake_leaf, &fake_sibs, &fake_pos, fake_blinding, fake_root)
+                .expect("proof gen succeeds against fake tree");
+        let fake_blinded_leaf = hash_fact(fake_leaf, &[fake_blinding]);
         assert!(
-            !verify_ring_membership(&proof, blinded_leaf, real_root),
+            !verify_ring_membership(&fake_proof, fake_blinded_leaf, real_root),
             "non-member proof should not verify against real ring root"
         );
     }

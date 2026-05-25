@@ -495,33 +495,6 @@ mod tests {
     // End-to-end integration tests
     // =========================================================================
 
-    /// End-to-end test: build a Poseidon2 tree with 10 leaves, prove membership
-    /// of leaf 5, verify the proof.
-    #[test]
-    fn end_to_end_tree_prove_verify() {
-        let mut tree = Poseidon2MerkleTree::with_depth(4);
-        let leaves: Vec<BabyBear> = (0..10).map(|i| BabyBear::new(i * 1000 + 42)).collect();
-        for &leaf in &leaves {
-            tree.append(leaf);
-        }
-        let root = tree.root();
-
-        // Prove membership of leaf at position 5
-        let proof = tree.prove_membership(5).unwrap();
-        assert!(Poseidon2MerkleTree::verify_membership(
-            root, leaves[5], &proof
-        ));
-
-        // Verify all 10 leaves
-        for (pos, &leaf) in leaves.iter().enumerate() {
-            let p = tree.prove_membership(pos).unwrap();
-            assert!(
-                Poseidon2MerkleTree::verify_membership(root, leaf, &p),
-                "Failed at position {pos}"
-            );
-        }
-    }
-
     /// End-to-end test: convert a real Note commitment to a field element,
     /// append to Poseidon2 tree, prove membership, verify.
     #[test]

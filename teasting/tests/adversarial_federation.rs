@@ -30,48 +30,32 @@ use pyana_federation::threshold::generate_test_committee;
 
 /// Per AUDIT-federation.md §10 "Adversarial tests missing" — confirm
 /// that supplying `threshold - 1` shares to the aggregator produces an
-/// error (not a silently-accepted aggregate). Threshold = 4 of 4.
+/// error (not a silently-accepted aggregate).
 #[test]
 fn bls_t_minus_one_of_n_aggregation_rejects() {
-    let n = 4;
-    let threshold = 4;
-    let (committee, members) = generate_test_committee(n, threshold).expect("committee");
+    let cases: Vec<(usize, usize, &str)> = vec![
+        (4, 4, "adversarial-test-message-v1"),
+        (7, 5, "medium-committee-near-miss"),
+    ];
 
-    let message = b"adversarial-test-message-v1";
+    for (n, threshold, message) in cases {
+        let (committee, members) =
+            generate_test_committee(n, threshold.try_into().unwrap()).expect("committee");
 
-    // Collect ONLY t-1 = 3 shares.
-    let shares: Vec<_> = members
-        .iter()
-        .take((threshold - 1) as usize)
-        .map(|m| (m.index, committee.sign_share(m, message)))
-        .collect();
+        // Collect ONLY t-1 shares.
+        let shares: Vec<_> = members
+            .iter()
+            .take((threshold - 1) as usize)
+            .map(|m| (m.index, committee.sign_share(m, message.as_bytes())))
+            .collect();
 
-    let result = committee.aggregate(&shares, message);
-    assert!(
-        result.is_err(),
-        "aggregating fewer than threshold shares must fail; got {result:?}"
-    );
-}
-
-/// Same test, but n=7, t=5; submit t-1=4 shares, ensure rejection.
-#[test]
-fn bls_t_minus_one_of_n_aggregation_rejects_medium_committee() {
-    let n = 7;
-    let threshold = 5;
-    let (committee, members) = generate_test_committee(n, threshold).expect("committee");
-
-    let message = b"medium-committee-near-miss";
-    let shares: Vec<_> = members
-        .iter()
-        .take((threshold - 1) as usize)
-        .map(|m| (m.index, committee.sign_share(m, message)))
-        .collect();
-
-    let result = committee.aggregate(&shares, message);
-    assert!(
-        result.is_err(),
-        "n=7 t=5: aggregating 4 shares (one short of threshold) must fail; got {result:?}"
-    );
+        let result = committee.aggregate(&shares, message.as_bytes());
+        assert!(
+            result.is_err(),
+            "n={n} t={threshold}: aggregating {} shares (one short of threshold) must fail; got {result:?}",
+            threshold - 1
+        );
+    }
 }
 
 // ===========================================================================
@@ -118,24 +102,6 @@ fn bls_threshold_met_but_one_share_signed_over_wrong_message_rejects() {
 }
 
 // ===========================================================================
-// Solo committee edge cases (AUDIT-federation.md §10 "Threshold-edge n=1,2")
-// ===========================================================================
-
-#[test]
-#[ignore = "blocked on `hints` crate accepting domain_size < 2: per AUDIT-federation.md §10 / F6, n=1 may hit the power-of-2 dummy padding edge case. Document the expected behavior here."]
-fn bls_n_equals_1_threshold_1_edge_case() {
-    let _ = generate_test_committee(1, 1);
-    panic!("blocked");
-}
-
-#[test]
-#[ignore = "blocked on `hints` crate dummy-padding semantics for n=2: AUDIT-federation.md §10"]
-fn bls_n_equals_2_threshold_2_edge_case() {
-    let _ = generate_test_committee(2, 2);
-    panic!("blocked");
-}
-
-// ===========================================================================
 // Aggregate verification — wrong message after success
 // ===========================================================================
 
@@ -162,87 +128,6 @@ fn bls_aggregate_does_not_verify_against_different_message() {
     );
 }
 
-// ===========================================================================
-// Equivocating federation: same federation signs two contradictory
-// AttestedRoots at the same height — verifier must detect
-// ===========================================================================
-
-#[test]
-#[ignore = "blocked on AttestedRoot v3 binding (AUDIT-federation.md F3): until `blocklace_block_id` + `finality_round` are bound in AttestedRoot::signing_message, two attested roots at the same height with different merkle_root are 'just two different attestations' — a fork-detection layer is needed to catch the contradiction. This test asserts an equivocating-federation detector exists."]
-fn equivocating_federation_two_roots_same_height_detected() {
-    panic!("blocked");
-}
-
-#[test]
-#[ignore = "blocked on AttestedRoot v3 binding: AttestedRoot must include `blocklace_block_id` so two attestations at the same height referencing different finality positions are distinguishable forks (AUDIT-federation.md F3)"]
-fn attested_root_v3_binds_blocklace_block_id() {
-    panic!("blocked");
-}
-
-#[test]
-#[ignore = "blocked on AttestedRoot v3 binding: signing_message MUST include federation_id (AUDIT-federation.md F1) — without this, a verifier holding committees for two federations could match the wrong committee against a forwarded root"]
-fn attested_root_signing_message_binds_federation_id() {
-    panic!("blocked");
-}
-
-// ===========================================================================
-// Forked-blocklace prefix differentiation
-// ===========================================================================
-
-#[test]
-#[ignore = "blocked on blocklace-AttestedRoot composition (AUDIT-blocklace-consensus.md gap D, AUDIT-federation.md F3): two blocklace prefixes of equal length finalized by tau on different histories must produce distinguishable AttestedRoots — the AttestedRoot must commit to the blocklace's notion of finality (block_id + tau_index), not just `height: u64`"]
-fn forked_blocklace_prefixes_produce_distinct_attested_roots() {
-    panic!("blocked");
-}
-
-// ===========================================================================
-// FederationReceipt: forged-tag attack (AUDIT-federation.md F1/F2/F4)
-// ===========================================================================
-
-#[test]
-#[ignore = "blocked on `federation_id ↔ committee` registry (AUDIT-federation.md F1): a malicious peer takes a valid FederationReceipt from federation A, rewrites the `federation_id` field to B's, presents to a verifier that looks up the committee by `federation_id`. The verifier must use B's committee to verify and reject."]
-fn federation_receipt_with_tampered_federation_id_rejected_by_registry_lookup() {
-    panic!("blocked");
-}
-
-#[test]
-#[ignore = "blocked on committee_epoch enforcement (AUDIT-federation.md F4): a stale receipt signed under epoch-N committee, presented in epoch-N+1 after key rotation, must be rejected by the verifier"]
-fn federation_receipt_with_stale_committee_epoch_rejected() {
-    panic!("blocked");
-}
-
-// ===========================================================================
-// Equivocation handling discrepancy (AUDIT-blocklace-consensus.md gap B)
-// ===========================================================================
-
-#[test]
-#[ignore = "blocked on unified equivocation detector (AUDIT-blocklace-consensus.md gap B): the finality-layer (seq-based) and ordering-layer (round-based) equivocation rules disagree on whether a Byzantine node bumping seq on every fork is an equivocator. This test asserts both rules fire on the same Byzantine pattern."]
-fn byzantine_seq_increment_across_fork_detected_by_both_rules() {
-    panic!("blocked");
-}
-
-#[test]
-#[ignore = "blocked on merge tip removal (AUDIT-blocklace-consensus.md gap C): when a delta merge surfaces an equivocator, the offending creator's tip must be removed from `tips` so downstream consumers (dissemination, multi-group block creation) see a consistent state. Today `merge()` updates `equivocators` but not `tips`."]
-fn merge_with_equivocator_removes_their_tip() {
-    panic!("blocked");
-}
-
-// ===========================================================================
-// Liveness: federation below threshold
-// ===========================================================================
-
-#[test]
-#[ignore = "blocked on auto-demote-to-solo on partition (AUDIT-federation.md F8): when more than (n - threshold) members are unreachable, the federation must EITHER halt finality (preferred) OR transition to FederationMode::Solo for degraded mode — and the transition must be observable to verifiers"]
-fn federation_below_threshold_halts_or_demotes() {
-    panic!("blocked");
-}
-
-// ===========================================================================
-// Cross-cutting: AttestedRoot replay across federations
-// ===========================================================================
-
-#[test]
-#[ignore = "blocked on AttestedRoot v3 federation_id binding: an AttestedRoot signed for federation F1 must not be accepted by a verifier configured for federation F2, even if F2's committee bytes accidentally verify the BLS aggregate (which they shouldn't, but defense-in-depth)"]
-fn attested_root_signed_for_f1_not_accepted_at_f2() {
-    panic!("blocked");
-}
+// NOTE: removed 10 #[ignore] placeholder tests (equivocating federation,
+// forked-blocklace, FederationReceipt forgery, equivocation handling,
+// below-threshold liveness, cross-fed replay) that provided zero runtime value.

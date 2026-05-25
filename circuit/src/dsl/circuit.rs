@@ -1220,12 +1220,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "sovereign_transition_air module was removed"]
-    fn dsl_circuit_matches_handwritten_air() {
-        // sovereign_transition_air module has been removed from pyana-circuit
-    }
-
-    #[test]
     fn dsl_circuit_rejects_invalid_trace() {
         let row = vec![
             BabyBear::from_u64(1000),

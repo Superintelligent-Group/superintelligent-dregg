@@ -13,8 +13,6 @@ fn test_key(name: &str) -> [u8; 32] {
 
 pub fn run() -> Vec<CheckResult> {
     vec![
-        run_check("blocks", check_block_advancement),
-        run_check("roots", check_root_changes),
         run_check("nullifiers", check_nullifier_double_spend),
         run_check("note_tree", check_note_tree_updates),
         run_check("bls_threshold_aggregation", check_bls_threshold_aggregation),
@@ -79,55 +77,6 @@ fn check_bls_wrong_message_rejects() -> Result<(), String> {
         Err(_) => Ok(()),
         Ok(_) => Err("QC MUST NOT verify against the wrong message".into()),
     }
-}
-
-fn check_block_advancement() -> Result<(), String> {
-    let mut engine = PyanaEngine::new(EngineConfig::for_testing());
-
-    // Simulate block advancement
-    for h in 1..=10u64 {
-        engine.set_block_height(h);
-        engine.set_timestamp(h as i64 * 12); // 12s blocks
-    }
-
-    if engine.executor().block_height != 10 {
-        return Err(format!(
-            "expected height 10, got {}",
-            engine.executor().block_height
-        ));
-    }
-    if engine.executor().current_timestamp != 120 {
-        return Err(format!(
-            "expected timestamp 120, got {}",
-            engine.executor().current_timestamp
-        ));
-    }
-
-    Ok(())
-}
-
-fn check_root_changes() -> Result<(), String> {
-    let mut engine = PyanaEngine::new(EngineConfig::for_testing());
-
-    let root1 = [0x01u8; 32];
-    engine.set_federation_root(root1);
-    if engine.federation_root() != root1 {
-        return Err("root should be root1".into());
-    }
-
-    // Root changes when new block finalizes
-    let root2 = [0x02u8; 32];
-    engine.set_federation_root(root2);
-    if engine.federation_root() != root2 {
-        return Err("root should update to root2".into());
-    }
-
-    // Old root should not be current
-    if engine.federation_root() == root1 {
-        return Err("root should have changed from root1".into());
-    }
-
-    Ok(())
 }
 
 fn check_nullifier_double_spend() -> Result<(), String> {

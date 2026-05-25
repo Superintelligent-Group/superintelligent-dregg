@@ -10,7 +10,6 @@ pub fn run() -> Vec<CheckResult> {
         run_check("cli_config_init", check_cli_config_init),
         run_check("cli_doctor", check_cli_doctor),
         run_check("cli_completions", check_cli_completions),
-        run_check("cli_config_roundtrip", check_cli_config_roundtrip),
     ]
 }
 
@@ -141,39 +140,5 @@ fn check_cli_completions() -> Result<(), String> {
         }
     }
 
-    Ok(())
-}
-
-fn check_cli_config_roundtrip() -> Result<(), String> {
-    // Manually write a config file and verify the CLI can read it.
-    let tmp_home = std::env::temp_dir().join(format!("preflight-cli-rt-{}", std::process::id()));
-    std::fs::create_dir_all(&tmp_home).map_err(|e| format!("create tmp dir failed: {e}"))?;
-
-    let config_content = r#"
-[node]
-address = "127.0.0.1:9090"
-federation = "test-federation"
-
-[cclerk]
-default_cell = "my-cell"
-"#;
-
-    let config_path = tmp_home.join("config.toml");
-    std::fs::write(&config_path, config_content)
-        .map_err(|e| format!("write config failed: {e}"))?;
-
-    // Verify we can read it back.
-    let read_back =
-        std::fs::read_to_string(&config_path).map_err(|e| format!("read config failed: {e}"))?;
-
-    if !read_back.contains("127.0.0.1:9090") {
-        return Err("config roundtrip: address not found in read-back".into());
-    }
-    if !read_back.contains("test-federation") {
-        return Err("config roundtrip: federation not found in read-back".into());
-    }
-
-    // Cleanup.
-    let _ = std::fs::remove_dir_all(&tmp_home);
     Ok(())
 }

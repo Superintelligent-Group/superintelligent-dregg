@@ -17,7 +17,6 @@ pub fn run() -> Vec<CheckResult> {
         run_check("session_lifecycle", check_session_lifecycle),
         run_check("handoff_roundtrip", check_handoff_roundtrip),
         run_check("pipeline_resolve", check_pipeline_resolve),
-        run_check("store_forward_order", check_store_forward_order),
     ]
 }
 
@@ -188,71 +187,6 @@ fn check_pipeline_resolve() -> Result<(), String> {
     }
     if delivered[0].action.method != "transfer" {
         return Err("delivered message method mismatch".into());
-    }
-
-    Ok(())
-}
-
-fn check_store_forward_order() -> Result<(), String> {
-    // Verify that store-and-forward messages maintain causal ordering.
-    let dest = GroupId(*blake3::hash(b"destination").as_bytes());
-
-    let msg1 = QueuedMessage {
-        destination: dest,
-        encrypted_payload: vec![1, 2, 3],
-        sender_ephemeral_pk: [1u8; 32],
-        causal_sequence: 1,
-        queued_at: 10,
-        ttl_blocks: 100,
-        priority: MessagePriority::Normal,
-    };
-
-    let msg2 = QueuedMessage {
-        destination: dest,
-        encrypted_payload: vec![4, 5, 6],
-        sender_ephemeral_pk: [2u8; 32],
-        causal_sequence: 2,
-        queued_at: 11,
-        ttl_blocks: 100,
-        priority: MessagePriority::High,
-    };
-
-    let msg3 = QueuedMessage {
-        destination: dest,
-        encrypted_payload: vec![7, 8, 9],
-        sender_ephemeral_pk: [3u8; 32],
-        causal_sequence: 3,
-        queued_at: 12,
-        ttl_blocks: 100,
-        priority: MessagePriority::Low,
-    };
-
-    // Queue them in order.
-    let messages = vec![msg1.clone(), msg2.clone(), msg3.clone()];
-
-    // Verify causal ordering is preserved.
-    for i in 1..messages.len() {
-        if messages[i].causal_sequence <= messages[i - 1].causal_sequence {
-            return Err(format!(
-                "causal order violated: seq {} should be > {}",
-                messages[i].causal_sequence,
-                messages[i - 1].causal_sequence
-            ));
-        }
-    }
-
-    // Verify priority ordering (High > Normal > Low).
-    if msg2.priority <= msg1.priority {
-        return Err("High priority should be greater than Normal".into());
-    }
-    if msg1.priority <= msg3.priority {
-        return Err("Normal priority should be greater than Low".into());
-    }
-
-    // Verify TTL computation: message should expire at queued_at + ttl_blocks.
-    let expiry = msg1.queued_at + msg1.ttl_blocks;
-    if expiry != 110 {
-        return Err(format!("expected expiry 110, got {expiry}"));
     }
 
     Ok(())

@@ -1044,46 +1044,34 @@ mod tests {
         );
     }
 
-    // ─── Test 12: PipelineResult success resolves local promise ──
+    // ─── Test 12/13: PipelineResult success/failure affects local promise ──
 
     #[test]
-    fn pipeline_result_success_resolves_local() {
+    fn pipeline_result_success_or_failure_local() {
         let mut bridge = CrossFedPipelineBridge::new();
 
-        // Pipeline to remote, get a local result promise.
+        // Success case
         let local_p = bridge.pipeline_to_remote(fed_b(), 1, make_action("query"));
         let _ = bridge.drain_outbox();
-
-        // Receive a success result.
         let result = PipelineResultValue::Success {
             cell_id: cell(0x55),
             receipt_hash: [0xAB; 32],
         };
         bridge.on_pipeline_result(fed_b(), local_p, result);
-
         assert!(matches!(
             bridge.local_registry().promise_state(local_p),
             Some(PipelinePromiseState::Fulfilled { resolved_cell }) if *resolved_cell == cell(0x55)
         ));
-    }
 
-    // ─── Test 13: PipelineResult failure breaks local promise ──
-
-    #[test]
-    fn pipeline_result_failure_breaks_local() {
-        let mut bridge = CrossFedPipelineBridge::new();
-
-        let local_p = bridge.pipeline_to_remote(fed_b(), 1, make_action("query"));
+        // Failure case
+        let local_p2 = bridge.pipeline_to_remote(fed_b(), 2, make_action("query"));
         let _ = bridge.drain_outbox();
-
-        // Receive a failure result.
         let result = PipelineResultValue::Failure {
             error: "permission denied".into(),
         };
-        bridge.on_pipeline_result(fed_b(), local_p, result);
-
+        bridge.on_pipeline_result(fed_b(), local_p2, result);
         assert!(matches!(
-            bridge.local_registry().promise_state(local_p),
+            bridge.local_registry().promise_state(local_p2),
             Some(PipelinePromiseState::Broken { reason }) if reason == "permission denied"
         ));
     }

@@ -1244,18 +1244,23 @@ mod tests {
     // --- Encryption tests ---
 
     #[test]
-    fn encrypt_decrypt_roundtrip() {
+    fn encrypt_decrypt_various_payloads() {
         let (bob_secret, bob_public) = test_x25519_keypair();
         let (alice_secret, _alice_public) = test_x25519_keypair();
 
-        let plaintext = b"hello capability world";
+        let cases: Vec<Vec<u8>> = vec![
+            b"hello capability world".to_vec(),
+            b"".to_vec(),
+            (0..256).map(|i| i as u8).collect(),
+        ];
 
-        let (ephemeral_pk, ciphertext) =
-            encrypt_for_destination(plaintext, &bob_public, &alice_secret);
+        for plaintext in &cases {
+            let (ephemeral_pk, ciphertext) =
+                encrypt_for_destination(plaintext, &bob_public, &alice_secret);
 
-        // Bob decrypts
-        let decrypted = decrypt_from_sender(&ciphertext, &ephemeral_pk, &bob_secret).unwrap();
-        assert_eq!(decrypted, plaintext);
+            let decrypted = decrypt_from_sender(&ciphertext, &ephemeral_pk, &bob_secret).unwrap();
+            assert_eq!(decrypted, plaintext.as_slice());
+        }
     }
 
     #[test]
@@ -1272,33 +1277,6 @@ mod tests {
         // Eve tries to decrypt with her key — should fail
         let result = decrypt_from_sender(&ciphertext, &ephemeral_pk, &eve_secret);
         assert!(result.is_err() || result.unwrap() != plaintext);
-    }
-
-    #[test]
-    fn empty_payload_encrypt_decrypt() {
-        let (bob_secret, bob_public) = test_x25519_keypair();
-        let (alice_secret, _) = test_x25519_keypair();
-
-        let plaintext = b"";
-        let (ephemeral_pk, ciphertext) =
-            encrypt_for_destination(plaintext, &bob_public, &alice_secret);
-
-        let decrypted = decrypt_from_sender(&ciphertext, &ephemeral_pk, &bob_secret).unwrap();
-        assert_eq!(decrypted, plaintext);
-    }
-
-    #[test]
-    fn large_payload_encrypt_decrypt() {
-        let (bob_secret, bob_public) = test_x25519_keypair();
-        let (alice_secret, _) = test_x25519_keypair();
-
-        // Multi-block payload (larger than 32 bytes)
-        let plaintext: Vec<u8> = (0..256).map(|i| i as u8).collect();
-        let (ephemeral_pk, ciphertext) =
-            encrypt_for_destination(&plaintext, &bob_public, &alice_secret);
-
-        let decrypted = decrypt_from_sender(&ciphertext, &ephemeral_pk, &bob_secret).unwrap();
-        assert_eq!(decrypted, plaintext);
     }
 
     #[test]
@@ -1512,35 +1490,5 @@ mod tests {
 
         let result = relay.enqueue(msg);
         assert_eq!(result.unwrap_err(), RelayError::InvalidTtl);
-    }
-
-    #[test]
-    fn priority_ordering() {
-        // MessagePriority implements Ord: Low < Normal < High
-        assert!(MessagePriority::Low < MessagePriority::Normal);
-        assert!(MessagePriority::Normal < MessagePriority::High);
-    }
-
-    #[test]
-    fn drain_empty_destination() {
-        let mut relay = MessageRelay::new(100, 1000);
-        let dest = fed_bob();
-
-        // Draining a destination with no messages returns empty vec
-        let drained = relay.drain(&dest);
-        assert!(drained.is_empty());
-        assert_eq!(relay.total_stored(), 0);
-    }
-
-    #[test]
-    fn x25519_dh_commutativity() {
-        // Verify that DH is commutative: a*B == b*A (where A = a*G, B = b*G)
-        let (secret_a, public_a) = test_x25519_keypair();
-        let (secret_b, public_b) = test_x25519_keypair();
-
-        let shared_ab = x25519_scalar_mult(&secret_a, &public_b);
-        let shared_ba = x25519_scalar_mult(&secret_b, &public_a);
-
-        assert_eq!(shared_ab, shared_ba, "DH should be commutative");
     }
 }

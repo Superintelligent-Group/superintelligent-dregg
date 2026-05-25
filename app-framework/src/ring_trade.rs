@@ -74,67 +74,6 @@ pub trait RingTradeParticipant {
 mod tests {
     use super::*;
     use pyana_intent::CommitmentId;
-    use pyana_intent::exchange::AssetId;
-
-    struct DummyParticipant {
-        offer: AssetId,
-        want: AssetId,
-        settled: Vec<Settlement>,
-    }
-
-    #[derive(Debug)]
-    struct Never;
-
-    impl RingTradeParticipant for DummyParticipant {
-        type Error = Never;
-
-        fn exchange_offers(&self) -> Vec<ExchangeSpec> {
-            vec![ExchangeSpec {
-                offer_asset: self.offer,
-                offer_amount: 1000,
-                want_asset: self.want,
-                want_min_amount: 900,
-                min_rate: None,
-                max_rate: None,
-            }]
-        }
-
-        fn settle_leg(&mut self, s: &Settlement) -> Result<(), Never> {
-            self.settled.push(s.clone());
-            Ok(())
-        }
-
-        fn rollback_leg(&mut self, _s: &Settlement) -> Result<(), Never> {
-            self.settled.pop();
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn trait_wiring_compiles_and_works() {
-        let mut p = DummyParticipant {
-            offer: [0xAA; 32],
-            want: [0xBB; 32],
-            settled: Vec::new(),
-        };
-
-        let offers = p.exchange_offers();
-        assert_eq!(offers.len(), 1);
-        assert_eq!(offers[0].offer_amount, 1000);
-
-        let s = Settlement {
-            from: CommitmentId([0u8; 32]),
-            to: CommitmentId([1u8; 32]),
-            asset: [0xAA; 32],
-            amount: 1000,
-        };
-
-        p.settle_leg(&s).unwrap();
-        assert_eq!(p.settled.len(), 1);
-
-        p.rollback_leg(&s).unwrap();
-        assert_eq!(p.settled.len(), 0);
-    }
 
     #[test]
     fn leg_id_is_deterministic() {

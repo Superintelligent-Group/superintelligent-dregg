@@ -397,22 +397,19 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_nullifier_deterministic() {
+    fn test_derive_nullifier_properties() {
         let key = [0x42; 32];
         let commitment = [0xAA; 32];
+
+        // Deterministic
         let n1 = derive_nullifier(&key, &commitment);
         let n2 = derive_nullifier(&key, &commitment);
         assert_eq!(n1, n2);
-    }
 
-    #[test]
-    fn test_derive_nullifier_different_inputs() {
-        let key = [0x42; 32];
-        let c1 = [0xAA; 32];
+        // Different inputs -> different outputs
         let c2 = [0xBB; 32];
-        let n1 = derive_nullifier(&key, &c1);
-        let n2 = derive_nullifier(&key, &c2);
-        assert_ne!(n1, n2);
+        let n3 = derive_nullifier(&key, &c2);
+        assert_ne!(n1, n3);
     }
 
     /// Adversarial: the EVM-side withdrawal nullifier MUST be in a different
@@ -465,27 +462,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_generate_withdrawal_proof_rejects_zero_amount() {
+    async fn test_generate_withdrawal_proof_rejects_invalid() {
         let mut req = mock_request();
         req.note_value = 0;
-        let result = generate_withdrawal_proof(&req).await;
-        assert!(result.is_err());
-    }
+        assert!(generate_withdrawal_proof(&req).await.is_err());
 
-    #[tokio::test]
-    async fn test_generate_withdrawal_proof_rejects_empty_merkle_proof() {
         let mut req = mock_request();
         req.merkle_proof = vec![];
-        let result = generate_withdrawal_proof(&req).await;
-        assert!(result.is_err());
-    }
+        assert!(generate_withdrawal_proof(&req).await.is_err());
 
-    #[tokio::test]
-    async fn test_generate_withdrawal_proof_rejects_bad_nullifier() {
         let mut req = mock_request();
         req.nullifier = [0xFF; 32]; // Doesn't match derivation
-        let result = generate_withdrawal_proof(&req).await;
-        assert!(result.is_err());
+        assert!(generate_withdrawal_proof(&req).await.is_err());
     }
 
     #[cfg(feature = "mock")]

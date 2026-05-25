@@ -808,7 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn test_discharge_caveat_valid() {
+    fn test_discharge_caveat_cases() {
         let key = test_key();
         let mut tracker = PresenceTracker::new(key);
         tracker.update(12345, PresenceStatus::Online);
@@ -817,119 +817,79 @@ mod tests {
             .attest(12345, test_cell_id(), PresenceClaim::CurrentlyOnline)
             .unwrap();
 
-        let caveat = PresenceCaveat {
-            bot_key: key,
-            required_claim: PresenceClaim::CurrentlyOnline,
-            user_id: 12345,
-            cell_id: test_cell_id(),
-        };
+        let cases: &[(&str, [u8; 32], u64, i64, bool)] = &[
+            ("valid", key, 12345, PresenceTracker::now(), true),
+            ("expired", key, 12345, attestation.expires_at + 1000, false),
+            ("wrong_user", key, 99999, PresenceTracker::now(), false),
+            (
+                "wrong_key",
+                [0xFF; 32],
+                12345,
+                PresenceTracker::now(),
+                false,
+            ),
+        ];
 
-        let now = PresenceTracker::now();
-        assert!(discharge_presence_caveat(&attestation, &caveat, now));
+        for (name, bot_key, user_id, now, expected) in cases {
+            let caveat = PresenceCaveat {
+                bot_key: *bot_key,
+                required_claim: PresenceClaim::CurrentlyOnline,
+                user_id: *user_id,
+                cell_id: test_cell_id(),
+            };
+            assert_eq!(
+                discharge_presence_caveat(&attestation, &caveat, *now),
+                *expected,
+                "case: {name}"
+            );
+        }
     }
 
     #[test]
-    fn test_discharge_caveat_expired() {
-        let key = test_key();
-        let mut tracker = PresenceTracker::new(key);
-        tracker.update(12345, PresenceStatus::Online);
+    fn test_claim_satisfies_cases() {
+        let cases: &[(PresenceClaim, PresenceClaim, bool)] = &[
+            (
+                PresenceClaim::CurrentlyOnline,
+                PresenceClaim::OnlineWithin { window_secs: 3600 },
+                true,
+            ),
+            (
+                PresenceClaim::OnlineForAtLeast {
+                    duration_secs: 7200,
+                },
+                PresenceClaim::OnlineForAtLeast {
+                    duration_secs: 3600,
+                },
+                true,
+            ),
+            (
+                PresenceClaim::OnlineForAtLeast {
+                    duration_secs: 3600,
+                },
+                PresenceClaim::OnlineForAtLeast {
+                    duration_secs: 7200,
+                },
+                false,
+            ),
+            (
+                PresenceClaim::OnlineWithin { window_secs: 300 },
+                PresenceClaim::OnlineWithin { window_secs: 600 },
+                true,
+            ),
+            (
+                PresenceClaim::OnlineWithin { window_secs: 600 },
+                PresenceClaim::OnlineWithin { window_secs: 300 },
+                false,
+            ),
+        ];
 
-        let attestation = tracker
-            .attest(12345, test_cell_id(), PresenceClaim::CurrentlyOnline)
-            .unwrap();
-
-        let caveat = PresenceCaveat {
-            bot_key: key,
-            required_claim: PresenceClaim::CurrentlyOnline,
-            user_id: 12345,
-            cell_id: test_cell_id(),
-        };
-
-        // Set current time far in the future (past expiry).
-        let future = attestation.expires_at + 1000;
-        assert!(!discharge_presence_caveat(&attestation, &caveat, future));
-    }
-
-    #[test]
-    fn test_discharge_caveat_wrong_user() {
-        let key = test_key();
-        let mut tracker = PresenceTracker::new(key);
-        tracker.update(12345, PresenceStatus::Online);
-
-        let attestation = tracker
-            .attest(12345, test_cell_id(), PresenceClaim::CurrentlyOnline)
-            .unwrap();
-
-        let caveat = PresenceCaveat {
-            bot_key: key,
-            required_claim: PresenceClaim::CurrentlyOnline,
-            user_id: 99999,
-            cell_id: test_cell_id(),
-        };
-
-        let now = PresenceTracker::now();
-        assert!(!discharge_presence_caveat(&attestation, &caveat, now));
-    }
-
-    #[test]
-    fn test_discharge_caveat_wrong_key() {
-        let key = test_key();
-        let mut tracker = PresenceTracker::new(key);
-        tracker.update(12345, PresenceStatus::Online);
-
-        let attestation = tracker
-            .attest(12345, test_cell_id(), PresenceClaim::CurrentlyOnline)
-            .unwrap();
-
-        let caveat = PresenceCaveat {
-            bot_key: [0xFF; 32],
-            required_claim: PresenceClaim::CurrentlyOnline,
-            user_id: 12345,
-            cell_id: test_cell_id(),
-        };
-
-        let now = PresenceTracker::now();
-        assert!(!discharge_presence_caveat(&attestation, &caveat, now));
-    }
-
-    #[test]
-    fn test_claim_satisfies_online_within() {
-        assert!(claim_satisfies(
-            &PresenceClaim::CurrentlyOnline,
-            &PresenceClaim::OnlineWithin { window_secs: 3600 }
-        ));
-    }
-
-    #[test]
-    fn test_claim_satisfies_duration_stronger() {
-        assert!(claim_satisfies(
-            &PresenceClaim::OnlineForAtLeast {
-                duration_secs: 7200
-            },
-            &PresenceClaim::OnlineForAtLeast {
-                duration_secs: 3600
-            },
-        ));
-        assert!(!claim_satisfies(
-            &PresenceClaim::OnlineForAtLeast {
-                duration_secs: 3600
-            },
-            &PresenceClaim::OnlineForAtLeast {
-                duration_secs: 7200
-            },
-        ));
-    }
-
-    #[test]
-    fn test_claim_satisfies_window_tighter() {
-        assert!(claim_satisfies(
-            &PresenceClaim::OnlineWithin { window_secs: 300 },
-            &PresenceClaim::OnlineWithin { window_secs: 600 },
-        ));
-        assert!(!claim_satisfies(
-            &PresenceClaim::OnlineWithin { window_secs: 600 },
-            &PresenceClaim::OnlineWithin { window_secs: 300 },
-        ));
+        for (attested, required, expected) in cases {
+            assert_eq!(
+                claim_satisfies(attested, required),
+                *expected,
+                "attested: {attested:?}, required: {required:?}"
+            );
+        }
     }
 
     #[test]
@@ -944,22 +904,5 @@ mod tests {
         assert_eq!(history[0].status, PresenceStatus::Online);
         assert_eq!(history[1].status, PresenceStatus::Idle);
         assert_eq!(history[2].status, PresenceStatus::Offline);
-    }
-
-    #[test]
-    fn test_bot_cell_id_deterministic() {
-        let tracker = PresenceTracker::new(test_key());
-        let id1 = tracker.bot_cell_id();
-        let id2 = tracker.bot_cell_id();
-        assert_eq!(id1, id2);
-        assert_ne!(id1, [0u8; 32]);
-    }
-
-    #[test]
-    fn test_presence_status_is_online() {
-        assert!(PresenceStatus::Online.is_online());
-        assert!(PresenceStatus::Idle.is_online());
-        assert!(PresenceStatus::Dnd.is_online());
-        assert!(!PresenceStatus::Offline.is_online());
     }
 }

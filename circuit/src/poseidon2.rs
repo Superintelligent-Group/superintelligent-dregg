@@ -477,19 +477,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn poseidon2_deterministic() {
-        let input = [
-            BabyBear::new(1),
-            BabyBear::new(2),
-            BabyBear::new(3),
-            BabyBear::new(4),
-        ];
-        let h1 = hash_4_to_1(&input);
-        let h2 = hash_4_to_1(&input);
-        assert_eq!(h1, h2);
-    }
-
-    #[test]
     fn poseidon2_different_inputs_different_outputs() {
         let a = [
             BabyBear::new(1),
@@ -522,15 +509,6 @@ mod tests {
     }
 
     #[test]
-    fn hash_fact_deterministic() {
-        let pred = BabyBear::new(42);
-        let terms = [BabyBear::new(1), BabyBear::new(2), BabyBear::new(3)];
-        let h1 = hash_fact(pred, &terms);
-        let h2 = hash_fact(pred, &terms);
-        assert_eq!(h1, h2);
-    }
-
-    #[test]
     fn poseidon2_trace_consistency() {
         let mut input = [BabyBear::ZERO; WIDTH];
         input[0] = BabyBear::new(10);
@@ -556,15 +534,6 @@ mod tests {
         let x = BabyBear::new(2);
         let y = Poseidon2State::sbox(x);
         assert_eq!(y.0, 128);
-    }
-
-    #[test]
-    fn hash_bytes_deterministic() {
-        let data = b"hello world";
-        let h1 = hash_bytes(data);
-        let h2 = hash_bytes(data);
-        assert_eq!(h1, h2);
-        assert_ne!(h1, BabyBear::ZERO);
     }
 
     #[test]

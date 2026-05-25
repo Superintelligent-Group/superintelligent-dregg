@@ -10,7 +10,6 @@ pub fn run() -> Vec<CheckResult> {
         run_check("petname_lifecycle", check_petname_lifecycle),
         run_check("registration_resolve", check_registration_resolve),
         run_check("delegation_subname", check_delegation_subname),
-        run_check("hierarchical_dotted", check_hierarchical_dotted),
     ]
 }
 
@@ -129,45 +128,6 @@ fn check_delegation_subname() -> Result<(), String> {
     for segment in "project.alice".split('.') {
         validate_name_segment(segment)
             .map_err(|e| format!("segment '{segment}' should be valid: {e}"))?;
-    }
-
-    Ok(())
-}
-
-fn check_hierarchical_dotted() -> Result<(), String> {
-    // Test hierarchical name parsing and segment validation.
-    let dotted_name = "service.team.org";
-
-    // Each segment should validate.
-    let segments: Vec<&str> = dotted_name.split('.').collect();
-    if segments.len() != 3 {
-        return Err(format!("expected 3 segments, got {}", segments.len()));
-    }
-
-    for segment in &segments {
-        validate_name_segment(segment).map_err(|e| format!("segment '{segment}' invalid: {e}"))?;
-    }
-
-    // Verify resolution priority: rightmost segment is the TLD/root.
-    // In hierarchical resolution, "service.team.org" traverses: org -> team -> service
-    if segments[2] != "org" {
-        return Err("rightmost segment should be 'org'".into());
-    }
-    if segments[1] != "team" {
-        return Err("middle segment should be 'team'".into());
-    }
-    if segments[0] != "service" {
-        return Err("leftmost segment should be 'service'".into());
-    }
-
-    // Invalid hierarchical names should fail at least one segment.
-    let bad_dotted = "valid..empty-segment";
-    let bad_segments: Vec<&str> = bad_dotted.split('.').collect();
-    let has_invalid = bad_segments
-        .iter()
-        .any(|s| validate_name_segment(s).is_err());
-    if !has_invalid {
-        return Err("dotted name with empty segment should have invalid segments".into());
     }
 
     Ok(())

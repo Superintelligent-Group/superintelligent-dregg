@@ -94,15 +94,6 @@ fn check_gallery_logic() -> Result<(), String> {
         return Err("bid reveal with wrong nonce should fail".into());
     }
 
-    // 3. AuctionPhase equality checks (ensures serde/types work).
-    let phase = AuctionPhase::Bidding;
-    if phase != AuctionPhase::Bidding {
-        return Err("phase equality broken".into());
-    }
-    if phase == AuctionPhase::Reveal {
-        return Err("bidding should not equal reveal".into());
-    }
-
     Ok(())
 }
 

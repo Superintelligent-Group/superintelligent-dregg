@@ -2373,11 +2373,12 @@ mod tests {
         let bare = EvalContext::default();
         let err = p.evaluate(&s, None, Some(&bare)).unwrap_err();
         assert!(matches!(err, ProgramError::MissingContextField { .. }));
-        // ctx with sender → ok
-        assert!(
-            p.evaluate(&s, None, Some(&ctx_sender([1u8; 32], 0)))
-                .is_ok()
-        );
+        // ctx with sender but no registry → SenderMembershipWitnessMissing
+        // (the registry + witness blob are also required for full verification)
+        let err = p
+            .evaluate(&s, None, Some(&ctx_sender([1u8; 32], 0)))
+            .unwrap_err();
+        assert!(matches!(err, ProgramError::SenderMembershipWitnessMissing));
     }
 
     #[test]

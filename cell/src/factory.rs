@@ -1109,30 +1109,6 @@ mod tests {
     }
 
     #[test]
-    fn test_provenance_creation() {
-        let prov = Provenance::from_factory(test_factory_vk(), Some([0xAB; 32]), 100);
-        assert_eq!(prov.created_by_factory, Some(test_factory_vk()));
-        assert_eq!(prov.creation_proof_hash, Some([0xAB; 32]));
-        assert_eq!(prov.creation_height, 100);
-    }
-
-    #[test]
-    fn test_provenance_genesis() {
-        let prov = Provenance::genesis(0);
-        assert_eq!(prov.created_by_factory, None);
-        assert_eq!(prov.creation_proof_hash, None);
-        assert_eq!(prov.creation_height, 0);
-    }
-
-    #[test]
-    fn test_descriptor_hash_deterministic() {
-        let desc = worker_factory_descriptor();
-        let h1 = desc.hash();
-        let h2 = desc.hash();
-        assert_eq!(h1, h2);
-    }
-
-    #[test]
     fn test_descriptor_hash_changes_with_content() {
         let desc1 = worker_factory_descriptor();
         let mut desc2 = worker_factory_descriptor();
@@ -1368,17 +1344,6 @@ mod tests {
     }
 
     #[test]
-    fn test_child_vk_strategy_hash_deterministic() {
-        let s1 = ChildVkStrategy::Derived {
-            base_vk: test_factory_vk(),
-        };
-        let s2 = ChildVkStrategy::Derived {
-            base_vk: test_factory_vk(),
-        };
-        assert_eq!(s1.hash(), s2.hash());
-    }
-
-    #[test]
     fn test_child_vk_strategy_hash_differs_between_variants() {
         let fixed = ChildVkStrategy::Fixed(Some(test_child_vk()));
         let derived = ChildVkStrategy::Derived {
@@ -1419,14 +1384,6 @@ mod tests {
     }
 
     #[test]
-    fn canonical_program_vk_is_deterministic() {
-        let p = canonical_test_program();
-        let h1 = canonical_program_vk(&p);
-        let h2 = canonical_program_vk(&p);
-        assert_eq!(h1, h2, "canonical VK must be deterministic");
-    }
-
-    #[test]
     fn canonical_program_vk_changes_with_program_shape() {
         use crate::program::{StateConstraint, TransitionCase, TransitionGuard};
         let p1 = canonical_test_program();
@@ -1455,19 +1412,6 @@ mod tests {
             constraints: vec![StateConstraint::WriteOnce { index: 3 }],
         }]);
         assert_ne!(canonical_program_vk(&p1), canonical_program_vk(&p2));
-    }
-
-    #[test]
-    fn canonical_program_vk_none_program_has_stable_hash() {
-        // Even the trivial program has a stable canonical VK — apps that
-        // pin child_program_vk to `canonical_program_vk(&CellProgram::None)`
-        // get a real cryptographic identifier, not a placeholder.
-        let p = CellProgram::None;
-        let h = canonical_program_vk(&p);
-        // Non-zero (BLAKE3 of any input is non-zero w.h.p.).
-        assert_ne!(h, [0u8; 32]);
-        // Deterministic.
-        assert_eq!(h, canonical_program_vk(&CellProgram::None));
     }
 
     #[test]

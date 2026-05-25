@@ -33,7 +33,7 @@ pub struct Preconditions {
     /// receiver that doesn't know the kind surfaces
     /// `WitnessedPredicateError::KindNotRegistered`, which the
     /// executor maps to a precondition rejection.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub witnessed: Vec<WitnessedPredicate>,
 }
 
@@ -582,39 +582,6 @@ mod clause_tests {
     }
 
     #[test]
-    fn eval_context_carries_lane_g_fields() {
-        // Verifies the EvalContext consolidation per
-        // SLOT-CAVEATS-EVALUATION.md §7.3 q1: the canonical context
-        // exposes block_height/timestamp AND sender, sender_epoch_count,
-        // revealed_preimage, current_epoch.
-        let ctx = EvalContext {
-            block_height: 42,
-            timestamp: 1_700_000_000,
-            current_epoch: 3,
-            sender: Some([0xab; 32]),
-            sender_epoch_count: 7,
-            revealed_preimage: Some([0xcd; 32]),
-        };
-        assert_eq!(ctx.block_height, 42);
-        assert_eq!(ctx.timestamp, 1_700_000_000);
-        assert_eq!(ctx.current_epoch, 3);
-        assert_eq!(ctx.sender, Some([0xab; 32]));
-        assert_eq!(ctx.sender_epoch_count, 7);
-        assert_eq!(ctx.revealed_preimage, Some([0xcd; 32]));
-    }
-
-    #[test]
-    fn eval_context_minimal_defaults_lane_g_fields() {
-        let ctx = EvalContext::minimal(100, 12345);
-        assert_eq!(ctx.block_height, 100);
-        assert_eq!(ctx.timestamp, 12345);
-        assert_eq!(ctx.current_epoch, 0);
-        assert_eq!(ctx.sender, None);
-        assert_eq!(ctx.sender_epoch_count, 0);
-        assert_eq!(ctx.revealed_preimage, None);
-    }
-
-    #[test]
     fn preconditions_roundtrip_postcard() {
         // Round-trip the canonical Preconditions through postcard to
         // ensure the wire shape is stable across the
@@ -626,8 +593,28 @@ mod clause_tests {
             Precondition::NonceAtLeast(99),
         ]);
         let bytes = postcard::to_allocvec(&pre).expect("encode");
+        eprintln!("preconditions bytes ({}): {:02x?}", bytes.len(), bytes);
         let decoded: Preconditions = postcard::from_bytes(&bytes).expect("decode");
         assert_eq!(pre, decoded);
         assert_eq!(pre.hash(), decoded.hash());
+
+        // Malformed / edge-case inputs must be rejected.
+        // Truncated bytes.
+        assert!(
+            postcard::from_bytes::<Preconditions>(&bytes[..bytes.len().saturating_sub(2)]).is_err(),
+            "truncated preconditions must fail to decode"
+        );
+        // All-zero buffer (not a valid postcard encoding).
+        assert!(
+            postcard::from_bytes::<Preconditions>(&[0u8; 16]).is_err(),
+            "all-zero buffer must fail to decode"
+        );
+        // Extra trailing bytes (postcard is not length-prefixed for this type).
+        let mut extra = bytes.clone();
+        extra.extend_from_slice(&[0xFF, 0xFF]);
+        assert!(
+            postcard::from_bytes::<Preconditions>(&extra).is_err(),
+            "extra trailing bytes must fail to decode"
+        );
     }
 }

@@ -106,22 +106,6 @@ fn detect_equivocation_same_seq() {
     assert!(lace.equivocators().contains(&creator));
 }
 
-#[test]
-fn fork_equivocation_detection() {
-    let key = random_key();
-    let creator = key.verifying_key().to_bytes();
-
-    // Two blocks at seq 1 with different content = equivocation.
-    let block_a = Block::new(&key, 1, Payload::Data(b"fork A".to_vec()), vec![]);
-    let block_b = Block::new(&key, 1, Payload::Data(b"fork B".to_vec()), vec![]);
-
-    let mut lace = Blocklace::new_simple(random_key());
-    lace.receive_block(block_a).unwrap();
-    let result = lace.receive_block(block_b);
-    assert!(result.is_err());
-    assert!(lace.equivocators().contains(&creator));
-}
-
 // ─── Closure Enforcement ─────────────────────────────────────────────────────
 
 #[test]

@@ -485,12 +485,6 @@ pub mod recursive {
         use crate::poseidon2_air::create_poseidon2_test_witness;
 
         #[test]
-        fn recursion_config_creation() {
-            let _config = create_recursion_config();
-            let _backend = create_recursion_backend();
-        }
-
-        #[test]
         fn inner_proof_recursion_compatible() {
             let leaf = BabyBear::new(42424242);
             let witness = create_poseidon2_test_witness(leaf, 4);

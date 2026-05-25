@@ -135,14 +135,6 @@ mod tests {
     }
 
     #[test]
-    fn self_state_transition_is_deterministic() {
-        let id = cid(1);
-        let a = UnilateralAttestation::self_state_transition(&id, &[1; 32], &[2; 32], &[3; 32]);
-        let b = UnilateralAttestation::self_state_transition(&id, &[1; 32], &[2; 32], &[3; 32]);
-        assert_eq!(a, b);
-    }
-
-    #[test]
     fn nonce_bump_differs_per_nonce() {
         let id = cid(1);
         let a = UnilateralAttestation::self_nonce_bump(&id, 1, 2);

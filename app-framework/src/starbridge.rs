@@ -479,14 +479,6 @@ mod tests {
     }
 
     #[test]
-    fn context_holds_cclerk_and_executor() {
-        let (w, e) = fixture();
-        let ctx = StarbridgeAppContext::new(w.clone(), e.clone());
-        assert_eq!(ctx.cclerk().cell_id(), w.cell_id());
-        assert_eq!(ctx.executor().cell_id(), e.cell_id());
-    }
-
-    #[test]
     fn factory_registry_register_and_lookup() {
         let (w, e) = fixture();
         let ctx = StarbridgeAppContext::new(w, e);

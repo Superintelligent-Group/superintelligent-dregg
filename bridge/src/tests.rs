@@ -9,7 +9,7 @@ use pyana_circuit::merkle_air::MerkleAir;
 use pyana_circuit::{BabyBear, ConstraintProver, PresentationVerification};
 use pyana_commit::{Fact, FactSet, FieldElement, SymbolTable, TokenState, verify_fold_chain};
 use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
-use pyana_trace::{Conclusion, symbol_from_str};
+use pyana_trace::Conclusion;
 
 use crate::authorize::{self, AuthError};
 use crate::convert::macaroon_to_factset;
@@ -532,12 +532,21 @@ fn test_issuer_membership_circuit_rejects_wrong_federation_root() {
     let builder = BridgePresentationBuilder::new(root_key, federation_root);
 
     let issuer_hash = crate::present::bytes_to_babybear(&root_key);
-    let result = builder.build_issuer_membership(issuer_hash);
 
-    // The synthetic Merkle path won't match the arbitrary test federation root.
+    let result = builder.build_issuer_membership(issuer_hash);
     assert!(
         result.is_err(),
         "Issuer membership should fail against unrelated federation root"
+    );
+    assert_eq!(
+        result.unwrap_err(),
+        crate::authorize::AuthError::IssuerNotInFederation
+    );
+
+    let result = builder.build_issuer_membership_poseidon2(issuer_hash);
+    assert!(
+        result.is_err(),
+        "Poseidon2 issuer membership should fail against unrelated federation root"
     );
     assert_eq!(
         result.unwrap_err(),
@@ -720,20 +729,4 @@ fn test_fold_delta_from_raw_states() {
     let new_state = delta.reconstruct_new_state(&state).unwrap();
     assert!(!new_state.contains(&Fact::from_symbols("can_access", &["user-1", "secret-doc"])));
     assert!(new_state.contains(&Fact::from_symbols("can_access", &["user-1", "public-doc"])));
-}
-
-#[test]
-fn test_symbol_table_round_trip() {
-    let mut symbols = SymbolTable::new();
-    let names = ["app", "service", "dashboard", "http", "rw", "read", "alice"];
-
-    for name in &names {
-        symbols.intern(name);
-    }
-
-    // All names should be resolvable.
-    for name in &names {
-        let fe = FieldElement::from_symbol(name);
-        assert_eq!(symbols.resolve(fe), Some(*name));
-    }
 }

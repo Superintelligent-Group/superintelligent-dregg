@@ -441,28 +441,6 @@ mod tests {
         assert_eq!(addr1, addr3);
     }
 
-    #[test]
-    fn fabric_address_capability_creation() {
-        let swiss = [0xAB; 32];
-        let addr = FabricAddress::capability(swiss);
-        assert!(addr.is_capability());
-        match addr {
-            FabricAddress::Capability { swiss: s } => assert_eq!(s, swiss),
-            _ => panic!("expected Capability variant"),
-        }
-    }
-
-    #[test]
-    fn fabric_address_federation_creation() {
-        let fed = FederationId([0xFE; 32]);
-        let addr = FabricAddress::federation(fed);
-        assert!(addr.is_federation());
-        match addr {
-            FabricAddress::Federation(f) => assert_eq!(f, fed),
-            _ => panic!("expected Federation variant"),
-        }
-    }
-
     // ─── GroupId Determinism Tests ──────────────────────────────────────────
 
     #[test]
@@ -760,15 +738,15 @@ mod tests {
     }
 
     #[test]
-    fn backward_compat_strand_has_no_federation_equivalent() {
-        let addr = FabricAddress::strand(make_key(5));
-        assert_eq!(fabric_to_federation(&addr), None);
-    }
-
-    #[test]
-    fn backward_compat_capability_has_no_federation_equivalent() {
-        let addr = FabricAddress::capability([0x77; 32]);
-        assert_eq!(fabric_to_federation(&addr), None);
+    fn backward_compat_non_federation_variants_have_no_federation_equivalent() {
+        assert_eq!(
+            fabric_to_federation(&FabricAddress::strand(make_key(5))),
+            None
+        );
+        assert_eq!(
+            fabric_to_federation(&FabricAddress::capability([0x77; 32])),
+            None
+        );
     }
 
     // ─── Checkpoint Hash Determinism ────────────────────────────────────────

@@ -114,31 +114,5 @@ fn test_blinded_predicate_proofs_unlinkable() {
     assert!(verify_predicate(&proof2, BabyBear::new(threshold), fc_blinded2).is_ok());
 }
 
-/// Multiple delegations from the same token: delegated presentations must not
-/// reveal that they share a common ancestor token.
-#[test]
-#[ignore = "TODO: implement delegation-chain unlinkability verification"]
-fn test_delegation_presentations_unlinkable() {
-    // TODO: Steps to implement:
-    // 1. Alice mints root token.
-    // 2. Alice delegates to Bob (with restrictions A).
-    // 3. Alice delegates to Carol (with restrictions B).
-    // 4. Bob presents to Verifier1, Carol presents to Verifier2.
-    // 5. Verify that Verifier1 and Verifier2 cannot determine that Bob and Carol
-    //    hold tokens derived from the same root (no common presentation_tag,
-    //    no common issuer_key_hash in public inputs due to ring blinding).
-}
-
-/// Timing side-channel: proof generation time should not depend on the private value.
-#[test]
-#[ignore = "TODO: implement timing side-channel resistance test (statistical)"]
-fn test_proof_generation_constant_time() {
-    // TODO: Steps to implement:
-    // 1. Generate 100 proofs with value=1 (near-zero diff).
-    // 2. Generate 100 proofs with value=536870000 (near-max diff for 30-bit range).
-    // 3. Compare mean generation times — they should be within 2x of each other
-    //    (proving that the bit decomposition doesn't short-circuit on leading zeros).
-    //
-    // Note: This is a statistical test and may be flaky in CI. Consider marking
-    // it with a longer timeout and running only in nightly.
-}
+// NOTE: removed 2 empty #[ignore] placeholder tests (delegation unlinkability,
+// timing side-channel) that provided zero runtime value.

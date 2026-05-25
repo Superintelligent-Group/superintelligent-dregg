@@ -67,6 +67,7 @@ pub struct PresentationResult {
 /// # Ok(())
 /// # }
 /// ```
+// TODO: SiloClient needs tests
 pub struct SiloClient {
     /// Remote silo address.
     address: SocketAddr,

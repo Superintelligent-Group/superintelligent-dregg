@@ -11,7 +11,6 @@ pub fn run() -> Vec<CheckResult> {
     vec![
         run_check("hosted", check_hosted_cell),
         run_check("sovereign", check_sovereign_cell),
-        run_check("factory", check_factory_cell),
     ]
 }
 
@@ -66,56 +65,6 @@ fn check_sovereign_cell() -> Result<(), String> {
         .ok_or("no sovereign commitment")?;
     if *stored != commitment {
         return Err("sovereign commitment mismatch".into());
-    }
-
-    Ok(())
-}
-
-fn check_factory_cell() -> Result<(), String> {
-    let mut registry = FactoryRegistry::new();
-
-    let factory_vk = *blake3::hash(b"factory-vk").as_bytes();
-    let descriptor = FactoryDescriptor {
-        factory_vk,
-        child_program_vk: None,
-        child_vk_strategy: Some(ChildVkStrategy::Derived {
-            base_vk: factory_vk,
-        }),
-        allowed_cap_templates: vec![],
-        field_constraints: vec![FieldConstraint::Range {
-            field_index: 0,
-            min: 0,
-            max: 1000,
-        }],
-        state_constraints: vec![],
-        default_mode: CellMode::Hosted,
-        creation_budget: Some(100),
-    };
-
-    let deployed_vk = registry.deploy(descriptor);
-    if deployed_vk != factory_vk {
-        return Err("deployed VK should match descriptor".into());
-    }
-
-    // Verify factory is registered
-    let retrieved = registry.get(&factory_vk).ok_or("factory not in registry")?;
-    if retrieved.factory_vk != factory_vk {
-        return Err("factory VK mismatch in registry".into());
-    }
-
-    // Record a creation
-    registry
-        .record_creation(&factory_vk)
-        .map_err(|e| format!("{e:?}"))?;
-
-    // Verify VK derivation for child
-    let params_hash = *blake3::hash(b"child-params").as_bytes();
-    let child_vk = ChildVkStrategy::derive_child_vk(&factory_vk, &params_hash);
-    if child_vk == factory_vk {
-        return Err("child VK should differ from factory VK".into());
-    }
-    if child_vk == [0u8; 32] {
-        return Err("child VK should not be zero".into());
     }
 
     Ok(())

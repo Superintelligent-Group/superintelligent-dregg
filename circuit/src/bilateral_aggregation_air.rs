@@ -478,10 +478,26 @@ pub fn build_aggregation_trace(rows: &[AggregationInnerRow]) -> Vec<Vec<BabyBear
     }
 
     // Padding rows: all zero except cumulative + n_cells_active carry forward.
+    // Turn-identity slots must match active rows to satisfy CG-2 constraints.
     while trace.len() < n_padded {
         let mut t = vec![BabyBear::ZERO; AGG_WIDTH];
         t[IS_AGENT_CUMULATIVE_COL] = BabyBear::new(cum_agent);
         t[N_CELLS_ACTIVE_COL] = BabyBear::new(n_cells_active);
+        if let Some(first) = rows.first() {
+            for i in 0..inner_pi::TURN_HASH_LEN {
+                t[PI_BUFFER_BASE + inner_pi::TURN_HASH_BASE + i] =
+                    first.inner_pi[inner_pi::TURN_HASH_BASE + i];
+            }
+            for i in 0..inner_pi::EFFECTS_HASH_GLOBAL_LEN {
+                t[PI_BUFFER_BASE + inner_pi::EFFECTS_HASH_GLOBAL_BASE + i] =
+                    first.inner_pi[inner_pi::EFFECTS_HASH_GLOBAL_BASE + i];
+            }
+            t[PI_BUFFER_BASE + inner_pi::ACTOR_NONCE] = first.inner_pi[inner_pi::ACTOR_NONCE];
+            for i in 0..inner_pi::PREVIOUS_RECEIPT_HASH_LEN {
+                t[PI_BUFFER_BASE + inner_pi::PREVIOUS_RECEIPT_HASH_BASE + i] =
+                    first.inner_pi[inner_pi::PREVIOUS_RECEIPT_HASH_BASE + i];
+            }
+        }
         trace.push(t);
     }
 

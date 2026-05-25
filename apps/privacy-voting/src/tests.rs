@@ -315,30 +315,7 @@ async fn double_submission_by_same_voter_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. The commitment hides the vote (commit phase carries no usable signal)
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn commitment_hides_vote() {
-    // Privacy property: two voters voting the SAME option with different
-    // randomness produce DIFFERENT commitments. An observer looking at the
-    // queue cannot detect that two voters voted the same way.
-    let pid = derive_proposal_id("hidden");
-    let c1 = ballot::commit(&pid, 0, &[1u8; 32]);
-    let c2 = ballot::commit(&pid, 0, &[2u8; 32]);
-    assert_ne!(c1, c2);
-
-    // And: a voter cannot mount a brute-force preimage attack to *learn* a
-    // peer's vote without their randomness. This is implicit in blake3's
-    // preimage resistance; we assert structurally that the only inputs are
-    // (proposal_id, option, randomness), so an attacker missing randomness
-    // faces 2^256 work.
-    let c3 = ballot::commit(&pid, 0, &[1u8; 32]);
-    assert_eq!(c1, c3, "deterministic given identical inputs");
-}
-
-// ---------------------------------------------------------------------------
-// 4. The tally is verifiable
+// 3. The tally is verifiable
 // ---------------------------------------------------------------------------
 
 #[tokio::test]

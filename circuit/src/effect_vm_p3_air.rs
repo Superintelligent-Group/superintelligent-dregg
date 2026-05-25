@@ -49,11 +49,13 @@
 //! grow `eval()` here to mirror every selector branch in
 //! `EffectVmAir::eval_constraints`. The translation is mechanical:
 //!
+//! ```ignore
 //!     // local code (concrete):                        // p3-air (symbolic):
 //!     let s = local[sel::NOOP];                        let s: AB::Expr = local[sel::NOOP].into();
 //!     let c = s * (s - BabyBear::ONE);                 let c: AB::Expr = s.clone() * (s - AB::Expr::ONE);
 //!     combined = combined + alpha_pow * c;             builder.assert_zero(c);
 //!     alpha_pow = alpha_pow * alpha;                   // (alpha folding is the verifier's job)
+//! ```
 //!
 //! The alpha-folding scaffolding inside `eval_constraints` is the
 //! verifier's responsibility under `p3-air` — each `builder.assert_zero(c)`

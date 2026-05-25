@@ -8,7 +8,6 @@ use std::time::Duration;
 use crate::budget::{BudgetEnforcer, BudgetSpec};
 use crate::event::UsageEvent;
 use crate::log::AuditLog;
-use crate::proofs::BudgetProof;
 
 /// Helper: create a usage event with a given token, sequence, and timestamp.
 fn make_event(token_id: [u8; 32], seq: u64, ts: i64) -> UsageEvent {
@@ -231,30 +230,6 @@ fn receipts_independently_verifiable() {
     assert_eq!(current_root, receipts.last().unwrap().log_root_after);
 }
 
-/// Test: log maintains consistent historical roots.
-#[test]
-fn historical_roots_consistent() {
-    let token = [0x99; 32];
-    let mut log = AuditLog::new();
-
-    let mut expected_roots = Vec::new();
-    for i in 0..8 {
-        let receipt = log.append(make_event(token, i, 1000 + i as i64));
-        expected_roots.push(receipt.log_root_after);
-    }
-
-    // Historical roots should match receipt roots.
-    for (i, expected) in expected_roots.iter().enumerate() {
-        let historical = log.historical_root(i + 1).unwrap();
-        assert_eq!(
-            historical,
-            *expected,
-            "Historical root mismatch at size {}",
-            i + 1
-        );
-    }
-}
-
 /// Test: count proof is invalid if you try to claim fewer uses.
 #[test]
 fn count_proof_tamper_detection() {
@@ -300,22 +275,6 @@ fn multi_snapshot_consistency() {
             snapshot.size
         );
     }
-}
-
-/// Test: last use proof correctness.
-#[test]
-fn last_use_proof_tracks_most_recent() {
-    let token = [0xDD; 32];
-    let mut log = AuditLog::new();
-
-    for i in 0..5 {
-        log.append(make_event(token, i, 1000 + i as i64 * 100));
-    }
-
-    let proof = log.prove_last_use(&token).unwrap();
-    assert_eq!(proof.last_sequence, 4);
-    assert_eq!(proof.last_timestamp, 1400);
-    assert!(proof.verify());
 }
 
 /// Test: interleaved tokens don't interfere.

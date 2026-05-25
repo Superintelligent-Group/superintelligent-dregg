@@ -1112,21 +1112,6 @@ mod tests {
         assert_eq!(note.value_commitment.point, expected_vc.point);
     }
 
-    #[test]
-    fn committed_note_deterministic() {
-        let owner = [0x11; 32];
-        let blinding = test_scalar(71);
-        let rcm = [0x22; 32];
-        let nonce = [0x33; 32];
-
-        let opening = CommittedNoteOpening::new(owner, 500, 1, blinding, rcm, nonce);
-        let note1 = CommittedNote::from_opening(&opening);
-        let note2 = CommittedNote::from_opening(&opening);
-
-        assert_eq!(note1.note_commitment, note2.note_commitment);
-        assert_eq!(note1.value_commitment.point, note2.value_commitment.point);
-    }
-
     // ─── Range proof tests ───────────────────────────────────────────────────
 
     #[test]

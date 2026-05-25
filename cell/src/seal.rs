@@ -700,13 +700,6 @@ mod tests {
         }
     }
     #[test]
-    fn pair_id_deterministic() {
-        let a = SealPair::from_secret([1u8; 32]);
-        let b = SealPair::from_secret([1u8; 32]);
-        assert_eq!(a.id, b.id);
-        assert_eq!(a.sealer_public, b.sealer_public);
-    }
-    #[test]
     fn pair_id_depends_on_secret() {
         let a = SealPair::from_secret([1u8; 32]);
         let b = SealPair::from_secret([2u8; 32]);
@@ -720,6 +713,24 @@ mod tests {
         let json = serde_json::to_string(&sealed).unwrap();
         let recovered: SealedBox = serde_json::from_str(&json).unwrap();
         assert_eq!(pair.unseal(&recovered).unwrap(), cap);
+
+        // Malformed JSON must fail to deserialize.
+        assert!(
+            serde_json::from_str::<SealedBox>("not-json").is_err(),
+            "garbage JSON must be rejected"
+        );
+        // Missing required field.
+        let missing_field = r#"{"ciphertext":"aaaa","nonce":"bbbb"}"#;
+        assert!(
+            serde_json::from_str::<SealedBox>(missing_field).is_err(),
+            "missing fields must be rejected"
+        );
+        // Wrong field type.
+        let bad_type = r#"{"pair_id":123,"ciphertext":"aaaa","nonce":"bbbb"}"#;
+        assert!(
+            serde_json::from_str::<SealedBox>(bad_type).is_err(),
+            "wrong field types must be rejected"
+        );
     }
     #[test]
     fn sealer_public_key_cannot_unseal() {

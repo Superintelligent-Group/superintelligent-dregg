@@ -16,7 +16,7 @@ use pyana_turn::escrow::EscrowCondition;
 use pyana_types::CellId;
 
 #[test]
-fn rejecting_authorizer_blocks_create_payment_escrow() {
+fn rejecting_authorizer_blocks_all_escrow_operations() {
     let mut engine = PyanaEngine::new(EngineConfig::for_testing());
     let auth = Box::new(RejectingAuthorizer::new("no escrows allowed (test)"));
     let mut mgr = EscrowManager::new(&mut engine, auth);
@@ -27,57 +27,33 @@ fn rejecting_authorizer_blocks_create_payment_escrow() {
         verification_key: [0u8; 32],
     };
 
+    // create_payment_escrow
     let err = mgr
         .create_payment_escrow(from, to, 1000, condition, 100)
         .expect_err("rejecting authorizer must block escrow creation");
+    assert_rejected(&err, "no escrows allowed");
 
+    // release_with_proof
+    let err = mgr
+        .release_with_proof([7u8; 32], b"any-proof")
+        .expect_err("rejecting authorizer must block release");
+    assert_rejected(&err, "no escrows allowed");
+
+    // refund_expired
+    let err = mgr
+        .refund_expired([9u8; 32], 1000)
+        .expect_err("rejecting authorizer must block refund");
+    assert_rejected(&err, "no escrows allowed");
+}
+
+fn assert_rejected(err: &EscrowError, reason_substring: &str) {
     match err {
         EscrowError::AuthorizationFailed(AuthError::Rejected(reason)) => {
             assert!(
-                reason.contains("no escrows allowed"),
+                reason.contains(reason_substring),
                 "unexpected reject reason: {reason}"
             );
         }
         other => panic!("expected AuthorizationFailed(Rejected), got: {other:?}"),
     }
-}
-
-#[test]
-fn rejecting_authorizer_blocks_release_with_proof() {
-    let mut engine = PyanaEngine::new(EngineConfig::for_testing());
-    let auth = Box::new(RejectingAuthorizer::default());
-    let mut mgr = EscrowManager::new(&mut engine, auth);
-
-    let escrow_id = [7u8; 32];
-    let err = mgr
-        .release_with_proof(escrow_id, b"any-proof")
-        .expect_err("rejecting authorizer must block release");
-
-    assert!(
-        matches!(
-            err,
-            EscrowError::AuthorizationFailed(AuthError::Rejected(_))
-        ),
-        "expected AuthorizationFailed(Rejected), got: {err:?}"
-    );
-}
-
-#[test]
-fn rejecting_authorizer_blocks_refund_expired() {
-    let mut engine = PyanaEngine::new(EngineConfig::for_testing());
-    let auth = Box::new(RejectingAuthorizer::default());
-    let mut mgr = EscrowManager::new(&mut engine, auth);
-
-    let escrow_id = [9u8; 32];
-    let err = mgr
-        .refund_expired(escrow_id, 1000)
-        .expect_err("rejecting authorizer must block refund");
-
-    assert!(
-        matches!(
-            err,
-            EscrowError::AuthorizationFailed(AuthError::Rejected(_))
-        ),
-        "expected AuthorizationFailed(Rejected), got: {err:?}"
-    );
 }

@@ -994,23 +994,21 @@ mod tests {
     // ── Bounded Counter Tests ─────────────────────────────────────────────
 
     #[test]
-    fn test_slice_ceiling_calculation() {
-        // With f=1, ceiling = balance * 2/3
-        let silos = test_silos(4);
-        let coord = BudgetCoordinator::new(test_agent(), 1000, silos, 1).unwrap();
-        let ceiling = coord.compute_slice_ceiling();
-        // 1000 * 2 / 3 = 666
-        assert_eq!(ceiling, 666);
-    }
-
-    #[test]
-    fn test_slice_ceiling_f2() {
-        // With f=2, ceiling = balance * 3/5
-        let silos = test_silos(7);
-        let coord = BudgetCoordinator::new(test_agent(), 10000, silos, 2).unwrap();
-        let ceiling = coord.compute_slice_ceiling();
-        // 10000 * 3 / 5 = 6000
-        assert_eq!(ceiling, 6000);
+    fn test_slice_ceiling_various_f() {
+        let cases = vec![
+            // (balance, silo_count, f, expected_ceiling)
+            (1000, 4, 1, 666),   // f=1: balance * 2/3
+            (10000, 7, 2, 6000), // f=2: balance * 3/5
+        ];
+        for (balance, silo_count, f, expected) in cases {
+            let silos = test_silos(silo_count);
+            let coord = BudgetCoordinator::new(test_agent(), balance, silos, f).unwrap();
+            assert_eq!(
+                coord.compute_slice_ceiling(),
+                expected,
+                "ceiling mismatch for balance={balance}, f={f}"
+            );
+        }
     }
 
     #[test]

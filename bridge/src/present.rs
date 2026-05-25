@@ -3433,79 +3433,29 @@ mod tests {
     }
 
     #[test]
-    fn test_builder_new() {
-        let builder = BridgePresentationBuilder::new(test_key(), test_federation_root());
-        assert_eq!(builder.chain_length(), 0);
-    }
-
-    #[test]
-    fn test_builder_set_root_token() {
+    fn test_builder_state_transitions() {
         let key = test_key();
         let mut builder = BridgePresentationBuilder::new(key, test_federation_root());
-        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
+        assert_eq!(builder.chain_length(), 0);
 
+        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
         builder.set_root_token(token);
         assert_eq!(builder.chain_length(), 1);
         assert!(builder.final_state().is_some());
-    }
-
-    #[test]
-    fn test_builder_add_attenuation() {
-        let key = test_key();
-        let mut builder = BridgePresentationBuilder::new(key, test_federation_root());
-        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
-
-        builder.set_root_token(token);
 
         let att = Attenuation {
             apps: vec![("my-app".into(), "rw".into())],
             ..Default::default()
         };
-
-        let result = builder.add_attenuation(&att);
-        assert!(result);
-        assert_eq!(builder.chain_length(), 2);
-    }
-
-    #[test]
-    fn test_builder_multiple_attenuations() {
-        let key = test_key();
-        let mut builder = BridgePresentationBuilder::new(key, test_federation_root());
-        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
-
-        builder.set_root_token(token);
-
-        // First attenuation: restrict to an app.
-        let att1 = Attenuation {
-            apps: vec![("my-app".into(), "rw".into())],
-            ..Default::default()
-        };
-        assert!(builder.add_attenuation(&att1));
+        assert!(builder.add_attenuation(&att));
         assert_eq!(builder.chain_length(), 2);
 
-        // Second attenuation: add user confinement.
         let att2 = Attenuation {
             confine_user: Some("alice".into()),
             ..Default::default()
         };
         assert!(builder.add_attenuation(&att2));
         assert_eq!(builder.chain_length(), 3);
-    }
-
-    #[test]
-    fn test_builder_verify_chain() {
-        let key = test_key();
-        let mut builder = BridgePresentationBuilder::new(key, test_federation_root());
-        let token = MacaroonToken::mint(key, b"kid-1", "pyana.dev");
-
-        builder.set_root_token(token);
-
-        let att = Attenuation {
-            apps: vec![("my-app".into(), "rw".into())],
-            ..Default::default()
-        };
-        builder.add_attenuation(&att);
-
         assert!(builder.verify_chain());
     }
 
@@ -3585,23 +3535,25 @@ mod tests {
         let builder = BridgePresentationBuilder::new(key, test_federation_root());
         let issuer_hash = bytes_to_babybear(&key);
 
-        let result = builder.build_issuer_membership(issuer_hash);
-        assert!(
-            result.is_err(),
-            "Synthetic proof should fail against an unrelated federation root"
-        );
-        assert_eq!(result.unwrap_err(), AuthError::IssuerNotInFederation);
+        for result in [
+            builder.build_issuer_membership(issuer_hash),
+            builder.build_issuer_membership_poseidon2(issuer_hash),
+        ] {
+            assert!(
+                result.is_err(),
+                "Synthetic proof should fail against an unrelated federation root"
+            );
+            assert_eq!(result.unwrap_err(), AuthError::IssuerNotInFederation);
+        }
     }
 
     #[test]
     fn test_build_issuer_membership_accepts_matching_root() {
-        // Compute the "correct" federation root from the synthetic path,
-        // then verify the builder accepts it when using new_with_root_bb.
         let key = test_key();
         let issuer_hash = bytes_to_babybear(&key);
-
-        // First, compute what root the synthetic path produces.
         let depth = 8;
+
+        // Linear Merkle AIR path.
         let mut current = issuer_hash;
         for i in 0..depth {
             let position = (i % 4) as u8;
@@ -3612,21 +3564,23 @@ mod tests {
             ];
             current = MerkleAir::compute_parent(current, position, &siblings);
         }
-        let expected_root_bb = current;
+        let expected_root_bb_linear = current;
 
-        // Use new_with_root_bb so the federation root check passes.
         let builder = BridgePresentationBuilder::new_with_root_bb(
             key,
             test_federation_root(),
-            expected_root_bb,
+            expected_root_bb_linear,
         );
         let result = builder.build_issuer_membership(issuer_hash);
-        assert!(result.is_ok(), "Should succeed with matching root");
+        assert!(
+            result.is_ok(),
+            "Linear membership should succeed with matching root"
+        );
 
         let witness = result.unwrap();
         assert_eq!(witness.leaf_hash, issuer_hash);
         assert_eq!(witness.levels.len(), 8);
-        assert_eq!(witness.expected_root, expected_root_bb);
+        assert_eq!(witness.expected_root, expected_root_bb_linear);
 
         // The Merkle AIR should verify this witness.
         let air = MerkleAir::new(witness);
@@ -3635,43 +3589,8 @@ mod tests {
             result.is_valid(),
             "Issuer membership Merkle proof should verify"
         );
-    }
 
-    #[test]
-    fn test_with_federation_tree() {
-        // Create a federation tree and insert an issuer key.
-        let key = test_key();
-        let mut tree = MerkleTree::new();
-        tree.insert(&key);
-
-        let mut builder = BridgePresentationBuilder::new(key, [0u8; 32]);
-        builder.with_federation_tree(tree);
-
-        // The builder's federation_root should now match the tree's root.
-        assert_ne!(builder.federation_root, [0u8; 32]);
-    }
-
-    #[test]
-    fn test_build_issuer_membership_poseidon2_rejects_wrong_root() {
-        let key = test_key();
-        let builder = BridgePresentationBuilder::new(key, test_federation_root());
-        let issuer_hash = bytes_to_babybear(&key);
-
-        let result = builder.build_issuer_membership_poseidon2(issuer_hash);
-        assert!(
-            result.is_err(),
-            "Poseidon2 synthetic proof should fail against an unrelated federation root"
-        );
-        assert_eq!(result.unwrap_err(), AuthError::IssuerNotInFederation);
-    }
-
-    #[test]
-    fn test_build_issuer_membership_poseidon2_accepts_matching_root() {
-        let key = test_key();
-        let issuer_hash = bytes_to_babybear(&key);
-
-        // Compute the Poseidon2-based federation root.
-        let depth = 8;
+        // Poseidon2 path.
         let mut current = issuer_hash;
         for i in 0..depth {
             let position = (i % 4) as u8;
@@ -3686,23 +3605,23 @@ mod tests {
                 &[siblings[0], siblings[1], siblings[2], position_bb],
             );
         }
-        let expected_root_bb = current;
+        let expected_root_bb_poseidon2 = current;
 
         let builder = BridgePresentationBuilder::new_with_root_bb(
             key,
             test_federation_root(),
-            expected_root_bb,
+            expected_root_bb_poseidon2,
         );
         let result = builder.build_issuer_membership_poseidon2(issuer_hash);
         assert!(
             result.is_ok(),
-            "Poseidon2 proof should succeed with matching root"
+            "Poseidon2 membership should succeed with matching root"
         );
 
         let witness = result.unwrap();
         assert_eq!(witness.leaf_hash, issuer_hash);
         assert_eq!(witness.levels.len(), 8);
-        assert_eq!(witness.expected_root, expected_root_bb);
+        assert_eq!(witness.expected_root, expected_root_bb_poseidon2);
     }
 
     #[test]

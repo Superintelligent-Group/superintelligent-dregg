@@ -239,55 +239,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_config_validation_valid() {
-        let config = BaseBridgeConfig {
+    fn test_config_validation_cases() {
+        let valid = BaseBridgeConfig {
             rpc_url: "https://mainnet.base.org".to_string(),
             vault_address: "0x3B6041173B80E77f038f3F2C0f9744f04837185e".to_string(),
             program_vkey: [0; 32],
             poll_interval_secs: 12,
             confirmations: 2,
         };
-        assert!(config.validate().is_ok());
-    }
+        assert!(valid.validate().is_ok());
 
-    #[test]
-    fn test_config_validation_empty_rpc() {
-        let config = BaseBridgeConfig {
-            rpc_url: "".to_string(),
-            vault_address: "0x3B6041173B80E77f038f3F2C0f9744f04837185e".to_string(),
-            ..Default::default()
-        };
+        let mut config = valid.clone();
+        config.rpc_url.clear();
         assert!(config.validate().is_err());
-    }
 
-    #[test]
-    fn test_config_validation_empty_vault() {
-        let config = BaseBridgeConfig {
-            rpc_url: "https://mainnet.base.org".to_string(),
-            vault_address: "".to_string(),
-            ..Default::default()
-        };
+        let mut config = valid.clone();
+        config.vault_address.clear();
         assert!(config.validate().is_err());
-    }
 
-    #[test]
-    fn test_config_validation_bad_vault_address() {
-        let config = BaseBridgeConfig {
-            rpc_url: "https://mainnet.base.org".to_string(),
-            vault_address: "0x1234".to_string(), // Too short
-            ..Default::default()
-        };
+        let mut config = valid.clone();
+        config.vault_address = "0x1234".to_string();
         assert!(config.validate().is_err());
-    }
 
-    #[test]
-    fn test_config_validation_zero_poll_interval() {
-        let config = BaseBridgeConfig {
-            rpc_url: "https://mainnet.base.org".to_string(),
-            vault_address: "0x3B6041173B80E77f038f3F2C0f9744f04837185e".to_string(),
-            poll_interval_secs: 0,
-            ..Default::default()
-        };
+        let mut config = valid.clone();
+        config.poll_interval_secs = 0;
         assert!(config.validate().is_err());
     }
 
