@@ -632,6 +632,7 @@ mod tests {
             sequence: bad_sequence,
             signature: sig.to_bytes(),
             transition_proof: None,
+            unilateral_attestation: None,
         };
 
         // Bob expects sequence 2, but gets 3.
@@ -688,6 +689,7 @@ mod tests {
             sequence,
             signature: sig.to_bytes(),
             transition_proof: None,
+            unilateral_attestation: None,
         };
 
         let result = bob.verify_transition(&backdated, &alice_pubkey);

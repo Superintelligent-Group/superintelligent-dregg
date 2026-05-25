@@ -298,6 +298,18 @@ fn hash_delegation_into(hasher: &mut blake3::Hasher, deleg: &DelegatedRef) {
     }
 }
 
+/// Public-within-crate alias for the canonical capability-ref hashing
+/// used by [`compute_canonical_capability_root`]. Exposed for the
+/// in-place attenuation primitive in [`crate::capability`], which
+/// returns a 32-byte commitment to the *narrowed* cap so callers can
+/// update c-list audit indices without re-hashing the whole c-list.
+pub(crate) fn hash_capability_ref_canonical(
+    hasher: &mut blake3::Hasher,
+    cap: &crate::capability::CapabilityRef,
+) {
+    hash_capability_ref_into(hasher, cap);
+}
+
 fn hash_capability_ref_into(hasher: &mut blake3::Hasher, cap: &crate::capability::CapabilityRef) {
     hasher.update(cap.target.as_bytes());
     hasher.update(&cap.slot.to_le_bytes());

@@ -309,6 +309,84 @@ impl CapabilitySet {
         })
     }
 
+    /// Monotonically narrow an existing capability in-place — *without*
+    /// changing its slot identity.
+    ///
+    /// Per `PROTOCOL-CATEGORICAL-ANALYSIS.md §6.3` / the Silver-Vision
+    /// AttenuateCapability primitive: today, narrowing a capability
+    /// requires `revoke + reissue`, which (a) races against in-flight
+    /// exercises, (b) makes the cap *temporarily absent* during the
+    /// swap, and (c) loses the c-list slot identity (consumers must
+    /// update their references). The structural primitive *narrows
+    /// the caveat set / permissions in-place*: slot and `breadstuff`
+    /// are preserved, the cap's identity is unchanged, only the
+    /// authority shrinks.
+    ///
+    /// # Soundness
+    ///
+    /// Strict subset-refinement only — never expansion:
+    /// - `narrower` must satisfy `is_narrower_or_equal(existing.permissions)`
+    /// - `narrower_effects`, when provided, must be a bitwise subset of
+    ///   the existing `allowed_effects` (or of `EFFECT_ALL` if previously
+    ///   unbounded)
+    /// - `narrower_expiry`, when provided, must be `≤` the existing
+    ///   `expires_at` (passing `None` means "leave expiry unchanged" —
+    ///   it can never *extend* a finite expiry)
+    ///
+    /// # Returns
+    ///
+    /// On success, returns the 32-byte commitment to the *new* (narrower)
+    /// CapabilityRef so callers can update c-list audit indices. Returns
+    /// `None` if the slot doesn't exist or any narrowing constraint is
+    /// violated.
+    pub fn attenuate_in_place(
+        &mut self,
+        slot: u32,
+        narrower: AuthRequired,
+        narrower_effects: Option<EffectMask>,
+        narrower_expiry: Option<u64>,
+    ) -> Option<[u8; 32]> {
+        // First pass: find slot + validate strict narrowing without mutating.
+        let existing = self.lookup(slot)?;
+        if !narrower.is_narrower_or_equal(&existing.permissions) {
+            return None;
+        }
+        // Effect-mask narrowing: subset-only.
+        let new_effects = match narrower_effects {
+            Some(new_mask) => {
+                let parent_mask = existing.allowed_effects.unwrap_or(crate::facet::EFFECT_ALL);
+                if !crate::facet::is_facet_attenuation(parent_mask, new_mask) {
+                    return None;
+                }
+                Some(new_mask)
+            }
+            None => existing.allowed_effects,
+        };
+        // Expiry narrowing: can only shrink.
+        let new_expiry = match (existing.expires_at, narrower_expiry) {
+            (Some(e), Some(n)) if n > e => return None, // cannot extend a finite expiry
+            (None, Some(n)) => Some(n),                 // unbounded → bounded is narrowing
+            (existing_exp, None) => existing_exp,       // None means "leave as-is"
+            (_, Some(n)) => Some(n),                    // narrower finite expiry
+        };
+
+        // Second pass: mutate in place and compute commitment.
+        let cap = self.refs.iter_mut().find(|r| r.slot == slot)?;
+        cap.permissions = narrower;
+        cap.allowed_effects = new_effects;
+        cap.expires_at = new_expiry;
+
+        // Commit to the narrowed cap so callers can update c-list audit
+        // indices. Uses the same canonical capability-ref hashing as
+        // compute_canonical_capability_root (single-element path).
+        let mut hasher =
+            blake3::Hasher::new_derive_key(crate::commitment::CANONICAL_CAP_ROOT_CONTEXT);
+        let one: u64 = 1;
+        hasher.update(&one.to_le_bytes());
+        crate::commitment::hash_capability_ref_canonical(&mut hasher, cap);
+        Some(*hasher.finalize().as_bytes())
+    }
+
     /// Insert an attenuated capability into this set, assigning the next available slot.
     ///
     /// This is the proper way to delegate an attenuated capability to a child: the child's
@@ -375,4 +453,171 @@ impl Default for CapabilitySet {
 /// as restrictive or more restrictive than what you hold. Never amplification.
 pub fn is_attenuation(held: &AuthRequired, granted: &AuthRequired) -> bool {
     granted.is_narrower_or_equal(held)
+}
+
+#[cfg(test)]
+mod attenuate_in_place_tests {
+    //! Adversarial tests for `CapabilitySet::attenuate_in_place`.
+    //!
+    //! Per `PROTOCOL-CATEGORICAL-ANALYSIS.md §6.3` — narrowing must be
+    //! strict subset-refinement only. These tests prove that violating
+    //! the invariant gets rejected (no widening, no expiry-extension,
+    //! no effect-mask widening).
+    use super::*;
+
+    fn cid(b: u8) -> CellId {
+        let mut k = [0u8; 32];
+        k[0] = b;
+        CellId::derive_raw(&k, &[0u8; 32])
+    }
+
+    #[test]
+    fn happy_path_narrows_permissions_and_returns_commitment() {
+        let mut caps = CapabilitySet::new();
+        let slot = caps.grant(cid(1), AuthRequired::Either).unwrap();
+        let h = caps
+            .attenuate_in_place(slot, AuthRequired::Signature, None, None)
+            .expect("narrowing Either -> Signature must succeed");
+        assert_eq!(caps.lookup(slot).unwrap().permissions, AuthRequired::Signature);
+        // Slot identity unchanged.
+        assert_eq!(caps.lookup(slot).unwrap().slot, slot);
+        assert_ne!(h, [0u8; 32], "commitment must be non-zero");
+    }
+
+    #[test]
+    fn rejects_widening_permissions() {
+        let mut caps = CapabilitySet::new();
+        let slot = caps.grant(cid(1), AuthRequired::Signature).unwrap();
+        // Either is *broader* than Signature.
+        let result = caps.attenuate_in_place(slot, AuthRequired::Either, None, None);
+        assert!(result.is_none(), "must reject widening Signature -> Either");
+        // Cap state must be unchanged on rejection.
+        assert_eq!(caps.lookup(slot).unwrap().permissions, AuthRequired::Signature);
+    }
+
+    #[test]
+    fn rejects_unknown_slot() {
+        let mut caps = CapabilitySet::new();
+        let result = caps.attenuate_in_place(99, AuthRequired::Signature, None, None);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn rejects_effect_mask_widening() {
+        let mut caps = CapabilitySet::new();
+        // Start with a faceted cap allowing only TRANSFER.
+        let slot = caps
+            .grant_faceted(cid(1), AuthRequired::Signature, crate::facet::EFFECT_TRANSFER)
+            .unwrap();
+        // Try to widen to TRANSFER | SET_FIELD.
+        let result = caps.attenuate_in_place(
+            slot,
+            AuthRequired::Signature,
+            Some(crate::facet::EFFECT_TRANSFER | crate::facet::EFFECT_SET_FIELD),
+            None,
+        );
+        assert!(result.is_none(), "must reject mask widening");
+        assert_eq!(
+            caps.lookup(slot).unwrap().allowed_effects,
+            Some(crate::facet::EFFECT_TRANSFER)
+        );
+    }
+
+    #[test]
+    fn rejects_expiry_extension() {
+        let mut caps = CapabilitySet::new();
+        let slot = caps
+            .grant_with_expiry(cid(1), AuthRequired::Signature, 100)
+            .unwrap();
+        let result = caps.attenuate_in_place(slot, AuthRequired::Signature, None, Some(200));
+        assert!(result.is_none(), "must reject expiry extension (100 -> 200)");
+        assert_eq!(caps.lookup(slot).unwrap().expires_at, Some(100));
+    }
+
+    #[test]
+    fn allows_expiry_shrinking() {
+        let mut caps = CapabilitySet::new();
+        let slot = caps
+            .grant_with_expiry(cid(1), AuthRequired::Signature, 100)
+            .unwrap();
+        let h = caps
+            .attenuate_in_place(slot, AuthRequired::Signature, None, Some(50))
+            .expect("expiry shrink 100 -> 50 must succeed");
+        assert_eq!(caps.lookup(slot).unwrap().expires_at, Some(50));
+        assert_ne!(h, [0u8; 32]);
+    }
+
+    #[test]
+    fn allows_unbounded_to_bounded_expiry() {
+        let mut caps = CapabilitySet::new();
+        let slot = caps.grant(cid(1), AuthRequired::Signature).unwrap();
+        assert_eq!(caps.lookup(slot).unwrap().expires_at, None);
+        let _ = caps
+            .attenuate_in_place(slot, AuthRequired::Signature, None, Some(1000))
+            .expect("None -> Some(1000) is narrowing");
+        assert_eq!(caps.lookup(slot).unwrap().expires_at, Some(1000));
+    }
+
+    #[test]
+    fn allows_effect_mask_narrowing() {
+        let mut caps = CapabilitySet::new();
+        let slot = caps
+            .grant_faceted(
+                cid(1),
+                AuthRequired::Signature,
+                crate::facet::EFFECT_TRANSFER | crate::facet::EFFECT_SET_FIELD,
+            )
+            .unwrap();
+        let _ = caps
+            .attenuate_in_place(
+                slot,
+                AuthRequired::Signature,
+                Some(crate::facet::EFFECT_TRANSFER),
+                None,
+            )
+            .expect("mask narrowing to TRANSFER alone must succeed");
+        assert_eq!(
+            caps.lookup(slot).unwrap().allowed_effects,
+            Some(crate::facet::EFFECT_TRANSFER)
+        );
+    }
+
+    /// Slot identity must be preserved across attenuation — this is
+    /// the structural difference between in-place attenuation and the
+    /// revoke-and-reissue workaround.
+    #[test]
+    fn slot_and_target_preserved_across_narrowing() {
+        let mut caps = CapabilitySet::new();
+        let target = cid(42);
+        let slot = caps.grant(target, AuthRequired::Either).unwrap();
+        let before_slot = caps.lookup(slot).unwrap().slot;
+        let before_target = caps.lookup(slot).unwrap().target;
+        let _ = caps.attenuate_in_place(slot, AuthRequired::Signature, None, None).unwrap();
+        assert_eq!(caps.lookup(slot).unwrap().slot, before_slot);
+        assert_eq!(caps.lookup(slot).unwrap().target, before_target);
+    }
+
+    /// Commitment must change when the narrowed cap differs from the
+    /// original — this is what makes c-list audit indices updatable
+    /// in a single deterministic step.
+    #[test]
+    fn commitment_changes_when_cap_narrows() {
+        let mut caps = CapabilitySet::new();
+        let slot = caps.grant(cid(1), AuthRequired::Either).unwrap();
+        // First narrowing.
+        let h1 = caps
+            .attenuate_in_place(slot, AuthRequired::Signature, None, None)
+            .unwrap();
+        // Second narrowing to identical state — commitment must match.
+        let h2 = caps
+            .attenuate_in_place(slot, AuthRequired::Signature, None, None)
+            .unwrap();
+        assert_eq!(h1, h2, "identical narrowed state must produce equal commitments");
+
+        // Further narrowing to Impossible — commitment must differ.
+        let h3 = caps
+            .attenuate_in_place(slot, AuthRequired::Impossible, None, None)
+            .unwrap();
+        assert_ne!(h1, h3, "different narrowed state must produce different commitments");
+    }
 }
