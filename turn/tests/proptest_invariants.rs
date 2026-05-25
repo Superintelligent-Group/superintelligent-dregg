@@ -346,6 +346,7 @@ proptest! {
                         may_delegate: DelegationMode::None,
                         commitment_mode: Default::default(),
                         balance_change: None,
+                        witness_blobs: vec![],
                     };
                     forest.add_root(action);
 
@@ -421,6 +422,7 @@ fn build_receipt_chain(
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
         forest.add_root(action);
 
@@ -583,6 +585,7 @@ proptest! {
                 may_delegate: DelegationMode::None,
                 commitment_mode: Default::default(),
                 balance_change: None,
+                witness_blobs: vec![],
             };
             forest.add_root(action);
 
@@ -650,6 +653,7 @@ proptest! {
                 may_delegate: DelegationMode::None,
                 commitment_mode: Default::default(),
                 balance_change: None,
+                witness_blobs: vec![],
             };
             forest.add_root(action);
 
@@ -706,6 +710,7 @@ proptest! {
                 may_delegate: DelegationMode::None,
                 commitment_mode: Default::default(),
                 balance_change: None,
+                witness_blobs: vec![],
             };
             forest.add_root(action);
 

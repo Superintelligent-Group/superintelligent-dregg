@@ -6,6 +6,7 @@
 
 use pyana_cell::note_bridge::{BridgeReceipt, PortableNoteProof};
 use pyana_cell::permissions::AuthRequired;
+use pyana_cell::predicate::WitnessedPredicate;
 use pyana_cell::state::FieldElement;
 use pyana_cell::{CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox};
 #[allow(unused_imports)]
@@ -79,6 +80,107 @@ pub struct Action {
     /// This enables composable patterns like DEX fills without explicit Transfer pairing.
     #[serde(default)]
     pub balance_change: Option<i64>,
+    /// Canonical witness carrier for witness-attached predicates.
+    ///
+    /// Each blob is an opaque bytestring identified by its index in this vec.
+    /// `WitnessedPredicate` clauses (in [`Preconditions::witnessed`] or in
+    /// [`pyana_cell::StateConstraint::Witnessed`]) reference a blob by index
+    /// via `WitnessedPredicate::proof_witness_index`. Variant-specific
+    /// witnesses (Merkle paths for `SenderAuthorized`, preimage bytes for
+    /// `PreimageGate`, per-(cell,sender) epoch counters for `RateLimit`,
+    /// `Custom` predicate STARK proofs, etc.) are encoded as
+    /// [`WitnessBlob`] entries here.
+    ///
+    /// Turn::hash v3 covers this field (see [`Action::hash`]); existing
+    /// signatures that signed an empty vec are byte-identical to actions
+    /// that omitted the field (postcard skips empty vecs by default).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub witness_blobs: Vec<WitnessBlob>,
+}
+
+/// A single witness blob carried alongside an [`Action`].
+///
+/// Witness blobs are the canonical carrier for the inputs that
+/// witness-attached predicates (`WitnessedPredicate`) and slot-caveat
+/// enforcement need. The encoding is **typed-tag + bytes** so the
+/// executor can dispatch without parsing the variant; the bytes are
+/// then interpreted per-tag.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessBlob {
+    /// What kind of witness this is. Determines how `bytes` is parsed.
+    pub kind: WitnessKind,
+    /// The opaque witness payload. Encoding is determined by `kind`.
+    pub bytes: Vec<u8>,
+}
+
+impl WitnessBlob {
+    /// Construct a `WitnessBlob` with the given kind and raw bytes.
+    pub fn new(kind: WitnessKind, bytes: Vec<u8>) -> Self {
+        Self { kind, bytes }
+    }
+    /// Convenience: a Merkle-membership-proof blob (for `SenderAuthorized`).
+    pub fn merkle_path(path_bytes: Vec<u8>) -> Self {
+        Self {
+            kind: WitnessKind::MerklePath,
+            bytes: path_bytes,
+        }
+    }
+    /// Convenience: a 32-byte preimage blob (for `PreimageGate`).
+    pub fn preimage(preimage: [u8; 32]) -> Self {
+        Self {
+            kind: WitnessKind::Preimage32,
+            bytes: preimage.to_vec(),
+        }
+    }
+    /// Convenience: a STARK / custom proof bytes blob.
+    pub fn proof(proof_bytes: Vec<u8>) -> Self {
+        Self {
+            kind: WitnessKind::ProofBytes,
+            bytes: proof_bytes,
+        }
+    }
+    /// Convenience: a u32 rate-limit count blob (for `RateLimit`).
+    pub fn rate_limit_count(count: u32) -> Self {
+        Self {
+            kind: WitnessKind::RateLimitCount,
+            bytes: count.to_le_bytes().to_vec(),
+        }
+    }
+    /// Decode `RateLimitCount` payload to its u32 value.
+    pub fn as_rate_limit_count(&self) -> Option<u32> {
+        if self.kind != WitnessKind::RateLimitCount || self.bytes.len() != 4 {
+            return None;
+        }
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&self.bytes);
+        Some(u32::from_le_bytes(buf))
+    }
+    /// Decode `Preimage32` payload to its 32-byte value.
+    pub fn as_preimage32(&self) -> Option<[u8; 32]> {
+        if self.kind != WitnessKind::Preimage32 || self.bytes.len() != 32 {
+            return None;
+        }
+        let mut buf = [0u8; 32];
+        buf.copy_from_slice(&self.bytes);
+        Some(buf)
+    }
+}
+
+/// Kinds of witness payloads carried in `Action::witness_blobs`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WitnessKind {
+    /// 32-byte preimage payload (for `PreimageGate`).
+    Preimage32,
+    /// Merkle-membership-proof bytes (for `SenderAuthorized` /
+    /// `MerkleMembership` witnessed predicates).
+    MerklePath,
+    /// u32 little-endian rate-limit counter snapshot (for `RateLimit`).
+    RateLimitCount,
+    /// STARK / Plonk / Bulletproof proof bytes (for `WitnessedPredicate`
+    /// dispatch, custom-AIR proofs, etc.).
+    ProofBytes,
+    /// Cleartext bytes — interpreted by the receiving verifier.
+    Cleartext,
 }
 
 /// How an action is authorized.
@@ -151,6 +253,35 @@ pub enum Authorization {
         #[serde(with = "crate::escrow::serde_sig64")]
         sender_signature: [u8; 64],
     },
+    /// App-defined authorization: a [`WitnessedPredicate`] proves the
+    /// authorization condition holds for THIS turn at THIS federation
+    /// at THIS nonce position (per `AUTHORIZATION-CUSTOM-DESIGN.md`).
+    ///
+    /// The predicate's `input_ref` SHOULD be
+    /// [`InputRef::SigningMessage`](pyana_cell::InputRef::SigningMessage),
+    /// which the executor binds to the bytes
+    /// `compute_partial_signing_message(action, position, federation_id,
+    /// turn_nonce)` produces. The same federation/nonce binding the
+    /// `Signature` path enjoys carries to `Custom`.
+    ///
+    /// `predicate.proof_witness_index` names the entry in
+    /// [`Action::witness_blobs`] that carries the proof bytes; the
+    /// verifier is resolved via the executor's
+    /// `WitnessedPredicateRegistry` keyed on `predicate.kind`. Unknown
+    /// kinds reject with [`TurnError::AuthModeNotRegistered`].
+    ///
+    /// When the target cell's [`AuthRequired::Custom { vk_hash }`] is
+    /// set, the executor additionally requires that
+    /// `predicate.kind == WitnessedPredicateKind::Custom { vk_hash }`
+    /// — the cell declares which mode it accepts (design §10.4).
+    Custom {
+        /// The witnessed predicate that proves the authorization
+        /// condition. Its commitment names the auth-mode-specific
+        /// audience root (e.g., multisig signer set, time-lock DSL
+        /// hash, credential ring root); its proof witnesses the
+        /// authorization condition over the canonical signing message.
+        predicate: WitnessedPredicate,
+    },
 }
 
 /// Proof-carrying bearer capability: demonstrates delegated authority to exercise
@@ -216,6 +347,10 @@ impl Authorization {
             Authorization::Bearer(_) => None,
             Authorization::Unchecked => None,
             Authorization::CapTpDelivered { .. } => None,
+            // Custom is not part of the Sig/Proof lattice; cells that
+            // require Custom auth declare `AuthRequired::Custom { vk_hash }`
+            // and the executor checks the predicate directly.
+            Authorization::Custom { .. } => None,
         }
     }
 
@@ -850,6 +985,18 @@ impl Action {
                 hasher.update(sender_pk);
                 hasher.update(sender_signature);
             }
+            Authorization::Custom { predicate } => {
+                hasher.update(&[6u8]);
+                // Hash the predicate's structural shape so a tampering
+                // executor can't substitute a different predicate
+                // (different kind, commitment, input_ref, or proof
+                // index) under the same signed-turn envelope. Use
+                // postcard for a canonical byte encoding that's
+                // forward-compatible with the kind enum.
+                let pred_bytes = postcard::to_allocvec(predicate).unwrap_or_default();
+                hasher.update(&(pred_bytes.len() as u64).to_le_bytes());
+                hasher.update(&pred_bytes);
+            }
         }
         // Hash delegation mode.
         hasher.update(&[self.may_delegate as u8]);
@@ -870,6 +1017,24 @@ impl Action {
         // preconditions (e.g., minimum balance guards) from a signed action.
         let preconds_bytes = postcard::to_allocvec(&self.preconditions).unwrap_or_default();
         hasher.update(&preconds_bytes);
+        // Hash witness_blobs (Cav-Codex Block 3) so a tampering verifier
+        // can't strip or substitute the witness payloads a signed action
+        // committed to. Empty vec hashes to the length prefix only; this
+        // is byte-equivalent to actions that were signed before this
+        // field was added (Turn v3 preimage extension).
+        hasher.update(&(self.witness_blobs.len() as u64).to_le_bytes());
+        for wb in &self.witness_blobs {
+            let kind_disc: u8 = match wb.kind {
+                WitnessKind::Preimage32 => 0,
+                WitnessKind::MerklePath => 1,
+                WitnessKind::RateLimitCount => 2,
+                WitnessKind::ProofBytes => 3,
+                WitnessKind::Cleartext => 4,
+            };
+            hasher.update(&[kind_disc]);
+            hasher.update(&(wb.bytes.len() as u64).to_le_bytes());
+            hasher.update(&wb.bytes);
+        }
         *hasher.finalize().as_bytes()
     }
 }
@@ -943,14 +1108,27 @@ impl Effect {
                     &new_permissions.access,
                 ];
                 for p in perms {
-                    let disc = match p {
-                        pyana_cell::AuthRequired::None => 0u8,
-                        pyana_cell::AuthRequired::Signature => 1u8,
-                        pyana_cell::AuthRequired::Proof => 2u8,
-                        pyana_cell::AuthRequired::Either => 3u8,
-                        pyana_cell::AuthRequired::Impossible => 4u8,
-                    };
-                    hasher.update(&[disc]);
+                    match p {
+                        pyana_cell::AuthRequired::None => {
+                            hasher.update(&[0u8]);
+                        }
+                        pyana_cell::AuthRequired::Signature => {
+                            hasher.update(&[1u8]);
+                        }
+                        pyana_cell::AuthRequired::Proof => {
+                            hasher.update(&[2u8]);
+                        }
+                        pyana_cell::AuthRequired::Either => {
+                            hasher.update(&[3u8]);
+                        }
+                        pyana_cell::AuthRequired::Impossible => {
+                            hasher.update(&[4u8]);
+                        }
+                        pyana_cell::AuthRequired::Custom { vk_hash } => {
+                            hasher.update(&[5u8]);
+                            hasher.update(vk_hash);
+                        }
+                    }
                 }
             }
             Effect::SetVerificationKey { cell, new_vk } => {
@@ -1097,13 +1275,27 @@ impl Effect {
                 hasher.update(introducer.as_bytes());
                 hasher.update(recipient.as_bytes());
                 hasher.update(target.as_bytes());
-                hasher.update(&[match permissions {
-                    pyana_cell::AuthRequired::None => 0u8,
-                    pyana_cell::AuthRequired::Signature => 1u8,
-                    pyana_cell::AuthRequired::Proof => 2u8,
-                    pyana_cell::AuthRequired::Either => 3u8,
-                    pyana_cell::AuthRequired::Impossible => 4u8,
-                }]);
+                match permissions {
+                    pyana_cell::AuthRequired::None => {
+                        hasher.update(&[0u8]);
+                    }
+                    pyana_cell::AuthRequired::Signature => {
+                        hasher.update(&[1u8]);
+                    }
+                    pyana_cell::AuthRequired::Proof => {
+                        hasher.update(&[2u8]);
+                    }
+                    pyana_cell::AuthRequired::Either => {
+                        hasher.update(&[3u8]);
+                    }
+                    pyana_cell::AuthRequired::Impossible => {
+                        hasher.update(&[4u8]);
+                    }
+                    pyana_cell::AuthRequired::Custom { vk_hash } => {
+                        hasher.update(&[5u8]);
+                        hasher.update(vk_hash);
+                    }
+                }
             }
             Effect::PipelinedSend { target, action } => {
                 hasher.update(&[16u8]);

@@ -162,7 +162,8 @@ use pyana_cell::state::FieldElement;
 use pyana_cell::{CapabilityRef, CellId, Preconditions};
 
 use crate::action::{
-    Action, Authorization, BearerCapProof, CommitmentMode, DelegationMode, Effect, Event, symbol,
+    Action, Authorization, BearerCapProof, CommitmentMode, DelegationMode, Effect, Event,
+    WitnessBlob, symbol,
 };
 use crate::forest::CallForest;
 use crate::turn::Turn;
@@ -1160,6 +1161,7 @@ impl<S: Authorized> ActionBuilder<S> {
             may_delegate: self.may_delegate,
             commitment_mode: self.commitment_mode,
             balance_change,
+            witness_blobs: vec![],
         }
     }
 
@@ -1188,6 +1190,7 @@ pub struct LegacyActionBuilder {
     may_delegate: DelegationMode,
     commitment_mode: CommitmentMode,
     balance_change: Option<i64>,
+    witness_blobs: Vec<WitnessBlob>,
     children: Vec<LegacyActionBuilder>,
 }
 
@@ -1209,6 +1212,7 @@ impl LegacyActionBuilder {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
             children: Vec::new(),
         }
     }
@@ -1333,6 +1337,7 @@ impl LegacyActionBuilder {
             may_delegate: self.may_delegate,
             commitment_mode: self.commitment_mode,
             balance_change: self.balance_change,
+            witness_blobs: vec![],
         }
     }
 

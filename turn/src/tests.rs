@@ -525,6 +525,7 @@ fn test_real_signature_verification() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     let message = TurnExecutor::compute_signing_message(&unsigned_action, &[0u8; 32]);
 
@@ -544,6 +545,7 @@ fn test_real_signature_verification() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut forest = CallForest::new();
@@ -660,6 +662,7 @@ fn test_wrong_key_signature_rejected() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     let message = TurnExecutor::compute_signing_message(&unsigned_action, &[0u8; 32]);
 
@@ -678,6 +681,7 @@ fn test_wrong_key_signature_rejected() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut forest = CallForest::new();
@@ -1206,6 +1210,7 @@ fn test_call_forest_hash() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut forest = CallForest::new();
@@ -1239,6 +1244,7 @@ fn test_call_forest_dfs_iteration() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut forest = CallForest::new();
@@ -1275,6 +1281,7 @@ fn test_call_tree_depth() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut tree = CallTree::new(make_action());
@@ -1941,6 +1948,7 @@ fn test_forest_total_effects() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut forest = CallForest::new();
@@ -2035,6 +2043,7 @@ fn test_action_hash_sensitivity() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     // Different method -> different hash.
@@ -2714,6 +2723,7 @@ fn test_partial_commitment_signature_valid() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: Some(-100),
+        witness_blobs: vec![],
     };
 
     let position = 0;
@@ -2753,6 +2763,7 @@ fn test_partial_commitment_independent_of_other_actions() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: Some(-50),
+        witness_blobs: vec![],
     };
 
     // Sign the action at position 0 (partial commitment = action hash + position only).
@@ -2800,6 +2811,7 @@ fn test_full_commitment_invalidated_by_changes() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     // Sign with full commitment message.
@@ -2849,6 +2861,7 @@ fn test_compose_two_party_swap() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: Some(-100),
+        witness_blobs: vec![],
     };
 
     // Bob's action: withdraw 50 (balance_change = -50)
@@ -2862,6 +2875,7 @@ fn test_compose_two_party_swap() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: Some(-50),
+        witness_blobs: vec![],
     };
 
     // Settlement actions from the matcher (deposit into opposite parties):
@@ -2876,6 +2890,7 @@ fn test_compose_two_party_swap() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: Some(50),
+        witness_blobs: vec![],
     };
 
     let settle_bob = Action {
@@ -2888,6 +2903,7 @@ fn test_compose_two_party_swap() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: Some(100),
+        witness_blobs: vec![],
     };
 
     // Alice signs her action at position 0 (partial: action hash + position only).
@@ -2946,6 +2962,7 @@ fn test_compose_rejects_invalid_signature() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: Some(-100),
+        witness_blobs: vec![],
     };
 
     let settle = Action {
@@ -2958,6 +2975,7 @@ fn test_compose_rejects_invalid_signature() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: Some(100),
+        witness_blobs: vec![],
     };
 
     // Sign with the WRONG key (not Alice's).
@@ -3011,6 +3029,7 @@ fn test_compose_validates_excess_balance() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: Some(-100),
+        witness_blobs: vec![],
     };
 
     let alice_sig = sign_partial_action(&alice_action, 0, &alice_kp.signing_key);
@@ -3055,6 +3074,7 @@ fn test_fragment_full_commitment_rejected() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full, // Wrong! Should be Partial.
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut composer = TurnComposer::new(matcher_cell, 1000, 0);
@@ -3097,6 +3117,7 @@ fn test_fragment_signature_count_mismatch() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut composer = TurnComposer::new(matcher_cell, 1000, 0);
@@ -5061,6 +5082,7 @@ fn test_budget_gate_refund_on_turn_failure() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     forest.add_root(action);
     let turn = Turn {
@@ -5191,6 +5213,7 @@ fn test_spawn_with_delegation_child_gets_parent_caps() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = Turn {
@@ -5271,6 +5294,7 @@ fn test_child_acts_via_delegated_caps() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn1 = Turn {
@@ -5318,6 +5342,7 @@ fn test_child_acts_via_delegated_caps() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn2 = Turn {
@@ -5387,6 +5412,7 @@ fn test_refresh_delegation_updates_snapshot() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn1 = Turn {
@@ -5449,6 +5475,7 @@ fn test_refresh_delegation_updates_snapshot() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn2 = Turn {
@@ -5518,6 +5545,7 @@ fn test_revoke_delegation_bumps_epoch_and_clears_child() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn1 = Turn {
@@ -5564,6 +5592,7 @@ fn test_revoke_delegation_bumps_epoch_and_clears_child() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn2 = Turn {
@@ -5630,6 +5659,7 @@ fn test_parent_new_cap_invisible_until_refresh() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn1 = Turn {
@@ -5681,6 +5711,7 @@ fn test_parent_new_cap_invisible_until_refresh() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn2 = Turn {
@@ -5748,6 +5779,7 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn1 = Turn {
@@ -5801,6 +5833,7 @@ fn test_parent_loses_cap_child_still_has_until_refresh() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn2 = Turn {
@@ -7231,6 +7264,7 @@ fn sovereign_cell_execute_turn_with_valid_witness() {
                     may_delegate: DelegationMode::None,
                     commitment_mode: CommitmentMode::Full,
                     balance_change: None,
+                    witness_blobs: vec![],
                 },
                 children: vec![],
                 hash: [0u8; 32],
@@ -7354,6 +7388,7 @@ fn sovereign_cell_rejected_without_witness() {
                     may_delegate: DelegationMode::None,
                     commitment_mode: CommitmentMode::Full,
                     balance_change: None,
+                    witness_blobs: vec![],
                 },
                 children: vec![],
                 hash: [0u8; 32],
@@ -7438,6 +7473,7 @@ fn sovereign_cell_rejected_with_wrong_commitment() {
                     may_delegate: DelegationMode::None,
                     commitment_mode: CommitmentMode::Full,
                     balance_change: None,
+                    witness_blobs: vec![],
                 },
                 children: vec![],
                 hash: [0u8; 32],
@@ -7568,6 +7604,7 @@ fn sovereign_witness_tamper_invalidates_wallet_signature() {
                     may_delegate: DelegationMode::None,
                     commitment_mode: CommitmentMode::Full,
                     balance_change: None,
+                    witness_blobs: vec![],
                 },
                 children: vec![],
                 hash: [0u8; 32],
@@ -7704,6 +7741,7 @@ fn sovereign_witness_rejected_with_forged_signature() {
                     may_delegate: DelegationMode::None,
                     commitment_mode: CommitmentMode::Full,
                     balance_change: None,
+                    witness_blobs: vec![],
                 },
                 children: vec![],
                 hash: [0u8; 32],
@@ -7809,6 +7847,7 @@ fn sovereign_witness_replay_rejected_by_sequence() {
                     may_delegate: DelegationMode::None,
                     commitment_mode: CommitmentMode::Full,
                     balance_change: None,
+                    witness_blobs: vec![],
                 },
                 children: vec![],
                 hash: [0u8; 32],
@@ -7878,6 +7917,7 @@ fn sovereign_cell_make_sovereign_effect() {
                     may_delegate: DelegationMode::None,
                     commitment_mode: CommitmentMode::Full,
                     balance_change: None,
+                    witness_blobs: vec![],
                 },
                 children: vec![],
                 hash: [0u8; 32],
@@ -8659,6 +8699,7 @@ fn test_faceted_capability_permits_allowed_effects() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut forest = CallForest::new();
@@ -8748,6 +8789,7 @@ fn test_faceted_capability_blocks_disallowed_effects() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut forest = CallForest::new();
@@ -8842,6 +8884,7 @@ fn test_unfaceted_capability_allows_all_effects() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut forest = CallForest::new();
@@ -8968,6 +9011,7 @@ fn make_bearer_turn(
                     may_delegate: DelegationMode::None,
                     commitment_mode: CommitmentMode::Full,
                     balance_change: None,
+                    witness_blobs: vec![],
                 },
                 children: vec![],
                 hash: [0u8; 32],
@@ -9759,6 +9803,7 @@ mod privacy_wiring {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
         action.authorization = agent_kp.sign_action(&action);
 
@@ -10230,5 +10275,401 @@ mod gamma_2_bilateral_tests {
             "single-cell non-bilateral turn must verify: {:?}",
             res
         );
+    }
+}
+
+// =============================================================================
+// Tests: Authorization::Custom — Phase 1 (AUTHORIZATION-CUSTOM-DESIGN)
+//
+// Coverage:
+//   * positive — Custom-authorized action with a registered, accepting
+//     verifier commits.
+//   * T2 / verifier-reject — Custom predicate rejects → turn rejected.
+//   * T18 / version drift — predicate's kind not in the executor's
+//     registry → AuthModeNotRegistered.
+//   * T6 / cross-federation replay — Custom auth bound to federation F1
+//     fails when the executor evaluates against F2 (the canonical
+//     signing message changes with federation_id, so the verifier sees
+//     a different input and rejects).
+// =============================================================================
+#[cfg(test)]
+mod authorization_custom_tests {
+    use super::*;
+    use pyana_cell::predicate::{
+        InputRef as PredInputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError,
+        WitnessedPredicateKind, WitnessedPredicateRegistry, WitnessedPredicateVerifier,
+    };
+    use std::sync::Arc;
+
+    /// Verifier that accepts iff the supplied input bytes match a
+    /// captured "expected signing message". Used to express the
+    /// positive-binding case: the verifier must see the exact canonical
+    /// message the executor recomputes from on-chain Turn fields.
+    struct ExpectedMessageVerifier {
+        vk_hash: [u8; 32],
+        expected: Vec<u8>,
+    }
+
+    impl WitnessedPredicateVerifier for ExpectedMessageVerifier {
+        fn name(&self) -> &'static str {
+            "test-expected-message"
+        }
+        fn kind(&self) -> WitnessedPredicateKind {
+            WitnessedPredicateKind::Custom {
+                vk_hash: self.vk_hash,
+            }
+        }
+        fn verify(
+            &self,
+            _commitment: &[u8; 32],
+            input: &PredicateInput<'_>,
+            _proof_bytes: &[u8],
+        ) -> Result<(), WitnessedPredicateError> {
+            match input {
+                PredicateInput::SigningMessage(bytes) => {
+                    if *bytes == self.expected.as_slice() {
+                        Ok(())
+                    } else {
+                        Err(WitnessedPredicateError::Rejected {
+                            kind_name: "test-expected-message",
+                            reason: "signing message did not match expected bytes".into(),
+                        })
+                    }
+                }
+                _ => Err(WitnessedPredicateError::InputShapeMismatch {
+                    kind_name: "test-expected-message",
+                    expected: "SigningMessage",
+                    actual: "other",
+                }),
+            }
+        }
+    }
+
+    /// Verifier that always rejects. Used to express the adversarial
+    /// "verifier rejects" case (T2 — forge / wrong predicate).
+    struct AlwaysRejectVerifier {
+        vk_hash: [u8; 32],
+    }
+
+    impl WitnessedPredicateVerifier for AlwaysRejectVerifier {
+        fn name(&self) -> &'static str {
+            "test-always-reject"
+        }
+        fn kind(&self) -> WitnessedPredicateKind {
+            WitnessedPredicateKind::Custom {
+                vk_hash: self.vk_hash,
+            }
+        }
+        fn verify(
+            &self,
+            _commitment: &[u8; 32],
+            _input: &PredicateInput<'_>,
+            _proof_bytes: &[u8],
+        ) -> Result<(), WitnessedPredicateError> {
+            Err(WitnessedPredicateError::Rejected {
+                kind_name: "test-always-reject",
+                reason: "deliberate adversarial rejection".into(),
+            })
+        }
+    }
+
+    /// Build an Action with `Authorization::Custom` carrying the given
+    /// `WitnessedPredicate` and a single proof-bytes witness blob.
+    /// `target` is set as the action target; the action's effects are a
+    /// single SetField to slot 0.
+    fn make_custom_action(
+        target: CellId,
+        predicate: WitnessedPredicate,
+        proof_bytes: Vec<u8>,
+    ) -> Action {
+        use crate::action::{CommitmentMode, WitnessBlob};
+        Action {
+            target,
+            method: symbol("custom_authd_op"),
+            args: vec![],
+            authorization: Authorization::Custom { predicate },
+            preconditions: pyana_cell::Preconditions::default(),
+            effects: vec![Effect::SetField {
+                cell: target,
+                index: 0,
+                value: [42u8; 32],
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
+            balance_change: None,
+            witness_blobs: vec![WitnessBlob::proof(proof_bytes)],
+        }
+    }
+
+    /// Build a Turn containing the single given action.
+    fn wrap_in_turn(agent: CellId, action: Action) -> Turn {
+        let mut builder = TurnBuilder::new(agent, 0);
+        builder.add_action(action);
+        builder.fee(0).build()
+    }
+
+    #[test]
+    fn t1_positive_custom_authorized_action_commits() {
+        // The cell uses open permissions so no signature/proof gate
+        // fires. The Custom authorization is verified via the registry
+        // and must accept the canonical signing message bytes.
+        let (mut ledger, agent_id, target_id) = setup_two_open_cells(1000, 0);
+        let federation_id = [0xF1u8; 32];
+        let vk_hash = [0x42u8; 32];
+
+        // Construct the action and compute the canonical signing
+        // message the executor will produce.
+        let predicate = WitnessedPredicate::custom(
+            vk_hash,
+            [0u8; 32],
+            PredInputRef::SigningMessage,
+            0, // proof_witness_index
+        );
+        let action = make_custom_action(target_id, predicate.clone(), vec![0xAB; 16]);
+        let expected_msg = TurnExecutor::compute_custom_signing_message(
+            &action,
+            &predicate,
+            0,
+            &federation_id,
+            0,
+        );
+
+        // Register a verifier that requires the canonical message.
+        let mut registry = WitnessedPredicateRegistry::empty();
+        registry.register_custom(
+            vk_hash,
+            Arc::new(ExpectedMessageVerifier {
+                vk_hash,
+                expected: expected_msg,
+            }),
+        );
+
+        let mut executor = TurnExecutor::new(ComputronCosts::zero());
+        executor.set_local_federation_id(federation_id);
+        executor.set_witnessed_registry(registry);
+
+        let turn = wrap_in_turn(agent_id, action);
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(
+            result.is_committed(),
+            "Custom-authorized turn should commit, got {:?}",
+            result
+        );
+
+        // Confirm the effect actually applied.
+        let cell = ledger.get(&target_id).unwrap();
+        assert_eq!(cell.state.fields[0], [42u8; 32]);
+    }
+
+    #[test]
+    fn t2_verifier_reject_rejects_turn() {
+        // The adversarial-verifier case: the registry is populated, but
+        // the verifier always rejects. The turn must be rejected with
+        // an InvalidAuthorization error (Custom auth predicate
+        // rejected: …).
+        let (mut ledger, agent_id, target_id) = setup_two_open_cells(1000, 0);
+        let federation_id = [0xF2u8; 32];
+        let vk_hash = [0x55u8; 32];
+
+        let predicate = WitnessedPredicate::custom(
+            vk_hash,
+            [0u8; 32],
+            PredInputRef::SigningMessage,
+            0,
+        );
+        let action = make_custom_action(target_id, predicate, vec![0xCD; 16]);
+
+        let mut registry = WitnessedPredicateRegistry::empty();
+        registry.register_custom(vk_hash, Arc::new(AlwaysRejectVerifier { vk_hash }));
+
+        let mut executor = TurnExecutor::new(ComputronCosts::zero());
+        executor.set_local_federation_id(federation_id);
+        executor.set_witnessed_registry(registry);
+
+        let turn = wrap_in_turn(agent_id, action);
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(result.is_rejected(), "verifier-reject should reject");
+        match result.unwrap_rejected().0 {
+            TurnError::InvalidAuthorization { reason } => {
+                assert!(
+                    reason.contains("Custom auth predicate rejected"),
+                    "reason should name Custom rejection, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidAuthorization, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn t18_version_drift_kind_not_registered() {
+        // The action names `Custom { vk_hash: X }`, but the executor's
+        // registry has no verifier under X (it has one under Y instead,
+        // for an unrelated mode). The Custom path must reject with
+        // AuthModeNotRegistered.
+        let (mut ledger, agent_id, target_id) = setup_two_open_cells(1000, 0);
+        let federation_id = [0xF3u8; 32];
+        let actual_vk = [0x11u8; 32]; // used in the action's predicate
+        let registered_vk = [0x22u8; 32]; // a DIFFERENT vk that IS registered
+
+        let predicate = WitnessedPredicate::custom(
+            actual_vk,
+            [0u8; 32],
+            PredInputRef::SigningMessage,
+            0,
+        );
+        let action = make_custom_action(target_id, predicate, vec![0xEF; 16]);
+
+        // Registry has a verifier — but under a DIFFERENT vk_hash.
+        let mut registry = WitnessedPredicateRegistry::empty();
+        registry.register_custom(
+            registered_vk,
+            Arc::new(AlwaysRejectVerifier {
+                vk_hash: registered_vk,
+            }),
+        );
+
+        let mut executor = TurnExecutor::new(ComputronCosts::zero());
+        executor.set_local_federation_id(federation_id);
+        executor.set_witnessed_registry(registry);
+
+        let turn = wrap_in_turn(agent_id, action);
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(result.is_rejected());
+        match result.unwrap_rejected().0 {
+            TurnError::AuthModeNotRegistered { kind, vk_hash } => {
+                assert_eq!(kind, "Custom");
+                assert_eq!(vk_hash, actual_vk);
+            }
+            other => panic!("expected AuthModeNotRegistered, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn t6_cross_federation_replay_rejected() {
+        // The verifier is bound to the canonical signing message that
+        // would be produced under federation F1. Replaying the same
+        // action against federation F2 changes the canonical message
+        // (federation_id is hashed into it), so the verifier sees
+        // different bytes and rejects. This is the
+        // EXECUTOR-HONESTY-AUDIT T6 carry-over: the Custom path enjoys
+        // the same federation binding the Signature path does.
+        let (mut ledger, agent_id, target_id) = setup_two_open_cells(1000, 0);
+        let fed_signed_for = [0x11u8; 32];
+        let fed_replay_at = [0x22u8; 32];
+        let vk_hash = [0x77u8; 32];
+
+        let predicate = WitnessedPredicate::custom(
+            vk_hash,
+            [0u8; 32],
+            PredInputRef::SigningMessage,
+            0,
+        );
+        let action = make_custom_action(target_id, predicate.clone(), vec![0x01; 8]);
+
+        // Verifier expects the F1-bound canonical message.
+        let f1_msg = TurnExecutor::compute_custom_signing_message(
+            &action,
+            &predicate,
+            0,
+            &fed_signed_for,
+            0,
+        );
+        let mut registry = WitnessedPredicateRegistry::empty();
+        registry.register_custom(
+            vk_hash,
+            Arc::new(ExpectedMessageVerifier {
+                vk_hash,
+                expected: f1_msg,
+            }),
+        );
+
+        // Build an executor configured for F2 — different federation_id
+        // → different signing message → verifier should reject.
+        let mut executor = TurnExecutor::new(ComputronCosts::zero());
+        executor.set_local_federation_id(fed_replay_at);
+        executor.set_witnessed_registry(registry);
+
+        let turn = wrap_in_turn(agent_id, action);
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(
+            result.is_rejected(),
+            "cross-federation replay must be rejected"
+        );
+        match result.unwrap_rejected().0 {
+            TurnError::InvalidAuthorization { reason } => {
+                assert!(
+                    reason.contains("Custom auth predicate rejected"),
+                    "expected predicate-rejection on cross-fed replay, got: {reason}"
+                );
+            }
+            other => panic!("expected InvalidAuthorization on T6 replay, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cell_auth_required_custom_with_mismatched_vk_rejects() {
+        // The cell declares AuthRequired::Custom { vk_hash: A } on
+        // set_state. The action's Custom auth uses Custom { vk_hash: B
+        // != A } — even though B IS in the registry, the cell-side
+        // descriptor mismatch must reject.
+        let mut ledger = Ledger::new();
+        let (agent, _) = make_open_cell(1, 1000);
+        let agent_id = agent.id();
+        ledger.insert_cell(agent).unwrap();
+
+        let cell_vk = [0xAAu8; 32];
+        let action_vk = [0xBBu8; 32];
+
+        let (mut target, _) = make_open_cell(2, 0);
+        // Require Custom auth for set_state with cell_vk.
+        target.permissions.set_state = AuthRequired::Custom { vk_hash: cell_vk };
+        let target_id = target.id();
+        ledger.insert_cell(target).unwrap();
+
+        let predicate = WitnessedPredicate::custom(
+            action_vk,
+            [0u8; 32],
+            PredInputRef::SigningMessage,
+            0,
+        );
+        let action = make_custom_action(target_id, predicate.clone(), vec![0xFF; 4]);
+
+        // Both vk_hashes registered with accepting verifiers — so the
+        // failure isolates to the cell↔action vk_hash mismatch.
+        let mut registry = WitnessedPredicateRegistry::empty();
+        let expected_msg = TurnExecutor::compute_custom_signing_message(
+            &action,
+            &predicate,
+            0,
+            &[0u8; 32],
+            0,
+        );
+        registry.register_custom(
+            action_vk,
+            Arc::new(ExpectedMessageVerifier {
+                vk_hash: action_vk,
+                expected: expected_msg.clone(),
+            }),
+        );
+        registry.register_custom(
+            cell_vk,
+            Arc::new(ExpectedMessageVerifier {
+                vk_hash: cell_vk,
+                expected: expected_msg,
+            }),
+        );
+
+        let mut executor = TurnExecutor::new(ComputronCosts::zero());
+        executor.set_witnessed_registry(registry);
+
+        let turn = wrap_in_turn(agent_id, action);
+        let result = executor.execute(&turn, &mut ledger);
+        assert!(result.is_rejected(), "vk_hash mismatch must reject");
+        match result.unwrap_rejected().0 {
+            TurnError::PermissionDenied { required, .. } => {
+                assert_eq!(required, AuthRequired::Custom { vk_hash: cell_vk });
+            }
+            other => panic!("expected PermissionDenied for cell-vk mismatch, got {other:?}"),
+        }
     }
 }

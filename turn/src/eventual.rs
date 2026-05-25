@@ -512,6 +512,7 @@ mod tests {
             may_delegate: DelegationMode::ParentsOwn,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
         let mut forest = CallForest::new();
         forest.add_root(action);
@@ -745,6 +746,7 @@ mod tests {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
         let mut forest_b = CallForest::new();
         forest_b.add_root(action_b);
@@ -1184,6 +1186,7 @@ mod tests {
             may_delegate: DelegationMode::ParentsOwn,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let turn_b = make_test_turn(
@@ -1299,6 +1302,7 @@ mod tests {
             may_delegate: DelegationMode::ParentsOwn,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let turn_b = make_test_turn(
@@ -1384,6 +1388,7 @@ mod tests {
             may_delegate: DelegationMode::ParentsOwn,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let turn_b = make_test_turn(
@@ -1447,6 +1452,7 @@ mod tests {
             may_delegate: DelegationMode::ParentsOwn,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let turn = make_test_turn(
@@ -1545,6 +1551,7 @@ mod tests {
             may_delegate: DelegationMode::ParentsOwn,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let inner_action_2 = Action {
@@ -1561,6 +1568,7 @@ mod tests {
             may_delegate: DelegationMode::ParentsOwn,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let turn_b = make_test_turn(

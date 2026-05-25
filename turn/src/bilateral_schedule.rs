@@ -178,6 +178,12 @@ pub fn permissions_to_bits(p: &AuthRequired) -> u32 {
         AuthRequired::Proof => 0x0000_0004,
         AuthRequired::Either => 0x0000_0008,
         AuthRequired::Impossible => 0x0000_0010,
+        // `Custom { vk_hash }` shares the encoding space with a single
+        // discriminant bit; the vk_hash identity is not represented in
+        // this 32-bit lattice (the AIR routes on the lattice slot, not
+        // the vk_hash). Distinguishing Custom modes happens above this
+        // layer.
+        AuthRequired::Custom { .. } => 0x0000_0020,
     }
 }
 

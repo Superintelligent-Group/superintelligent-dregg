@@ -38,6 +38,9 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+#[allow(unused_imports)]
+use tracing::info;
+
 use ed25519_dalek::{Signature, VerifyingKey};
 use pyana_cell::{
     AuthRequired, BulletproofRangeProof, Cell, CellId, CellStateDelta, Ledger, LedgerDelta,
@@ -46,6 +49,7 @@ use pyana_cell::{
     note_bridge::{BridgedNullifierSet, PendingBridgeSet},
     nullifier_set::NullifierSet,
     preconditions::EvalContext,
+    predicate::{InputRef, PredicateInput, WitnessedPredicateError, WitnessedPredicateKind},
     state::STATE_SLOTS,
 };
 use pyana_types::AttestedRoot;
@@ -61,6 +65,29 @@ use crate::routing::RoutingDirective;
 use crate::turn::{EmittedEvent, Turn, TurnReceipt, TurnResult};
 
 use pyana_dsl_runtime::ProgramRegistry;
+
+/// Human-readable name of a `WitnessedPredicateKind` for diagnostic
+/// error messages (used by `TurnError::AuthModeNotRegistered`).
+fn predicate_kind_name(kind: WitnessedPredicateKind) -> String {
+    match kind {
+        WitnessedPredicateKind::Dfa => "Dfa".into(),
+        WitnessedPredicateKind::Temporal => "Temporal".into(),
+        WitnessedPredicateKind::MerkleMembership => "MerkleMembership".into(),
+        WitnessedPredicateKind::BlindedSet => "BlindedSet".into(),
+        WitnessedPredicateKind::BridgePredicate => "BridgePredicate".into(),
+        WitnessedPredicateKind::PedersenEquality => "PedersenEquality".into(),
+        WitnessedPredicateKind::Custom { .. } => "Custom".into(),
+    }
+}
+
+/// 32-byte vk_hash for `WitnessedPredicateKind::Custom { vk_hash }`;
+/// zeroed for built-in kinds (the built-in identity is in the name).
+fn predicate_kind_vk_hash(kind: WitnessedPredicateKind) -> [u8; 32] {
+    match kind {
+        WitnessedPredicateKind::Custom { vk_hash } => vk_hash,
+        _ => [0u8; 32],
+    }
+}
 
 /// Whether note effects in a turn use Pedersen value commitments or cleartext values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -647,6 +674,16 @@ pub struct TurnExecutor {
     /// (`verify_receipt_chain_with_keys`) treats absent signatures as a
     /// best-effort property, so the field is opt-in.
     pub executor_signing_key: Option<[u8; 32]>,
+    /// Optional witnessed-predicate registry (Cav-Codex Block 2).
+    ///
+    /// When set, slot-caveat variants that need verifier dispatch
+    /// (`StateConstraint::Witnessed`, `TemporalPredicate`,
+    /// `SenderAuthorized { BlindedSet }`, `Custom`) call into this
+    /// registry to verify the proof bytes from the action's
+    /// `witness_blobs`. When absent, those variants surface the legacy
+    /// "requires executor wiring" sentinel (programs that don't use
+    /// them are unaffected).
+    pub witnessed_registry: Option<pyana_cell::WitnessedPredicateRegistry>,
 }
 
 impl TurnExecutor {
@@ -681,6 +718,7 @@ impl TurnExecutor {
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
+            witnessed_registry: None,
         }
     }
 
@@ -719,6 +757,7 @@ impl TurnExecutor {
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
+            witnessed_registry: None,
         }
     }
 
@@ -753,6 +792,7 @@ impl TurnExecutor {
             last_receipt_hash: Mutex::new(HashMap::new()),
             executor_signing_key: None,
             turn_decryption_keypair: None,
+            witnessed_registry: None,
         }
     }
 
@@ -807,6 +847,23 @@ impl TurnExecutor {
     pub fn set_turn_decryption_secret(&mut self, secret: [u8; 32]) {
         let public = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(secret));
         self.turn_decryption_keypair = Some((secret, *public.as_bytes()));
+    }
+
+    /// Cav-Codex Block 2: equip the executor with a witnessed-predicate
+    /// registry. Programs that declare `Witnessed` / `TemporalPredicate` /
+    /// `Custom` / `SenderAuthorized { BlindedSet }` slot caveats will
+    /// dispatch through this registry to verify proof bytes carried in
+    /// the action's `witness_blobs`.
+    pub fn with_witnessed_registry(
+        mut self,
+        registry: pyana_cell::WitnessedPredicateRegistry,
+    ) -> Self {
+        self.witnessed_registry = Some(registry);
+        self
+    }
+    /// Set the witnessed-predicate registry after construction.
+    pub fn set_witnessed_registry(&mut self, registry: pyana_cell::WitnessedPredicateRegistry) {
+        self.witnessed_registry = Some(registry);
     }
 
     /// Return the X25519 public key callers should encrypt to (if set).
@@ -2859,8 +2916,14 @@ impl TurnExecutor {
                             pyana_cell::AuthRequired::Proof => 2,
                             pyana_cell::AuthRequired::Either => 3,
                             pyana_cell::AuthRequired::Impossible => 4,
+                            pyana_cell::AuthRequired::Custom { .. } => 5,
                         };
                         hasher.update(&[perm_byte]);
+                        // For Custom, also hash the vk_hash so distinct
+                        // Custom modes route to distinct intro hashes.
+                        if let pyana_cell::AuthRequired::Custom { vk_hash } = permissions {
+                            hasher.update(vk_hash);
+                        }
                         let intro_hash_bytes = hasher.finalize();
                         vm_effects.push(VmEffect::Introduce {
                             intro_hash: hash_to_bb(intro_hash_bytes.as_bytes()),
@@ -3635,6 +3698,9 @@ impl TurnExecutor {
                     at_action: vec![],
                 };
             }
+            // Studio trace: sovereign_witness_verified — emitted once per verified witness.
+            // Fields match the pyana-observability schema (observability/src/events.rs).
+            info!(kind = "sovereign_witness_verified", cell_id = %cell_id, sequence = witness.sequence, has_stark_proof = witness.transition_proof.is_some(), old_commitment = hex::encode(witness.old_commitment), new_commitment = hex::encode(witness.new_commitment), effects_hash = hex::encode(witness.effects_hash));
             sovereign_cell_ids.push(*cell_id);
             sovereign_witness_sequences.push((*cell_id, witness.sequence));
         }
@@ -4168,6 +4234,9 @@ impl TurnExecutor {
             Authorization::Unchecked => 0,
             // CapTpDelivered verifies introducer signature + sender signature: two ed25519 verifies.
             Authorization::CapTpDelivered { .. } => self.costs.signature_verify.saturating_mul(2),
+            // Authorization::Custom: a witnessed-predicate dispatch
+            // through the registry; meter as a proof verify.
+            Authorization::Custom { .. } => self.costs.proof_verify,
         };
         *computrons_used = computrons_used.saturating_add(auth_cost);
         if *computrons_used > budget {
@@ -4180,8 +4249,31 @@ impl TurnExecutor {
             ));
         }
 
-        // Capture the target cell's state before effects are applied (for program enforcement).
-        let old_target_state = ledger.get(&action.target).map(|c| c.state.clone());
+        // Cav-Codex Block 1: snapshot the pre-effects state of EVERY cell
+        // the action might touch (target cell + any cell named in an
+        // effect or in an `ExerciseViaCapability`'s inner effects).
+        // The cell-program evaluator at the bottom of this function
+        // walks the touched-set and re-checks each cell's program
+        // against its (old, new) pair — closing the "B was mutated
+        // from action targeting A, but B's program was never checked"
+        // gap codex flagged.
+        let mut old_cell_states: std::collections::HashMap<CellId, pyana_cell::CellState> =
+            std::collections::HashMap::new();
+        for cell_id in Self::collect_touched_cells(action) {
+            if let Some(c) = ledger.get(&cell_id) {
+                old_cell_states.insert(cell_id, c.state.clone());
+            }
+        }
+        // Always include the target cell (even if its state is None
+        // pre-effects — i.e. the action creates it).
+        if !old_cell_states.contains_key(&action.target) {
+            if let Some(c) = ledger.get(&action.target) {
+                old_cell_states.insert(action.target, c.state.clone());
+            }
+        }
+        // Back-compat alias for code below that still references the
+        // single old_target_state path.
+        let old_target_state = old_cell_states.get(&action.target).cloned();
 
         // =====================================================================
         // PERMISSION UPDATE ORDERING (Fix 2):
@@ -4334,57 +4426,108 @@ impl TurnExecutor {
             })?;
         }
 
-        // Enforce cell program constraints on the post-transition state.
-        if let Some(target_cell) = ledger.get(&action.target) {
-            if !target_cell.program.is_none() {
-                // For Circuit programs, the action must carry a proof (already verified above).
-                // For Predicate programs, evaluate constraints against new state.
-                if !target_cell.program.requires_proof() {
-                    // Build the slot-caveat EvalContext (Lane G).
-                    // Contextual variants (`SenderAuthorized`,
-                    // `TemporalGate`, `FieldGteHeight`, `RateLimit`,
-                    // `PreimageGate`, …) read these fields; static
-                    // variants ignore them.
-                    //
-                    // Replay semantics (per `SLOT-CAVEATS-EVALUATION.md`
-                    // finding 3): for variants that depend on external
-                    // state (set roots, current height), the receipt is
-                    // expected to snapshot those at receipt-time;
-                    // replay should reconstruct this context from the
-                    // receipt, not from the replayer's live chain view.
-                    let parent_pk_opt: Option<[u8; 32]> =
-                        ledger.get(parent_cell).map(|p| *p.public_key());
-                    let ctx = pyana_cell::EvalContext {
-                        block_height: self.block_height,
-                        timestamp: self.current_timestamp,
-                        // Epoch ≈ floor(height / 1024) as a default
-                        // mapping until the executor wires an explicit
-                        // epoch oracle (cf. open question #q1).
-                        current_epoch: self.block_height.saturating_div(1024),
-                        sender: parent_pk_opt,
-                        sender_epoch_count: 0,
-                        revealed_preimage: None,
-                    };
-                    let result = target_cell.program.evaluate(
-                        &target_cell.state,
-                        old_target_state.as_ref(),
-                        Some(&ctx),
-                    );
-                    if let Err(e) = result {
-                        return Err((
-                            TurnError::ProgramViolation {
-                                cell: action.target,
-                                reason: e.to_string(),
-                            },
-                            path,
-                        ));
+        // Cav-Codex Block 1+2: enforce cell program constraints on every
+        // cell the action touched (not just the target). Multi-cell
+        // mutations (Transfer, GrantCapability, SetField on a non-target
+        // cell, ExerciseViaCapability inner effects) now re-check each
+        // cell's program against its captured (old, new) pair.
+        //
+        // Cav-Codex Block 2: build a `WitnessBundle` from the action's
+        // `witness_blobs` and the executor's
+        // `WitnessedPredicateRegistry`, plus a fresh `TransitionMeta`
+        // carrying the action's method symbol + effects-kind mask so
+        // `CellProgram::Cases` programs can dispatch by op-shape.
+        let parent_pk_opt: Option<[u8; 32]> = ledger.get(parent_cell).map(|p| *p.public_key());
+        let effects_mask: u32 = action
+            .effects
+            .iter()
+            .fold(0u32, |acc, e| acc | e.effect_kind_mask());
+        let meta = pyana_cell::program::TransitionMeta::new(action.method, effects_mask);
+        let witness_views: Vec<pyana_cell::program::WitnessBlobView<'_>> = action
+            .witness_blobs
+            .iter()
+            .map(|wb| pyana_cell::program::WitnessBlobView {
+                kind: match wb.kind {
+                    crate::action::WitnessKind::Preimage32 => {
+                        pyana_cell::program::WitnessKindTag::Preimage32
                     }
-                }
-                // Circuit programs: we rely on the proof verification done in verify_authorization.
-                // The cell's verification_key corresponds to the circuit. If the proof passed
-                // verification, the state transition is valid by construction.
+                    crate::action::WitnessKind::MerklePath => {
+                        pyana_cell::program::WitnessKindTag::MerklePath
+                    }
+                    crate::action::WitnessKind::RateLimitCount => {
+                        pyana_cell::program::WitnessKindTag::RateLimitCount
+                    }
+                    crate::action::WitnessKind::ProofBytes => {
+                        pyana_cell::program::WitnessKindTag::ProofBytes
+                    }
+                    crate::action::WitnessKind::Cleartext => {
+                        pyana_cell::program::WitnessKindTag::Cleartext
+                    }
+                },
+                bytes: &wb.bytes,
+            })
+            .collect();
+        let witnesses = pyana_cell::program::WitnessBundle {
+            blobs: &witness_views,
+            registry: self.witnessed_registry.as_ref(),
+        };
+
+        // Walk every cell whose program might fire on this action: the
+        // target cell + any cell named in old_cell_states (the snapshot
+        // map, which holds every cell touched by an effect).
+        let mut to_check: Vec<CellId> = old_cell_states.keys().cloned().collect();
+        // Also include any cell newly created during effects (no old
+        // state but a fresh new state).
+        if !to_check.contains(&action.target) {
+            to_check.push(action.target);
+        }
+
+        for cell_id in &to_check {
+            let Some(touched_cell) = ledger.get(cell_id) else {
+                continue;
+            };
+            if touched_cell.program.is_none() {
+                continue;
+            }
+            if touched_cell.program.requires_proof() {
+                // Circuit programs: proof verification handles the
+                // transition; skip the predicate evaluator.
+                continue;
+            }
+            let old_state = old_cell_states.get(cell_id);
+            // For RateLimit + SenderAuthorized variants, populate
+            // ctx.sender_epoch_count from the executor's per-(cell,
+            // sender) counter slot. Until a real counter slot lands
+            // (deferred), leave at 0 and let the witness blob (a
+            // RateLimitCount blob) supply the count.
+            let ctx = pyana_cell::EvalContext {
+                block_height: self.block_height,
+                timestamp: self.current_timestamp,
+                current_epoch: self.block_height.saturating_div(1024),
+                sender: parent_pk_opt,
+                sender_epoch_count: 0,
+                revealed_preimage: None,
+            };
+            let result = touched_cell.program.evaluate_full(
+                &touched_cell.state,
+                old_state,
+                Some(&ctx),
+                &meta,
+                &witnesses,
+            );
+            if let Err(e) = result {
+                return Err((
+                    TurnError::ProgramViolation {
+                        cell: *cell_id,
+                        reason: e.to_string(),
+                    },
+                    path,
+                ));
             }
         }
+
+        // Suppress unused warning on the legacy alias.
+        let _ = old_target_state;
 
         // Recurse into children.
         // NOTE: This resolution determines whether children can target *different* cells.
@@ -4489,6 +4632,21 @@ impl TurnExecutor {
         path: &[usize],
         turn_nonce: u64,
     ) -> Result<(), (TurnError, Vec<usize>)> {
+        // Custom: app-defined authorization via WitnessedPredicate
+        // (AUTHORIZATION-CUSTOM-DESIGN). Verified by dispatching the
+        // predicate's kind through the WitnessedPredicateRegistry with
+        // the canonical signing message as input.
+        if let Authorization::Custom { predicate } = &action.authorization {
+            self.verify_custom_authorization(action, target_cell, predicate, path, turn_nonce)?;
+            info!(
+                kind = "authorization",
+                auth_kind = "custom",
+                target = %action.target,
+                pred_kind = ?predicate.kind,
+            );
+            return Ok(());
+        }
+
         // CapTpDelivered carries the cryptographic provenance of a CapTP wire
         // delivery (introducer-signed handoff cert + recipient-signed turn
         // binding). Verified holistically here regardless of the target cell's
@@ -4510,6 +4668,8 @@ impl TurnExecutor {
                 turn_nonce,
                 path,
             )?;
+            // Studio trace: authorization verified (CapTpDelivered).
+            info!(kind = "authorization", auth_kind = "captp_delivered", target = %action.target, cert_nonce = hex::encode(handoff_cert.nonce));
             return Ok(());
         }
 
@@ -4563,6 +4723,8 @@ impl TurnExecutor {
                 }
             }
 
+            // Studio trace: authorization verified (Bearer) — facet check passed.
+            info!(kind = "authorization", auth_kind = "bearer", target = %bearer_proof.target, expires_at = bearer_proof.expires_at);
             return Ok(());
         }
 
@@ -4634,6 +4796,17 @@ impl TurnExecutor {
             }
         }
 
+        // Studio trace: authorization verified (Signature / Proof / Breadstuff / Unchecked).
+        // The auth_kind discriminator matches the observability schema (observability/src/events.rs §AuthorizationPayload).
+        let auth_kind = match &action.authorization {
+            Authorization::Signature(_, _) => "signature",
+            Authorization::Proof { .. } => "proof",
+            Authorization::Breadstuff(_) => "breadstuff",
+            Authorization::Unchecked => "unchecked",
+            Authorization::Custom { .. } => "custom",
+            _ => "other",
+        };
+        info!(kind = "authorization", auth_kind, target = %action.target);
         Ok(())
     }
 
@@ -4761,6 +4934,186 @@ impl TurnExecutor {
         Ok(())
     }
 
+    /// Verify a `WitnessedPredicate`-backed authorization
+    /// (`Authorization::Custom`).
+    ///
+    /// Flow (AUTHORIZATION-CUSTOM-DESIGN §2):
+    /// 1. **Cell consistency check.** If the target cell declares
+    ///    `AuthRequired::Custom { vk_hash }` for any action it needs to
+    ///    authorize, the predicate's kind MUST match
+    ///    `WitnessedPredicateKind::Custom { vk_hash }` with the same
+    ///    `vk_hash`.
+    /// 2. **Registry lookup.** Resolve `predicate.kind` in
+    ///    `self.witnessed_registry`. On miss → `AuthModeNotRegistered`.
+    ///    No silent fallback.
+    /// 3. **Input binding.** When `predicate.input_ref ==
+    ///    InputRef::SigningMessage`, supply
+    ///    `compute_partial_signing_message(action, position,
+    ///    federation_id, turn_nonce)` — the same federation+nonce
+    ///    binding the `Signature` path uses. Other `input_ref` shapes
+    ///    are unsupported in auth context: the design specifies
+    ///    SigningMessage as THE auth input.
+    /// 4. **Proof bytes.** Resolved from
+    ///    `action.witness_blobs[predicate.proof_witness_index]`.
+    /// 5. **Verifier call.** On reject → `InvalidAuthorization`.
+    ///
+    /// Replay carries forward identically to the `Signature` path: the
+    /// canonical signing message is recomputed from on-chain Turn
+    /// fields, so receipts re-verify deterministically.
+    fn verify_custom_authorization(
+        &self,
+        action: &Action,
+        target_cell: &Cell,
+        predicate: &pyana_cell::WitnessedPredicate,
+        path: &[usize],
+        turn_nonce: u64,
+    ) -> Result<(), (TurnError, Vec<usize>)> {
+        // Step 1: cell-side AuthRequired::Custom consistency check.
+        // If any of the cell's permission slots demand a specific
+        // Custom vk_hash, the predicate's kind must agree.
+        let required_vk: Option<[u8; 32]> = {
+            let candidates = [
+                &target_cell.permissions.send,
+                &target_cell.permissions.receive,
+                &target_cell.permissions.set_state,
+                &target_cell.permissions.set_permissions,
+                &target_cell.permissions.set_verification_key,
+                &target_cell.permissions.increment_nonce,
+                &target_cell.permissions.delegate,
+                &target_cell.permissions.access,
+            ];
+            candidates.iter().find_map(|req| match req {
+                AuthRequired::Custom { vk_hash } => Some(*vk_hash),
+                _ => None,
+            })
+        };
+        if let Some(required) = required_vk {
+            match predicate.kind {
+                WitnessedPredicateKind::Custom { vk_hash } if vk_hash == required => {}
+                _ => {
+                    return Err((
+                        TurnError::PermissionDenied {
+                            cell: action.target,
+                            action: "Custom".to_string(),
+                            required: AuthRequired::Custom { vk_hash: required },
+                        },
+                        path.to_vec(),
+                    ));
+                }
+            }
+        }
+
+        // Step 2: registry lookup. Failing closed: if the executor has
+        // no registry, or the kind isn't in it, reject.
+        let registry = self.witnessed_registry.as_ref().ok_or_else(|| {
+            (
+                TurnError::AuthModeNotRegistered {
+                    kind: predicate_kind_name(predicate.kind),
+                    vk_hash: predicate_kind_vk_hash(predicate.kind),
+                },
+                path.to_vec(),
+            )
+        })?;
+        if registry.get(predicate.kind).is_none() {
+            return Err((
+                TurnError::AuthModeNotRegistered {
+                    kind: predicate_kind_name(predicate.kind),
+                    vk_hash: predicate_kind_vk_hash(predicate.kind),
+                },
+                path.to_vec(),
+            ));
+        }
+
+        // Step 3: build the canonical signing message bytes.
+        //
+        // We use `compute_custom_signing_message` rather than the
+        // Signature path's `compute_partial_signing_message` because
+        // the latter hashes `action.hash()`, which itself hashes
+        // `action.witness_blobs` — and `witness_blobs` contains the
+        // very proof bytes the predicate's verifier is checking. That
+        // would be circular at proof-generation time (the wallet would
+        // need the proof bytes to compute the message that the proof
+        // commits to).
+        //
+        // `compute_custom_signing_message` binds:
+        //   * federation_id  — T6 cross-federation replay defense
+        //   * turn_nonce     — T11 stale-proof defense
+        //   * position       — multi-action turn placement binding
+        //   * target / method / args / effects-hashes / preconditions
+        //                    — T2 forge-effects defense
+        //   * predicate's *structural* shape (kind/commitment/input_ref/
+        //     proof_witness_index) but NOT the proof bytes in
+        //     witness_blobs.
+        //
+        // This is the design's "federation_id + nonce + action hash"
+        // intent (AUTHORIZATION-CUSTOM-DESIGN §2 step 4), correctly
+        // unfolded to break the witness-blob circularity.
+        let position = path.first().copied().unwrap_or(0);
+        let signing_message = Self::compute_custom_signing_message(
+            action,
+            predicate,
+            position,
+            &self.local_federation_id,
+            turn_nonce,
+        );
+
+        // Step 4: resolve proof bytes from witness_blobs by index.
+        let proof_blob = action
+            .witness_blobs
+            .get(predicate.proof_witness_index)
+            .ok_or_else(|| {
+                (
+                    TurnError::InvalidAuthorization {
+                        reason: format!(
+                            "Authorization::Custom proof_witness_index {} out of bounds \
+                             (witness_blobs.len()={})",
+                            predicate.proof_witness_index,
+                            action.witness_blobs.len()
+                        ),
+                    },
+                    path.to_vec(),
+                )
+            })?;
+
+        // Step 5: dispatch. We support InputRef::SigningMessage as the
+        // canonical input shape for auth; other shapes are rejected at
+        // this surface (slot-caveat / precondition surfaces have their
+        // own input resolution).
+        let input = match &predicate.input_ref {
+            InputRef::SigningMessage => PredicateInput::SigningMessage(&signing_message),
+            other => {
+                return Err((
+                    TurnError::InvalidAuthorization {
+                        reason: format!(
+                            "Authorization::Custom requires InputRef::SigningMessage, got {other:?}"
+                        ),
+                    },
+                    path.to_vec(),
+                ));
+            }
+        };
+
+        registry
+            .verify(predicate, &input, &proof_blob.bytes)
+            .map_err(|e| match e {
+                WitnessedPredicateError::KindNotRegistered { kind } => (
+                    TurnError::AuthModeNotRegistered {
+                        kind: predicate_kind_name(kind),
+                        vk_hash: predicate_kind_vk_hash(kind),
+                    },
+                    path.to_vec(),
+                ),
+                other => (
+                    TurnError::InvalidAuthorization {
+                        reason: format!("Custom auth predicate rejected: {other}"),
+                    },
+                    path.to_vec(),
+                ),
+            })?;
+
+        Ok(())
+    }
+
     /// Check a single auth requirement against an action's authorization.
     fn check_single_auth_requirement(
         &self,
@@ -4840,6 +5193,27 @@ impl TurnExecutor {
                     path.to_vec(),
                 )),
             },
+            AuthRequired::Custom { vk_hash } => {
+                // The cell requires app-defined Custom auth with this
+                // specific vk_hash. Because `Authorization::Custom`
+                // short-circuits in `verify_authorization`, reaching
+                // here means the action did NOT supply Custom auth —
+                // reject.
+                //
+                // (The vk_hash match-up — predicate.kind's vk_hash ==
+                // cell's required vk_hash — is enforced in
+                // `verify_custom_authorization` when the Custom path
+                // does run.)
+                let _ = vk_hash;
+                Err((
+                    TurnError::PermissionDenied {
+                        cell: action.target,
+                        action: action_name.to_string(),
+                        required: auth_required.clone(),
+                    },
+                    path.to_vec(),
+                ))
+            }
             AuthRequired::Either => match &action.authorization {
                 Authorization::Signature(r, s) => {
                     self.verify_ed25519_signature(action, target_cell, r, s, path, turn_nonce)
@@ -4884,6 +5258,22 @@ impl TurnExecutor {
                 // and short-circuits before reaching this point. If we ever reach
                 // here it means the early-return was bypassed: treat as deny.
                 Authorization::CapTpDelivered { .. } => Err((
+                    TurnError::PermissionDenied {
+                        cell: action.target,
+                        action: action_name.to_string(),
+                        required: AuthRequired::Either,
+                    },
+                    path.to_vec(),
+                )),
+                // Authorization::Custom: defer to the witnessed-predicate
+                // dispatch path. The `AuthRequired::Either` permission
+                // accepts Custom only when the cell explicitly declares
+                // it via `AuthRequired::Custom`; if a cell declared
+                // `Either`, we treat Custom as a deny (the cell-program
+                // / authorization path that wants Custom semantics
+                // should declare `AuthRequired::Custom { vk_hash }`
+                // directly).
+                Authorization::Custom { .. } => Err((
                     TurnError::PermissionDenied {
                         cell: action.target,
                         action: action_name.to_string(),
@@ -5351,8 +5741,12 @@ impl TurnExecutor {
             AuthRequired::Proof => 2u8,
             AuthRequired::Either => 3u8,
             AuthRequired::Impossible => 4u8,
+            AuthRequired::Custom { .. } => 5u8,
         };
         hasher.update(&[perm_byte]);
+        if let AuthRequired::Custom { vk_hash } = permissions {
+            hasher.update(vk_hash);
+        }
         hasher.update(bearer_pk);
         hasher.update(&expires_at.to_le_bytes());
         *hasher.finalize().as_bytes()
@@ -5432,6 +5826,71 @@ impl TurnExecutor {
         hasher.update(&(position as u64).to_le_bytes());
         hasher.update(&turn_nonce.to_le_bytes());
         *hasher.finalize().as_bytes()
+    }
+
+    /// Compute the canonical signing message bytes for
+    /// `Authorization::Custom`.
+    ///
+    /// Excludes `action.witness_blobs` (which contain the proof bytes
+    /// the verifier is checking) to break the proof-generation
+    /// circularity that would otherwise arise from
+    /// `compute_partial_signing_message`. Includes:
+    ///
+    /// * Domain separator `"pyana-custom-sig-v1:"` (T-domain isolation).
+    /// * `federation_id` (T6 cross-federation replay defense).
+    /// * `turn_nonce` (T11 stale-proof defense).
+    /// * `position` (multi-action turn binding).
+    /// * Action target, method, args, effects (each via `effect.hash`),
+    ///   may_delegate, commitment_mode, balance_change, preconditions
+    ///   (T2 forge-effects defense — same fields the Signature
+    ///   path's preimage covers).
+    /// * The predicate's structural shape (kind / commitment /
+    ///   input_ref / proof_witness_index) via postcard so a tampering
+    ///   verifier can't substitute a different predicate against the
+    ///   same proof.
+    ///
+    /// Returns the raw byte vector (not a 32-byte hash digest) because
+    /// the predicate verifier consumes the full message — many app
+    /// AIRs absorb the message into their public input series rather
+    /// than hashing it.
+    pub fn compute_custom_signing_message(
+        action: &Action,
+        predicate: &pyana_cell::WitnessedPredicate,
+        position: usize,
+        federation_id: &[u8; 32],
+        turn_nonce: u64,
+    ) -> Vec<u8> {
+        let mut msg = Vec::with_capacity(256);
+        msg.extend_from_slice(b"pyana-custom-sig-v1:");
+        msg.extend_from_slice(federation_id);
+        msg.extend_from_slice(&turn_nonce.to_le_bytes());
+        msg.extend_from_slice(&(position as u64).to_le_bytes());
+        // Action body (mirrors compute_signing_message's preimage).
+        msg.extend_from_slice(action.target.as_bytes());
+        msg.extend_from_slice(&action.method);
+        for arg in &action.args {
+            msg.extend_from_slice(arg);
+        }
+        for effect in &action.effects {
+            msg.extend_from_slice(&effect.hash());
+        }
+        msg.push(action.may_delegate as u8);
+        msg.push(action.commitment_mode as u8);
+        match action.balance_change {
+            Some(delta) => {
+                msg.push(1u8);
+                msg.extend_from_slice(&delta.to_le_bytes());
+            }
+            None => msg.push(0u8),
+        }
+        let preconds_bytes = postcard::to_allocvec(&action.preconditions).unwrap_or_default();
+        msg.extend_from_slice(&(preconds_bytes.len() as u32).to_le_bytes());
+        msg.extend_from_slice(&preconds_bytes);
+        // Predicate's structural shape (NOT the proof bytes).
+        let pred_bytes = postcard::to_allocvec(predicate).unwrap_or_default();
+        msg.extend_from_slice(&(pred_bytes.len() as u32).to_le_bytes());
+        msg.extend_from_slice(&pred_bytes);
+        msg
     }
 
     /// Determine ALL required permissions for an action based on its effects.
@@ -5517,6 +5976,76 @@ impl TurnExecutor {
         }
 
         result
+    }
+
+    /// Cav-Codex Block 1: walk an action and collect every cell whose
+    /// state could be mutated by its effects. Used by `execute_tree` to
+    /// snapshot pre-effect states so the cell-program evaluator can
+    /// run on each touched cell's (old, new) pair after the action.
+    ///
+    /// The returned vec includes the action's `target` and every cell
+    /// named explicitly in an `Effect::SetField { cell, .. }`,
+    /// `Transfer { from, to }`, `GrantCapability { from, to }`,
+    /// `RevokeCapability { cell }`, `IncrementNonce { cell }`,
+    /// `EmitEvent { cell }`, `SetPermissions { cell }`,
+    /// `SetVerificationKey { cell }`, `RevokeDelegation { child }`, or
+    /// `MakeSovereign { cell }`. `ExerciseViaCapability` recursively
+    /// expands its `inner_effects`. Note that some effects (Transfer,
+    /// etc.) can name a cell that didn't exist before the effect; we
+    /// snapshot whatever's there (lazy snapshot on `None`).
+    pub(crate) fn collect_touched_cells(action: &Action) -> Vec<CellId> {
+        let mut out: Vec<CellId> = vec![action.target];
+        fn push(out: &mut Vec<CellId>, id: CellId) {
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
+        fn walk(out: &mut Vec<CellId>, effects: &[Effect]) {
+            for e in effects {
+                match e {
+                    Effect::SetField { cell, .. }
+                    | Effect::RevokeCapability { cell, .. }
+                    | Effect::EmitEvent { cell, .. }
+                    | Effect::IncrementNonce { cell }
+                    | Effect::SetPermissions { cell, .. }
+                    | Effect::SetVerificationKey { cell, .. }
+                    | Effect::MakeSovereign { cell }
+                    | Effect::CreateEscrow { cell, .. } => push(out, *cell),
+                    Effect::Transfer { from, to, .. } => {
+                        push(out, *from);
+                        push(out, *to);
+                    }
+                    Effect::GrantCapability { from, to, .. } => {
+                        push(out, *from);
+                        push(out, *to);
+                    }
+                    Effect::Introduce {
+                        introducer,
+                        recipient,
+                        target,
+                        ..
+                    } => {
+                        push(out, *introducer);
+                        push(out, *recipient);
+                        push(out, *target);
+                    }
+                    Effect::ExerciseViaCapability { inner_effects, .. } => {
+                        walk(out, inner_effects);
+                    }
+                    Effect::RevokeDelegation { child } => push(out, *child),
+                    _ => {
+                        // CreateCell, CreateCellFromFactory, queue ops,
+                        // note ops, bridge ops, captp ops: either create
+                        // fresh state (no old to snapshot) OR mutate
+                        // global executor-side data structures. Their
+                        // cell-program coverage rides on the target
+                        // cell's program (which we always snapshot).
+                    }
+                }
+            }
+        }
+        walk(&mut out, &action.effects);
+        out
     }
 
     /// Apply a single effect to the ledger, recording undo entries in the journal.
@@ -8667,6 +9196,7 @@ impl TurnExecutor {
             Authorization::Bearer(_) => self.costs.signature_verify,
             Authorization::Unchecked => 0,
             Authorization::CapTpDelivered { .. } => self.costs.signature_verify.saturating_mul(2),
+            Authorization::Custom { .. } => self.costs.proof_verify,
         });
 
         for effect in &tree.action.effects {
@@ -11206,6 +11736,7 @@ mod hardening_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
         let tree = CallTree {
             action,
@@ -11415,6 +11946,7 @@ mod hardening_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
         let tree = CallTree {
             action,
@@ -11513,6 +12045,7 @@ mod hardening_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let mixed = MixedAtomicTurn {
@@ -11567,6 +12100,7 @@ mod hardening_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
         // Action 2: C sends 999_999 to B (FAILS: insufficient balance after first
         // action). Journal MUST roll back action 1.
@@ -11584,6 +12118,7 @@ mod hardening_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let mixed = MixedAtomicTurn {
@@ -11645,6 +12180,7 @@ mod hardening_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let mixed = MixedAtomicTurn {

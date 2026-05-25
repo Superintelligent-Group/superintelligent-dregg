@@ -147,6 +147,7 @@ mod tests {
             }],
             may_delegate: DelegationMode::None,
             balance_change: None,
+            witness_blobs: vec![],
             commitment_mode: Default::default(),
         };
 

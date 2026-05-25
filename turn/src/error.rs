@@ -296,6 +296,23 @@ pub enum TurnError {
         expected: Option<[u8; 32]>,
         got: Option<[u8; 32]>,
     },
+
+    /// `Authorization::Custom` named a `WitnessedPredicateKind` (built-in
+    /// discriminant or `Custom { vk_hash }`) that the executor's
+    /// `WitnessedPredicateRegistry` does not have a verifier for.
+    ///
+    /// Per AUTHORIZATION-CUSTOM-DESIGN §2 step 3 ("Registry lookup …
+    /// No silent fallback. The mode must be on the federation's
+    /// allowlist") and §8.6 (T18 — verifier version drift): turns that
+    /// reference an unregistered auth mode are rejected closed.
+    AuthModeNotRegistered {
+        /// Human-readable discriminant name for built-ins, or
+        /// `"Custom"` for `WitnessedPredicateKind::Custom`.
+        kind: String,
+        /// 32-byte verifier-key hash, set for `Custom` kinds; zeroed for
+        /// built-ins (the built-in identity is in `kind`).
+        vk_hash: [u8; 32],
+    },
 }
 
 impl core::fmt::Display for TurnError {
@@ -659,6 +676,13 @@ impl core::fmt::Display for TurnError {
                 write!(
                     f,
                     "cell {cell} is frozen for migration; no turns may execute against it"
+                )
+            }
+            TurnError::AuthModeNotRegistered { kind, vk_hash } => {
+                write!(
+                    f,
+                    "authorization mode not registered: kind={kind}, vk_hash={:02x}{:02x}...",
+                    vk_hash[0], vk_hash[1]
                 )
             }
             TurnError::ReceiptChainMismatch { expected, got } => {

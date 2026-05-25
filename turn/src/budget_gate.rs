@@ -5,7 +5,7 @@
 //! executor to the Stingray bounded-counter budget coordinator (in `pyana-coord`)
 //! without introducing a circular dependency.
 //!
-//! The gate holds a local copy of the silo's budget slice. The BudgetCoordinator
+//! The gate holds a local copy of the silo's budget slice. The StingrayCounter
 //! in `pyana-coord` manages distribution and rebalancing at a higher level.
 
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ pub type DebitDigest = [u8; 32];
 ///
 /// This is the turn-crate-local representation of a budget slice. The full
 /// lifecycle (distribution, rebalancing, certificates) is managed by
-/// `BudgetCoordinator` in `pyana-coord`. This struct carries just enough state
+/// `StingrayCounter` in `pyana-coord`. This struct carries just enough state
 /// to gate individual turn executions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BudgetSlice {
