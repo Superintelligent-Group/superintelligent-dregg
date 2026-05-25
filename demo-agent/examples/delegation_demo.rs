@@ -131,6 +131,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(parent_id, 0, spawn);
@@ -188,6 +189,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(child_id, 0, child_write);
@@ -227,6 +229,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(child_id, child_nonce, child_try_d);
@@ -253,6 +256,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(child_id, child_nonce, refresh);
@@ -287,6 +291,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(child_id, child_nonce, child_use_d);
@@ -319,6 +324,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(parent_id, parent_nonce, revoke);
@@ -353,6 +359,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(child_id, child_nonce, child_try_a);

@@ -87,6 +87,7 @@ fn make_own_cell_turn(agent_id: CellId) -> Turn {
         effects: vec![],
         may_delegate: DelegationMode::None,
         balance_change: None,
+        witness_blobs: vec![],
         commitment_mode: Default::default(),
     };
 
@@ -132,6 +133,7 @@ fn make_self_write_turn(agent_id: CellId) -> Turn {
         }],
         may_delegate: DelegationMode::None,
         balance_change: None,
+        witness_blobs: vec![],
         commitment_mode: Default::default(),
     };
 
@@ -177,6 +179,7 @@ fn make_cross_cell_turn(agent_id: CellId, target_id: CellId) -> Turn {
         }],
         may_delegate: DelegationMode::None,
         balance_change: None,
+        witness_blobs: vec![],
         commitment_mode: Default::default(),
     };
 

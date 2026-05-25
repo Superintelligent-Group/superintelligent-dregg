@@ -167,60 +167,19 @@ fn adversarial_token_lifecycle_forgery() {
 }
 
 // =============================================================================
-// TEST 2: Revocation propagation
+// TEST 2: Revocation propagation — at the nullifier/registry layer
 // =============================================================================
+//
+// The previous version of this test exercised the `CAV_REVOCABLE` token
+// caveat, which was retired in the 2026-05-24 modernization pass (see
+// `token/src/pyana_caveats.rs` module docs). Revocation now lives in
+// `pyana_token::RevocationRegistry` (STARK-attested non-membership) and
+// in cell-level nullifier sets. This test exercises the nullifier-set
+// double-insertion contract; the full `RevocationRegistry` path is
+// covered by `tests/cross_federation.rs`.
 
-/// Mint -> present -> SUCCESS -> revoke -> present again -> REJECTED
 #[test]
 fn adversarial_revocation_propagation() {
-    // --- Step 1: Mint token with Revocable caveat ---
-    let issuer_key = test_key("issuer-revocation");
-    let root_token = MacaroonToken::mint(issuer_key, b"revoke-kid", "auth.pyana.dev");
-
-    // Attenuate with a revocable caveat (token_id = "revocable-token-1")
-    let att = Attenuation {
-        services: vec![("compute".into(), "rw".into())],
-        revocable: Some("revocable-token-1".into()),
-        not_after: Some(2_000_000_000),
-        ..Default::default()
-    };
-    let revocable_token = root_token.attenuate(&att).unwrap();
-
-    // --- Step 2: Present with non-revocation proof (token NOT in revocation set) ---
-    let mut valid_request = AuthRequest {
-        service: Some("compute".into()),
-        action: Some("r".into()),
-        now: Some(1_700_000_000),
-        ..Default::default()
-    };
-    // Add the token to the "not revoked" set (non-membership proof)
-    valid_request
-        .not_revoked
-        .insert("revocable-token-1".to_string());
-
-    let result = revocable_token.verify(&valid_request);
-    assert!(
-        result.is_ok(),
-        "Token with valid non-revocation proof should verify: {:?}",
-        result.err()
-    );
-
-    // --- Step 3: Revoke the token (remove from not_revoked set) ---
-    // Now present WITHOUT the non-revocation proof (simulating stale verifier state)
-    let revoked_request = AuthRequest {
-        service: Some("compute".into()),
-        action: Some("r".into()),
-        now: Some(1_700_000_000),
-        // NOT including "revocable-token-1" in not_revoked set
-        ..Default::default()
-    };
-    let result = revocable_token.verify(&revoked_request);
-    assert!(
-        result.is_err(),
-        "Revocable token MUST fail when not_revoked set doesn't contain the token ID"
-    );
-
-    // --- Step 4: Also test with NullifierSet double-insertion (cell-level revocation) ---
     let mut nullifier_set = NullifierSet::new();
     let token_nullifier = Nullifier(*blake3::hash(b"revocable-token-1-nullifier").as_bytes());
 

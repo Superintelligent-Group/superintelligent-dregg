@@ -28,10 +28,10 @@
 use pyana_app_framework::{AgentWallet, AppWallet, Authorization, CellId, Effect, FieldElement};
 use pyana_cell::{CellProgram, ProgramError, StateConstraint};
 use starbridge_nameservice::{
-    build_register_action, build_renew_action, build_revoke_action, build_set_target_action,
-    build_transfer_action, expiry_field, factory_descriptors, name_factory_descriptor, name_hash,
-    register, resolve_target, revoked_tombstone, EXPIRY_SLOT, NAME_FACTORY_VK, NAME_HASH_SLOT,
-    OWNER_HASH_SLOT, RESOLVE_TARGET_SLOT, REVOKED_SLOT,
+    EXPIRY_SLOT, NAME_FACTORY_VK, NAME_HASH_SLOT, OWNER_HASH_SLOT, RESOLVE_TARGET_SLOT,
+    REVOKED_SLOT, build_register_action, build_renew_action, build_revoke_action,
+    build_set_target_action, build_transfer_action, expiry_field, factory_descriptors,
+    name_factory_descriptor, name_hash, register, resolve_target, revoked_tombstone,
 };
 
 // =============================================================================
@@ -54,10 +54,7 @@ fn empty_state() -> pyana_cell::state::CellState {
     pyana_cell::state::CellState::new(0)
 }
 
-fn project_setfield(
-    action: &pyana_app_framework::Action,
-    slot: usize,
-) -> Option<FieldElement> {
+fn project_setfield(action: &pyana_app_framework::Action, slot: usize) -> Option<FieldElement> {
     for effect in &action.effects {
         if let Effect::SetField { index, value, .. } = effect {
             if *index == slot {
@@ -98,10 +95,7 @@ fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
     program
         .evaluate(&state_after_register, Some(&empty_state()), None)
         .expect("register: passes WriteOnce(name)+Monotonic(expiry)+WriteOnce(revoked)");
-    assert_eq!(
-        state_after_register.fields[NAME_HASH_SLOT],
-        name_hash(name)
-    );
+    assert_eq!(state_after_register.fields[NAME_HASH_SLOT], name_hash(name));
 
     // ── Step 2: set-target (no slot caveat applies). ────────────────
     let target = resolve_target("pyana://cell/alices-document");
@@ -119,13 +113,15 @@ fn lifecycle_register_set_target_renew_transfer_revoke_round_trips() {
     let new_expiry: u64 = 5_000;
     let renew_action = build_renew_action(&wallet, cell, name, new_expiry);
     let mut state_after_renew = state_after_set_target.clone();
-    state_after_renew.fields[EXPIRY_SLOT] =
-        project_setfield(&renew_action, EXPIRY_SLOT).unwrap();
+    state_after_renew.fields[EXPIRY_SLOT] = project_setfield(&renew_action, EXPIRY_SLOT).unwrap();
     state_after_renew.set_nonce(3);
     program
         .evaluate(&state_after_renew, Some(&state_after_set_target), None)
         .expect("renew: Monotonic permits expiry extension");
-    assert_eq!(state_after_renew.fields[EXPIRY_SLOT], expiry_field(new_expiry));
+    assert_eq!(
+        state_after_renew.fields[EXPIRY_SLOT],
+        expiry_field(new_expiry)
+    );
 
     // ── Step 4: transfer (owner change, no other slot moves). ───────
     let transfer_action = build_transfer_action(&wallet, cell, name, owner, new_owner);
@@ -280,7 +276,10 @@ fn auth_all_lifecycle_actions_carry_real_signatures() {
     let cell = registry_cell();
     let name = "alice.pyana";
     let actions = vec![
-        ("register", build_register_action(&wallet, cell, name, [3u8; 32], 1_000)),
+        (
+            "register",
+            build_register_action(&wallet, cell, name, [3u8; 32], 1_000),
+        ),
         ("renew", build_renew_action(&wallet, cell, name, 5_000)),
         (
             "transfer",
@@ -371,15 +370,10 @@ fn adversarial_transfer_from_non_owner_authorization_diverges() {
     // executor would write into OWNER_HASH_SLOT is identical) — but the
     // `Authorization::Signature(r, s)` diverges because each wallet's
     // Ed25519 key is distinct.
-    let legit = build_transfer_action(
-        &owner_wallet, cell, name, old_owner_pk, new_owner_pk,
-    );
-    let impostor = build_transfer_action(
-        &impostor_wallet, cell, name, old_owner_pk, new_owner_pk,
-    );
+    let legit = build_transfer_action(&owner_wallet, cell, name, old_owner_pk, new_owner_pk);
+    let impostor = build_transfer_action(&impostor_wallet, cell, name, old_owner_pk, new_owner_pk);
 
-    let (Authorization::Signature(r_owner, s_owner),
-         Authorization::Signature(r_imp, s_imp)) =
+    let (Authorization::Signature(r_owner, s_owner), Authorization::Signature(r_imp, s_imp)) =
         (&legit.authorization, &impostor.authorization)
     else {
         panic!("expected Signature variants");

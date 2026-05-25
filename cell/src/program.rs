@@ -661,10 +661,7 @@ pub enum ProgramError {
     /// program verifier; either the action did not carry a proof at
     /// the expected witness index or no verifier matched the
     /// declared vk hash.
-    CustomProgramProofRejected {
-        ir_hash: [u8; 32],
-        reason: String,
-    },
+    CustomProgramProofRejected { ir_hash: [u8; 32], reason: String },
 }
 
 impl core::fmt::Display for ProgramError {
@@ -802,13 +799,7 @@ impl CellProgram {
         ctx: Option<&EvalContext>,
         meta: &TransitionMeta,
     ) -> Result<(), ProgramError> {
-        self.evaluate_full(
-            new_state,
-            old_state,
-            ctx,
-            meta,
-            &WitnessBundle::empty(),
-        )
+        self.evaluate_full(new_state, old_state, ctx, meta, &WitnessBundle::empty())
     }
 
     /// Full-fat evaluation: per-transition context + witness bundle.
@@ -1265,11 +1256,15 @@ fn evaluate_constraint_full(
             let (commitment, kind) = match set {
                 AuthorizedSet::PublicRoot { set_root_index } => {
                     let idx = check_index(*set_root_index)?;
-                    (new_state.fields[idx], crate::predicate::WitnessedPredicateKind::MerkleMembership)
+                    (
+                        new_state.fields[idx],
+                        crate::predicate::WitnessedPredicateKind::MerkleMembership,
+                    )
                 }
-                AuthorizedSet::BlindedSet { commitment } => {
-                    (*commitment, crate::predicate::WitnessedPredicateKind::BlindedSet)
-                }
+                AuthorizedSet::BlindedSet { commitment } => (
+                    *commitment,
+                    crate::predicate::WitnessedPredicateKind::BlindedSet,
+                ),
             };
             // Require a witness blob and a registry. If neither is
             // present the constraint surfaces a structural sentinel so
@@ -1536,12 +1531,12 @@ fn evaluate_constraint_full(
                 proof_witness_index: 0,
             };
             let input = PredicateInput::Bytes(input_blob.bytes);
-            registry
-                .verify(&wp, &input, proof_blob.bytes)
-                .map_err(|e| ProgramError::WitnessedPredicateRejected {
+            registry.verify(&wp, &input, proof_blob.bytes).map_err(|e| {
+                ProgramError::WitnessedPredicateRejected {
                     kind_name: "Temporal",
                     reason: e.to_string(),
-                })
+                }
+            })
         }
 
         StateConstraint::BoundDelta { peer_cell, .. } => {
@@ -1624,12 +1619,15 @@ fn evaluate_constraint_full(
                     PredicateInput::Slot(&new_state.fields[idx])
                 }
                 InputRef::Witness { index } => {
-                    let b = witnesses.blob(*index).ok_or(
-                        ProgramError::WitnessedPredicateRejected {
-                            kind_name,
-                            reason: format!("witness_blobs has no entry at input_ref index {index}"),
-                        },
-                    )?;
+                    let b =
+                        witnesses
+                            .blob(*index)
+                            .ok_or(ProgramError::WitnessedPredicateRejected {
+                                kind_name,
+                                reason: format!(
+                                    "witness_blobs has no entry at input_ref index {index}"
+                                ),
+                            })?;
                     PredicateInput::Bytes(b.bytes)
                 }
                 InputRef::PublicInput { .. } => {
@@ -1655,12 +1653,12 @@ fn evaluate_constraint_full(
                     PredicateInput::Bytes(b.bytes)
                 }
             };
-            registry
-                .verify(wp, &input, proof_blob.bytes)
-                .map_err(|e| ProgramError::WitnessedPredicateRejected {
+            registry.verify(wp, &input, proof_blob.bytes).map_err(|e| {
+                ProgramError::WitnessedPredicateRejected {
                     kind_name,
                     reason: e.to_string(),
-                })
+                }
+            })
         }
 
         StateConstraint::Custom { ir_hash, .. } => {
@@ -1682,9 +1680,7 @@ fn evaluate_constraint_full(
                     reason: "no ProofBytes witness blob carried for Custom predicate".into(),
                 })?;
             let wp = crate::predicate::WitnessedPredicate {
-                kind: crate::predicate::WitnessedPredicateKind::Custom {
-                    vk_hash: *ir_hash,
-                },
+                kind: crate::predicate::WitnessedPredicateKind::Custom { vk_hash: *ir_hash },
                 commitment: *ir_hash,
                 input_ref: InputRef::Slot { index: 0 },
                 proof_witness_index: 0,

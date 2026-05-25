@@ -1041,9 +1041,6 @@ fn diagnose_denial(caveat_set: &CaveatSet, request: &AuthRequest) -> String {
     let mut confined_users: Vec<String> = Vec::new();
     let mut oauth_providers: Vec<String> = Vec::new();
     let mut oauth_scopes: Vec<String> = Vec::new();
-    let mut machines: Vec<String> = Vec::new();
-    let mut commands: Vec<String> = Vec::new();
-    let mut orgs: Vec<u64> = Vec::new();
     let mut validity_windows: Vec<(Option<i64>, Option<i64>)> = Vec::new();
 
     for wc in caveat_set.first_party_caveats() {
@@ -1056,9 +1053,6 @@ fn diagnose_denial(caveat_set: &CaveatSet, request: &AuthRequest) -> String {
             Ok(pyana_caveats::PyanaGrant::ConfineUser(uid)) => confined_users.push(uid),
             Ok(pyana_caveats::PyanaGrant::OAuthProvider(p)) => oauth_providers.push(p),
             Ok(pyana_caveats::PyanaGrant::OAuthScope(s)) => oauth_scopes.push(s),
-            Ok(pyana_caveats::PyanaGrant::FromMachine(m)) => machines.push(m),
-            Ok(pyana_caveats::PyanaGrant::Command(c)) => commands.push(c),
-            Ok(pyana_caveats::PyanaGrant::Organization(id)) => orgs.push(id),
             Ok(pyana_caveats::PyanaGrant::ValidityWindow {
                 not_before,
                 not_after,
@@ -1132,30 +1126,9 @@ fn diagnose_denial(caveat_set: &CaveatSet, request: &AuthRequest) -> String {
         }
     }
 
-    if let Some(req_org) = request.org_id {
-        if !orgs.is_empty() && !orgs.contains(&req_org) {
-            return format!(
-                "token restricted to org(s) {:?}, requested org {}",
-                orgs, req_org
-            );
-        }
-    }
-
     if let Some(req_provider) = &request.oauth_provider {
         if !oauth_providers.is_empty() && !oauth_providers.contains(req_provider) {
             return format!("token not valid for OAuth provider '{}'", req_provider);
-        }
-    }
-
-    if let Some(req_machine) = &request.machine_id {
-        if !machines.is_empty() && !machines.contains(req_machine) {
-            return format!("token not valid for machine '{}'", req_machine);
-        }
-    }
-
-    if let Some(req_cmd) = &request.command {
-        if !commands.is_empty() && !commands.contains(req_cmd) {
-            return format!("token not valid for command '{}'", req_cmd);
         }
     }
 
@@ -1187,13 +1160,11 @@ fn diagnose_denial(caveat_set: &CaveatSet, request: &AuthRequest) -> String {
 /// Some checks in the old `verify_caveats` are NEGATIVE constraints (deny-if-match)
 /// that are awkward in a pure-positive Datalog. We handle these as pre-checks:
 /// - Time validity (not_before / not_after)
-/// - Organization restriction
 /// - User confinement
-/// - Machine binding
-/// - Command restriction
 /// - OAuth provider/scope restriction
 /// - Feature set containment
 /// - Feature glob patterns
+/// - Budget enforcement
 ///
 /// These run BEFORE the Datalog evaluation and produce Denied errors directly.
 /// The Datalog engine handles the POSITIVE allow logic (app/service/action matching).
@@ -1207,27 +1178,20 @@ pub fn pre_evaluation_deny_checks(
     caveat_set: &CaveatSet,
     request: &AuthRequest,
 ) -> Result<(), TokenError> {
-    let mut orgs: Vec<u64> = Vec::new();
     let mut confined_users: Vec<String> = Vec::new();
     let mut oauth_providers: Vec<String> = Vec::new();
     let mut oauth_scopes: Vec<String> = Vec::new();
-    let mut machines: Vec<String> = Vec::new();
-    let mut commands: Vec<String> = Vec::new();
     let mut features: Vec<String> = Vec::new();
     let mut validity_windows: Vec<(Option<i64>, Option<i64>)> = Vec::new();
     let mut feature_globs: Vec<(Vec<String>, Vec<String>)> = Vec::new();
 
     let mut budgets: Vec<(String, u64)> = Vec::new(); // (budget_id, limit)
-    let mut revocable_ids: Vec<String> = Vec::new();
 
     for wc in caveat_set.first_party_caveats() {
         match pyana_caveats::decode_grant(&wc) {
-            Ok(pyana_caveats::PyanaGrant::Organization(id)) => orgs.push(id),
             Ok(pyana_caveats::PyanaGrant::ConfineUser(uid)) => confined_users.push(uid),
             Ok(pyana_caveats::PyanaGrant::OAuthProvider(p)) => oauth_providers.push(p),
             Ok(pyana_caveats::PyanaGrant::OAuthScope(s)) => oauth_scopes.push(s),
-            Ok(pyana_caveats::PyanaGrant::FromMachine(m)) => machines.push(m),
-            Ok(pyana_caveats::PyanaGrant::Command(c)) => commands.push(c),
             Ok(pyana_caveats::PyanaGrant::Feature(name)) => features.push(name),
             Ok(pyana_caveats::PyanaGrant::ValidityWindow {
                 not_before,
@@ -1236,12 +1200,9 @@ pub fn pre_evaluation_deny_checks(
             Ok(pyana_caveats::PyanaGrant::FeatureGlob { include, exclude }) => {
                 feature_globs.push((include, exclude))
             }
-            // Issue #1: Budget and revocation MUST be checked here.
+            // Issue #1: Budget MUST be checked here.
             Ok(pyana_caveats::PyanaGrant::Budget { id, limit, .. }) => {
                 budgets.push((id, limit));
-            }
-            Ok(pyana_caveats::PyanaGrant::Revocable(token_id)) => {
-                revocable_ids.push(token_id);
             }
             Ok(pyana_caveats::PyanaGrant::Unknown(type_id, _)) => {
                 // Fail-closed: unknown caveat types MUST deny authorization.
@@ -1275,29 +1236,6 @@ pub fn pre_evaluation_deny_checks(
         if let Some(na) = not_after {
             if now > *na {
                 return Err(TokenError::Expired);
-            }
-        }
-    }
-
-    // Organization: match-any.
-    // SECURITY: If the token has org restrictions, the request MUST specify an org_id.
-    // Otherwise, a token scoped to org=42 could be used on the passthrough path
-    // (features-only or time-only requests) without the org being verified.
-    if !orgs.is_empty() {
-        match request.org_id {
-            Some(req_org) => {
-                if !orgs.contains(&req_org) {
-                    return Err(TokenError::Denied(format!(
-                        "token restricted to org(s) {:?}, requested org {}",
-                        orgs, req_org
-                    )));
-                }
-            }
-            None => {
-                return Err(TokenError::Denied(format!(
-                    "token restricted to org(s) {:?} but request does not specify org_id",
-                    orgs
-                )));
             }
         }
     }
@@ -1360,47 +1298,6 @@ pub fn pre_evaluation_deny_checks(
                     "OAuth scope '{}' not granted by token",
                     req_scope
                 )));
-            }
-        }
-    }
-
-    // Machine: match-any.
-    // SECURITY: If the token is machine-restricted, the request MUST specify machine_id.
-    if !machines.is_empty() {
-        match &request.machine_id {
-            Some(req_machine) => {
-                if !machines.contains(req_machine) {
-                    return Err(TokenError::Denied(format!(
-                        "token not valid for machine '{}'",
-                        req_machine
-                    )));
-                }
-            }
-            None => {
-                return Err(TokenError::Denied(
-                    "token restricted to specific machine(s) but request does not specify machine_id".into(),
-                ));
-            }
-        }
-    }
-
-    // Command: match-any.
-    // SECURITY: If the token has command restrictions, the request MUST specify command.
-    // Otherwise, a command-restricted token could be used without command verification.
-    if !commands.is_empty() {
-        match &request.command {
-            Some(req_cmd) => {
-                if !commands.contains(req_cmd) {
-                    return Err(TokenError::Denied(format!(
-                        "token not valid for command '{}'",
-                        req_cmd
-                    )));
-                }
-            }
-            None => {
-                return Err(TokenError::Denied(
-                    "token requires command but request omits it".into(),
-                ));
             }
         }
     }
@@ -1489,25 +1386,6 @@ pub fn pre_evaluation_deny_checks(
                         budget_id
                     )));
                 }
-            }
-        }
-    }
-
-    // Issue #1 (CRITICAL): Revocation enforcement — MUST run regardless of request dimensions.
-    // Previously revocable_ids were collected but never validated here, allowing bypass
-    // via the "dimension passthrough" path in verify_token_datalog_full.
-    if !revocable_ids.is_empty() {
-        if request.not_revoked.is_empty() {
-            return Err(TokenError::Denied(
-                "revocation state required for verification: token is revocable but no revocation proof was provided".into(),
-            ));
-        }
-        for token_id in &revocable_ids {
-            if !request.not_revoked.contains(token_id) {
-                return Err(TokenError::Denied(format!(
-                    "token '{}' has been revoked or no non-revocation proof provided",
-                    token_id
-                )));
             }
         }
     }
@@ -1900,27 +1778,6 @@ mod tests {
 
         let request2 = AuthRequest {
             oauth_provider: Some("google".into()),
-            now: Some(1700000000),
-            ..Default::default()
-        };
-        assert_paths_agree(&set, &request2);
-    }
-
-    #[test]
-    fn test_comparison_command() {
-        let mut set = CaveatSet::new();
-        set.push(WireCaveat::new(CAV_COMMAND, encode_string("deploy")));
-        set.push(WireCaveat::new(CAV_COMMAND, encode_string("status")));
-
-        let request = AuthRequest {
-            command: Some("deploy".into()),
-            now: Some(1700000000),
-            ..Default::default()
-        };
-        assert_paths_agree(&set, &request);
-
-        let request2 = AuthRequest {
-            command: Some("rollback".into()),
             now: Some(1700000000),
             ..Default::default()
         };
@@ -2333,7 +2190,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Security tests: fail-closed for OAuth/command/features
+    // Security tests: fail-closed for OAuth/features
     // =========================================================================
 
     #[test]
@@ -2359,33 +2216,6 @@ mod tests {
         assert!(
             err_msg.contains("OAuth provider"),
             "error should mention OAuth provider, got: {}",
-            err_msg
-        );
-    }
-
-    #[test]
-    fn test_command_fails_closed_when_request_omits_command() {
-        // ATTACK: Token has Command("deploy") restriction.
-        // Request omits command entirely.
-        // Previously this would PASS (fail-open). Now it must DENY.
-        let mut set = CaveatSet::new();
-        set.push(WireCaveat::new(CAV_COMMAND, encode_string("deploy")));
-
-        let request = AuthRequest {
-            now: Some(1700000000),
-            // command: None -- omitted!
-            ..Default::default()
-        };
-
-        let result = pre_evaluation_deny_checks(&set, &request);
-        assert!(
-            result.is_err(),
-            "token with command restriction must deny when request omits command"
-        );
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("command"),
-            "error should mention command, got: {}",
             err_msg
         );
     }
@@ -2433,25 +2263,6 @@ mod tests {
         assert!(
             result.is_ok(),
             "matching OAuth provider should pass, got: {:?}",
-            result.unwrap_err()
-        );
-    }
-
-    #[test]
-    fn test_command_allows_when_request_provides_matching_command() {
-        let mut set = CaveatSet::new();
-        set.push(WireCaveat::new(CAV_COMMAND, encode_string("deploy")));
-
-        let request = AuthRequest {
-            command: Some("deploy".into()),
-            now: Some(1700000000),
-            ..Default::default()
-        };
-
-        let result = pre_evaluation_deny_checks(&set, &request);
-        assert!(
-            result.is_ok(),
-            "matching command should pass, got: {:?}",
             result.unwrap_err()
         );
     }

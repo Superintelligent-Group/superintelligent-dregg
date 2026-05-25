@@ -709,6 +709,7 @@ fn run_pipeline(_ledger: &mut Ledger) -> Result<(), Box<dyn Error>> {
             may_delegate: DelegationMode::ParentsOwn,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
         let mut forest = CallForest::new();
         forest.add_root(action);
@@ -893,6 +894,7 @@ fn run_atomic_swap(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Error
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let ba = Action {
@@ -922,6 +924,7 @@ fn run_atomic_swap(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Error
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     // Conservation
@@ -1082,13 +1085,13 @@ fn run_causal_ordering() -> Result<(), Box<dyn Error>> {
 }
 
 fn run_multi_silo_budget() -> Result<(), Box<dyn Error>> {
-    use pyana_coord::budget::BudgetCoordinator;
+    use pyana_coord::budget::StingrayCounter;
     let agent = CellId::from_bytes([0xAA; 32]);
     let sa = [1u8; 32];
     let sb = [2u8; 32];
     let sc = [3u8; 32];
     let sd = [4u8; 32];
-    let mut coord = BudgetCoordinator::new(agent, 1000, vec![sa, sb, sc, sd], 1)?;
+    let mut coord = StingrayCounter::new(agent, 1000, vec![sa, sb, sc, sd], 1)?;
     let rem = coord.remaining(&sa).unwrap();
     assert!(rem > 0);
     let d1 = *blake3::hash(&1u64.to_le_bytes()).as_bytes();

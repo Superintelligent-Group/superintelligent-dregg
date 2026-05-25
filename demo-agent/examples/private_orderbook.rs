@@ -302,6 +302,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     // Bob's action: spend ETH bid note, receive USDC
@@ -332,6 +333,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     // Build the forest and sign fragments

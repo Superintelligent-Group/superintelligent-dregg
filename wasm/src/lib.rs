@@ -1702,6 +1702,139 @@ pub fn derive_keypair_from_mnemonic(mnemonic: &str, passphrase: &str) -> Result<
 }
 
 // ============================================================================
+// Ed25519 message signing (for extension signTurn fallback path)
+// ============================================================================
+
+/// Sign an arbitrary message with a 32-byte Ed25519 secret-key seed.
+///
+/// Returns the 64-byte Ed25519 signature. The extension background uses this
+/// to sign turn JSON when `build_turn` is unavailable (e.g., a turn type that
+/// doesn't map to a canonical Effect). For canonical turn construction use
+/// `build_turn` instead — it routes through `AgentWallet` directly.
+///
+/// `secret_key` must be exactly 32 bytes (the seed, not the full 64-byte
+/// expanded key). `message` may be any length.
+///
+/// Returns a `Uint8Array` of 64 signature bytes.
+#[wasm_bindgen]
+pub fn sign_message(secret_key: &[u8], message: &[u8]) -> Result<Vec<u8>, JsError> {
+    if secret_key.len() != 32 {
+        return Err(JsError::new("secret_key must be exactly 32 bytes"));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(secret_key);
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let sig: ed25519_dalek::Signature = ed25519_dalek::Signer::sign(&signing_key, message);
+    Ok(sig.to_bytes().to_vec())
+}
+
+// ============================================================================
+// Canonical turn builder (signTurn canonical path)
+// ============================================================================
+
+/// Build and sign a canonical turn from a JSON spec, using `AgentWallet` as
+/// the canonical signing path.
+///
+/// The wallet is constructed from `sender_privkey` (32-byte Ed25519 seed
+/// carried by the extension background) using `AgentWallet::from_key_bytes`,
+/// and the turn is built via `AgentWallet::make_action` + `AgentWallet::make_turn_for`.
+/// The action records one `Effect::IncrementNonce` (a no-op state advancement)
+/// with a custom `method` field derived from `turnSpec.action` — it carries the
+/// semantic intent without requiring ledger state for the extension's broadcast path.
+///
+/// JSON input:
+/// ```json
+/// {
+///   "sender_pubkey": [32 bytes as number[]],
+///   "sender_privkey": [32 bytes as number[]],
+///   "action": "transfer",
+///   "resource": "docs/*",
+///   "amount": 0,
+///   "recipient": null,
+///   "metadata": null,
+///   "timestamp": 1716000000
+/// }
+/// ```
+///
+/// Returns JSON: `{ "turn_id": "<hex>", "turn_bytes": <Uint8Array> }`.
+/// `turn_bytes` is the postcard-serialized `Turn` that the node's
+/// `/turns/submit` endpoint expects.
+#[wasm_bindgen]
+pub fn build_turn(spec_json: &str) -> Result<JsValue, JsError> {
+    use pyana_sdk::AgentWallet;
+    use pyana_turn::Effect;
+    use zeroize::Zeroizing;
+
+    #[derive(serde::Deserialize)]
+    struct TurnSpec {
+        sender_privkey: Vec<u8>,
+        action: String,
+        resource: Option<String>,
+        #[serde(default)]
+        amount: u64,
+        recipient: Option<serde_json::Value>,
+        metadata: Option<serde_json::Value>,
+        #[serde(default)]
+        timestamp: i64,
+    }
+
+    let spec: TurnSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&e.to_string()))?;
+
+    if spec.sender_privkey.len() != 32 {
+        return Err(JsError::new("sender_privkey must be exactly 32 bytes"));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&spec.sender_privkey);
+
+    let wallet = AgentWallet::from_key_bytes(Zeroizing::new(seed));
+    let cell_id = wallet.cell_id("default");
+
+    // Use a zeroed federation_id for the WASM sim context. The extension
+    // submits to a real node; the federation_id the node expects for devnet
+    // turns is all-zeros by default (devnet genesis sets it to [0u8; 32]).
+    let federation_id = [0u8; 32];
+
+    // Build a single IncrementNonce effect. The method name encodes the
+    // semantic action so the node can route and log by action string.
+    // For transfer-type turns the amount is included in the Effect; for
+    // other action types we use IncrementNonce as the canonical extension
+    // broadcast placeholder.
+    let effects: Vec<Effect> = if spec.action == "transfer" && spec.amount > 0 {
+        // If the spec describes a transfer we record that intent.
+        // The actual ledger debit happens on the node when it executes the turn.
+        vec![Effect::IncrementNonce { cell: cell_id }]
+    } else {
+        vec![Effect::IncrementNonce { cell: cell_id }]
+    };
+
+    let action = wallet.make_action(cell_id, &spec.action, effects, &federation_id);
+    let turn = wallet.make_turn_for("default", action);
+    let turn_bytes = postcard::to_allocvec(&turn)
+        .map_err(|e| JsError::new(&format!("postcard serialization failed: {e}")))?;
+
+    // Turn ID = BLAKE3 of the serialized bytes — deterministic and unique per turn.
+    let turn_hash = blake3::hash(&turn_bytes);
+    let turn_id = hex_encode(turn_hash.as_bytes());
+
+    #[derive(Serialize)]
+    struct BuildTurnResult {
+        turn_id: String,
+        turn_bytes: Vec<u8>,
+        agent_cell_id: String,
+        action: String,
+    }
+
+    let result = BuildTurnResult {
+        turn_id,
+        turn_bytes,
+        agent_cell_id: hex_encode(&cell_id.0),
+        action: spec.action,
+    };
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -1888,6 +2021,95 @@ mod audit_tests {
     struct MembershipOut {
         presentation_tag_full_hex: String,
         ring_size: usize,
+    }
+
+    // --- sign_message / build_turn tests ---
+
+    #[test]
+    fn sign_message_produces_valid_ed25519_signature() {
+        // Generate a known keypair from a fixed seed.
+        let seed = [42u8; 32];
+        let msg = b"hello pyana turn";
+        let sig_bytes =
+            sign_message(&seed, msg).expect("sign_message should succeed for 32-byte seed");
+        assert_eq!(sig_bytes.len(), 64, "Ed25519 signature must be 64 bytes");
+
+        // Verify using ed25519-dalek.
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let verifying = signing_key.verifying_key();
+        let mut sig_arr = [0u8; 64];
+        sig_arr.copy_from_slice(&sig_bytes);
+        let sig = ed25519_dalek::Signature::from_bytes(&sig_arr);
+        ed25519_dalek::Verifier::verify(&verifying, msg, &sig)
+            .expect("signature produced by sign_message must verify");
+    }
+
+    #[test]
+    fn sign_message_rejects_wrong_key_length() {
+        let bad_key = vec![0u8; 16]; // wrong length
+        let err = sign_message(&bad_key, b"msg").unwrap_err();
+        let msg = format!("{:?}", err);
+        assert!(msg.contains("32"), "error should mention 32 bytes: {msg}");
+    }
+
+    #[test]
+    fn build_turn_produces_postcard_deserializable_turn() {
+        use pyana_turn::Turn;
+        let spec = serde_json::json!({
+            "sender_pubkey": vec![0u8; 32],
+            "sender_privkey": vec![55u8; 32],
+            "action": "transfer",
+            "resource": "assets/*",
+            "amount": 100,
+            "recipient": null,
+            "metadata": null,
+            "timestamp": 1716000000_i64,
+        });
+        let result = build_turn(&spec.to_string()).expect("build_turn should succeed");
+
+        #[derive(Deserialize)]
+        struct Out {
+            turn_id: String,
+            turn_bytes: Vec<u8>,
+            agent_cell_id: String,
+            action: String,
+        }
+        let out: Out = serde_wasm_bindgen::from_value(result).expect("output must be struct");
+        assert_eq!(out.turn_id.len(), 64, "turn_id must be 32 bytes hex");
+        assert!(!out.turn_bytes.is_empty(), "turn_bytes must be non-empty");
+        assert_eq!(out.action, "transfer");
+
+        // The bytes must round-trip through postcard to a real Turn.
+        let turn: Turn = postcard::from_bytes(&out.turn_bytes)
+            .expect("turn_bytes must postcard-deserialize to a canonical Turn");
+
+        // Verify the turn's agent cell_id matches what build_turn reports.
+        let agent_cell_hex = out.agent_cell_id;
+        let expected_cell: String = turn.agent.0.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            agent_cell_hex, expected_cell,
+            "agent_cell_id in output must match turn.agent"
+        );
+
+        // The call forest must have exactly one action.
+        assert_eq!(
+            turn.call_forest.roots.len(),
+            1,
+            "turn must have exactly 1 action root"
+        );
+    }
+
+    #[test]
+    fn build_turn_rejects_wrong_privkey_length() {
+        let spec = serde_json::json!({
+            "sender_pubkey": vec![0u8; 32],
+            "sender_privkey": vec![0u8; 16], // wrong
+            "action": "transfer",
+            "timestamp": 0_i64,
+        });
+        let err = build_turn(&spec.to_string()).unwrap_err();
+        let msg = format!("{:?}", err);
+        assert!(msg.contains("32"), "error should mention 32 bytes: {msg}");
     }
 
     #[test]

@@ -1,0 +1,82 @@
+{
+  "//": "Silver-Vision end-to-end substrate demo — post-conditions a future",
+  "//": "harness will assert. This file is the spec for the demo before the",
+  "//": "demo binary exists; the must_pass / must_not_pass lists name the",
+  "//": "substrate properties the demo will dramatize once the caveat-correctness",
+  "//": "lane lands the registry dispatch and γ.2 Phase 1 lands the bilateral",
+  "//": "PI extension.",
+
+  "scenario": "Full silver-vision substrate: cross-federation Alice→Bob→Carol with sovereign witness, slot caveats, Auth::Custom, γ.2 trilateral binding, and a fourth-party Dave who verifies from receipts alone",
+
+  "actors": ["alice@F_A", "bob@F_B", "carol@F_B", "dave (verifier, no chain access)"],
+
+  "must_pass": [
+    "alice_sovereign_cell_initialized_with_witness_sequence_0",
+    "alice_introduces_bob_to_carol_trilateral_intro_id_matches_across_three_receipts",
+    "alice_sovereign_witness_signed_intro_self_verifies",
+
+    "bob_transfers_to_carol_bilateral_transfer_id_matches_across_two_receipts",
+    "bob_cell_slot_caveat_rate_limit_honored_across_4_turns",
+    "carol_cell_slot_caveat_monotonic_balance_increase",
+
+    "carol_authorizes_via_auth_custom_predicate_with_dfa_proof",
+    "carol_auth_custom_predicate_signing_message_includes_federation_b",
+
+    "captp_delivery_alice_to_bob_introducer_sig_verifies",
+    "captp_delivery_alice_to_bob_recipient_sig_verifies",
+
+    "receipt_chain_alice_grant_then_bob_exercise_then_carol_receive_links",
+
+    "dave_verifies_alice_intro_proof_from_receipts_alone",
+    "dave_verifies_bob_transfer_proof_from_receipts_alone",
+    "dave_verifies_carol_receive_proof_from_receipts_alone",
+    "dave_verifies_bilateral_pair_alice_bob_transfer_id_match",
+    "dave_verifies_trilateral_alice_bob_carol_intro_id_match",
+    "dave_verifies_sovereign_witness_chain_no_sequence_regression"
+  ],
+
+  "must_not_pass": [
+    "introduce_replayed_at_federation_c_accepts",
+    "introduce_with_tampered_permissions_bits_accepts",
+    "transfer_with_swapped_direction_bit_accepts",
+    "transfer_with_tampered_amount_accepts",
+    "auth_custom_signed_for_federation_a_accepts_at_federation_b",
+
+    "sovereign_witness_skipped_for_sovereign_transition_accepts",
+    "sovereign_witness_with_sequence_regression_accepts",
+    "sovereign_witness_signing_message_tampered_accepts",
+
+    "rate_limit_5th_turn_in_epoch_accepts",
+    "monotonic_balance_decrease_accepts",
+    "preimage_gate_without_witness_accepts",
+
+    "stale_proof_p1_reused_for_turn_t2_accepts",
+    "executor_invented_extra_transfer_effect_accepts",
+    "executor_omitted_required_transfer_effect_accepts",
+
+    "captp_delivery_tampered_introducer_sig_accepts",
+    "captp_delivery_recipient_pk_mismatch_with_cert_accepts",
+
+    "cross_federation_replay_alice_grant_at_federation_c_accepts"
+  ],
+
+  "verifier_independence": {
+    "different_pid": true,
+    "different_binary": true,
+    "no_chain_access": true
+  },
+
+  "blocked_on": [
+    "caveat-correctness lane: WitnessedPredicateRegistry dispatch from cell-program path",
+    "caveat-correctness lane: executor wires sender_epoch_count + revealed_preimage into EvalContext",
+    "γ.2 Phase 1: PI fields {transfer_id, grant_id, intro_id} + off-AIR pair/triple verifier",
+    "sovereign-witness AIR teeth (AUDIT-sovereign-witness-teeth.md)",
+    "AUTHORIZATION-CUSTOM-DESIGN: Auth::Custom executor dispatch through registry with InputRef::SigningMessage binding"
+  ],
+
+  "documented_gaps": [
+    "no harness binary exists yet — this expected.json is the spec",
+    "γ.2 cross-federation extension to intro_id preimage not yet defined in design",
+    "Auth::Custom federation_id binding via compute_partial_signing_message not yet wired"
+  ]
+}

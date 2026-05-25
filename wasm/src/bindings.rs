@@ -655,12 +655,15 @@ pub fn create_federation(handle: usize, name: &str, num_nodes: usize) -> Result<
             threshold: usize,
             max_faults: usize,
         }
+        let threshold = fed.federation.threshold() as usize;
+        // max_faults = n - threshold (BFT tolerance)
+        let max_faults = fed.node_count.saturating_sub(threshold);
         let result = FedResult {
             fed_index: idx,
             name: fed.name.clone(),
-            num_nodes: fed.federation.nodes.len(),
-            threshold: fed.federation.config.threshold,
-            max_faults: fed.federation.config.max_faults,
+            num_nodes: fed.node_count,
+            threshold,
+            max_faults,
         };
         serde_wasm_bindgen::to_value(&result).map_err(|e| e.to_string())
     })
@@ -686,7 +689,7 @@ pub fn propose_block(
         }
         let events: Vec<String> = serde_json::from_str(events_json).map_err(|e| e.to_string())?;
         let block_hash = rt.propose_block(fed_index, events);
-        let height = rt.federations[fed_index].federation.finalized_history.len() as u64;
+        let height = rt.federations[fed_index].height;
 
         #[derive(Serialize)]
         struct BlockResult {
@@ -705,7 +708,7 @@ pub fn propose_block(
 
 /// Get a snapshot of federation state — node count, finalized history depth,
 /// latest attested root, etc. All values derived from the canonical
-/// `Federation` instance.
+/// `Federation` committee + local consensus state.
 #[wasm_bindgen]
 pub fn get_federation_state(handle: usize, fed_index: usize) -> Result<JsValue, JsError> {
     with_runtime_ref(handle, |rt| {
@@ -715,22 +718,21 @@ pub fn get_federation_state(handle: usize, fed_index: usize) -> Result<JsValue, 
         let fed = &rt.federations[fed_index];
         let canonical = &fed.federation;
 
-        let num_finalized = canonical.finalized_history.len();
-        let latest_root = canonical
-            .finalized_history
+        let num_finalized = fed.finalized_blocks.len();
+        let latest_root = fed
+            .finalized_blocks
             .last()
-            .map(|(b, _)| hex_encode(&b.block_hash));
+            .map(|b| hex_encode(&b.block_hash));
 
         // Total event count across all finalized blocks.
-        let num_events: usize = canonical
-            .finalized_history
+        let num_events: usize = fed
+            .finalized_blocks
             .iter()
-            .map(|(b, _)| b.events.len())
+            .map(|b| b.revoked_token_ids.len())
             .sum();
 
-        let online: usize = canonical.online_count();
-
-        // Per-node view (real NodeIdentity + tree size).
+        // Per-node view: the canonical `Federation` holds the committee pubkeys;
+        // all nodes are always online in the wasm sim (no crash/recover API).
         #[derive(Serialize)]
         struct NodeView {
             node_id: usize,
@@ -739,15 +741,17 @@ pub fn get_federation_state(handle: usize, fed_index: usize) -> Result<JsValue, 
             is_online: bool,
             revoked_count: usize,
         }
-        let nodes: Vec<NodeView> = canonical
-            .nodes
+        let members = canonical.members();
+        let total_revoked = fed.revoked_set.len();
+        let nodes: Vec<NodeView> = members
             .iter()
-            .map(|n| NodeView {
-                node_id: n.identity.id,
-                name: n.identity.name.clone(),
-                public_key: hex_encode(&n.identity.public_key.0),
-                is_online: n.is_online,
-                revoked_count: n.revocation_tree.len(),
+            .enumerate()
+            .map(|(i, pk)| NodeView {
+                node_id: i,
+                name: format!("{}-{i}", fed.name),
+                public_key: hex_encode(&pk.0),
+                is_online: true,
+                revoked_count: total_revoked,
             })
             .collect();
 
@@ -768,11 +772,11 @@ pub fn get_federation_state(handle: usize, fed_index: usize) -> Result<JsValue, 
         let result = FedState {
             fed_index,
             name: fed.name.clone(),
-            height: num_finalized as u64,
-            num_nodes: canonical.nodes.len(),
-            online_nodes: online,
-            threshold: canonical.config.threshold,
-            epoch: canonical.config.epoch,
+            height: fed.height,
+            num_nodes: fed.node_count,
+            online_nodes: fed.node_count,
+            threshold: canonical.threshold() as usize,
+            epoch: canonical.epoch(),
             num_events,
             num_finalized_roots: num_finalized,
             latest_root,
@@ -797,8 +801,7 @@ pub fn simulate_consensus_round(handle: usize, fed_index: usize) -> Result<JsVal
 }
 
 /// Get a finalized block by height (1-indexed; height 1 = first finalized
-/// block). Returns `null` if the height has not been finalized. The shape
-/// mirrors the canonical `RevocationBlock` + `QuorumCertificate`.
+/// block). Returns `null` if the height has not been finalized.
 #[wasm_bindgen]
 pub fn get_federation_block(
     handle: usize,
@@ -814,13 +817,9 @@ pub fn get_federation_block(
             return serde_wasm_bindgen::to_value(&serde_json::Value::Null)
                 .map_err(|e| e.to_string());
         }
-        let entry = fed
-            .federation
-            .finalized_history
-            .iter()
-            .find(|(b, _)| b.height == height);
-        let (block, qc) = match entry {
-            Some(e) => e,
+        let block = fed.finalized_blocks.iter().find(|b| b.height == height);
+        let block = match block {
+            Some(b) => b,
             None => {
                 return serde_wasm_bindgen::to_value(&serde_json::Value::Null)
                     .map_err(|e| e.to_string());
@@ -845,14 +844,14 @@ pub fn get_federation_block(
             fed_index,
             height: block.height,
             view: block.view,
-            proposer: block.proposer,
+            proposer: 0,
             block_hash: hex_encode(&block.block_hash),
-            prev_hash: hex_encode(&block.prev_hash),
-            pre_state_root: hex_encode(&block.pre_state_root),
-            post_state_root: hex_encode(&block.post_state_root),
-            events: block.events.iter().map(|e| e.token_id.clone()).collect(),
-            num_votes: qc.votes.len(),
-            qc_threshold: qc.threshold,
+            prev_hash: hex_encode(&[0u8; 32]),
+            pre_state_root: hex_encode(&[0u8; 32]),
+            post_state_root: hex_encode(&[0u8; 32]),
+            events: block.revoked_token_ids.clone(),
+            num_votes: block.qc_votes,
+            qc_threshold: block.qc_threshold,
         };
         serde_wasm_bindgen::to_value(&result).map_err(|e| e.to_string())
     })
@@ -878,15 +877,14 @@ pub fn list_federation_blocks(handle: usize, fed_index: usize) -> Result<JsValue
             num_events: usize,
         }
         let blocks: Vec<BlockSummary> = fed
-            .federation
-            .finalized_history
+            .finalized_blocks
             .iter()
-            .map(|(b, _)| BlockSummary {
+            .map(|b| BlockSummary {
                 fed_index,
                 height: b.height,
                 view: b.view,
                 block_hash: hex_encode(&b.block_hash),
-                num_events: b.events.len(),
+                num_events: b.revoked_token_ids.len(),
             })
             .collect();
         serde_wasm_bindgen::to_value(&blocks).map_err(|e| e.to_string())

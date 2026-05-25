@@ -263,6 +263,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn_no_proof = Turn {
@@ -335,6 +336,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn_with_proof = Turn {
@@ -420,6 +422,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn_bad_proof = Turn {

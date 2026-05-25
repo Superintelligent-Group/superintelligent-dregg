@@ -65,6 +65,7 @@ impl ArtworkRegistry {
             may_delegate: DelegationMode::Inherit,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let turn = Turn {

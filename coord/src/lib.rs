@@ -1,6 +1,6 @@
 //! # pyana-coord
 //!
-//! Two-layer turn coordination for the Pyana agent network.
+//! Three-layer turn coordination for the Pyana agent network.
 //!
 //! ## Layer 1: Causal Chaining (cheap, async, no coordination needed)
 //!
@@ -16,6 +16,17 @@
 //! Uses a simple 2-phase commit: Propose -> Vote -> Commit/Abort.
 //! If any participant's preconditions fail, the entire forest is aborted.
 //! The committed forest gets a threshold QC (everyone who participated signs).
+//!
+//! ## Layer 3: Stingray Bounded Counters (concurrent spending, no coordination)
+//!
+//! Based on the Stingray protocol (arXiv:2501.06531). An agent's total resource
+//! balance is split into per-silo slices. Each silo may debit locally up to its
+//! slice ceiling without any cross-silo coordination. The invariant
+//! `slice_ceiling = balance * (f+1) / (2f+1)` ensures that, even with f Byzantine
+//! silos, total honest spending cannot exceed the true balance. Slices are reconciled
+//! periodically via a signed spending-certificate rebalance. Fast-unlock allows
+//! immediate release of locked resources after a 2PC abort without waiting for an
+//! epoch timeout.
 //!
 //! # Architecture
 //!
@@ -39,6 +50,19 @@
 //! │                                                                          │
 //! │  (2PC: all-or-nothing commitment of a shared call forest)                │
 //! └──────────────────────────────────────────────────────────────────────────┘
+//!
+//! ┌──────────────────────────────────────────────────────────────────────────┐
+//! │  Layer 3: Stingray Bounded Counters                                      │
+//! │                                                                          │
+//! │    balance B, silos S, Byzantine tolerance f                             │
+//! │    slice_ceiling = B * (f+1) / (2f+1)                                   │
+//! │                                                                          │
+//! │    Silo A ──debit──► local slice A (no coordination)                    │
+//! │    Silo B ──debit──► local slice B (no coordination)                    │
+//! │    Rebalance ◄── cert_A + cert_B ──► new slices                         │
+//! │                                                                          │
+//! │  (concurrent spending; Ed25519-signed certificates; fast unlock)         │
+//! └──────────────────────────────────────────────────────────────────────────┘
 //! ```
 
 pub mod atomic;
@@ -46,7 +70,6 @@ pub mod budget;
 pub mod causal;
 pub mod error;
 pub mod serde_sig;
-pub mod shared_budget;
 
 #[cfg(test)]
 mod tests;
@@ -57,11 +80,8 @@ pub use atomic::{
     Participant, ProposeMessage, Vote,
 };
 pub use budget::{
-    BudgetCoordinator, BudgetError, BudgetSlice, FastUnlockManager, UnlockCertificate,
-    UnlockRequest,
+    BudgetCoordinator, BudgetError, BudgetSlice, FastUnlockManager, StingrayCounter,
+    UnlockCertificate, UnlockRequest,
 };
-pub use causal::{CausalDag, CausalLedger, CausalTurn};
+pub use causal::CausalDag;
 pub use error::CoordError;
-pub use shared_budget::{
-    DebitResolution, ResourceState, SharedBudgetError, SharedBudgetObserver, SharedResourceBudget,
-};

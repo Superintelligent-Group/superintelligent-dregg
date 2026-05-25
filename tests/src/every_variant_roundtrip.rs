@@ -304,6 +304,7 @@ fn all_effect_variants() -> Vec<Variant> {
                     may_delegate: DelegationMode::None,
                     commitment_mode: Default::default(),
                     balance_change: None,
+                    witness_blobs: vec![],
                 }),
             },
         },
@@ -639,6 +640,7 @@ fn construct_minimal_turn_with(agent: CellId, effect: Effect, nonce: u64) -> Tur
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let mut forest = pyana_turn::forest::CallForest::new();

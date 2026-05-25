@@ -28,13 +28,18 @@
 //!
 //! ## Status
 //!
-//! - `balance_conservation`        — IMPLEMENTED
-//! - `nonce_monotonicity`          — IMPLEMENTED
-//! - `receipt_chain`               — IMPLEMENTED
-//! - `capability_attenuation`      — STUB (next session)
-//! - `facet_attenuation`           — STUB (next session)
-//! - `sealed_field_integrity`      — STUB (next session; compile_fail tests)
-//! - `permission_enforcement`      — STUB (next session)
+//! - `balance_conservation`                      — IMPLEMENTED
+//! - `nonce_monotonicity`                        — IMPLEMENTED
+//! - `receipt_chain`                             — IMPLEMENTED
+//! - `capability_attenuation`                    — STUB (next session)
+//! - `facet_attenuation`                         — STUB (next session)
+//! - `sealed_field_integrity`                    — STUB (next session; compile_fail tests)
+//! - `permission_enforcement`                    — STUB (next session)
+//! - `state_constraint_conjunction`              — IMPLEMENTED (substrate-correctness mandate)
+//! - `any_of_disjunction`                        — IMPLEMENTED
+//! - `sentinel_variants_reject`                  — IMPLEMENTED (CAVEAT-LAYER-COVERAGE.md §6.1)
+//! - `gamma2_id_injectivity`                     — IMPLEMENTED (STAGE-7-GAMMA-2-PI-DESIGN.md §3)
+//! - `authorization_hash_domain_separation`      — IMPLEMENTED (EXECUTOR-HONESTY-AUDIT.md T1/T2/T15 floor)
 
 #![allow(dead_code)]
 

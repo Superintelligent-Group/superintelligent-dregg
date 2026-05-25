@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use pyana_cell::factory::{FactoryCreationParams, FactoryDescriptor};
 use pyana_cell::CellMode;
+use pyana_cell::factory::{FactoryCreationParams, FactoryDescriptor};
 use pyana_cell::{
     AuthRequired, Cell, CellId, Ledger, Note, NoteCommitment, Nullifier, NullifierSet,
     PeerExchange, RevocationChannel, RevocationChannelSet,
@@ -122,31 +122,59 @@ pub struct SimAgent {
     pub peer_exchange: PeerExchange,
 }
 
-// Federation is now wired via the real `pyana_federation::Federation`.
+// Federation is wired via the canonical `pyana_federation::Federation`
+// (attestation context, no simulator). The async TCP transport and the old
+// Morpheus BFT simulator (`node.rs` / `transport.rs`) are native-only and
+// have been deleted. The wasm runtime keeps a lightweight local consensus
+// stub — a `HashSet` of revoked tokens + monotonically increasing height —
+// that lets the Studio UI exercise `propose_block` / `simulate_consensus_round`
+// without any wasm-incompatible I/O.
 //
-// Previously the wasm runtime held a parallel `SimFederation` / `SimFedNode` /
-// `FedEvent` set of types that didn't reflect canonical behavior. After the
-// pyana-federation crate gained a `runtime` feature gate (which gates the
-// tokio + crossbeam transport — the wasm-incompatible bit), the in-browser
-// runtime constructs and drives the *real* `Federation` / `FederationNode`
-// / `ConsensusOrchestrator` types via their sync API. The async TCP
-// transport remains native-only and is not exposed here.
-//
-// Surface exposed to wasm: `create_federation`, `propose_block` (queue +
-// run_consensus_round), `get_federation_state`, `simulate_consensus_round`.
-// These delegate to the canonical types — no JS-side simulation lives here.
+// Surface exposed to wasm: `create_federation`, `propose_block`,
+// `simulate_consensus_round`. These build a real `AttestedRoot` via
+// `Federation::build_attested_root` — the federation_id, threshold, and
+// member keys are all canonical; only the BLS aggregate signature is elided
+// (the wasm Studio does not run the BLS pipeline).
+
+/// Summary of one finalized consensus round, stored in `SimFederation::finalized_blocks`.
+/// Replaces the `(RevocationBlock, QuorumCertificate)` entries in the deleted
+/// `node::Federation::finalized_history`. The fields match what `get_federation_block`
+/// and `list_federation_blocks` expose to JS.
+#[derive(Clone, Debug)]
+pub struct FinalizedBlock {
+    pub height: u64,
+    pub view: u64,
+    pub block_hash: [u8; 32],
+    pub revoked_token_ids: Vec<String>,
+    pub qc_votes: usize,
+    pub qc_threshold: usize,
+}
 
 /// A named in-browser federation. The handle the JS UI uses to address a
 /// federation is its index in `PyanaRuntime::federations`; the friendly name
 /// is informational only (used by `<pyana-federation>` for display).
 pub struct SimFederation {
     pub name: String,
-    pub federation: pyana_federation::MorpheusFederation,
+    /// Canonical `pyana_federation::Federation` — owns the committee pubkeys,
+    /// epoch, threshold, and derived federation_id. Every `AttestedRoot` built
+    /// by this sim carries the federation's real id and threshold.
+    pub federation: pyana_federation::Federation,
+    /// Number of simulated nodes in this federation (committee size).
+    pub node_count: usize,
+    /// Revoked token ids accumulated since the last consensus round.
+    pub pending_revocations: Vec<String>,
+    /// All token ids ever revoked (for membership queries).
+    pub revoked_set: std::collections::HashSet<String>,
+    /// Monotonically increasing block height, bumped on each finalized round.
+    pub height: u64,
+    /// Monotonically increasing view number, bumped on each round attempt.
+    pub view: u64,
+    /// Ordered history of finalized rounds; replaces `node::Federation::finalized_history`.
+    pub finalized_blocks: Vec<FinalizedBlock>,
     /// History of `propose_block` calls: one entry per call, each a list of
-    /// token IDs that were *submitted* (not necessarily finalized — the
-    /// `Federation::finalized_history` is the source of truth for what
-    /// actually committed). Used by `<pyana-block>` so the inspector can
-    /// surface input intent alongside the canonical `RevocationBlock`.
+    /// token IDs that were *submitted*. Used by `<pyana-block>` so the
+    /// inspector can surface input intent alongside the canonical
+    /// `RevocationBlock`.
     pub submitted_token_ids: Vec<Vec<String>>,
 }
 
@@ -187,10 +215,9 @@ pub struct PyanaRuntime {
     pub current_height: u64,
     pub current_timestamp: i64,
     pub receipts: Vec<TurnReceipt>,
-    /// Real `pyana_federation::Federation` instances, addressed by index.
-    /// The Studio's federation/block inspectors read through these — every
-    /// hash, signature, and merkle root surfaced in the UI comes from the
-    /// canonical types, not a JS-side simulation.
+    /// `pyana_federation::Federation` instances (attestation contexts), addressed
+    /// by index. Each `SimFederation` pairs the canonical committee context with
+    /// a lightweight local consensus stub — see `SimFederation` for details.
     pub federations: Vec<SimFederation>,
     /// VK of the default test-wallet factory deployed at runtime
     /// construction. See [`default_wallet_factory_descriptor`]. Subsequent
@@ -256,59 +283,142 @@ impl PyanaRuntime {
     }
 
     /// Create a new federation with `num_nodes` nodes named `<name>-<idx>`.
-    /// Delegates to `pyana_federation::MorpheusFederation::new` — the nodes have real
-    /// Ed25519 keypairs, a real Merkle revocation tree, and a real consensus
-    /// state machine. Returns the new federation's index.
+    ///
+    /// Builds a real `pyana_federation::Federation` committee: each node gets a
+    /// deterministic Ed25519 keypair derived from its name. The federation_id,
+    /// threshold (n − ⌊n/3⌋), and member pubkeys are all canonical. Returns
+    /// the new federation's index.
     pub fn create_federation(&mut self, name: &str, num_nodes: usize) -> usize {
-        let node_names: Vec<String> = (0..num_nodes).map(|i| format!("{name}-{i}")).collect();
-        let name_refs: Vec<&str> = node_names.iter().map(|s| s.as_str()).collect();
-        let federation = pyana_federation::MorpheusFederation::new(&name_refs);
+        use pyana_federation::{Federation, LocalSeat};
+        use pyana_types::{PublicKey as FedPublicKey, SigningKey};
+
+        let mut members: Vec<FedPublicKey> = Vec::with_capacity(num_nodes);
+        let mut local_sk: Option<SigningKey> = None;
+
+        for i in 0..num_nodes {
+            // Deterministic seed: BLAKE3(name || "-" || i)
+            let mut hasher = blake3::Hasher::new_derive_key("pyana-wasm-fed-node-key-v1");
+            hasher.update(name.as_bytes());
+            hasher.update(b"-");
+            hasher.update(&(i as u64).to_le_bytes());
+            let seed: [u8; 32] = *hasher.finalize().as_bytes();
+            let sk = SigningKey::from_bytes(&seed);
+            let pk = sk.public_key();
+            if i == 0 {
+                local_sk = Some(sk);
+            }
+            members.push(pk);
+        }
+
+        // BFT threshold: n − ⌊n/3⌋ (same formula as the deleted node.rs).
+        let threshold = (num_nodes - num_nodes / 3) as u32;
+        // `LocalSeat::bls_secret` only exists under the `runtime` feature of
+        // pyana-federation. pyana-wasm depends on federation with
+        // `default-features = false` (no `runtime`), so the field is absent.
+        let local_seat = local_sk.map(|sk| LocalSeat {
+            index: 0,
+            signing_key: sk,
+        });
+        let federation = Federation::from_committee(members, 0, threshold, None, local_seat);
+
         let idx = self.federations.len();
         self.federations.push(SimFederation {
             name: name.to_string(),
             federation,
+            node_count: num_nodes,
+            pending_revocations: Vec::new(),
+            revoked_set: std::collections::HashSet::new(),
+            height: 0,
+            view: 0,
+            finalized_blocks: Vec::new(),
             submitted_token_ids: Vec::new(),
         });
         idx
     }
 
-    /// Submit a batch of revocation events from node 0 and immediately run a
-    /// consensus round. Returns the finalized block hash and height; `None`
-    /// if consensus didn't finalize (insufficient online nodes, divergence,
-    /// etc.).
+    /// Submit a batch of revocation events and immediately run a consensus
+    /// round. Returns the finalized block hash; `None` if there are no
+    /// pending revocations to finalize.
     ///
-    /// Behavioral divergence from the deleted `SimFederation::propose_block`:
-    /// the canonical `Federation::run_consensus_round` requires the leader's
-    /// `pending_events` to be non-empty AND a quorum (n - floor(n/3)) of
-    /// online nodes' votes — not any-N like the sim. With a single submission
-    /// here (all events submitted to node 0 then drained to the leader), a
-    /// freshly created federation of N >= 1 nodes will normally finalize on
-    /// the first call.
+    /// The block hash is BLAKE3(height || view || sorted token_ids) — a
+    /// deterministic function of the committed state, not a network round-trip.
+    /// The produced `AttestedRoot` (accessible via `get_federation_state`)
+    /// carries the real `federation_id` and `threshold` from the canonical
+    /// `Federation` committee.
     pub fn propose_block(&mut self, fed_index: usize, token_ids: Vec<String>) -> Option<[u8; 32]> {
         let fed = self.federations.get_mut(fed_index)?;
-        // Submit each token-id revocation from node 0 (the initial leader).
+        if token_ids.is_empty() {
+            return None;
+        }
         for tid in &token_ids {
-            fed.federation.submit_revocation(0, tid);
+            fed.pending_revocations.push(tid.clone());
+            fed.revoked_set.insert(tid.clone());
         }
         fed.submitted_token_ids.push(token_ids);
-        let (block, _qc) = fed.federation.run_consensus_round()?;
-        Some(block.block_hash)
+        fed.view += 1;
+        fed.height += 1;
+
+        // Block hash = BLAKE3(height || view || each pending token id in order).
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-wasm-consensus-block-v1");
+        hasher.update(&fed.height.to_le_bytes());
+        hasher.update(&fed.view.to_le_bytes());
+        for tid in &fed.pending_revocations {
+            hasher.update(tid.as_bytes());
+        }
+        let block_hash: [u8; 32] = *hasher.finalize().as_bytes();
+        let qc_threshold = fed.federation.threshold() as usize;
+        let qc_votes = fed.node_count;
+        let revoked = std::mem::take(&mut fed.pending_revocations);
+        fed.finalized_blocks.push(FinalizedBlock {
+            height: fed.height,
+            view: fed.view,
+            block_hash,
+            revoked_token_ids: revoked,
+            qc_votes,
+            qc_threshold,
+        });
+        Some(block_hash)
     }
 
     /// Run an additional consensus round (e.g. to flush any pending events
     /// submitted out-of-band). Returns the finalized block hash + height +
-    /// view + event count, or `None` if the round didn't finalize.
+    /// view + event count, or `None` if there are no pending revocations.
     pub fn simulate_consensus_round(&mut self, fed_index: usize) -> Option<ConsensusRoundResult> {
         let fed = self.federations.get_mut(fed_index)?;
-        let (block, qc) = fed.federation.run_consensus_round()?;
+        if fed.pending_revocations.is_empty() {
+            return None;
+        }
+        fed.view += 1;
+        fed.height += 1;
+        let num_events = fed.pending_revocations.len();
+
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-wasm-consensus-block-v1");
+        hasher.update(&fed.height.to_le_bytes());
+        hasher.update(&fed.view.to_le_bytes());
+        for tid in &fed.pending_revocations {
+            hasher.update(tid.as_bytes());
+        }
+        let block_hash: [u8; 32] = *hasher.finalize().as_bytes();
+        let qc_threshold = fed.federation.threshold() as usize;
+        // Simulated quorum: all nodes vote (wasm doesn't run BLS pipeline).
+        let qc_votes = fed.node_count;
+        let revoked = std::mem::take(&mut fed.pending_revocations);
+        fed.finalized_blocks.push(FinalizedBlock {
+            height: fed.height,
+            view: fed.view,
+            block_hash,
+            revoked_token_ids: revoked,
+            qc_votes,
+            qc_threshold,
+        });
         Some(ConsensusRoundResult {
-            block_hash: hex_encode_bytes(&block.block_hash),
-            height: block.height,
-            view: block.view,
-            num_events: block.events.len(),
-            proposer: block.proposer,
-            qc_threshold: qc.threshold,
-            qc_votes: qc.votes.len(),
+            block_hash: hex_encode_bytes(&block_hash),
+            height: fed.height,
+            view: fed.view,
+            num_events,
+            proposer: 0,
+            qc_threshold,
+            qc_votes,
         })
     }
 

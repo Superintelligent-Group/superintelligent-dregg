@@ -8,13 +8,22 @@ autobins = false
 name = "pyana_tests"
 path = "src/main.rs"
 
+[features]
+# `pyana-bridge` consumption is gated to the legacy/WIP test modules.
+# When those features are enabled, the dependency is required; the default
+# build skips it so the workspace stays buildable while bridge undergoes
+# token-vocabulary changes.
+default = []
+__legacy_tests = ["dep:pyana-bridge"]
+__wip_tests = ["dep:pyana-bridge"]
+
 [dependencies]
 pyana-circuit = { path = "../circuit" }
 pyana-turn = { path = "../turn" }
 pyana-cell = { path = "../cell" }
 pyana-sdk = { path = "../sdk" }
 pyana-types = { path = "../types" }
-pyana-bridge = { path = "../bridge" }
+pyana-bridge = { path = "../bridge", optional = true }
 pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
 pyana-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 blake3 = "1"

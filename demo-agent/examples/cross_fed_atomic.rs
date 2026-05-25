@@ -53,6 +53,7 @@ fn build_transfer_turn(agent: CellId, nonce: u64, from: CellId, to: CellId, amou
         effects: vec![Effect::Transfer { from, to, amount }],
         may_delegate: DelegationMode::None,
         balance_change: None,
+        witness_blobs: vec![],
         commitment_mode: Default::default(),
     }));
     Turn {

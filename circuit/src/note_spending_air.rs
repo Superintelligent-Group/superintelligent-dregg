@@ -776,12 +776,16 @@ mod tests {
             assert_eq!(row.len(), NOTE_SPENDING_WIDTH);
         }
 
-        // Public inputs: [nullifier, merkle_root, value, asset_type]
-        assert_eq!(public_inputs.len(), 4);
+        // Public inputs: [nullifier, merkle_root, value, asset_type, destination_federation]
+        assert_eq!(public_inputs.len(), 5);
         assert_eq!(public_inputs[pi::NULLIFIER], witness.nullifier());
         assert_eq!(public_inputs[pi::MERKLE_ROOT], witness.merkle_root());
         assert_eq!(public_inputs[pi::VALUE], witness.value);
         assert_eq!(public_inputs[pi::ASSET_TYPE], witness.asset_type);
+        assert_eq!(
+            public_inputs[pi::DESTINATION_FEDERATION],
+            witness.destination_federation
+        );
     }
 
     #[test]

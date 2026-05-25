@@ -28,8 +28,8 @@ use pyana_app_framework::{AgentWallet, AppWallet, CellId, Effect};
 use pyana_token::AuthRequest;
 
 use starbridge_identity::{
-    AttrValue, CredentialAttributes, IssuerKeys, Predicate, PredicateRequest,
-    PresentationOptions, RevocationRegistry, VerificationOptions, build_issue_credential_action,
+    AttrValue, CredentialAttributes, IssuerKeys, Predicate, PredicateRequest, PresentationOptions,
+    RevocationRegistry, VerificationOptions, build_issue_credential_action,
     build_present_credential_action, build_revoke_credential_action,
     build_verify_presentation_action, issue, kyc_schema, present, present_anonymous, revoke,
     schema_commitment, verify,
@@ -82,8 +82,8 @@ fn roundtrip_issue_present_verify() {
     let holder = [9u8; 32];
 
     // Issue a credential.
-    let credential = issue(&issuer, &schema, holder, attrs, 1_700_000_000, None)
-        .expect("issuance must succeed");
+    let credential =
+        issue(&issuer, &schema, holder, attrs, 1_700_000_000, None).expect("issuance must succeed");
 
     // Userspace anchor: emit the issuance action on the issuer cell.
     let wallet = fixture_wallet();
@@ -104,8 +104,8 @@ fn roundtrip_issue_present_verify() {
             "verification_level",
             Predicate::Gte(1),
         ));
-    let presentation = present(&credential, &fixture_request(), &options)
-        .expect("presentation must succeed");
+    let presentation =
+        present(&credential, &fixture_request(), &options).expect("presentation must succeed");
 
     // Userspace anchor: holder records the presentation on their cell.
     let holder_cell = fixture_cell(9);
@@ -153,21 +153,13 @@ fn revoked_credential_rejected() {
     // Userspace anchor: record revocation on the issuer cell.
     let wallet = fixture_wallet();
     let issuer_cell = fixture_cell(1);
-    let rev_action = build_revoke_credential_action(
-        &wallet,
-        issuer_cell,
-        credential.id(),
-        registry.root(),
-    );
+    let rev_action =
+        build_revoke_credential_action(&wallet, issuer_cell, credential.id(), registry.root());
     assert_eq!(rev_action.effects.len(), 2);
 
     // Holder presents the revoked credential.
-    let presentation = present(
-        &credential,
-        &fixture_request(),
-        &PresentationOptions::new(),
-    )
-    .expect("presentation must succeed (the holder doesn't yet know it's revoked)");
+    let presentation = present(&credential, &fixture_request(), &PresentationOptions::new())
+        .expect("presentation must succeed (the holder doesn't yet know it's revoked)");
 
     // Verifier supplies the non-revocation proof from the registry —
     // verification must reject.
@@ -183,7 +175,8 @@ fn revoked_credential_rejected() {
 
     // The verifier turn-builder records the rejection on the verifier cell.
     let verifier_cell = fixture_cell(2);
-    let action = build_verify_presentation_action(&wallet, verifier_cell, &presentation, &verify_opts);
+    let action =
+        build_verify_presentation_action(&wallet, verifier_cell, &presentation, &verify_opts);
     match &action.effects[0] {
         Effect::EmitEvent { event, .. } => {
             // Event topic is "presentation-rejected" — encoded as a symbol,
@@ -306,12 +299,8 @@ fn verify_action_records_accept_event() {
         ..Default::default()
     };
     let wallet = fixture_wallet();
-    let action = build_verify_presentation_action(
-        &wallet,
-        fixture_cell(2),
-        &presentation,
-        &verify_opts,
-    );
+    let action =
+        build_verify_presentation_action(&wallet, fixture_cell(2), &presentation, &verify_opts);
     match &action.effects[0] {
         Effect::EmitEvent { event, .. } => {
             assert_eq!(event.data.len(), 3);
@@ -343,12 +332,8 @@ fn verify_action_records_reject_event() {
     .unwrap();
 
     // Holder presents with no predicates.
-    let presentation = present(
-        &credential,
-        &fixture_request(),
-        &PresentationOptions::new(),
-    )
-    .unwrap();
+    let presentation =
+        present(&credential, &fixture_request(), &PresentationOptions::new()).unwrap();
 
     // Verifier asks for a predicate that the holder didn't prove.
     let verify_opts = VerificationOptions {
@@ -359,12 +344,8 @@ fn verify_action_records_reject_event() {
         ..Default::default()
     };
     let wallet = fixture_wallet();
-    let action = build_verify_presentation_action(
-        &wallet,
-        fixture_cell(2),
-        &presentation,
-        &verify_opts,
-    );
+    let action =
+        build_verify_presentation_action(&wallet, fixture_cell(2), &presentation, &verify_opts);
     match &action.effects[0] {
         Effect::EmitEvent { event, .. } => {
             assert_eq!(event.data[1][31], 0, "accept flag must be zero on reject");

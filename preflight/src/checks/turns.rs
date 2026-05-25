@@ -372,7 +372,7 @@ fn check_conservation_law() -> Result<(), String> {
     Ok(())
 }
 
-/// Verify the SharedResourceBudget (BudgetGate) path:
+/// Verify the BudgetGate (Stingray bounded-counter) path:
 /// budget ceiling limits turn execution, exhaustion rejects.
 fn check_budget_gate() -> Result<(), String> {
     let token_id = test_key("token-budget");

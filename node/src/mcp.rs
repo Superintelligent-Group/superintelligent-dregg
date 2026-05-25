@@ -113,6 +113,7 @@ fn build_forest_with_effects(target: CellId, effects: Vec<pyana_turn::Effect>) -
         may_delegate: pyana_turn::DelegationMode::None,
         commitment_mode: pyana_turn::CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     let mut forest = CallForest::new();
     forest.add_root(action);
@@ -139,6 +140,7 @@ fn build_signed_forest(
         may_delegate: pyana_turn::DelegationMode::None,
         commitment_mode: pyana_turn::CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     // Compute the canonical signing message and replace Unchecked with
     // Authorization::Signature so cells with `delegate: Signature` accept
@@ -1215,6 +1217,7 @@ async fn tool_submit_turn(params: &Value, state: &NodeState) -> McpToolResult {
         may_delegate: pyana_turn::DelegationMode::None,
         commitment_mode: pyana_turn::CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     let mut forest = CallForest::new();
     forest.add_root(action);
@@ -2772,6 +2775,7 @@ async fn tool_exercise_bearer_cap(params: &Value, state: &NodeState) -> McpToolR
         may_delegate: pyana_turn::DelegationMode::None,
         commitment_mode: pyana_turn::CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     let mut forest = CallForest::new();
     forest.add_root(action);
@@ -4143,6 +4147,7 @@ async fn tool_captp_deliver(params: &Value, state: &NodeState) -> McpToolResult 
         may_delegate: pyana_turn::DelegationMode::None,
         commitment_mode: pyana_turn::CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     let mut forest = CallForest::new();
     forest.add_root(action);
@@ -4482,6 +4487,7 @@ async fn tool_bilateral_action(params: &Value, state: &NodeState) -> McpToolResu
         may_delegate: pyana_turn::DelegationMode::None,
         commitment_mode: pyana_turn::CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     let mut forest = CallForest::new();
     forest.add_root(action);

@@ -1,14 +1,13 @@
 //! Typed Pyana caveats for Macaroon tokens.
 //!
-//! Defines the platform caveat types (IDs 0–15) used by the Pyana runtime,
-//! plus the collective verification logic that checks decoded caveats against
-//! an authorization request.
+//! Defines the platform caveat types used by the Pyana runtime, plus the
+//! collective verification logic that checks decoded caveats against an
+//! authorization request.
 //!
-//! # Caveat Type Table
+//! # Caveat Type Table (compacted post-modernization)
 //!
 //! | ID | Name           | Body (MsgPack)                           |
 //! |----|----------------|------------------------------------------|
-//! |  0 | Organization   | `u64`                                    |
 //! |  1 | App            | `(String, String)` — (app_id, actions)   |
 //! |  2 | Service        | `(String, String)` — (service, actions)  |
 //! |  4 | Feature        | `String`                                 |
@@ -16,11 +15,51 @@
 //! |  8 | ConfineUser    | `String`                                 |
 //! |  9 | OAuthProvider  | `String`                                 |
 //! | 10 | OAuthScope     | `String`                                 |
-//! | 11 | FromMachine    | `String`                                 |
-//! | 12 | Command        | `String`                                 |
 //! | 13 | FeatureGlob    | `(Vec<String>, Vec<String>)` — (inc, exc) |
 //! | 14 | Budget         | `(String, String, u64, Option<String>)`  |
-//! | 15 | Revocable      | `String` — revocation service URL        |
+//!
+//! IDs 0 (`Organization`), 11 (`FromMachine`), 12 (`Command`), and 15
+//! (`Revocable`) were retired during the 2026-05-24 modernization pass —
+//! they were CLI / OS-process / org-tenancy vestiges from token's
+//! pre-pyana ancestry with no production consumers in the pyana runtime.
+//! Revocation is handled by the [`crate::RevocationRegistry`] STARK
+//! pipeline rather than per-token caveat.
+//!
+//! Gaps in the ID range (0, 3, 6, 7, 11, 12, 15) are *reserved* — the
+//! ID space is append-only for forward-compat of any externally-minted
+//! tokens we still need to parse. New caveats grow from 16 onward.
+//!
+//! # Boundary: token caveats vs `cell::WitnessedPredicate`
+//!
+//! Token caveats scope **token-bearer authorization** (an `AuthRequest`
+//! predicates a service / app / scope / time-window grant). They run on
+//! the request side of an HTTP/RPC boundary and do not participate in
+//! cell program evaluation.
+//!
+//! `cell::predicate::WitnessedPredicate` (and its
+//! `WitnessedPredicateKind` registry) scopes **per-turn / per-cell**
+//! state-transition predicates — its verifiers run inside the executor
+//! against a cell's state. The two surfaces are disjoint by design (see
+//! `CAVEAT-LAYER-COVERAGE.md` §3, `PREDICATE-INVENTORY.md` §3.6 case 7).
+//! Three pairs are *shape-similar* but not unified:
+//!
+//! | Token caveat       | `StateConstraint` analogue | Notes                       |
+//! |--------------------|----------------------------|-----------------------------|
+//! | `ValidityWindow`   | `TemporalGate`             | unix-time vs block-height   |
+//! | `ConfineUser`      | `SenderAuthorized`         | single user vs set commit   |
+//! | `Budget`           | `RateLimit`                | API-call cost vs mutations  |
+//!
+//! The convergence is documentary, not structural: token caveats stay
+//! in `AuthRequest` units (unix time, string user-id, API-call cost);
+//! slot caveats stay in cell-state units (block height, pk Merkle root,
+//! mutation count). Unifying them would require a single `EvalContext`
+//! carrying both authorization and execution context, which is out of
+//! scope for the token crate.
+//!
+//! For app-defined predicate kinds that *do* want the witnessed-proof
+//! shape, the canonical extension path is
+//! `cell::predicate::WitnessedPredicateKind::Custom { vk_hash }`, not a
+//! new `CaveatType` ID — see `cell/src/predicate.rs`.
 //!
 //! # Verification Model
 //!
@@ -29,11 +68,11 @@
 //! [`verify_caveats`] groups all caveats by type and performs collective
 //! checks:
 //!
-//! - **Set-valued** (Feature, OAuthScope, Command): all values form an allowed
+//! - **Set-valued** (Feature, OAuthScope): all values form an allowed
 //!   set; the request's values must be a subset.
-//! - **Match-any** (App, Service, Organization, ConfineUser, OAuthProvider,
-//!   FromMachine): if the request specifies a value, at least one caveat of
-//!   that type must match.
+//! - **Match-any** (App, Service, ConfineUser, OAuthProvider): if the
+//!   request specifies a value, at least one caveat of that type must
+//!   match.
 //! - **All-must-pass** (ValidityWindow): every window caveat is checked
 //!   independently against `now`.
 
@@ -46,36 +85,48 @@ use crate::traits::{Attenuation, AuthRequest, Capability};
 // ============================================================================
 // Caveat type IDs
 // ============================================================================
+//
+// IDs 0, 3, 6, 7, 11, 12, 15 are RESERVED — they held caveats that were
+// retired in the 2026-05-24 modernization pass and must not be reused
+// for forward-compat of any externally-minted tokens still being
+// parsed. New caveats grow from 16 onward.
 
-/// Organization restriction (body: u64 org ID).
-pub const CAV_ORGANIZATION: CaveatType = 0;
+// 0 = Organization — retired (no pyana consumers).
 /// App restriction (body: (app_id, actions) tuple).
 pub const CAV_APP: CaveatType = 1;
 /// Service restriction (body: (service, actions) tuple).
 pub const CAV_SERVICE: CaveatType = 2;
-// 3 = Secret — reserved, not yet used in Attenuation
+// 3 = Secret — reserved, never wired
 /// Feature restriction (body: feature name string).
 pub const CAV_FEATURE: CaveatType = 4;
 /// Validity window restriction (body: (not_before, not_after) tuple).
+///
+/// Shape-similar to `cell::StateConstraint::TemporalGate`; this caveat
+/// works in unix-time units against an `AuthRequest`, while
+/// `TemporalGate` works in block-height units against an
+/// `EvalContext`. See module docs.
 pub const CAV_VALIDITY_WINDOW: CaveatType = 5;
 // 6 = IfPresent — reserved
 // 7 = reserved
 /// Confine to a specific user (body: user_id string).
+///
+/// Shape-similar to `cell::StateConstraint::SenderAuthorized` (single
+/// user vs set-membership commitment). See module docs.
 pub const CAV_CONFINE_USER: CaveatType = 8;
 /// OAuth provider restriction (body: provider name string).
 pub const CAV_OAUTH_PROVIDER: CaveatType = 9;
 /// OAuth scope restriction (body: scope string).
 pub const CAV_OAUTH_SCOPE: CaveatType = 10;
-/// Machine binding (body: machine_id string).
-pub const CAV_FROM_MACHINE: CaveatType = 11;
-/// Command restriction (body: command name string).
-pub const CAV_COMMAND: CaveatType = 12;
+// 11 = FromMachine — retired (CLI/OS vestige, no pyana consumers).
+// 12 = Command — retired (CLI vestige, no pyana consumers).
 /// Feature glob pattern (body: (Vec<String>, Vec<String>) — (include, exclude)).
 pub const CAV_FEATURE_GLOB: CaveatType = 13;
 /// Budget enrollment (body: (String, String, u64, Option<String>) — (id, class, limit, window)).
+///
+/// Shape-similar to `cell::StateConstraint::RateLimit` (API-call cost
+/// vs cell mutations). See module docs.
 pub const CAV_BUDGET: CaveatType = 14;
-/// Revocable marker (body: String — revocation service URL).
-pub const CAV_REVOCABLE: CaveatType = 15;
+// 15 = Revocable — retired (handled by RevocationRegistry STARK pipeline).
 
 // ============================================================================
 // Decoded grant enum
@@ -84,7 +135,6 @@ pub const CAV_REVOCABLE: CaveatType = 15;
 /// A decoded Pyana caveat representing a single access grant/restriction.
 #[derive(Debug, Clone)]
 pub enum PyanaGrant {
-    Organization(u64),
     App {
         id: String,
         actions: Action,
@@ -101,8 +151,6 @@ pub enum PyanaGrant {
     ConfineUser(String),
     OAuthProvider(String),
     OAuthScope(String),
-    FromMachine(String),
-    Command(String),
     /// Feature glob pattern with include/exclude lists.
     FeatureGlob {
         include: Vec<String>,
@@ -116,8 +164,6 @@ pub enum PyanaGrant {
         limit: u64,
         window: Option<String>,
     },
-    /// Revocable marker (locally enforced when revocation state is provided).
-    Revocable(String),
     /// Unrecognized caveat type — preserved but not enforced.
     Unknown(CaveatType, Vec<u8>),
 }
@@ -141,15 +187,6 @@ pub(crate) fn encode_string(s: &str) -> Vec<u8> {
 
 fn decode_string(body: &[u8]) -> Result<String, TokenError> {
     rmp_serde::from_slice::<String>(body)
-        .map_err(|e| TokenError::Malformed(format!("caveat body decode: {e}")))
-}
-
-pub fn encode_u64(v: u64) -> Vec<u8> {
-    rmp_serde::to_vec(&v).expect("msgpack encode should not fail")
-}
-
-fn decode_u64(body: &[u8]) -> Result<u64, TokenError> {
-    rmp_serde::from_slice::<u64>(body)
         .map_err(|e| TokenError::Malformed(format!("caveat body decode: {e}")))
 }
 
@@ -196,10 +233,6 @@ fn decode_budget(
 /// Decode a [`WireCaveat`] into a typed [`PyanaGrant`].
 pub fn decode_grant(wc: &WireCaveat) -> Result<PyanaGrant, TokenError> {
     match wc.caveat_type {
-        CAV_ORGANIZATION => {
-            let org_id = decode_u64(&wc.body)?;
-            Ok(PyanaGrant::Organization(org_id))
-        }
         CAV_APP => {
             let (id, actions_str) = decode_name_actions(&wc.body)?;
             Ok(PyanaGrant::App {
@@ -237,14 +270,6 @@ pub fn decode_grant(wc: &WireCaveat) -> Result<PyanaGrant, TokenError> {
             let scope = decode_string(&wc.body)?;
             Ok(PyanaGrant::OAuthScope(scope))
         }
-        CAV_FROM_MACHINE => {
-            let mid = decode_string(&wc.body)?;
-            Ok(PyanaGrant::FromMachine(mid))
-        }
-        CAV_COMMAND => {
-            let cmd = decode_string(&wc.body)?;
-            Ok(PyanaGrant::Command(cmd))
-        }
         CAV_FEATURE_GLOB => {
             let (include, exclude) = decode_feature_glob(&wc.body)?;
             Ok(PyanaGrant::FeatureGlob { include, exclude })
@@ -258,10 +283,6 @@ pub fn decode_grant(wc: &WireCaveat) -> Result<PyanaGrant, TokenError> {
                 limit,
                 window,
             })
-        }
-        CAV_REVOCABLE => {
-            let service = decode_string(&wc.body)?;
-            Ok(PyanaGrant::Revocable(service))
         }
         other => Ok(PyanaGrant::Unknown(other, wc.body.clone())),
     }
@@ -308,12 +329,6 @@ pub fn attenuation_to_wire_caveats(att: &Attenuation) -> Vec<WireCaveat> {
     for scope in &att.oauth_scopes {
         caveats.push(WireCaveat::new(CAV_OAUTH_SCOPE, encode_string(scope)));
     }
-    if let Some(mid) = &att.from_machine {
-        caveats.push(WireCaveat::new(CAV_FROM_MACHINE, encode_string(mid)));
-    }
-    for cmd in &att.commands {
-        caveats.push(WireCaveat::new(CAV_COMMAND, encode_string(cmd)));
-    }
     if let Some(fg) = &att.feature_globs {
         if !fg.include.is_empty() || !fg.exclude.is_empty() {
             caveats.push(WireCaveat::new(
@@ -333,9 +348,6 @@ pub fn attenuation_to_wire_caveats(att: &Attenuation) -> Vec<WireCaveat> {
                 budget.window.as_deref(),
             ),
         ));
-    }
-    if let Some(svc) = &att.revocable {
-        caveats.push(WireCaveat::new(CAV_REVOCABLE, encode_string(svc)));
     }
 
     caveats
@@ -378,7 +390,6 @@ pub fn verify_caveats(
     request: &AuthRequest,
 ) -> Result<CaveatVerifyResult, TokenError> {
     // Decode all first-party caveats into typed grants
-    let mut orgs: Vec<u64> = Vec::new();
     let mut apps: Vec<(String, Action)> = Vec::new();
     let mut services: Vec<(String, Action)> = Vec::new();
     let mut features: Vec<String> = Vec::new();
@@ -386,15 +397,11 @@ pub fn verify_caveats(
     let mut confined_users: Vec<String> = Vec::new();
     let mut oauth_providers: Vec<String> = Vec::new();
     let mut oauth_scopes: Vec<String> = Vec::new();
-    let mut machines: Vec<String> = Vec::new();
-    let mut commands: Vec<String> = Vec::new();
     let mut feature_globs: Vec<(Vec<String>, Vec<String>)> = Vec::new();
     let mut budgets: Vec<(String, u64)> = Vec::new(); // (budget_id, limit)
-    let mut revocable_ids: Vec<String> = Vec::new();
 
     for wc in caveat_set.first_party_caveats() {
         match decode_grant(wc)? {
-            PyanaGrant::Organization(id) => orgs.push(id),
             PyanaGrant::App { id, actions } => apps.push((id, actions)),
             PyanaGrant::Service { name, actions } => services.push((name, actions)),
             PyanaGrant::Feature(name) => features.push(name),
@@ -407,11 +414,8 @@ pub fn verify_caveats(
             PyanaGrant::ConfineUser(uid) => confined_users.push(uid),
             PyanaGrant::OAuthProvider(p) => oauth_providers.push(p),
             PyanaGrant::OAuthScope(s) => oauth_scopes.push(s),
-            PyanaGrant::FromMachine(mid) => machines.push(mid),
-            PyanaGrant::Command(cmd) => commands.push(cmd),
             PyanaGrant::FeatureGlob { include, exclude } => feature_globs.push((include, exclude)),
             PyanaGrant::Budget { id, limit, .. } => budgets.push((id, limit)),
-            PyanaGrant::Revocable(token_id) => revocable_ids.push(token_id),
             PyanaGrant::Unknown(type_id, _) => {
                 // Fail-closed: unknown caveat types MUST deny authorization.
                 // Silently passing unknown caveats would allow privilege escalation
@@ -441,25 +445,6 @@ pub fn verify_caveats(
         if let Some(na) = not_after {
             if now > *na {
                 return Err(TokenError::Expired);
-            }
-        }
-    }
-
-    // --- Organization: match-any ---
-    if !orgs.is_empty() {
-        match request.org_id {
-            Some(req_org) => {
-                if !orgs.contains(&req_org) {
-                    return Err(TokenError::Denied(format!(
-                        "token restricted to org(s) {:?}, requested org {}",
-                        orgs, req_org
-                    )));
-                }
-            }
-            None => {
-                return Err(TokenError::Denied(
-                    "token restricted to specific org(s) but request has no org_id".into(),
-                ));
             }
         }
     }
@@ -608,46 +593,6 @@ pub fn verify_caveats(
         }
     }
 
-    // --- Machine: match-any (fail-closed) ---
-    // SECURITY: If the token is machine-restricted, the request MUST specify machine_id.
-    if !machines.is_empty() {
-        match &request.machine_id {
-            Some(req_machine) => {
-                if !machines.contains(req_machine) {
-                    return Err(TokenError::Denied(format!(
-                        "token not valid for machine '{}'",
-                        req_machine
-                    )));
-                }
-            }
-            None => {
-                return Err(TokenError::Denied(
-                    "token restricted to specific machine(s) but request does not specify machine_id".into(),
-                ));
-            }
-        }
-    }
-
-    // --- Command: match-any (fail-closed) ---
-    // SECURITY: If the token has command restrictions, the request MUST specify command.
-    if !commands.is_empty() {
-        match &request.command {
-            Some(req_cmd) => {
-                if !commands.contains(req_cmd) {
-                    return Err(TokenError::Denied(format!(
-                        "token not valid for command '{}'",
-                        req_cmd
-                    )));
-                }
-            }
-            None => {
-                return Err(TokenError::Denied(
-                    "token requires command but request omits it".into(),
-                ));
-            }
-        }
-    }
-
     // --- Feature globs: all glob caveats must permit all requested features ---
     if !request.features.is_empty() && !feature_globs.is_empty() {
         for req_feat in &request.features {
@@ -717,23 +662,6 @@ pub fn verify_caveats(
         }
     }
 
-    // --- Revocation enforcement: locally verified, not passthrough ---
-    if !revocable_ids.is_empty() {
-        if request.not_revoked.is_empty() {
-            return Err(TokenError::Denied(
-        "revocation state required for verification: token is revocable but no revocation proof was provided".into(),
-      ));
-        }
-        for token_id in &revocable_ids {
-            if !request.not_revoked.contains(token_id) {
-                return Err(TokenError::Denied(format!(
-                    "token '{}' has been revoked or no non-revocation proof provided",
-                    token_id
-                )));
-            }
-        }
-    }
-
     // --- Build capabilities from the grants ---
     let mut capabilities = Vec::new();
     for (id, actions) in &apps {
@@ -794,16 +722,6 @@ pub fn verify_caveats(
 #[allow(deprecated)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_encode_decode_organization() {
-        let wc = WireCaveat::new(CAV_ORGANIZATION, encode_u64(42));
-        let grant = decode_grant(&wc).unwrap();
-        match grant {
-            PyanaGrant::Organization(id) => assert_eq!(id, 42),
-            _ => panic!("expected Organization grant"),
-        }
-    }
 
     #[test]
     fn test_encode_decode_app() {
@@ -898,12 +816,10 @@ mod tests {
             confine_user: Some("user-1".into()),
             oauth_providers: vec!["github".into()],
             oauth_scopes: vec!["repo".into()],
-            from_machine: Some("host-1".into()),
-            commands: vec!["deploy".into()],
             ..Default::default()
         };
         let caveats = attenuation_to_wire_caveats(&att);
-        assert_eq!(caveats.len(), 9);
+        assert_eq!(caveats.len(), 7);
         assert_eq!(caveats[0].caveat_type, CAV_APP);
         assert_eq!(caveats[1].caveat_type, CAV_SERVICE);
         assert_eq!(caveats[2].caveat_type, CAV_FEATURE);
@@ -911,8 +827,6 @@ mod tests {
         assert_eq!(caveats[4].caveat_type, CAV_CONFINE_USER);
         assert_eq!(caveats[5].caveat_type, CAV_OAUTH_PROVIDER);
         assert_eq!(caveats[6].caveat_type, CAV_OAUTH_SCOPE);
-        assert_eq!(caveats[7].caveat_type, CAV_FROM_MACHINE);
-        assert_eq!(caveats[8].caveat_type, CAV_COMMAND);
     }
 
     #[test]
@@ -1213,27 +1127,6 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_command() {
-        let mut set = CaveatSet::new();
-        set.push(WireCaveat::new(CAV_COMMAND, encode_string("deploy")));
-        set.push(WireCaveat::new(CAV_COMMAND, encode_string("status")));
-
-        let request = AuthRequest {
-            command: Some("deploy".into()),
-            now: Some(1700000000),
-            ..Default::default()
-        };
-        assert!(verify_caveats(&set, &request).is_ok());
-
-        let request2 = AuthRequest {
-            command: Some("rollback".into()),
-            now: Some(1700000000),
-            ..Default::default()
-        };
-        assert!(verify_caveats(&set, &request2).is_err());
-    }
-
-    #[test]
     fn test_roundtrip_attenuation_verify() {
         let att = Attenuation {
             apps: vec![("my-app".into(), "rw".into())],
@@ -1503,73 +1396,6 @@ mod tests {
         assert!(verify_caveats(&set, &request).is_ok());
     }
 
-    // --- Revocable tests ---
-
-    #[test]
-    fn test_encode_decode_revocable() {
-        let wc = WireCaveat::new(CAV_REVOCABLE, encode_string("revoke.pyana.dev"));
-        let grant = decode_grant(&wc).unwrap();
-        match grant {
-            PyanaGrant::Revocable(svc) => assert_eq!(svc, "revoke.pyana.dev"),
-            _ => panic!("expected Revocable grant"),
-        }
-    }
-
-    #[test]
-    fn test_revocable_enforcement_allows_when_not_revoked() {
-        let mut set = CaveatSet::new();
-        set.push(WireCaveat::new(
-            CAV_REVOCABLE,
-            encode_string("token-id-abc"),
-        ));
-
-        let mut not_revoked = std::collections::HashSet::new();
-        not_revoked.insert("token-id-abc".into());
-
-        let request = AuthRequest {
-            now: Some(1700000000),
-            not_revoked,
-            ..Default::default()
-        };
-        assert!(verify_caveats(&set, &request).is_ok());
-    }
-
-    #[test]
-    fn test_revocable_enforcement_denies_when_no_proof() {
-        let mut set = CaveatSet::new();
-        set.push(WireCaveat::new(
-            CAV_REVOCABLE,
-            encode_string("token-id-abc"),
-        ));
-
-        let request = AuthRequest {
-            now: Some(1700000000),
-            ..Default::default()
-        };
-        let err = verify_caveats(&set, &request).unwrap_err();
-        assert!(format!("{err}").contains("revocation state required"));
-    }
-
-    #[test]
-    fn test_revocable_enforcement_denies_wrong_token_id() {
-        let mut set = CaveatSet::new();
-        set.push(WireCaveat::new(
-            CAV_REVOCABLE,
-            encode_string("token-id-abc"),
-        ));
-
-        let mut not_revoked = std::collections::HashSet::new();
-        not_revoked.insert("token-id-xyz".into());
-
-        let request = AuthRequest {
-            now: Some(1700000000),
-            not_revoked,
-            ..Default::default()
-        };
-        let err = verify_caveats(&set, &request).unwrap_err();
-        assert!(format!("{err}").contains("revoked"));
-    }
-
     // --- Attenuation with new types ---
 
     #[test]
@@ -1589,15 +1415,13 @@ mod tests {
                 limit: 500,
                 window: Some("1d".into()),
             }),
-            revocable: Some("revoke.pyana.dev".into()),
             ..Default::default()
         };
         let caveats = attenuation_to_wire_caveats(&att);
-        // 1 app + 1 feature_glob + 1 budget + 1 revocable = 4
-        assert_eq!(caveats.len(), 4);
+        // 1 app + 1 feature_glob + 1 budget = 3
+        assert_eq!(caveats.len(), 3);
         assert_eq!(caveats[0].caveat_type, CAV_APP);
         assert_eq!(caveats[1].caveat_type, CAV_FEATURE_GLOB);
         assert_eq!(caveats[2].caveat_type, CAV_BUDGET);
-        assert_eq!(caveats[3].caveat_type, CAV_REVOCABLE);
     }
 }

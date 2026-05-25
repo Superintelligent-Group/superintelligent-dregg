@@ -68,26 +68,20 @@ impl BiscuitToken {
     /// Mint a new Biscuit token for the Pyana runtime with structured parameters.
     pub fn mint_pyana(
         root_keypair: &biscuit_auth::KeyPair,
-        org_id: Option<u64>,
         apps: &[(String, String)],
         services: &[(String, String)],
         features: &[String],
         oauth_providers: &[String],
         oauth_scopes: &[String],
         user_id: Option<&str>,
-        machine_id: Option<&str>,
-        commands: &[String],
     ) -> Result<Self, TokenError> {
         let code = pyana::authority_datalog(
-            org_id,
             apps,
             services,
             features,
             oauth_providers,
             oauth_scopes,
             user_id,
-            machine_id,
-            commands,
         )?;
         Self::mint(root_keypair, &code)
     }
@@ -296,15 +290,12 @@ mod tests {
         let kp = test_keypair();
         let token = BiscuitToken::mint_pyana(
             &kp,
-            Some(1),
             &[("test-app".into(), "rwcd".into())],
             &[("http".into(), "rw".into())],
             &[],
             &[],
             &[],
             Some("user-1"),
-            None,
-            &[],
         )
         .unwrap();
 
@@ -337,15 +328,12 @@ mod tests {
         let kp = test_keypair();
         let token = BiscuitToken::mint_pyana(
             &kp,
-            None,
             &[("my-app".into(), "rwcd".into())],
             &[],
             &[],
             &[],
             &[],
             Some("user-1"),
-            None,
-            &[],
         )
         .unwrap();
 

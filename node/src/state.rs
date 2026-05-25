@@ -16,7 +16,7 @@ use pyana_circuit::field::BabyBear;
 use pyana_commit::accumulator::PolynomialAccumulator;
 use pyana_coord::Coordinator;
 use pyana_coord::budget::{
-    BudgetCoordinator, BudgetError, FastUnlockManager, SiloId, SpendingCertificate,
+    BudgetError, FastUnlockManager, SiloId, SpendingCertificate, StingrayCounter,
     UnlockCertificate, UnlockRequest, UnlockVote,
 };
 use pyana_dsl_runtime::ProgramRegistry;
@@ -160,7 +160,7 @@ pub struct NodeStateInner {
     /// Per-agent budget coordinators for bounded-counter resource metering.
     /// Each agent with an active budget slice has an entry here.
     /// The node's silo_id is derived from the node's public key.
-    pub budget_coordinators: HashMap<CellId, BudgetCoordinator>,
+    pub budget_coordinators: HashMap<CellId, StingrayCounter>,
     /// Fast unlock manager for releasing locked resources after 2PC aborts.
     pub fast_unlock_manager: Option<FastUnlockManager>,
     /// This node's silo ID (derived from public key, set at startup).
@@ -720,7 +720,7 @@ impl NodeStateInner {
         byzantine_tolerance: usize,
     ) -> Result<(), BudgetError> {
         let mut coordinator =
-            BudgetCoordinator::new(agent, total_balance, silos, byzantine_tolerance)?;
+            StingrayCounter::new(agent, total_balance, silos, byzantine_tolerance)?;
 
         // Register THIS node's silo pubkey so the coordinator can verify our
         // own spending certificates at rebalance time. Remote silos' pubkeys

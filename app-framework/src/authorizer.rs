@@ -233,6 +233,7 @@ mod tests {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         }
     }
 

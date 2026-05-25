@@ -12,8 +12,8 @@
 use crate::Invariant;
 use proptest::prelude::*;
 use pyana_cell::CellId;
-use pyana_turn::action::{Action, Authorization, BearerCapProof, DelegationProofData};
 use pyana_turn::DelegationMode;
+use pyana_turn::action::{Action, Authorization, BearerCapProof, DelegationProofData};
 
 pub struct AuthorizationHashDomainSeparation;
 impl Invariant for AuthorizationHashDomainSeparation {

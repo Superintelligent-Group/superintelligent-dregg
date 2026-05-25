@@ -7,7 +7,7 @@
 //!
 //! This demonstrates the Stingray bounded-counter protocol (arXiv:2501.06531)
 //! adapted for payment channels:
-//! - BudgetCoordinator with slice allocation (Byzantine-tolerant budget splitting)
+//! - StingrayCounter with slice allocation (Byzantine-tolerant budget splitting)
 //! - try_debit() for instant off-chain payments (no consensus per payment!)
 //! - Receipt chain for offline verification
 //! - Epoch-boundary rebalancing with SpendingCertificates
@@ -18,7 +18,7 @@
 use std::time::Instant;
 
 use pyana_cell::CellId;
-use pyana_coord::budget::BudgetCoordinator;
+use pyana_coord::budget::StingrayCounter;
 use pyana_turn::turn::TurnReceipt;
 use pyana_turn::verify::verify_receipt_chain;
 
@@ -137,7 +137,7 @@ fn main() {
     };
 
     let silos = vec![alice_silo, bob_silo, witness_1, witness_2];
-    let mut coordinator = BudgetCoordinator::new(
+    let mut coordinator = StingrayCounter::new(
         alice_cell_id,
         channel_deposit,
         silos.clone(),

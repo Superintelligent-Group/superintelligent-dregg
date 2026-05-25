@@ -4074,6 +4074,7 @@ mod tests {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
         forest.add_root(action);
         AtomicForest::new(participants, forest, vec![], cell_id, 0)

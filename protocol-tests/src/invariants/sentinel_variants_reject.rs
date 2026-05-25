@@ -21,8 +21,7 @@ use pyana_cell::{CellProgram, CellState, InputRef, StateConstraint};
 pub struct SentinelVariantsReject;
 impl Invariant for SentinelVariantsReject {
     const NAME: &'static str = "sentinel_variants_reject";
-    const DESCRIPTION: &'static str =
-        "TemporalPredicate, BoundDelta, Witnessed, Custom — cell-side evaluator rejects unconditionally (current substrate state per CAVEAT-LAYER-COVERAGE.md §6.1)";
+    const DESCRIPTION: &'static str = "TemporalPredicate, BoundDelta, Witnessed, Custom — cell-side evaluator rejects unconditionally (current substrate state per CAVEAT-LAYER-COVERAGE.md §6.1)";
 }
 
 proptest! {

@@ -67,8 +67,15 @@ pub type BudgetVersion = u64;
 /// computrons, API calls, storage bytes, token units, etc.
 pub type ResourceAmount = u64;
 
-/// Convenience alias: a BudgetCoordinator for computron metering.
-pub type ComputronBudget = BudgetCoordinator;
+/// Convenience alias: a StingrayCounter for computron metering.
+pub type ComputronBudget = StingrayCounter;
+
+/// Backward-compat alias — new code should use `StingrayCounter`.
+#[deprecated(
+    since = "0.1.0",
+    note = "renamed to StingrayCounter (arXiv:2501.06531)"
+)]
+pub type BudgetCoordinator = StingrayCounter;
 
 // ─── BudgetSlice ──────────────────────────────────────────────────────────────
 
@@ -217,18 +224,21 @@ impl SpendingCertificate {
     }
 }
 
-// ─── BudgetCoordinator ────────────────────────────────────────────────────────
+// ─── StingrayCounter ─────────────────────────────────────────────────────────
 
 /// Manages resource budget distribution across silos for an agent.
 ///
-/// Generic over any fungible quantity (computrons, API calls, storage, tokens).
+/// Named after the Stingray protocol (arXiv:2501.06531) from which the
+/// bounded-counter design is adapted. Generic over any fungible quantity
+/// (computrons, API calls, storage bytes, tokens).
+///
 /// The coordinator is responsible for:
 /// 1. Computing slice sizes based on Byzantine fault tolerance.
 /// 2. Distributing slices to silos.
 /// 3. Processing spending certificates during rebalancing.
 /// 4. Issuing new slices after rebalancing.
 #[derive(Clone, Debug)]
-pub struct BudgetCoordinator {
+pub struct StingrayCounter {
     /// The agent whose budget is being managed.
     pub agent: CellId,
     /// All silos in the distribution.
@@ -249,7 +259,7 @@ pub struct BudgetCoordinator {
     pub silo_pubkeys: HashMap<SiloId, [u8; 32]>,
 }
 
-impl BudgetCoordinator {
+impl StingrayCounter {
     /// Create a new budget coordinator for an agent.
     ///
     /// # Parameters
@@ -274,7 +284,7 @@ impl BudgetCoordinator {
             });
         }
 
-        let mut coord = BudgetCoordinator {
+        let mut coord = StingrayCounter {
             agent,
             silos,
             byzantine_tolerance,
@@ -779,7 +789,7 @@ impl FastUnlockManager {
     pub fn apply_unlock_and_refund(
         &mut self,
         certificate: &UnlockCertificate,
-        coordinator: &mut BudgetCoordinator,
+        coordinator: &mut StingrayCounter,
     ) -> Result<u64, BudgetError> {
         let (amount, silo) = self.apply_unlock_certificate(certificate)?;
         // Refund the amount back to the silo's budget slice.

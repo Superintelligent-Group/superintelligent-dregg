@@ -635,8 +635,7 @@ mod tests {
             .with("family_name", AttrValue::Text("Doe".into()))
             .with("dob", AttrValue::Date(10_000))
             .with("verification_level", AttrValue::Integer(2));
-        issue(&issuer, &schema, [3u8; 32], attrs, 1_700_000_000, None)
-            .expect("issuance succeeds")
+        issue(&issuer, &schema, [3u8; 32], attrs, 1_700_000_000, None).expect("issuance succeeds")
     }
 
     // ── Schema sanity ────────────────────────────────────────────────────

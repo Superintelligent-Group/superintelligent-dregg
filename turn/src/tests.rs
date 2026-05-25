@@ -10426,13 +10426,8 @@ mod authorization_custom_tests {
             0, // proof_witness_index
         );
         let action = make_custom_action(target_id, predicate.clone(), vec![0xAB; 16]);
-        let expected_msg = TurnExecutor::compute_custom_signing_message(
-            &action,
-            &predicate,
-            0,
-            &federation_id,
-            0,
-        );
+        let expected_msg =
+            TurnExecutor::compute_custom_signing_message(&action, &predicate, 0, &federation_id, 0);
 
         // Register a verifier that requires the canonical message.
         let mut registry = WitnessedPredicateRegistry::empty();
@@ -10471,12 +10466,8 @@ mod authorization_custom_tests {
         let federation_id = [0xF2u8; 32];
         let vk_hash = [0x55u8; 32];
 
-        let predicate = WitnessedPredicate::custom(
-            vk_hash,
-            [0u8; 32],
-            PredInputRef::SigningMessage,
-            0,
-        );
+        let predicate =
+            WitnessedPredicate::custom(vk_hash, [0u8; 32], PredInputRef::SigningMessage, 0);
         let action = make_custom_action(target_id, predicate, vec![0xCD; 16]);
 
         let mut registry = WitnessedPredicateRegistry::empty();
@@ -10511,12 +10502,8 @@ mod authorization_custom_tests {
         let actual_vk = [0x11u8; 32]; // used in the action's predicate
         let registered_vk = [0x22u8; 32]; // a DIFFERENT vk that IS registered
 
-        let predicate = WitnessedPredicate::custom(
-            actual_vk,
-            [0u8; 32],
-            PredInputRef::SigningMessage,
-            0,
-        );
+        let predicate =
+            WitnessedPredicate::custom(actual_vk, [0u8; 32], PredInputRef::SigningMessage, 0);
         let action = make_custom_action(target_id, predicate, vec![0xEF; 16]);
 
         // Registry has a verifier — but under a DIFFERENT vk_hash.
@@ -10558,12 +10545,8 @@ mod authorization_custom_tests {
         let fed_replay_at = [0x22u8; 32];
         let vk_hash = [0x77u8; 32];
 
-        let predicate = WitnessedPredicate::custom(
-            vk_hash,
-            [0u8; 32],
-            PredInputRef::SigningMessage,
-            0,
-        );
+        let predicate =
+            WitnessedPredicate::custom(vk_hash, [0u8; 32], PredInputRef::SigningMessage, 0);
         let action = make_custom_action(target_id, predicate.clone(), vec![0x01; 8]);
 
         // Verifier expects the F1-bound canonical message.
@@ -10626,24 +10609,15 @@ mod authorization_custom_tests {
         let target_id = target.id();
         ledger.insert_cell(target).unwrap();
 
-        let predicate = WitnessedPredicate::custom(
-            action_vk,
-            [0u8; 32],
-            PredInputRef::SigningMessage,
-            0,
-        );
+        let predicate =
+            WitnessedPredicate::custom(action_vk, [0u8; 32], PredInputRef::SigningMessage, 0);
         let action = make_custom_action(target_id, predicate.clone(), vec![0xFF; 4]);
 
         // Both vk_hashes registered with accepting verifiers — so the
         // failure isolates to the cell↔action vk_hash mismatch.
         let mut registry = WitnessedPredicateRegistry::empty();
-        let expected_msg = TurnExecutor::compute_custom_signing_message(
-            &action,
-            &predicate,
-            0,
-            &[0u8; 32],
-            0,
-        );
+        let expected_msg =
+            TurnExecutor::compute_custom_signing_message(&action, &predicate, 0, &[0u8; 32], 0);
         registry.register_custom(
             action_vk,
             Arc::new(ExpectedMessageVerifier {

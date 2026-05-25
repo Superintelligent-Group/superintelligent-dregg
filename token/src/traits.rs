@@ -61,8 +61,6 @@ impl TokenClearance {
 /// Biscuit Datalog checks evaluate against this.
 #[derive(Clone, Debug, Default)]
 pub struct AuthRequest {
-    /// Organization ID.
-    pub org_id: Option<u64>,
     /// Application identifier.
     pub app_id: Option<String>,
     /// Service name (e.g., "dns", "http", "auth", "secrets").
@@ -77,10 +75,6 @@ pub struct AuthRequest {
     pub oauth_scopes: Vec<String>,
     /// User ID.
     pub user_id: Option<String>,
-    /// Machine/process ID.
-    pub machine_id: Option<String>,
-    /// Command being executed.
-    pub command: Option<String>,
     /// Current timestamp (Unix seconds). Auto-filled if None.
     pub now: Option<i64>,
     /// Current budget states for any budget caveats on this token.
@@ -89,9 +83,6 @@ pub struct AuthRequest {
     /// Cost of this specific request (in budget units).
     /// Required when the token has Budget caveats.
     pub request_cost: Option<u64>,
-    /// Revocation non-membership proofs: set of token IDs confirmed not-revoked.
-    /// Required when the token has Revocable caveats.
-    pub not_revoked: std::collections::HashSet<String>,
 }
 
 /// Restrictions to apply when attenuating a token.
@@ -117,17 +108,11 @@ pub struct Attenuation {
     pub oauth_providers: Vec<String>,
     /// Lock to specific OAuth scope(s).
     pub oauth_scopes: Vec<String>,
-    /// Lock to specific machine/process.
-    pub from_machine: Option<String>,
-    /// Lock to specific CLI command(s).
-    pub commands: Vec<String>,
     /// Feature glob patterns: include/exclude for resource scoping.
     /// Include patterns match resources; exclude patterns (prefixed with `!`) deny.
     pub feature_globs: Option<FeatureGlobSpec>,
     /// Budget enrollment: (budget_id, budget_class, limit, optional window).
     pub budget: Option<BudgetSpec>,
-    /// Mark token as revocable via a revocation service.
-    pub revocable: Option<String>,
     // SECURITY: raw_datalog field was removed to prevent Datalog injection attacks.
     // All attenuation MUST use structured caveats (apps, services, features, etc.).
 }

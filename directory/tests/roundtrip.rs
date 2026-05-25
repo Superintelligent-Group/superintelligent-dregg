@@ -9,7 +9,11 @@ use pyana_directory::{
 };
 
 fn fixture_handle(seed: u8) -> ResourceHandle {
-    ResourceHandle::new([seed; 32], [seed.wrapping_add(1); 32], [seed.wrapping_add(2); 32])
+    ResourceHandle::new(
+        [seed; 32],
+        [seed.wrapping_add(1); 32],
+        [seed.wrapping_add(2); 32],
+    )
 }
 
 fn fixture_entry(seed: u8) -> DirectoryEntry {

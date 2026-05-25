@@ -104,15 +104,11 @@ pub struct AuthRequestWire {
     pub action: Option<String>,
     pub features: Vec<String>,
     pub user_id: Option<String>,
-    pub org_id: Option<u64>,
     pub oauth_provider: Option<String>,
     pub oauth_scopes: Vec<String>,
-    pub machine_id: Option<String>,
-    pub command: Option<String>,
     pub now: Option<i64>,
     pub budget_states: Vec<(String, u64)>,
     pub request_cost: Option<u64>,
-    pub not_revoked: Vec<String>,
 }
 
 /// Wire format for Preconditions.
@@ -194,25 +190,17 @@ fn wire_to_auth_request(wire: &AuthRequestWire) -> AuthRequest {
     for (k, v) in &wire.budget_states {
         budget_states.insert(k.clone(), *v);
     }
-    let mut not_revoked = std::collections::HashSet::new();
-    for s in &wire.not_revoked {
-        not_revoked.insert(s.clone());
-    }
     AuthRequest {
         app_id: wire.app_id.clone(),
         service: wire.service.clone(),
         action: wire.action.clone(),
         features: wire.features.clone(),
         user_id: wire.user_id.clone(),
-        org_id: wire.org_id,
         oauth_provider: wire.oauth_provider.clone(),
         oauth_scopes: wire.oauth_scopes.clone(),
-        machine_id: wire.machine_id.clone(),
-        command: wire.command.clone(),
         now: wire.now,
         budget_states,
         request_cost: wire.request_cost,
-        not_revoked,
     }
 }
 

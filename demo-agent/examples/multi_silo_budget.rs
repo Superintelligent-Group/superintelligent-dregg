@@ -9,7 +9,7 @@
 //! 6. Periodic rebalancing when one silo's slice is exhausted
 
 use pyana_cell::CellId;
-use pyana_coord::budget::BudgetCoordinator;
+use pyana_coord::budget::StingrayCounter;
 
 /// Helper: deterministic silo IDs for the demo.
 fn silo_id(index: u8) -> [u8; 32] {
@@ -60,7 +60,7 @@ fn main() {
     // ─── Step 1: Initialize Budget Distribution ──────────────────────────────
     println!("--- Step 1: DISTRIBUTE BUDGET SLICES ---");
 
-    let mut coord = BudgetCoordinator::new(agent, total_budget, silos.clone(), byzantine_tolerance)
+    let mut coord = StingrayCounter::new(agent, total_budget, silos.clone(), byzantine_tolerance)
         .expect("should have enough silos for f=1");
 
     let ceiling = coord.compute_slice_ceiling();
@@ -329,7 +329,7 @@ fn main() {
 
     // Use a separate coordinator to demonstrate Byzantine behavior in isolation.
     let mut byz_coord =
-        BudgetCoordinator::new(agent, total_budget, silos.clone(), byzantine_tolerance).unwrap();
+        StingrayCounter::new(agent, total_budget, silos.clone(), byzantine_tolerance).unwrap();
     let byz_ceiling = byz_coord.compute_slice_ceiling();
 
     // Byzantine silo spends everything it can

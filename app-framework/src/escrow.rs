@@ -141,6 +141,7 @@ impl<'a> EscrowManager<'a> {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
         let ctx = AuthContext {
             action: &probe,

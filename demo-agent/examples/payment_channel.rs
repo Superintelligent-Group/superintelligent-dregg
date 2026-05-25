@@ -5,10 +5,10 @@
 //! 2. Alice sends payments to Bob by attenuating her slice of the budget
 //! 3. Bob can verify each payment is valid without contacting the federation
 //! 4. Channel closes with final balances settled via receipt chain
-//! 5. Uses `coord/src/budget.rs` bounded counters (BudgetCoordinator struct)
+//! 5. Uses `coord/src/budget.rs` bounded counters (StingrayCounter struct)
 
 use pyana_cell::CellId;
-use pyana_coord::budget::BudgetCoordinator;
+use pyana_coord::budget::StingrayCounter;
 use pyana_turn::turn::TurnReceipt;
 use pyana_turn::verify::verify_receipt_chain;
 
@@ -126,7 +126,7 @@ fn main() {
     // =======================================================================
     println!("--- Step 1: OPEN CHANNEL ---");
 
-    // The channel is modeled as a BudgetCoordinator where:
+    // The channel is modeled as a StingrayCounter where:
     // - The "agent" is the channel cell
     // - "Silos" represent the two endpoints (Alice's side, Bob's side)
     // - Alice's silo gets a budget slice she can debit (send to Bob)
@@ -158,7 +158,7 @@ fn main() {
     };
 
     let silos = vec![alice_silo, bob_silo, witness_1, witness_2];
-    let mut budget = BudgetCoordinator::new(
+    let mut budget = StingrayCounter::new(
         alice_cell_id,
         channel_deposit,
         silos.clone(),

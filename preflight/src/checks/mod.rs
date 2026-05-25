@@ -23,3 +23,9 @@ pub mod sovereign;
 pub mod storage;
 pub mod turns;
 pub mod wire;
+
+// Preflight gate for the substrate-correctness mandate: lightweight
+// sanity checks that the cell-side StateConstraint evaluator and the
+// γ.2 canonical id derivations behave as documented. If these fail,
+// none of the heavier substrate tests are worth running.
+pub mod state_constraints;

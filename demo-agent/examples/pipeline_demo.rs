@@ -60,6 +60,7 @@ fn make_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> Turn {
         may_delegate: DelegationMode::ParentsOwn, // allows children to target other cells (chain-walking not yet implemented)
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     let mut forest = CallForest::new();
     forest.add_root(action);
@@ -500,6 +501,7 @@ fn main() {
         may_delegate: DelegationMode::ParentsOwn, // allows children to target other cells (chain-walking not yet implemented)
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn4_b = make_turn(

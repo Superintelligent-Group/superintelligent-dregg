@@ -7359,8 +7359,10 @@ mod tests {
             initial_caps: vec![],
         };
         let params_b = params_a.clone();
-        let t_a = wallet.create_from_factory(issuer, [0xAA; 32], [0xBB; 32], [0xCC; 32], params_a, &fed_a);
-        let t_b = wallet.create_from_factory(issuer, [0xAA; 32], [0xBB; 32], [0xCC; 32], params_b, &fed_b);
+        let t_a = wallet
+            .create_from_factory(issuer, [0xAA; 32], [0xBB; 32], [0xCC; 32], params_a, &fed_a);
+        let t_b = wallet
+            .create_from_factory(issuer, [0xAA; 32], [0xBB; 32], [0xCC; 32], params_b, &fed_b);
         let sig_a = match root_action(&t_a).authorization {
             Authorization::Signature(a, b) => (a, b),
             _ => panic!("expected Signature"),

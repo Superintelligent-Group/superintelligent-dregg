@@ -794,9 +794,9 @@ mod tests {
     fn factory_descriptor_bakes_invariant_immutables() {
         let d = subscription_factory_descriptor();
         assert!(
-            d.state_constraints
-                .iter()
-                .any(|c| matches!(c, StateConstraint::Immutable { index } if *index == CAPACITY_SLOT)),
+            d.state_constraints.iter().any(
+                |c| matches!(c, StateConstraint::Immutable { index } if *index == CAPACITY_SLOT)
+            ),
             "factory must install Immutable on CAPACITY_SLOT"
         );
         assert!(
@@ -971,7 +971,10 @@ mod tests {
         else {
             panic!("expected Signature variants");
         };
-        assert_ne!(r1, r2, "different wallets must produce different signatures");
+        assert_ne!(
+            r1, r2,
+            "different wallets must produce different signatures"
+        );
     }
 
     // ─── CellProgram: structural shape ──────────────────────────────────
@@ -980,11 +983,7 @@ mod tests {
     fn program_is_cases_with_five_branches() {
         match subscription_program() {
             CellProgram::Cases(cases) => {
-                assert_eq!(
-                    cases.len(),
-                    5,
-                    "expected one Always + four MethodIs cases"
-                );
+                assert_eq!(cases.len(), 5, "expected one Always + four MethodIs cases");
             }
             other => panic!("expected CellProgram::Cases, got {other:?}"),
         }

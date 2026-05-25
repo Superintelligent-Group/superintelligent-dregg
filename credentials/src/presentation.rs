@@ -56,7 +56,10 @@ impl core::fmt::Debug for PresentationOptions {
             .field("predicates", &self.predicates)
             .field(
                 "federation_registry",
-                &self.federation_registry.as_ref().map(|_| "<dyn FederationRegistry>"),
+                &self
+                    .federation_registry
+                    .as_ref()
+                    .map(|_| "<dyn FederationRegistry>"),
             )
             .finish()
     }

@@ -387,8 +387,7 @@ impl SealPair {
             }
             5 => {
                 return Err(SealError::DeserializationFailed {
-                    reason: "Custom auth requires sealed-capability version 4 or later"
-                        .to_string(),
+                    reason: "Custom auth requires sealed-capability version 4 or later".to_string(),
                 });
             }
             other => {

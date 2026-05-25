@@ -147,6 +147,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial, // KEY: partial commitment for composability
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     println!("  Action effects:");
@@ -207,6 +208,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Partial,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     println!("  Action effects:");

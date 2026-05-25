@@ -193,7 +193,7 @@ impl AgentRuntime {
     /// rejected with `TurnError::BudgetExhausted`.
     ///
     /// Call this when the agent's current silo has provided a budget slice via
-    /// the BudgetCoordinator.
+    /// the StingrayCounter (pyana_coord::StingrayCounter).
     pub fn set_budget_gate(&mut self, silo_id: u32, slice: BudgetSlice) {
         self.executor
             .set_budget_gate(BudgetGate::new(silo_id, slice));
@@ -227,6 +227,7 @@ impl AgentRuntime {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         // Compute the signing message and sign with the wallet's key (read lock).
@@ -607,6 +608,7 @@ impl SubAgent {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         // Sign with the sub-agent's wallet using the parent's federation_id

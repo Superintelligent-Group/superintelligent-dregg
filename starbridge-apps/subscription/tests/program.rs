@@ -21,14 +21,14 @@
 //! 7. Operation-scoping: publish op doesn't advance tail; consume op
 //!    doesn't advance head.
 
+use pyana_app_framework::symbol;
+use pyana_cell::StateConstraint;
 use pyana_cell::program::{CellProgram, ProgramError, TransitionMeta};
 use pyana_cell::state::{CellState, FIELD_ZERO, FieldElement};
-use pyana_cell::StateConstraint;
-use pyana_app_framework::symbol;
 
 use starbridge_subscription::{
-    subscription_program, CAPACITY_SLOT, CONSUMERS_ROOT_SLOT, LATEST_PAYLOAD_SLOT,
-    MESSAGE_ROOT_SLOT, OWNER_PK_HASH_SLOT, PUBLISHERS_ROOT_SLOT, SEQ_HEAD_SLOT, SEQ_TAIL_SLOT,
+    CAPACITY_SLOT, CONSUMERS_ROOT_SLOT, LATEST_PAYLOAD_SLOT, MESSAGE_ROOT_SLOT, OWNER_PK_HASH_SLOT,
+    PUBLISHERS_ROOT_SLOT, SEQ_HEAD_SLOT, SEQ_TAIL_SLOT, subscription_program,
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -63,14 +63,14 @@ fn base_state(head: u64, tail: u64) -> CellState {
 /// (folded with the new payload hash), latest_payload set.
 fn publish_new(old: &CellState, payload_hash: FieldElement) -> CellState {
     let mut s = old.clone();
-    let old_head = u64::from_be_bytes(
-        s.fields[SEQ_HEAD_SLOT as usize][24..32]
-            .try_into()
-            .unwrap(),
-    );
+    let old_head = u64::from_be_bytes(s.fields[SEQ_HEAD_SLOT as usize][24..32].try_into().unwrap());
     s.fields[SEQ_HEAD_SLOT as usize] = u64_field(old_head + 1);
     s.fields[MESSAGE_ROOT_SLOT as usize] = blake3_field(
-        &[&old.fields[MESSAGE_ROOT_SLOT as usize][..], &payload_hash[..]].concat(),
+        &[
+            &old.fields[MESSAGE_ROOT_SLOT as usize][..],
+            &payload_hash[..],
+        ]
+        .concat(),
     );
     s.fields[LATEST_PAYLOAD_SLOT as usize] = payload_hash;
     s
@@ -79,11 +79,7 @@ fn publish_new(old: &CellState, payload_hash: FieldElement) -> CellState {
 /// Apply a consume-shaped transition: tail + 1.
 fn consume_new(old: &CellState) -> CellState {
     let mut s = old.clone();
-    let old_tail = u64::from_be_bytes(
-        s.fields[SEQ_TAIL_SLOT as usize][24..32]
-            .try_into()
-            .unwrap(),
-    );
+    let old_tail = u64::from_be_bytes(s.fields[SEQ_TAIL_SLOT as usize][24..32].try_into().unwrap());
     s.fields[SEQ_TAIL_SLOT as usize] = u64_field(old_tail + 1);
     s
 }
@@ -143,8 +139,7 @@ fn roundtrip_publish_then_consume_preserves_payload_hash() {
     assert!(r.is_ok(), "publish must pass slot-shape: {r:?}");
     // The latest_payload slot now holds the exact payload hash.
     assert_eq!(
-        new_pub.fields[LATEST_PAYLOAD_SLOT as usize],
-        payload_hash,
+        new_pub.fields[LATEST_PAYLOAD_SLOT as usize], payload_hash,
         "publish must write payload_hash into slot 7"
     );
 
@@ -184,9 +179,9 @@ fn non_authorized_publisher_rejected() {
         ProgramError::SenderMembershipWitnessMissing
         | ProgramError::WitnessedPredicateRequiresExecutor { .. }
         | ProgramError::MissingContextField { .. } => {} // any of these forms is a hard reject
-        other => panic!(
-            "expected SenderMembershipWitnessMissing or similar rejection, got {other:?}"
-        ),
+        other => {
+            panic!("expected SenderMembershipWitnessMissing or similar rejection, got {other:?}")
+        }
     }
 }
 
@@ -203,9 +198,9 @@ fn non_authorized_consumer_rejected() {
         ProgramError::SenderMembershipWitnessMissing
         | ProgramError::WitnessedPredicateRequiresExecutor { .. }
         | ProgramError::MissingContextField { .. } => {}
-        other => panic!(
-            "expected SenderMembershipWitnessMissing or similar rejection, got {other:?}"
-        ),
+        other => {
+            panic!("expected SenderMembershipWitnessMissing or similar rejection, got {other:?}")
+        }
     }
 }
 

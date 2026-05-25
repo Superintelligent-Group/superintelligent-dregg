@@ -19,8 +19,7 @@ use pyana_cell::id::CellId;
 pub struct Gamma2IdInjectivity;
 impl Invariant for Gamma2IdInjectivity {
     const NAME: &'static str = "gamma2_id_injectivity";
-    const DESCRIPTION: &'static str =
-        "γ.2 transfer_id / grant_id / intro_id preimage byte vectors are injective in their public components";
+    const DESCRIPTION: &'static str = "γ.2 transfer_id / grant_id / intro_id preimage byte vectors are injective in their public components";
 }
 
 fn transfer_pre(from: &CellId, to: &CellId, amount: u64, sender_nonce: u64) -> Vec<u8> {

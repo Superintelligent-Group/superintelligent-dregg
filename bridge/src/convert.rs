@@ -20,15 +20,11 @@
 //! | App(id, actions) | "app"              | [hash(id), hash(actions), _]    |
 //! | Service(n, act)  | "service"          | [hash(n), hash(actions), _]     |
 //! | Feature(name)    | "feature"          | [hash(name), _, _]              |
-//! | Organization(id) | "organization"     | [id_as_u64, _, _]               |
 //! | ConfineUser(uid) | "confine_user"     | [hash(uid), _, _]               |
 //! | ValidityWindow   | "valid_until"      | [not_after_as_i64, _, _]        |
 //! | OAuthProvider(p) | "oauth_provider"   | [hash(p), _, _]                 |
 //! | OAuthScope(s)    | "oauth_scope"      | [hash(s), _, _]                 |
-//! | FromMachine(m)   | "from_machine"     | [hash(m), _, _]                 |
-//! | Command(c)       | "command"          | [hash(c), _, _]                 |
 //! | Budget{..}       | "budget"           | [hash(id), limit, _]            |
-//! | Revocable(svc)   | "revocable"        | [hash(svc), _, _]               |
 //! | (no caveats)     | "unrestricted"     | [1, _, _]                       |
 //!
 //! An "unrestricted" fact is added when the token has no caveats at all,
@@ -115,12 +111,6 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
             vec![Fact::unary(pred, name_fe)]
         }
 
-        PyanaGrant::Organization(org_id) => {
-            let pred = symbols.intern("organization");
-            let id_fe = FieldElement::from_u64(*org_id);
-            vec![Fact::unary(pred, id_fe)]
-        }
-
         PyanaGrant::ConfineUser(uid) => {
             let pred = symbols.intern("confine_user");
             let uid_fe = symbols.intern(uid);
@@ -162,18 +152,6 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
             vec![Fact::unary(pred, scope_fe)]
         }
 
-        PyanaGrant::FromMachine(machine) => {
-            let pred = symbols.intern("from_machine");
-            let machine_fe = symbols.intern(machine);
-            vec![Fact::unary(pred, machine_fe)]
-        }
-
-        PyanaGrant::Command(cmd) => {
-            let pred = symbols.intern("command");
-            let cmd_fe = symbols.intern(cmd);
-            vec![Fact::unary(pred, cmd_fe)]
-        }
-
         PyanaGrant::FeatureGlob { include, exclude } => {
             // Feature globs are encoded as individual include/exclude facts.
             let mut facts = Vec::new();
@@ -195,12 +173,6 @@ pub fn grant_to_facts(grant: &PyanaGrant, symbols: &mut SymbolTable) -> Vec<Fact
             let id_fe = symbols.intern(id);
             let limit_fe = FieldElement::from_u64(*limit);
             vec![Fact::binary(pred, id_fe, limit_fe)]
-        }
-
-        PyanaGrant::Revocable(svc) => {
-            let pred = symbols.intern("revocable");
-            let svc_fe = symbols.intern(svc);
-            vec![Fact::unary(pred, svc_fe)]
         }
 
         PyanaGrant::Unknown(_, _) => {
@@ -466,19 +438,6 @@ mod tests {
         for fact in &facts {
             assert!(!fact.predicate.is_zero());
         }
-    }
-
-    #[test]
-    fn test_grant_to_facts_organization() {
-        let mut symbols = SymbolTable::new();
-        let grant = PyanaGrant::Organization(42);
-        let facts = grant_to_facts(&grant, &mut symbols);
-        assert_eq!(facts.len(), 1);
-        assert_eq!(
-            facts[0].predicate,
-            FieldElement::from_symbol("organization")
-        );
-        assert_eq!(facts[0].terms[0], FieldElement::from_u64(42));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Comprehensive tests for both coordination layers.
 //!
-//! Layer 1: Causal Chaining — DAG construction, ordering verification, frontier tracking.
+//! Layer 1: Causal Chaining — CausalDag construction, ordering verification, frontier tracking.
 //! Layer 2: Atomic Multi-Party — 2PC protocol, success and failure paths.
 
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ use pyana_turn::action::{Action, Authorization, CommitmentMode, DelegationMode, 
 use pyana_turn::{CallForest, ComputronCosts, Turn};
 
 use crate::atomic::{AtomicForest, AtomicForestBuilder, Coordinator, Decision, Participant, Vote};
-use crate::causal::{CausalDag, CausalLedger, CausalTurn, CausalTurnBuilder};
+use crate::causal::CausalDag;
 use crate::error::CoordError;
 
 // ─── Test Helpers ──────────────────────────────────────────────────────────────
@@ -99,6 +99,7 @@ fn make_transfer_turn(
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     forest.add_root(action);
     Turn {
@@ -136,6 +137,7 @@ fn make_set_field_turn(agent: CellId, index: usize, value: [u8; 32], nonce: u64)
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     forest.add_root(action);
     Turn {
@@ -169,6 +171,7 @@ fn make_noop_turn(agent: CellId, nonce: u64) -> Turn {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     forest.add_root(action);
     Turn {
@@ -386,245 +389,9 @@ mod causal_dag {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  LAYER 1: CAUSAL LEDGER TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod causal_ledger {
-    use super::*;
-
-    fn setup_ledger_with_two_cells() -> (CausalLedger, CellId, CellId) {
-        let mut ledger = Ledger::new();
-        let cell_a = make_cell(1, 10000);
-        let cell_b = make_cell(2, 5000);
-        let id_a = ledger.insert_cell(cell_a).unwrap();
-        let id_b = ledger.insert_cell(cell_b).unwrap();
-        let cl = CausalLedger::with_ledger(ledger);
-        (cl, id_a, id_b)
-    }
-
-    #[test]
-    fn empty_causal_ledger() {
-        let cl = CausalLedger::new();
-        assert_eq!(cl.turn_count(), 0);
-        assert!(cl.frontier().is_empty());
-    }
-
-    #[test]
-    fn single_causal_turn() {
-        let (mut cl, id_a, _id_b) = setup_ledger_with_two_cells();
-        let node_a = node_id(1);
-
-        let turn = make_noop_turn(id_a, 0);
-        let ct = CausalTurn::new(turn, vec![], node_a, 0);
-
-        let result = cl.apply_causal_turn(&ct).unwrap();
-        assert!(result.is_committed());
-
-        assert_eq!(cl.turn_count(), 1);
-        assert_eq!(cl.frontier(), vec![ct.hash]);
-        assert_eq!(cl.next_sequence(&node_a), 1);
-    }
-
-    #[test]
-    fn causal_chain_two_nodes() {
-        let (mut cl, id_a, id_b) = setup_ledger_with_two_cells();
-        let node_a = node_id(1);
-        let node_b = node_id(2);
-
-        // Node A produces T1 (no deps, it's genesis).
-        let t1 = make_set_field_turn(id_a, 0, [1u8; 32], 0);
-        let ct1 = CausalTurn::new(t1, vec![], node_a, 0);
-        let r1 = cl.apply_causal_turn(&ct1).unwrap();
-        assert!(r1.is_committed());
-
-        // Node B sees T1, produces T2 depending on T1.
-        let t2 = make_set_field_turn(id_b, 0, [2u8; 32], 0);
-        let ct2 = CausalTurn::new(t2, vec![ct1.hash], node_b, 0);
-        let r2 = cl.apply_causal_turn(&ct2).unwrap();
-        assert!(r2.is_committed());
-
-        // Verify causal ordering.
-        assert!(cl.happened_before(&ct1.hash, &ct2.hash));
-        assert!(!cl.happened_before(&ct2.hash, &ct1.hash));
-    }
-
-    #[test]
-    fn concurrent_turns_from_same_genesis() {
-        let (mut cl, id_a, id_b) = setup_ledger_with_two_cells();
-        let node_a = node_id(1);
-        let node_b = node_id(2);
-
-        // T1: Node A genesis.
-        let t1 = make_set_field_turn(id_a, 0, [1u8; 32], 0);
-        let ct1 = CausalTurn::new(t1, vec![], node_a, 0);
-        cl.apply_causal_turn(&ct1).unwrap();
-
-        // T2: Node A produces another turn depending on T1.
-        let t2 = make_set_field_turn(id_a, 1, [2u8; 32], 1);
-        let ct2 = CausalTurn::new(t2, vec![ct1.hash], node_a, 1);
-        cl.apply_causal_turn(&ct2).unwrap();
-
-        // T3: Node B produces turn depending only on T1 (hasn't seen T2).
-        let t3 = make_set_field_turn(id_b, 0, [3u8; 32], 0);
-        let ct3 = CausalTurn::new(t3, vec![ct1.hash], node_b, 0);
-        cl.apply_causal_turn(&ct3).unwrap();
-
-        // T2 and T3 are concurrent.
-        assert!(cl.are_concurrent(&ct2.hash, &ct3.hash));
-
-        // But both happened after T1.
-        assert!(cl.happened_before(&ct1.hash, &ct2.hash));
-        assert!(cl.happened_before(&ct1.hash, &ct3.hash));
-    }
-
-    #[test]
-    fn sequence_gap_rejected() {
-        let (mut cl, id_a, _) = setup_ledger_with_two_cells();
-        let node_a = node_id(1);
-
-        // Skip sequence 0, try to apply sequence 1.
-        let turn = make_noop_turn(id_a, 0);
-        let ct = CausalTurn::new(turn, vec![], node_a, 1); // sequence should be 0
-
-        let err = cl.apply_causal_turn(&ct).unwrap_err();
-        assert!(matches!(
-            err,
-            CoordError::SequenceGap {
-                expected: 0,
-                got: 1,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn missing_deps_rejected() {
-        let (mut cl, id_a, _) = setup_ledger_with_two_cells();
-        let node_a = node_id(1);
-
-        let fake_dep = *blake3::hash(b"nonexistent").as_bytes();
-        let turn = make_noop_turn(id_a, 0);
-        let ct = CausalTurn::new(turn, vec![fake_dep], node_a, 0);
-
-        let err = cl.apply_causal_turn(&ct).unwrap_err();
-        assert!(matches!(err, CoordError::MissingDependency { .. }));
-    }
-
-    #[test]
-    fn hash_mismatch_rejected() {
-        let (mut cl, id_a, _) = setup_ledger_with_two_cells();
-        let node_a = node_id(1);
-
-        let turn = make_noop_turn(id_a, 0);
-        let mut ct = CausalTurn::new(turn, vec![], node_a, 0);
-        // Corrupt the hash.
-        ct.hash[0] ^= 0xff;
-
-        let err = cl.apply_causal_turn(&ct).unwrap_err();
-        assert!(matches!(err, CoordError::HashMismatch { .. }));
-    }
-
-    #[test]
-    fn causal_turn_builder() {
-        let (mut cl, id_a, _) = setup_ledger_with_two_cells();
-        let node_a = node_id(1);
-        let builder = CausalTurnBuilder::new(node_a);
-
-        // First turn: builder auto-fills empty deps and seq=0.
-        let t1 = make_noop_turn(id_a, 0);
-        let ct1 = builder.build(t1, &cl);
-        assert_eq!(ct1.sequence, 0);
-        assert!(ct1.causal_deps.is_empty());
-
-        cl.apply_causal_turn(&ct1).unwrap();
-
-        // Second turn: builder fills frontier (ct1) and seq=1.
-        let t2 = make_set_field_turn(id_a, 0, [42u8; 32], 1);
-        let ct2 = builder.build(t2, &cl);
-        assert_eq!(ct2.sequence, 1);
-        assert_eq!(ct2.causal_deps, vec![ct1.hash]);
-    }
-
-    #[test]
-    fn node_frontier_tracking() {
-        let (mut cl, id_a, id_b) = setup_ledger_with_two_cells();
-        let node_a = node_id(1);
-        let node_b = node_id(2);
-
-        // Node A: two turns.
-        let t1 = make_noop_turn(id_a, 0);
-        let ct1 = CausalTurn::new(t1, vec![], node_a, 0);
-        cl.apply_causal_turn(&ct1).unwrap();
-
-        let t2 = make_set_field_turn(id_a, 0, [1u8; 32], 1);
-        let ct2 = CausalTurn::new(t2, vec![ct1.hash], node_a, 1);
-        cl.apply_causal_turn(&ct2).unwrap();
-
-        // Node A's frontier should be [ct2].
-        let a_frontier = cl.node_frontier(&node_a).unwrap();
-        assert_eq!(a_frontier.len(), 1);
-        assert!(a_frontier.contains(&ct2.hash));
-
-        // Node B: one turn depending on ct1.
-        let t3 = make_noop_turn(id_b, 0);
-        let ct3 = CausalTurn::new(t3, vec![ct1.hash], node_b, 0);
-        cl.apply_causal_turn(&ct3).unwrap();
-
-        // Node B's frontier should be [ct3].
-        let b_frontier = cl.node_frontier(&node_b).unwrap();
-        assert_eq!(b_frontier.len(), 1);
-        assert!(b_frontier.contains(&ct3.hash));
-    }
-
-    #[test]
-    fn receipt_stored_on_commit() {
-        let (mut cl, id_a, _) = setup_ledger_with_two_cells();
-        let node_a = node_id(1);
-
-        let turn = make_noop_turn(id_a, 0);
-        let ct = CausalTurn::new(turn, vec![], node_a, 0);
-        cl.apply_causal_turn(&ct).unwrap();
-
-        assert!(cl.receipt(&ct.hash).is_some());
-    }
-
-    #[test]
-    fn transfer_via_causal_turn() {
-        let (mut cl, id_a, id_b) = setup_ledger_with_two_cells();
-        let node_a = node_id(1);
-
-        // Transfer 500 from A to B.
-        let turn = make_transfer_turn(id_a, id_a, id_b, 500, 0, 0);
-        let ct = CausalTurn::new(turn, vec![], node_a, 0);
-        let result = cl.apply_causal_turn(&ct).unwrap();
-        assert!(result.is_committed());
-
-        // Verify balances.
-        assert_eq!(cl.ledger().get(&id_a).unwrap().state.balance(), 9500);
-        assert_eq!(cl.ledger().get(&id_b).unwrap().state.balance(), 5500);
-    }
-
-    #[test]
-    fn verify_hash_correctness() {
-        let node_a = node_id(1);
-        let mut pk = [0u8; 32];
-        pk[0] = 1;
-        let token_id = [0u8; 32];
-        let cell = Cell::with_balance(pk, token_id, 10000);
-        let id_a = cell.id();
-
-        let turn = make_noop_turn(id_a, 0);
-        let mut ct = CausalTurn::new(turn, vec![], node_a, 0);
-
-        // The hash should verify correctly.
-        assert!(ct.verify_hash());
-
-        // Tamper with sequence — hash should no longer verify.
-        ct.sequence = 999;
-        assert!(!ct.verify_hash());
-    }
-}
+// CausalLedger, CausalTurn, and CausalTurnBuilder were deleted in Block 4.
+// The node uses pyana_types::CausalDag directly; the ledger wrapper was dead production code.
+// Tests for CausalDag remain in the causal_dag module above.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  LAYER 2: ATOMIC MULTI-PARTY TESTS
@@ -653,6 +420,7 @@ mod atomic_forest_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         });
 
         let af = AtomicForest::new(
@@ -705,6 +473,7 @@ mod atomic_forest_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         });
 
         let af = AtomicForest::new(vec![], forest, vec![], cell_a.id(), 0);
@@ -727,6 +496,7 @@ mod atomic_forest_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         });
 
         let mut builder = AtomicForestBuilder::new();
@@ -787,6 +557,7 @@ mod coordinator_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         });
 
         let af = AtomicForest::new(
@@ -1189,6 +960,7 @@ mod participant_tests {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         });
 
         let af = AtomicForest::new(
@@ -1369,33 +1141,17 @@ mod integration {
         let node_b = node_id(2);
         let (signing_keys, participant_keys) = make_participant_keys(&[node_a, node_b]);
 
-        // ─── Layer 1: Causal Chaining ────────────────────────────────────
-
-        let mut cl = CausalLedger::with_ledger(ledger.clone());
-
-        // [1/3] Node A produces Turn T1 (deps: [])
-        let t1 = make_set_field_turn(alice_id, 0, [0xAA; 32], 0);
-        let ct1 = CausalTurn::new(t1, vec![], node_a, 0);
-        let r1 = cl.apply_causal_turn(&ct1).unwrap();
-        assert!(r1.is_committed());
-
-        // [2/3] Node B sees T1, produces Turn T2 (deps: [T1])
-        let t2 = make_set_field_turn(bob_id, 0, [0xBB; 32], 0);
-        let ct2 = CausalTurn::new(t2, vec![ct1.hash], node_b, 0);
-        let r2 = cl.apply_causal_turn(&ct2).unwrap();
-        assert!(r2.is_committed());
-
-        // Verify causal order: T1 -> T2.
-        assert!(cl.happened_before(&ct1.hash, &ct2.hash));
-
-        // [3/3] Node A produces Turn T3 (deps: [T1])  — concurrent with T2.
-        let t3 = make_set_field_turn(alice_id, 1, [0xCC; 32], 1);
-        let ct3 = CausalTurn::new(t3, vec![ct1.hash], node_a, 1);
-        let r3 = cl.apply_causal_turn(&ct3).unwrap();
-        assert!(r3.is_committed());
-
-        // T2 and T3 are concurrent.
-        assert!(cl.are_concurrent(&ct2.hash, &ct3.hash));
+        // ─── Layer 1: Causal Chaining (DAG-only; no CausalLedger needed) ──
+        // CausalLedger was deleted; the node uses pyana_types::CausalDag directly.
+        let mut dag = CausalDag::new();
+        let h1 = *blake3::hash(b"t1-alice").as_bytes();
+        let h2 = *blake3::hash(b"t2-bob").as_bytes();
+        let h3 = *blake3::hash(b"t3-alice").as_bytes();
+        dag.insert_genesis(h1).unwrap();
+        dag.insert(h2, &[h1]).unwrap(); // T2 depends on T1
+        dag.insert(h3, &[h1]).unwrap(); // T3 depends on T1 (concurrent with T2)
+        assert!(dag.happened_before(&h1, &h2));
+        assert!(dag.are_concurrent(&h2, &h3));
 
         // ─── Layer 2: Atomic Multi-Party Turn ────────────────────────────
 
@@ -1423,6 +1179,7 @@ mod integration {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         });
 
         let af = AtomicForest::new(
@@ -1512,6 +1269,7 @@ mod integration {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         });
 
         let af2 = AtomicForest::new(
@@ -1577,7 +1335,7 @@ mod integration {
         assert_eq!(fail_ledger.get(&bob_id3).unwrap().state.balance(), 5000);
     }
 
-    /// Test that causal turns and atomic turns can coexist on the same ledger.
+    /// Test that sequential turns and atomic turns can coexist on the same ledger.
     #[test]
     fn causal_then_atomic_on_same_ledger() {
         let mut ledger = Ledger::new();
@@ -1595,20 +1353,20 @@ mod integration {
         let node_b = node_id(2);
         let (signing_keys, participant_keys) = make_participant_keys(&[node_a, node_b]);
 
-        // Phase 1: Causal turns modify the ledger.
-        let mut cl = CausalLedger::with_ledger(ledger);
+        // Phase 1: Apply a turn directly against the ledger (no CausalLedger wrapper).
+        // CausalLedger was deleted; production code routes through pyana_turn::TurnExecutor.
+        {
+            use pyana_turn::TurnExecutor;
+            let executor = TurnExecutor::new(zero_costs());
+            let t1 = make_transfer_turn(id_a, id_a, id_b, 1000, 0, 0);
+            executor.execute(&t1, &mut ledger);
+        }
 
-        let t1 = make_transfer_turn(id_a, id_a, id_b, 1000, 0, 0);
-        let ct1 = CausalTurn::new(t1, vec![], node_a, 0);
-        cl.apply_causal_turn(&ct1).unwrap();
-
-        // After causal turn: A=9000, B=6000.
-        assert_eq!(cl.ledger().get(&id_a).unwrap().state.balance(), 9000);
-        assert_eq!(cl.ledger().get(&id_b).unwrap().state.balance(), 6000);
+        // After direct turn: A=9000, B=6000.
+        assert_eq!(ledger.get(&id_a).unwrap().state.balance(), 9000);
+        assert_eq!(ledger.get(&id_b).unwrap().state.balance(), 6000);
 
         // Phase 2: Atomic turn on the same ledger state.
-        // Get a mutable ledger for the atomic operation.
-        let atomic_ledger = cl.ledger_mut();
 
         let mut forest = CallForest::new();
         forest.add_root(Action {
@@ -1625,6 +1383,7 @@ mod integration {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         });
 
         let af = AtomicForest::new(
@@ -1664,13 +1423,13 @@ mod integration {
         let decision = coord.receive_vote(node_b, Vote::yes(sig_b)).unwrap();
         assert_eq!(decision, Some(Decision::Commit));
 
-        // Note: agent nonce is 1 now (after the causal turn).
+        // Note: agent nonce is 1 now (after the direct turn).
         // The coordinator builds a turn with the current nonce.
-        coord.commit(atomic_ledger).unwrap();
+        coord.commit(&mut ledger).unwrap();
 
         // Final state: A=9000+2000=11000, B=6000-2000=4000.
-        assert_eq!(cl.ledger().get(&id_a).unwrap().state.balance(), 11000);
-        assert_eq!(cl.ledger().get(&id_b).unwrap().state.balance(), 4000);
+        assert_eq!(ledger.get(&id_a).unwrap().state.balance(), 11000);
+        assert_eq!(ledger.get(&id_b).unwrap().state.balance(), 4000);
     }
 
     /// Test three-party atomic turn with majority threshold.
@@ -1712,6 +1471,7 @@ mod integration {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         });
 
         let af = AtomicForest::new(
@@ -1790,6 +1550,7 @@ mod integration {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         });
 
         let af = AtomicForest::new(vec![node_a, node_b, node_c], forest, vec![], id_a, 0);

@@ -45,6 +45,7 @@ fn run_all_subsystems() -> Vec<SubsystemResult> {
         run_subsystem("Solver", checks::solver::run()),
         run_subsystem("Bridges", checks::bridges::run()),
         run_subsystem("Demo-Agent Examples", checks::demo_agent::run()),
+        run_subsystem("StateConstraint surface", checks::state_constraints::run()),
     ]
 }
 
@@ -270,6 +271,18 @@ mod tests {
         let results = checks::demo_agent::run();
         for r in &results {
             assert!(r.passed, "demo_agent::{} failed: {:?}", r.name, r.error);
+        }
+    }
+
+    #[test]
+    fn preflight_state_constraints() {
+        let results = checks::state_constraints::run();
+        for r in &results {
+            assert!(
+                r.passed,
+                "state_constraints::{} failed: {:?}",
+                r.name, r.error
+            );
         }
     }
 

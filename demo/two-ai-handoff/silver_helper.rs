@@ -241,8 +241,8 @@ fn cmd_make_handoff(state_dir: &PathBuf, alice_cell_hex: &str, bob_cell_hex: &st
     let mut swiss = [0u8; 32];
     swiss[..4].copy_from_slice(b"DEMO");
     // HandoffCertificate::create wants `pyana_types::SigningKey`. Wrap
-     // alice's ed25519-dalek key in the substrate newtype using the
-     // shared 32-byte secret material.
+    // alice's ed25519-dalek key in the substrate newtype using the
+    // shared 32-byte secret material.
     let alice_sk_substrate = pyana_types::SigningKey::from_bytes(&alice_sk.to_bytes());
     let cert = HandoffCertificate::create(
         &alice_sk_substrate,

@@ -327,16 +327,10 @@ impl AuthorizationPayload {
                 let (predicate_kind, vk_hash) = match predicate.kind {
                     K::Dfa => ("dfa".to_string(), String::new()),
                     K::Temporal => ("temporal".to_string(), String::new()),
-                    K::MerkleMembership => {
-                        ("merkle_membership".to_string(), String::new())
-                    }
+                    K::MerkleMembership => ("merkle_membership".to_string(), String::new()),
                     K::BlindedSet => ("blinded_set".to_string(), String::new()),
-                    K::BridgePredicate => {
-                        ("bridge_predicate".to_string(), String::new())
-                    }
-                    K::PedersenEquality => {
-                        ("pedersen_equality".to_string(), String::new())
-                    }
+                    K::BridgePredicate => ("bridge_predicate".to_string(), String::new()),
+                    K::PedersenEquality => ("pedersen_equality".to_string(), String::new()),
                     K::Custom { vk_hash } => ("custom".to_string(), hex32(&vk_hash)),
                 };
                 AuthorizationPayload::Custom {

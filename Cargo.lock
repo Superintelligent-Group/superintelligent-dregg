@@ -9924,11 +9924,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "starbridge-governed-namespace"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "pyana-app-framework",
+ "pyana-cell",
+ "pyana-dfa",
+ "pyana-turn",
+ "pyana-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "starbridge-identity"
 version = "0.1.0"
 dependencies = [
  "blake3",
  "pyana-app-framework",
+ "pyana-cell",
+ "pyana-circuit",
  "pyana-credentials",
  "pyana-token",
  "pyana-types",
@@ -9938,6 +9954,18 @@ dependencies = [
 
 [[package]]
 name = "starbridge-nameservice"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "pyana-app-framework",
+ "pyana-cell",
+ "pyana-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "starbridge-subscription"
 version = "0.1.0"
 dependencies = [
  "blake3",

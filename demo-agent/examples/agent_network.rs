@@ -82,6 +82,7 @@ fn make_turn(agent: CellId, nonce: u64, effects: Vec<Effect>) -> pyana_turn::Tur
         may_delegate: DelegationMode::ParentsOwn,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
     let mut forest = CallForest::new();
     forest.add_root(action);
@@ -451,6 +452,7 @@ fn main() {
         may_delegate: DelegationMode::ParentsOwn,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn_f = make_turn(

@@ -27,6 +27,7 @@ fn sign_action_overwrites_unchecked() {
         may_delegate: DelegationMode::None,
         commitment_mode: Default::default(),
         balance_change: None,
+        witness_blobs: vec![],
     };
     let signed = wallet.sign_action(unsigned);
     assert!(matches!(signed.authorization, Authorization::Signature(..)));

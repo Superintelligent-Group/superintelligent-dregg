@@ -409,11 +409,7 @@ pub fn build_transfer_action(
 /// one-way: once the slot transitions from `FIELD_ZERO` to a tombstone,
 /// the executor rejects any subsequent write. A revoked name cannot be
 /// "un-revoked" by the owner, nor moved to a different tombstone.
-pub fn build_revoke_action(
-    wallet: &AppWallet,
-    registry_cell: CellId,
-    name: &str,
-) -> Action {
+pub fn build_revoke_action(wallet: &AppWallet, registry_cell: CellId, name: &str) -> Action {
     let name_hash = blake3_field(name.as_bytes());
     let tombstone = revoked_tombstone(name);
 

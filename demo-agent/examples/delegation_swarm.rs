@@ -156,6 +156,7 @@ fn main() {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let nonce = ledger.get(&controller_id).unwrap().state.nonce();
@@ -239,6 +240,7 @@ fn main() {
                 may_delegate: DelegationMode::None,
                 commitment_mode: CommitmentMode::Full,
                 balance_change: None,
+                witness_blobs: vec![],
             };
 
             let nonce = ledger.get(&worker_id).unwrap().state.nonce();
@@ -303,6 +305,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(worker_0_id, worker_0_nonce, try_new_svc);
@@ -341,6 +344,7 @@ fn main() {
             may_delegate: DelegationMode::None,
             commitment_mode: CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let turn = make_turn(*worker_id, nonce, refresh);
@@ -383,6 +387,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(worker_0_id, worker_0_nonce, use_new_svc);
@@ -426,6 +431,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(controller_id, controller_nonce, revoke);
@@ -477,6 +483,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(compromised_worker, w7_nonce, w7_try);
@@ -504,6 +511,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(w3_id, w3_nonce, w3_action);
@@ -623,6 +631,7 @@ fn main() {
         may_delegate: DelegationMode::None,
         commitment_mode: CommitmentMode::Full,
         balance_change: None,
+        witness_blobs: vec![],
     };
 
     let turn = make_turn(worker_0_id, w0_nonce, refresh_again);

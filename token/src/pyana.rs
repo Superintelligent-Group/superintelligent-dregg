@@ -7,7 +7,6 @@
 //!
 //! Authority facts (set at token creation):
 //! ```text
-//! organization({org_id});
 //! app({app_id}, {actions});         // e.g., app("my-app", "rwcd")
 //! service({name}, {actions});       // e.g., service("http", "rw")
 //! secret_access({namespace}, {actions});
@@ -15,13 +14,10 @@
 //! oauth_provider({name});
 //! oauth_scope({scope});
 //! user({user_id});
-//! machine({machine_id});
-//! command({name});
 //! ```
 //!
 //! Restriction checks (added during attenuation):
 //! ```text
-//! check if organization($org);
 //! check if app($app, $actions), $actions.contains("r");
 //! check if time($t), $t < {not_after};
 //! check if time($t), $t > {not_before};
@@ -65,7 +61,6 @@ fn sanitize_datalog_string(s: &str) -> Result<String, TokenError> {
 
 /// Standard Pyana Datalog fact names.
 pub mod facts {
-    pub const ORGANIZATION: &str = "organization";
     pub const APP: &str = "app";
     pub const SERVICE: &str = "service";
     pub const SECRET_ACCESS: &str = "secret_access";
@@ -73,20 +68,15 @@ pub mod facts {
     pub const OAUTH_PROVIDER: &str = "oauth_provider";
     pub const OAUTH_SCOPE: &str = "oauth_scope";
     pub const USER: &str = "user";
-    pub const MACHINE: &str = "machine";
-    pub const COMMAND: &str = "command";
 }
 
 /// Standard Pyana Datalog authorizer fact names (ambient facts from the request).
 pub mod authorizer_facts {
-    pub const REQUEST_ORG: &str = "request_org";
     pub const REQUEST_APP: &str = "request_app";
     pub const REQUEST_SERVICE: &str = "request_service";
     pub const REQUEST_ACTION: &str = "request_action";
     pub const REQUEST_FEATURE: &str = "request_feature";
     pub const REQUEST_USER: &str = "request_user";
-    pub const REQUEST_MACHINE: &str = "request_machine";
-    pub const REQUEST_COMMAND: &str = "request_command";
     pub const TIME: &str = "time";
 }
 
@@ -99,21 +89,15 @@ pub mod authorizer_facts {
 /// Returns an error if any input string contains characters that are not safe
 /// for Datalog interpolation.
 pub fn authority_datalog(
-    org_id: Option<u64>,
     apps: &[(String, String)],
     services: &[(String, String)],
     features: &[String],
     oauth_providers: &[String],
     oauth_scopes: &[String],
     user_id: Option<&str>,
-    machine_id: Option<&str>,
-    commands: &[String],
 ) -> Result<String, TokenError> {
     let mut code = String::new();
 
-    if let Some(org) = org_id {
-        code.push_str(&format!("{}({});\n", facts::ORGANIZATION, org));
-    }
     for (app, actions) in apps {
         code.push_str(&format!(
             "{}(\"{}\", \"{}\");\n",
@@ -156,20 +140,6 @@ pub fn authority_datalog(
             "{}(\"{}\");\n",
             facts::USER,
             sanitize_datalog_string(uid)?
-        ));
-    }
-    if let Some(mid) = machine_id {
-        code.push_str(&format!(
-            "{}(\"{}\");\n",
-            facts::MACHINE,
-            sanitize_datalog_string(mid)?
-        ));
-    }
-    for cmd in commands {
-        code.push_str(&format!(
-            "{}(\"{}\");\n",
-            facts::COMMAND,
-            sanitize_datalog_string(cmd)?
         ));
     }
 
@@ -251,22 +221,8 @@ pub fn attenuation_datalog(att: &Attenuation) -> Result<String, TokenError> {
             sanitize_datalog_string(scope)?,
         ));
     }
-    if let Some(mid) = &att.from_machine {
-        code.push_str(&format!(
-            "check if {}(\"{}\");\n",
-            facts::MACHINE,
-            sanitize_datalog_string(mid)?
-        ));
-    }
-    for cmd in &att.commands {
-        code.push_str(&format!(
-            "check if {}(\"{}\");\n",
-            facts::COMMAND,
-            sanitize_datalog_string(cmd)?
-        ));
-    }
     // Feature glob restrictions are macaroon-specific (Biscuit doesn't use glob matching).
-    // Budget and Revocable are service-level concerns, not Datalog checks.
+    // Budget is a service-level concern, not a Datalog check.
     //
     // SECURITY: raw_datalog was removed to prevent Datalog injection attacks.
     // Structured caveats cover all legitimate attenuation use cases.
@@ -284,9 +240,6 @@ pub fn authorizer_datalog(req: &AuthRequest) -> Result<String, TokenError> {
     let mut code = String::new();
 
     // Ambient facts from the request
-    if let Some(org) = req.org_id {
-        code.push_str(&format!("{}({});\n", authorizer_facts::REQUEST_ORG, org));
-    }
     if let Some(app) = &req.app_id {
         code.push_str(&format!(
             "{}(\"{}\");\n",
@@ -322,20 +275,6 @@ pub fn authorizer_datalog(req: &AuthRequest) -> Result<String, TokenError> {
             sanitize_datalog_string(uid)?,
         ));
     }
-    if let Some(mid) = &req.machine_id {
-        code.push_str(&format!(
-            "{}(\"{}\");\n",
-            authorizer_facts::REQUEST_MACHINE,
-            sanitize_datalog_string(mid)?,
-        ));
-    }
-    if let Some(cmd) = &req.command {
-        code.push_str(&format!(
-            "{}(\"{}\");\n",
-            authorizer_facts::REQUEST_COMMAND,
-            sanitize_datalog_string(cmd)?,
-        ));
-    }
 
     // Time fact
     let now = req.now.unwrap_or_else(|| {
@@ -366,18 +305,14 @@ mod tests {
     #[test]
     fn test_authority_datalog_generation() {
         let code = authority_datalog(
-            Some(42),
             &[("my-app".into(), "rwcd".into())],
             &[("http".into(), "rw".into())],
             &["ai-engine".into()],
             &["github".into()],
             &["repo".into(), "user:email".into()],
             Some("user-123"),
-            None,
-            &[],
         )
         .unwrap();
-        assert!(code.contains("organization(42)"));
         assert!(code.contains("app(\"my-app\", \"rwcd\")"));
         assert!(code.contains("service(\"http\", \"rw\")"));
         assert!(code.contains("feature(\"ai-engine\")"));
@@ -390,18 +325,7 @@ mod tests {
     #[test]
     fn test_authority_datalog_unrestricted_root_token() {
         // A token with no app and no service grants is a root token
-        let code = authority_datalog(
-            Some(1),
-            &[],
-            &[],
-            &[],
-            &[],
-            &["read".into()],
-            Some("alice"),
-            None,
-            &[],
-        )
-        .unwrap();
+        let code = authority_datalog(&[], &[], &[], &[], &["read".into()], Some("alice")).unwrap();
         assert!(code.contains("unrestricted(true)"));
         assert!(code.contains("user(\"alice\")"));
     }
@@ -409,18 +333,8 @@ mod tests {
     #[test]
     fn test_authority_datalog_app_only_no_unrestricted() {
         // A token with app grants but no service grants is NOT unrestricted
-        let code = authority_datalog(
-            None,
-            &[("my-app".into(), "rw".into())],
-            &[],
-            &[],
-            &[],
-            &[],
-            None,
-            None,
-            &[],
-        )
-        .unwrap();
+        let code =
+            authority_datalog(&[("my-app".into(), "rw".into())], &[], &[], &[], &[], None).unwrap();
         assert!(code.contains("app(\"my-app\", \"rw\")"));
         assert!(!code.contains("unrestricted"));
     }
@@ -506,15 +420,12 @@ mod tests {
     #[test]
     fn test_authority_datalog_rejects_bad_input() {
         let result = authority_datalog(
-            None,
             &[("my-app\"".into(), "rw".into())],
             &[],
             &[],
             &[],
             &[],
             None,
-            None,
-            &[],
         );
         assert!(result.is_err());
     }
