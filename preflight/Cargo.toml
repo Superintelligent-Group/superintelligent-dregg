@@ -32,9 +32,9 @@ serde_json = "1"
 toml = "0.8"
 
 # App crates — exercised by preflight app integration checks.
-# Gallery depends on pyana-app-framework -> pyana-sdk
-# which is currently broken (missing `custom_program_proofs` field in Turn).
-# Gated behind "apps-sdk" feature so preflight can still compile without them.
+# Gallery depends on pyana-app-framework -> pyana-sdk.
+# The `custom_program_proofs` field blocker is resolved (Turn now has the field).
+# Feature gate retained so preflight can still compile incrementally without apps.
 # Note: amm, lending, orderbook, stablecoin, dao-treasury, prediction-market
 # were retired in the apps/ → starbridge-apps/ migration (see STARBRIDGE-APPS-PLAN.md §4.1).
 pyana-gallery = { path = "../apps/gallery", optional = true }

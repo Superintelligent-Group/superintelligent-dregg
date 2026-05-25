@@ -513,63 +513,37 @@ let child_cell = wallet
     .await?;
 ```
 
-**Current SDK shape (`sdk/src/wallet.rs:4991`):**
+**Current SDK shape (`sdk/src/wallet.rs`):**
 ```rust
 pub fn create_from_factory(
     &self,
-    agent_cell: CellId,
+    issuer_cell: CellId,
     factory_vk: [u8; 32],
     owner_pubkey: [u8; 32],
     token_id: [u8; 32],
     params: pyana_cell::FactoryCreationParams,
-    nonce: u64,
-    fee: u64,
+    federation_id: &[u8; 32],
 ) -> Turn
 ```
 
 **SDK gap:**
 
-- *Already exists* — but the signature is 7-argument and returns an
-  unsigned `Turn` (with `Authorization::Unchecked` on the inner
-  action, same C-3 regression as the queue methods had until this
-  task). The pyanascript shape wants:
-  - One argument (the descriptor or a builder) instead of seven
-  - The signing step embedded (`make_action` with a real signature)
-  - The submission step embedded (`.submit()` running through an
-    `AgentRuntime`)
+- *Partially closed.* The `Unchecked` regression is **fixed** (this
+  task): `nonce`/`fee` removed, `federation_id` added, action now
+  routes through `make_action`/`make_turn` — signature is real.
+  Naming: `agent_cell` renamed to `issuer_cell` to clarify it is the
+  *issuer* of the effect, not the new child cell. Two adversarial
+  tests added (`create_from_factory_produces_real_signature`,
+  `create_from_factory_signature_binds_to_federation_id`).
+- *Remaining.* The pyanascript shape still wants:
+  - One argument (a builder) instead of six positional args
+  - The submission step embedded (`.submit()` through an `AgentRuntime`)
   - The async return (the receipt, when settled)
-- *Bug-flavoured.* `create_from_factory` still uses
-  `Authorization::Unchecked`. **This is a sibling of SDK-REVIEW C-3**
-  and should be on the next round's P0 list (alongside this task's
-  queue-methods fix).
-- *Naming.* `agent_cell` is "the cell that issues the
-  CreateCellFromFactory effect," not "the cell being created" —
-  ambiguous at the API boundary. Pyanascript will hide this; the
-  SDK still needs a clearer name (`issuer_cell`).
 
-**Verdict:** the primitive exists, but its signature is too low-level
-to be pyanascript-callable directly. Tier-0 follow-up: collapse to
-`create_from_factory(descriptor, params) -> Result<Turn, _>` taking
-named args via a builder, fix the `Unchecked` regression in the same
-pass.
-
-## Other `Authorization::Unchecked` sites in the SDK
-
-Found while doing the bottom-up walk (not exhaustive — searched
-`sdk/src/wallet.rs` only):
-
-```
-sdk/src/wallet.rs:5008  Effect::CreateCellFromFactory action
-                        (create_from_factory; same regression as the
-                        queue methods)
-```
-
-(The queue-method sites at 5575/5643/5700/5766 *were* on this list
-and are closed by this task.)
-
-The fix is mechanical and looks identical to the queue-method fix:
-take a `federation_id: &[u8; 32]` parameter, build the action via
-`make_action`, wrap in `make_turn`. Recommended for the next P0 pass.
+**Verdict:** the `Unchecked` regression is closed. What remains is a
+Tier-1 ergonomics improvement (builder + submit). See Tier-0 gap list
+entry #1 below — it is now updated to reflect that the signing fix
+has landed.
 
 ## Prioritized gap list (for the next pyanascript work)
 
@@ -580,7 +554,7 @@ mechanical / Tier-1 small design / Tier-2 deep design)**.
 
 | # | Gap | Addition | Notes |
 |---|---|---|---|
-| 1 | `wallet.create_from_factory` still uses `Authorization::Unchecked` | Use `make_action` + `make_turn`; add `federation_id` parameter; collapse 7-arg sig into a builder | Sibling of SDK-REVIEW C-3 closed by this task |
+| 1 | ~~`wallet.create_from_factory` still uses `Authorization::Unchecked`~~ | ~~Use `make_action` + `make_turn`; add `federation_id` parameter; collapse 7-arg sig into a builder~~ | **CLOSED** this task: `nonce`/`fee` removed, `federation_id` added, routes through `make_action`, two adversarial tests pinning it. Remaining: builder ergonomics (Tier-1). |
 | 2 | `CapInbox` not re-exported from SDK | `pub use pyana_storage::CapInbox` in `sdk/src/lib.rs` | Trivial |
 | 3 | No typed-message bridge for `LiveRef::send` | SDK trait `CapMessage` + `wallet.send_typed(live_ref, msg)` | Maps Rust enum to `PipelinedAction { method, args }` |
 | 4 | No "await this promise's receipt" sync convenience | `EventualRef::await_receipt(&runtime) -> Result<TurnReceipt, _>` | Mechanical given the wire-side is plumbed |
@@ -591,6 +565,7 @@ mechanical / Tier-1 small design / Tier-2 deep design)**.
 | # | Gap | Addition | Notes |
 |---|---|---|---|
 | 6 | No `FactoryDescriptorBuilder` in the SDK | `pub struct FactoryDescriptorBuilder { … }` with `.with_slot_caveat(..)`, `.with_initial_state(..)`, `.with_creation_budget(..)`, `.deploy(&wallet) -> [u8; 32]` | Wraps `pyana_cell::FactoryDescriptor` |
+| 6b | `create_from_factory` still 6-arg positional; no submit/await | Collapse into `wallet.create_from_factory(builder, params, fed) -> Turn` then `wallet.deploy_cell(builder) -> impl Future<Receipt>` | Signing now correct; ergonomics gap remains |
 | 7 | `wallet.exercise(cap, args)` not single-call | `wallet.exercise_token(token, method, args) -> Result<TurnReceipt>`; same for `exercise_cap` (LiveRef) | Closes the "build + sign + execute" 3-step |
 | 8 | `WriteOnce` slot constraint missing from `FieldConstraint` | Add `FieldConstraint::WriteOnce { field_index }` mirroring `StateConstraint::WriteOnce`; or document the split clearly | The two concepts apply at different layers (factory-deploy-time vs cell-program-perpetual) |
 | 9 | No SDK type wrapping "this wallet's logical cell" | `pub struct AgentCell<'w> { wallet: &'w mut AgentWallet, cell_id: CellId, domain: String }` with `send`/`exercise`/`attenuate_cap`/`spawn_child` methods | The actual "Cell::new(wallet)" facade |

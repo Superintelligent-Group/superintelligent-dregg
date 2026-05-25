@@ -2466,6 +2466,7 @@ impl AgentWallet {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
         self.sign_action(unsigned, federation_id)
     }
@@ -2633,6 +2634,7 @@ impl AgentWallet {
             may_delegate: DelegationMode::None,
             commitment_mode: Default::default(),
             balance_change: None,
+            witness_blobs: vec![],
         };
 
         let tree = CallTree {
@@ -4275,6 +4277,7 @@ impl AgentWallet {
             may_delegate: pyana_turn::DelegationMode::None,
             commitment_mode: pyana_turn::CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
         forest.add_root(action);
 
@@ -4403,6 +4406,7 @@ impl AgentWallet {
             may_delegate: pyana_turn::DelegationMode::None,
             commitment_mode: pyana_turn::CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
         forest.add_root(action);
 
@@ -4544,6 +4548,7 @@ impl AgentWallet {
             may_delegate: pyana_turn::DelegationMode::None,
             commitment_mode: pyana_turn::CommitmentMode::Full,
             balance_change: None,
+            witness_blobs: vec![],
         };
         forest.add_root(action);
 
@@ -4984,67 +4989,50 @@ impl AgentWallet {
         descriptor.factory_vk
     }
 
-    /// Build a turn that creates a cell from a deployed factory.
+    /// Build a signed turn that creates a cell from a deployed factory.
     ///
     /// The turn carries a `CreateCellFromFactory` effect that the executor validates
-    /// against the factory's registered descriptor.
+    /// against the factory's registered descriptor.  The inner action is signed with
+    /// `Authorization::Signature` via [`make_action`](Self::make_action) — not left
+    /// as `Authorization::Unchecked`.
+    ///
+    /// # Arguments
+    ///
+    /// * `issuer_cell` - The cell issuing the `CreateCellFromFactory` effect
+    ///   (i.e. the caller's cell, not the new child cell).
+    /// * `factory_vk` - The 32-byte factory VK hash returned by [`deploy_factory`](Self::deploy_factory).
+    /// * `owner_pubkey` - The ed25519 public key of the new cell's owner.
+    /// * `token_id` - The token-domain identifier for the new cell.
+    /// * `params` - Additional creation parameters (program VK, initial fields/caps).
+    /// * `federation_id` - The 32-byte federation binding for the canonical signing message.
+    ///
+    /// # Returns
+    ///
+    /// A [`Turn`] carrying a real `Authorization::Signature(..)` action, ready for submission.
     pub fn create_from_factory(
         &self,
-        agent_cell: CellId,
+        issuer_cell: CellId,
         factory_vk: [u8; 32],
         owner_pubkey: [u8; 32],
         token_id: [u8; 32],
         params: pyana_cell::FactoryCreationParams,
-        nonce: u64,
-        fee: u64,
+        federation_id: &[u8; 32],
     ) -> Turn {
-        use pyana_turn::action::{Action, Authorization, DelegationMode, Effect};
+        use pyana_turn::action::Effect;
 
-        let method = *blake3::hash(b"factory_create").as_bytes();
-        let action = Action {
-            target: agent_cell,
-            method,
-            args: vec![],
-            authorization: Authorization::Unchecked,
-            preconditions: pyana_cell::Preconditions::default(),
-            effects: vec![Effect::CreateCellFromFactory {
-                factory_vk,
-                owner_pubkey,
-                token_id,
-                params,
-            }],
-            may_delegate: DelegationMode::None,
-            commitment_mode: Default::default(),
-            balance_change: None,
+        let effect = Effect::CreateCellFromFactory {
+            factory_vk,
+            owner_pubkey,
+            token_id,
+            params,
         };
-
-        use pyana_turn::forest::{CallForest, CallTree};
-        let tree = CallTree {
-            action,
-            children: vec![],
-            hash: [0u8; 32],
-        };
-        let forest = CallForest {
-            roots: vec![tree],
-            forest_hash: [0u8; 32],
-        };
-
-        Turn {
-            agent: agent_cell,
-            nonce,
-            fee,
-            memo: None,
-            call_forest: forest,
-            valid_until: None,
-            sovereign_witnesses: std::collections::HashMap::new(),
-            conservation_proof: None,
-            execution_proof: None,
-            execution_proof_cell: None,
-            execution_proof_new_commitment: None,
-            custom_program_proofs: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
-            depends_on: vec![],
-        }
+        // Build and sign the action using the standard helper (closes the
+        // Authorization::Unchecked regression flagged in SDK-PYANASCRIPT-AUDIT.md §9).
+        let action = self.make_action(issuer_cell, "factory_create", vec![effect], federation_id);
+        let mut turn = self.make_turn(action);
+        // Override the agent to the issuer_cell (make_turn defaults to cell_id("default")).
+        turn.agent = issuer_cell;
+        turn
     }
 
     /// Verify provenance of a cell — returns the factory that created it (if any).
@@ -7322,6 +7310,68 @@ mod tests {
         assert_ne!(
             sig_a, sig_b,
             "queue signatures must bind to federation_id (got identical sigs across two feds)"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // create_from_factory authorization tests.
+    //
+    // SDK-PYANASCRIPT-AUDIT.md §9 flagged that `create_from_factory`
+    // was a sibling of the queue-method C-3 regression: it built its
+    // action by struct literal with Authorization::Unchecked.
+    // These tests pin the post-fix invariant.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn create_from_factory_produces_real_signature() {
+        let wallet = AgentWallet::new();
+        let fed = [42u8; 32];
+        let issuer = wallet.cell_id("default");
+        let turn = wallet.create_from_factory(
+            issuer,
+            [0xAA; 32],
+            [0xBB; 32],
+            [0xCC; 32],
+            pyana_cell::FactoryCreationParams {
+                owner_pubkey: [0xBB; 32],
+                mode: pyana_cell::CellMode::default(),
+                program_vk: None,
+                initial_fields: vec![],
+                initial_caps: vec![],
+            },
+            &fed,
+        );
+        assert_real_signature(root_action(&turn));
+    }
+
+    #[test]
+    fn create_from_factory_signature_binds_to_federation_id() {
+        use pyana_turn::action::Authorization;
+        let wallet = AgentWallet::new();
+        let issuer = wallet.cell_id("default");
+        let fed_a = [0x11u8; 32];
+        let fed_b = [0x22u8; 32];
+        let params_a = pyana_cell::FactoryCreationParams {
+            owner_pubkey: [0xBB; 32],
+            mode: pyana_cell::CellMode::default(),
+            program_vk: None,
+            initial_fields: vec![],
+            initial_caps: vec![],
+        };
+        let params_b = params_a.clone();
+        let t_a = wallet.create_from_factory(issuer, [0xAA; 32], [0xBB; 32], [0xCC; 32], params_a, &fed_a);
+        let t_b = wallet.create_from_factory(issuer, [0xAA; 32], [0xBB; 32], [0xCC; 32], params_b, &fed_b);
+        let sig_a = match root_action(&t_a).authorization {
+            Authorization::Signature(a, b) => (a, b),
+            _ => panic!("expected Signature"),
+        };
+        let sig_b = match root_action(&t_b).authorization {
+            Authorization::Signature(a, b) => (a, b),
+            _ => panic!("expected Signature"),
+        };
+        assert_ne!(
+            sig_a, sig_b,
+            "create_from_factory signatures must bind to federation_id"
         );
     }
 
