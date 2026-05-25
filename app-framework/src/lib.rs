@@ -69,7 +69,13 @@ pub mod cipherclerk;
 /// alias keeps `pyana_app_framework::wallet::...` callers compiling
 /// during the migration. New code should reach for `cipherclerk`.
 #[doc(hidden)]
-pub use cipherclerk as wallet;
+pub mod wallet {
+    //! Legacy module: forwards to `cipherclerk` and re-exports
+    //! `AppWallet` (renamed to `AppCipherclerk`) so pre-rename callers
+    //! keep building. New code should reach for `cipherclerk`.
+    pub use crate::cipherclerk::*;
+    pub use crate::cipherclerk::AppCipherclerk as AppWallet;
+}
 
 // =============================================================================
 // Re-exports: types that apps commonly need from sub-crates
