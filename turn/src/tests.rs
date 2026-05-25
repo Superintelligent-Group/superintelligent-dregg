@@ -10042,6 +10042,13 @@ mod privacy_wiring {
                 "encrypted path failed at decrypt/metadata stage: {reason_str}"
             );
         }
+        // If committed, the receipt MUST carry was_encrypted=true.
+        if let TurnResult::Committed { receipt, .. } = &result {
+            assert!(
+                receipt.was_encrypted,
+                "execute_encrypted_turn must set receipt.was_encrypted=true"
+            );
+        }
     }
 
     /// Adversarial: an EncryptedTurn whose ciphertext is tampered with
@@ -10108,15 +10115,15 @@ mod privacy_wiring {
         fee: u64,
         _federation_id: [u8; 32],
     ) -> Turn {
-        let mut action = crate::action::Action {
+        let mut action = Action {
             target: agent,
-            method: crate::action::symbol("noop"),
+            method: symbol("noop"),
             args: vec![],
-            authorization: crate::action::Authorization::Unchecked,
+            authorization: Authorization::Unchecked,
             preconditions: pyana_cell::Preconditions::default(),
             effects: vec![],
-            may_delegate: crate::action::DelegationMode::None,
-            commitment_mode: crate::action::CommitmentMode::Full,
+            may_delegate: DelegationMode::None,
+            commitment_mode: CommitmentMode::Full,
             balance_change: None,
             witness_blobs: vec![],
         };

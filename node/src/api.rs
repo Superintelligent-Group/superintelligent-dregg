@@ -1012,7 +1012,7 @@ pub fn router(
             post({
                 let limiter = turn_limiter.clone();
                 move |connect_info, state, body| {
-                    post_submit_encrypted_turn(connect_info, state, limiter, body)
+                    post_submit_encrypted_turn(connect_info, state, body, limiter)
                 }
             }),
         )
@@ -1430,8 +1430,8 @@ async fn get_turn_encryption_key(
 async fn post_submit_encrypted_turn(
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     State(state): State<NodeState>,
-    limiter: RateLimiter,
     body: axum::body::Bytes,
+    limiter: RateLimiter,
 ) -> Result<Json<SubmitEncryptedTurnResponse>, StatusCode> {
     // Reuse the cleartext-turn rate limiter — encrypted turns shouldn't
     // get a privacy-flavored quota bypass.
