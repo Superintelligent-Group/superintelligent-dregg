@@ -123,7 +123,7 @@ pub const BLINDED_QUEUE_FACTORY_VK: [u8; 32] = *b"pyana-storage-tpl-blindq-facto
 /// (Open Q §7.1) the workspace owns this VK and the constitution
 /// publishes the official `vk_hash`. The actual verifier registration
 /// is a host concern (`WitnessedPredicateRegistry::register_custom`).
-pub const BLINDED_QUEUE_SPEND_AIR_VK: [u8; 32] = *b"pyana-storage-tpl-blindq-spendair";
+pub const BLINDED_QUEUE_SPEND_AIR_VK: [u8; 32] = *b"pyana-storage-tpl-blindq-spendvk";
 
 /// Canonical child VK per `VK-AS-RE-EXECUTION-RECIPE.md` §2.1.
 pub fn blinded_queue_child_program_vk() -> [u8; 32] {
