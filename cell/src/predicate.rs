@@ -1548,4 +1548,141 @@ mod tests {
         let back = NonMembershipNeighborProof::from_bytes(&bytes).unwrap();
         assert_eq!(back, p);
     }
+
+    // ─── WitnessProducer — left adjoint of WitnessedPredicateVerifier ──
+    // CROSS-CELL-CATEGORICAL-ANALYSIS.md §3.4 + §4.1 + §9.1.4.
+
+    #[test]
+    fn producer_registry_empty_yields_kind_not_registered() {
+        let reg = WitnessProducerRegistry::empty();
+        let wp = WitnessedPredicate::dfa([0u8; 32], InputRef::Sender, 0);
+        let pk = [0u8; 32];
+        let err = reg
+            .produce(&wp, &PredicateInput::Sender(&pk), b"witness")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            WitnessProducerError::KindNotRegistered {
+                kind: WitnessedPredicateKind::Dfa
+            }
+        ));
+    }
+
+    #[test]
+    fn producer_stub_round_trip_verifier_accepts() {
+        // Unit-counit identity: produce(input, witness) -> proof_bytes;
+        // verify(proof_bytes) accepts. Walks every built-in kind.
+        let producers = WitnessProducerRegistry::with_stubs();
+        let verifiers = WitnessedPredicateRegistry::with_stubs();
+        for wp in [
+            WitnessedPredicate::dfa([0u8; 32], InputRef::Sender, 0),
+            WitnessedPredicate::temporal([0u8; 32], 0, 0),
+            WitnessedPredicate::merkle_membership([0u8; 32], InputRef::Sender, 0),
+            WitnessedPredicate::blinded_set([0u8; 32], InputRef::Sender, 0),
+            WitnessedPredicate::bridge_predicate(
+                [0u8; 32],
+                InputRef::PublicInput { pi_index: 0 },
+                0,
+            ),
+            WitnessedPredicate::pedersen_equality([0u8; 32], InputRef::Slot { index: 0 }, 0),
+        ] {
+            let pk = [0u8; 32];
+            let input = PredicateInput::Sender(&pk);
+            let proof_bytes = producers
+                .produce(&wp, &input, b"witness-bytes")
+                .expect("producer succeeds for builtin stub");
+            assert!(!proof_bytes.is_empty(), "produced bytes non-empty");
+            verifiers
+                .verify(&wp, &input, &proof_bytes)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "round-trip: producer output should verify for {:?}: {e}",
+                        wp.kind
+                    )
+                });
+        }
+    }
+
+    #[test]
+    fn producer_tampered_witness_still_verifies_under_stubs_but_distinct() {
+        // The stub verifier accepts any non-empty bytes; the unit-
+        // counit identity holds *and* the produced bytes for distinct
+        // inputs are themselves distinct (so a real verifier could
+        // distinguish). We assert the latter (the stub itself can't
+        // reject a tampered witness — that's the real verifier's job).
+        let producers = WitnessProducerRegistry::with_stubs();
+        let wp = WitnessedPredicate::dfa([0u8; 32], InputRef::Sender, 0);
+        let pk = [0u8; 32];
+        let a = producers
+            .produce(&wp, &PredicateInput::Sender(&pk), b"witness-a")
+            .unwrap();
+        let b = producers
+            .produce(&wp, &PredicateInput::Sender(&pk), b"witness-b")
+            .unwrap();
+        assert_ne!(
+            a, b,
+            "distinct witness bytes must yield distinct producer outputs"
+        );
+    }
+
+    #[test]
+    fn producer_custom_kind_routes_through_custom_registry() {
+        struct AcceptAllProducer {
+            vk: [u8; 32],
+        }
+        impl WitnessProducer for AcceptAllProducer {
+            fn name(&self) -> &'static str {
+                "accept-all-producer"
+            }
+            fn kind(&self) -> WitnessedPredicateKind {
+                WitnessedPredicateKind::Custom { vk_hash: self.vk }
+            }
+            fn produce(
+                &self,
+                _commitment: &[u8; 32],
+                _input: &PredicateInput<'_>,
+                witness_bytes: &[u8],
+            ) -> Result<Vec<u8>, WitnessProducerError> {
+                let mut out = Vec::with_capacity(witness_bytes.len() + 6);
+                out.extend_from_slice(b"custom");
+                out.extend_from_slice(witness_bytes);
+                Ok(out)
+            }
+        }
+
+        let vk = [7u8; 32];
+        let mut reg = WitnessProducerRegistry::empty();
+        reg.register_custom(vk, Arc::new(AcceptAllProducer { vk }));
+        let wp = WitnessedPredicate::custom(vk, [0u8; 32], InputRef::Sender, 0);
+        let pk = [0u8; 32];
+        let out = reg
+            .produce(&wp, &PredicateInput::Sender(&pk), b"hello")
+            .expect("custom producer dispatches");
+        assert!(out.starts_with(b"custom"));
+    }
+
+    #[test]
+    fn producer_custom_kind_unregistered_vk_hash_yields_kind_not_registered() {
+        let reg = WitnessProducerRegistry::empty();
+        let wp = WitnessedPredicate::custom([99u8; 32], [0u8; 32], InputRef::Sender, 0);
+        let pk = [0u8; 32];
+        let err = reg
+            .produce(&wp, &PredicateInput::Sender(&pk), b"witness")
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            WitnessProducerError::KindNotRegistered {
+                kind: WitnessedPredicateKind::Custom { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn producer_vk_hash_default_is_zero_for_builtins() {
+        // Built-in kinds report all-zero vk_hash; only Custom kinds
+        // carry meaningful vk_hash from their discriminant.
+        let producers = WitnessProducerRegistry::with_stubs();
+        let p = producers.get(WitnessedPredicateKind::Dfa).expect("dfa stub");
+        assert_eq!(p.vk_hash(), [0u8; 32]);
+    }
 }
