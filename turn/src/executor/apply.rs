@@ -3527,6 +3527,20 @@ impl TurnExecutor {
                         u64::from_le_bytes(queue_cell.state.fields[0][..8].try_into().unwrap());
                     let current_len =
                         u64::from_le_bytes(queue_cell.state.fields[1][..8].try_into().unwrap());
+                    // BUG #114: ACL check mirrors apply_queue_enqueue.
+                    let authorized_writer_bytes = queue_cell.state.fields[5];
+                    let is_open = authorized_writer_bytes.iter().all(|&b| b == 0);
+                    if !is_open && authorized_writer_bytes != *actor.as_bytes() {
+                        return Err((
+                            TurnError::InvalidEffect {
+                                reason: format!(
+                                    "atomic tx QueueEnqueue denied: actor {:?} is not the authorized writer for queue {:?}",
+                                    actor, queue
+                                ),
+                            },
+                            path.to_vec(),
+                        ));
+                    }
                     if current_len >= capacity {
                         return Err((
                             TurnError::InvalidEffect {
