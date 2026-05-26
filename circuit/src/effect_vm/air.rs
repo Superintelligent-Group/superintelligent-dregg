@@ -243,6 +243,22 @@ pub const AIR_DESCRIPTOR: crate::air_descriptor::AirDescriptor =
                 offset: pi::UNILATERAL_ATTESTATIONS_ROOT_BASE,
                 length_in_felts: pi::UNILATERAL_ATTESTATIONS_ROOT_LEN,
             },
+            // EmitEvent binding (closes #110).
+            crate::air_descriptor::PiSlot {
+                name: "emit_event_count",
+                offset: pi::EMIT_EVENT_COUNT,
+                length_in_felts: 1,
+            },
+            crate::air_descriptor::PiSlot {
+                name: "emit_event_topic_hash",
+                offset: pi::EMIT_EVENT_TOPIC_HASH_BASE,
+                length_in_felts: pi::EMIT_EVENT_TOPIC_HASH_LEN,
+            },
+            crate::air_descriptor::PiSlot {
+                name: "emit_event_payload_hash",
+                offset: pi::EMIT_EVENT_PAYLOAD_HASH_BASE,
+                length_in_felts: pi::EMIT_EVENT_PAYLOAD_HASH_LEN,
+            },
         ],
         // Constraint groups: selector validity (NUM_EFFECTS+1), per-effect
         // gated constraints (~NUM_EFFECTS large groups), boundary bindings
@@ -727,10 +743,36 @@ impl StarkAir for EffectVmAir {
             alpha_pow = alpha_pow * alpha;
         }
 
-        // -- EmitEvent: stateless side-effect, full state passthrough --
-        // The event_hash (param 0) is implicitly bound via the effects_hash
-        // chain (compute_effects_hash). The AIR's role is just to forbid the
-        // prover from changing any state column on an EmitEvent row.
+        // -- EmitEvent: stateless side-effect with canonical (topic, payload) binding --
+        //
+        // Row layout (closes #110):
+        //   params[0..4] = topic_hash[0..4]
+        //   params[4..8] = payload_hash[0..4]
+        //
+        // The full 8-felt topic/payload hashes (32 bytes each) are bound by
+        // three independent algebraic teeth:
+        //
+        //   (a) Per-row PI-equality (BELOW): when sel::EMIT_EVENT == 1, the
+        //       row's params[0..4] MUST equal PI[EMIT_EVENT_TOPIC_HASH][0..4]
+        //       and params[4..8] MUST equal PI[EMIT_EVENT_PAYLOAD_HASH][0..4].
+        //       Soundness: a malicious prover that forges any of the 8 low
+        //       felts cannot satisfy this constraint at any FRI evaluation
+        //       point because PI is a constant across rows. ~124-bit binding
+        //       on the low halves.
+        //
+        //   (b) compute_effects_hash absorbs all 16 felts of the (topic_hash ‖
+        //       payload_hash) preimage. The Poseidon2-chained effects_hash is
+        //       pinned to PI[EFFECTS_HASH_BASE] via a row-0 boundary, so the
+        //       HIGH 4 felts of each hash also become cryptographically bound
+        //       (any swap in [4..8] changes the chain). ~256-bit binding.
+        //
+        //   (c) Off-AIR PI-match loop: the verifier recomputes the canonical
+        //       (topic, payload) bytes from the runtime Event and rejects any
+        //       PI disagreement. Closes the executor-honesty gap for the high
+        //       halves with respect to the runtime Event encoding.
+        //
+        // State columns: balance / cap_root / fields all unchanged (the
+        // existing passthrough constraints retained below).
         let s_emitevent = local[sel::EMIT_EVENT];
         let c_ee_bal_lo = s_emitevent * (new_bal_lo - old_bal_lo);
         combined = combined + alpha_pow * c_ee_bal_lo;
@@ -747,6 +789,25 @@ impl StarkAir for EffectVmAir {
                     - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
             combined = combined + alpha_pow * c;
             alpha_pow = alpha_pow * alpha;
+        }
+        // (a) Per-row PI-equality binding for topic_hash[0..4] / payload_hash[0..4].
+        // Gated by sel::EMIT_EVENT so non-emit rows are unaffected. PI access is
+        // safe inside eval_constraints (see Group 6 INIT_BAL_LO usage above).
+        if public_inputs.len() >= pi::BASE_COUNT {
+            for i in 0..4 {
+                let pi_topic_i = public_inputs[pi::EMIT_EVENT_TOPIC_HASH_BASE + i];
+                let c_topic =
+                    s_emitevent * (local[PARAM_BASE + i] - pi_topic_i);
+                combined = combined + alpha_pow * c_topic;
+                alpha_pow = alpha_pow * alpha;
+            }
+            for i in 0..4 {
+                let pi_payload_i = public_inputs[pi::EMIT_EVENT_PAYLOAD_HASH_BASE + i];
+                let c_payload =
+                    s_emitevent * (local[PARAM_BASE + 4 + i] - pi_payload_i);
+                combined = combined + alpha_pow * c_payload;
+                alpha_pow = alpha_pow * alpha;
+            }
         }
 
         // -- SetPermissions: same shape as EmitEvent (state passthrough) --
