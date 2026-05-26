@@ -6039,7 +6039,7 @@ mod tests {
 
     fn extract_json(result: &McpToolResult) -> Value {
         assert!(
-            result.is_error.unwrap_or(false) == false,
+            !result.is_error.unwrap_or(false),
             "tool returned error: {}",
             result.content.first().map(|c| c.text.as_str()).unwrap_or("(no content)")
         );
