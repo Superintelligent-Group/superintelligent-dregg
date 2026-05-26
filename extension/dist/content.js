@@ -3,44 +3,44 @@
   // src/content.ts
   var SESSION_NONCE = crypto.randomUUID();
   var UNRESTRICTED_METHODS = /* @__PURE__ */ new Set([
-    "pyana:isConnected",
-    "pyana:canAuthorize",
-    "pyana:subscribe",
-    "pyana:discoverServices",
-    "pyana:resolvePath",
-    "pyana:storageQuota",
-    "pyana:federationStatus",
-    "pyana:listKnownFederations"
+    "dregg:isConnected",
+    "dregg:canAuthorize",
+    "dregg:subscribe",
+    "dregg:discoverServices",
+    "dregg:resolvePath",
+    "dregg:storageQuota",
+    "dregg:federationStatus",
+    "dregg:listKnownFederations"
   ]);
   var RESTRICTED_METHODS = /* @__PURE__ */ new Set([
-    "pyana:authorize",
-    "pyana:provision",
-    "pyana:postIntent",
-    "pyana:signTurn",
-    "pyana:signTurnV3",
-    "pyana:queryBalance",
-    "pyana:shareCapability",
-    "pyana:acceptCapability",
-    "pyana:createHandoff",
-    "pyana:mountService",
-    "pyana:storageWrite",
-    "pyana:storageRead",
-    "pyana:proposeRoutes",
-    "pyana:voteOnProposal",
-    "pyana:registerFederation",
-    "pyana:createCapTpDeliveredAuth"
+    "dregg:authorize",
+    "dregg:provision",
+    "dregg:postIntent",
+    "dregg:signTurn",
+    "dregg:signTurnV3",
+    "dregg:queryBalance",
+    "dregg:shareCapability",
+    "dregg:acceptCapability",
+    "dregg:createHandoff",
+    "dregg:mountService",
+    "dregg:storageWrite",
+    "dregg:storageRead",
+    "dregg:proposeRoutes",
+    "dregg:voteOnProposal",
+    "dregg:registerFederation",
+    "dregg:createCapTpDeliveredAuth"
   ]);
   var script = document.createElement("script");
   script.src = chrome.runtime.getURL("dist/page.js");
-  script.dataset.pyanaNonce = SESSION_NONCE;
+  script.dataset.dreggNonce = SESSION_NONCE;
   (document.head || document.documentElement).appendChild(script);
   script.onload = () => {
     script.remove();
   };
   async function isOriginAllowed(origin, method) {
     try {
-      const stored = await chrome.storage.local.get("pyana_allowed_origins");
-      const allowlist = stored.pyana_allowed_origins || {};
+      const stored = await chrome.storage.local.get("dregg_allowed_origins");
+      const allowlist = stored.dregg_allowed_origins || {};
       if (Array.isArray(allowlist)) return false;
       const entry = allowlist[origin];
       if (!entry) return false;
@@ -52,13 +52,13 @@
   }
   async function requestOriginPermission(origin, method) {
     const response = await chrome.runtime.sendMessage({
-      type: "pyana:requestOriginPermission",
+      type: "dregg:requestOriginPermission",
       origin,
       method
     });
     return response?.granted === true;
   }
-  window.addEventListener(`pyana:request:${SESSION_NONCE}`, async (event) => {
+  window.addEventListener(`dregg:request:${SESSION_NONCE}`, async (event) => {
     const customEvent = event;
     if (!customEvent.isTrusted) return;
     const detail = customEvent.detail;
@@ -70,14 +70,14 @@
       if (!allowed) {
         const granted = await requestOriginPermission(origin, messageType);
         if (!granted) {
-          window.dispatchEvent(new CustomEvent(`pyana:response:${SESSION_NONCE}`, {
+          window.dispatchEvent(new CustomEvent(`dregg:response:${SESSION_NONCE}`, {
             detail: { id: detail.id, error: "Origin not authorized for this method. User denied permission." }
           }));
           return;
         }
       }
     } else if (!UNRESTRICTED_METHODS.has(messageType)) {
-      window.dispatchEvent(new CustomEvent(`pyana:response:${SESSION_NONCE}`, {
+      window.dispatchEvent(new CustomEvent(`dregg:response:${SESSION_NONCE}`, {
         detail: { id: detail.id, error: `Method "${messageType}" is not available from page context.` }
       }));
       return;
@@ -86,11 +86,11 @@
       ...detail,
       _origin: origin
     });
-    window.dispatchEvent(new CustomEvent(`pyana:response:${SESSION_NONCE}`, { detail: response }));
+    window.dispatchEvent(new CustomEvent(`dregg:response:${SESSION_NONCE}`, { detail: response }));
   });
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message.type === "pyana:event") {
-      window.dispatchEvent(new CustomEvent(`pyana:event:${SESSION_NONCE}`, {
+    if (message.type === "dregg:event") {
+      window.dispatchEvent(new CustomEvent(`dregg:event:${SESSION_NONCE}`, {
         detail: { eventName: message.event, payload: message.payload }
       }));
       sendResponse({ ok: true });

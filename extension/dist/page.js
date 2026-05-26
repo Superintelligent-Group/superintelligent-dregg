@@ -1,30 +1,30 @@
 "use strict";
 (() => {
   // src/page.ts
-  var currentScript = document.currentScript || document.querySelector("script[data-pyana-nonce]");
-  var SESSION_NONCE = currentScript?.dataset?.pyanaNonce;
+  var currentScript = document.currentScript || document.querySelector("script[data-dregg-nonce]");
+  var SESSION_NONCE = currentScript?.dataset?.dreggNonce;
   if (!SESSION_NONCE) {
-    console.error("[pyana] Failed to initialize: missing session nonce.");
-    throw new Error("pyana: injection integrity check failed");
+    console.error("[dregg] Failed to initialize: missing session nonce.");
+    throw new Error("dregg: injection integrity check failed");
   }
   var pending = /* @__PURE__ */ new Map();
   var idCounter = 0;
   function sendMessage(type, payload = {}) {
     return new Promise((resolve, reject) => {
-      const id = `pyana_${Date.now()}_${idCounter++}`;
+      const id = `dregg_${Date.now()}_${idCounter++}`;
       pending.set(id, { resolve, reject });
-      window.dispatchEvent(new CustomEvent(`pyana:request:${SESSION_NONCE}`, {
+      window.dispatchEvent(new CustomEvent(`dregg:request:${SESSION_NONCE}`, {
         detail: { type, id, ...payload }
       }));
       setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
-          reject(new Error("Pyana: request timed out"));
+          reject(new Error("Dregg: request timed out"));
         }
       }, 3e4);
     });
   }
-  window.addEventListener(`pyana:response:${SESSION_NONCE}`, (event) => {
+  window.addEventListener(`dregg:response:${SESSION_NONCE}`, (event) => {
     const detail = event.detail;
     if (!detail) return;
     const resolver = pending.get(detail.id);
@@ -39,7 +39,7 @@
   var eventListeners = /* @__PURE__ */ new Map();
   function addListener(event, callback) {
     if (typeof callback !== "function") {
-      throw new TypeError("pyana.on: callback must be a function");
+      throw new TypeError("dregg.on: callback must be a function");
     }
     const validEvents = [
       "ready",
@@ -57,11 +57,11 @@
       "activity"
     ];
     if (!validEvents.includes(event)) {
-      throw new Error(`pyana.on: unknown event "${event}". Valid: ${validEvents.join(", ")}`);
+      throw new Error(`dregg.on: unknown event "${event}". Valid: ${validEvents.join(", ")}`);
     }
     if (!eventListeners.has(event)) {
       eventListeners.set(event, /* @__PURE__ */ new Set());
-      sendMessage("pyana:subscribe", { event }).catch(() => {
+      sendMessage("dregg:subscribe", { event }).catch(() => {
       });
     }
     eventListeners.get(event).add(callback);
@@ -72,7 +72,7 @@
       listeners.delete(callback);
     }
   }
-  window.addEventListener(`pyana:event:${SESSION_NONCE}`, (event) => {
+  window.addEventListener(`dregg:event:${SESSION_NONCE}`, (event) => {
     const { eventName, payload } = event.detail || {};
     const listeners = eventListeners.get(eventName);
     if (listeners) {
@@ -80,7 +80,7 @@
         try {
           cb(payload);
         } catch (e) {
-          console.error("[pyana] event handler error:", e);
+          console.error("[dregg] event handler error:", e);
         }
       }
     }
@@ -101,15 +101,15 @@
     }
     return bytes.buffer;
   }
-  var pyana = {
+  var dregg = {
     authorize(request) {
-      return sendMessage("pyana:authorize", { request });
+      return sendMessage("dregg:authorize", { request });
     },
     isConnected() {
-      return sendMessage("pyana:isConnected").then(() => true).catch(() => false);
+      return sendMessage("dregg:isConnected").then(() => true).catch(() => false);
     },
     canAuthorize(request) {
-      return sendMessage("pyana:canAuthorize", { request });
+      return sendMessage("dregg:canAuthorize", { request });
     },
     provision(tokenBytes) {
       let tokenData;
@@ -117,77 +117,77 @@
         try {
           tokenData = JSON.parse(new TextDecoder().decode(tokenBytes));
         } catch (_e) {
-          return Promise.reject(new Error("pyana.provision: invalid token bytes"));
+          return Promise.reject(new Error("dregg.provision: invalid token bytes"));
         }
       } else if (tokenBytes && typeof tokenBytes === "object") {
         tokenData = tokenBytes;
       } else {
-        return Promise.reject(new Error("pyana.provision: tokenBytes must be Uint8Array or object"));
+        return Promise.reject(new Error("dregg.provision: tokenBytes must be Uint8Array or object"));
       }
-      return sendMessage("pyana:provision", { tokenData });
+      return sendMessage("dregg:provision", { tokenData });
     },
     postIntent(matchSpec, options) {
-      return sendMessage("pyana:postIntent", { matchSpec, options });
+      return sendMessage("dregg:postIntent", { matchSpec, options });
     },
     getStealthAddress() {
-      return sendMessage("pyana:getStealthAddress", {});
+      return sendMessage("dregg:getStealthAddress", {});
     },
     postEncryptedIntent(matchSpec, options) {
-      return sendMessage("pyana:postEncryptedIntent", { matchSpec, options });
+      return sendMessage("dregg:postEncryptedIntent", { matchSpec, options });
     },
     privateTransfer(amount, assetType, recipientStealthMeta) {
-      return sendMessage("pyana:privateTransfer", { amount, assetType, recipientStealthMeta });
+      return sendMessage("dregg:privateTransfer", { amount, assetType, recipientStealthMeta });
     },
     createBearerCap(targetCellHex, action, expiry) {
-      return sendMessage("pyana:createBearerCap", { targetCellHex, action, expiry: expiry || 0 });
+      return sendMessage("dregg:createBearerCap", { targetCellHex, action, expiry: expiry || 0 });
     },
     verifyBearerCap(bearerTokenHex, delegatorKeyHex, targetCellHex, action, expiry) {
-      return sendMessage("pyana:verifyBearerCap", { bearerTokenHex, delegatorKeyHex, targetCellHex, action, expiry });
+      return sendMessage("dregg:verifyBearerCap", { bearerTokenHex, delegatorKeyHex, targetCellHex, action, expiry });
     },
     createFromFactory(factoryVkHex, ownerPubkeyHex, initialBalance) {
-      return sendMessage("pyana:createFromFactory", { factoryVkHex, ownerPubkeyHex, initialBalance });
+      return sendMessage("dregg:createFromFactory", { factoryVkHex, ownerPubkeyHex, initialBalance });
     },
     verifyProvenance(cellVkHex, knownFactoryVks) {
-      return sendMessage("pyana:verifyProvenance", { cellVkHex, knownFactoryVks });
+      return sendMessage("dregg:verifyProvenance", { cellVkHex, knownFactoryVks });
     },
     makeCellSovereign(cellIdHex) {
-      return sendMessage("pyana:makeCellSovereign", { cellIdHex });
+      return sendMessage("dregg:makeCellSovereign", { cellIdHex });
     },
     peerExchange(receiverCellHex, amount) {
-      return sendMessage("pyana:peerExchange", { receiverCellHex, amount });
+      return sendMessage("dregg:peerExchange", { receiverCellHex, amount });
     },
     composeProofs(proofs, mode) {
-      return sendMessage("pyana:composeProofs", { proofs, mode });
+      return sendMessage("dregg:composeProofs", { proofs, mode });
     },
     signTurn(turnSpec) {
-      return sendMessage("pyana:signTurn", { turnSpec });
+      return sendMessage("dregg:signTurn", { turnSpec });
     },
     queryBalance() {
-      return sendMessage("pyana:queryBalance", {});
+      return sendMessage("dregg:queryBalance", {});
     },
     shareCapability(cellId) {
-      return sendMessage("pyana:shareCapability", { cellId });
+      return sendMessage("dregg:shareCapability", { cellId });
     },
     acceptCapability(uri) {
-      return sendMessage("pyana:acceptCapability", { uri });
+      return sendMessage("dregg:acceptCapability", { uri });
     },
     createHandoff(cellId, recipientPk) {
-      return sendMessage("pyana:createHandoff", { cellId, recipientPk });
+      return sendMessage("dregg:createHandoff", { cellId, recipientPk });
     },
     mountService(path, opts) {
-      return sendMessage("pyana:mountService", { path, ...opts });
+      return sendMessage("dregg:mountService", { path, ...opts });
     },
     discoverServices(tags) {
-      return sendMessage("pyana:discoverServices", { tags });
+      return sendMessage("dregg:discoverServices", { tags });
     },
     resolvePath(path) {
-      return sendMessage("pyana:resolvePath", { path });
+      return sendMessage("dregg:resolvePath", { path });
     },
     storageWrite(data) {
-      return sendMessage("pyana:storageWrite", { data: arrayBufferToBase64(data) });
+      return sendMessage("dregg:storageWrite", { data: arrayBufferToBase64(data) });
     },
     storageRead(hash) {
-      return sendMessage("pyana:storageRead", { hash }).then((result) => {
+      return sendMessage("dregg:storageRead", { hash }).then((result) => {
         if (result && result.data) {
           return { ...result, data: base64ToArrayBuffer(result.data) };
         }
@@ -195,28 +195,28 @@
       });
     },
     storageQuota() {
-      return sendMessage("pyana:storageQuota", {});
+      return sendMessage("dregg:storageQuota", {});
     },
     federationStatus() {
-      return sendMessage("pyana:federationStatus", {});
+      return sendMessage("dregg:federationStatus", {});
     },
     proposeRoutes(routes) {
-      return sendMessage("pyana:proposeRoutes", { routes });
+      return sendMessage("dregg:proposeRoutes", { routes });
     },
     voteOnProposal(proposalId, approve) {
-      return sendMessage("pyana:voteOnProposal", { proposalId, approve });
+      return sendMessage("dregg:voteOnProposal", { proposalId, approve });
     },
     signTurnV3(turnBytes) {
-      return sendMessage("pyana:signTurnV3", { turnBytes: Array.from(turnBytes) });
+      return sendMessage("dregg:signTurnV3", { turnBytes: Array.from(turnBytes) });
     },
     registerFederation(federationId, name, committeePubkeys) {
-      return sendMessage("pyana:registerFederation", { federationId, name, committeePubkeys });
+      return sendMessage("dregg:registerFederation", { federationId, name, committeePubkeys });
     },
     listKnownFederations() {
-      return sendMessage("pyana:listKnownFederations", {});
+      return sendMessage("dregg:listKnownFederations", {});
     },
     createCapTpDeliveredAuth({ handoffCertB58, introducerPk, senderPk }) {
-      return sendMessage("pyana:createCapTpDeliveredAuth", { handoffCertB58, introducerPk, senderPk });
+      return sendMessage("dregg:createCapTpDeliveredAuth", { handoffCertB58, introducerPk, senderPk });
     },
     on(event, callback) {
       addListener(event, callback);
@@ -225,10 +225,10 @@
       removeListener(event, callback);
     }
   };
-  Object.defineProperty(window, "pyana", {
-    value: Object.freeze(pyana),
+  Object.defineProperty(window, "dregg", {
+    value: Object.freeze(dregg),
     writable: false,
     configurable: false
   });
-  window.dispatchEvent(new Event("pyana:ready"));
+  window.dispatchEvent(new Event("dregg:ready"));
 })();
