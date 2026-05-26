@@ -10,6 +10,7 @@
 //! corresponding old match arm, and `apply_effect` is reduced to a dispatcher.
 
 use super::*;
+use pyana_cell::*;
 
 impl TurnExecutor {
     /// Apply a single effect to the ledger, recording undo entries in the journal.
@@ -4094,7 +4095,7 @@ impl TurnExecutor {
         action_target: &CellId,
         journal: &mut LedgerJournal,
         target: &CellId,
-        reason: SealReason,
+        reason: [u8; 32],
     ) -> Result<(), (TurnError, Vec<usize>)> {
         if target != action_target {
             return Err((
@@ -4159,7 +4160,7 @@ impl TurnExecutor {
         action_target: &CellId,
         journal: &mut LedgerJournal,
         target: &CellId,
-        certificate: &DestroyCertificate,
+        certificate: &DeathCertificate,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         if target != action_target {
             return Err((
@@ -4255,7 +4256,7 @@ impl TurnExecutor {
         cell: &CellId,
         slot: u32,
         narrower_permissions: &pyana_cell::AuthRequired,
-        narrower_effects: Option<u64>,
+        narrower_effects: Option<u32>,
         narrower_expiry: Option<u64>,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         if cell != actor {
@@ -4317,7 +4318,7 @@ impl TurnExecutor {
         action_target: &CellId,
         journal: &mut LedgerJournal,
         prefix_end_height: u64,
-        checkpoint: &ArchiveCheckpoint,
+        checkpoint: &ArchivalAttestation,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         if checkpoint.cell_id != *action_target {
             return Err((

@@ -10,7 +10,7 @@ use pyana_cell::permissions::AuthRequired;
 use pyana_cell::predicate::WitnessedPredicate;
 use pyana_cell::state::FieldElement;
 use pyana_cell::{
-    CapabilityRef, CapabilitySet, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox,
+    CapabilityRef, CellId, NoteCommitment, Nullifier, Preconditions, SealedBox,
 };
 #[allow(unused_imports)]
 use pyana_cell::{ValueCommitment, ValueCommitmentBytes};

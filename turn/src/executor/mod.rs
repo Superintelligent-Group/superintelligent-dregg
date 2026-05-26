@@ -44,7 +44,7 @@ use tracing::info;
 use ed25519_dalek::{Signature, VerifyingKey};
 use pyana_cell::{
     AuthRequired, BulletproofRangeProof, Cell, CellId, CellStateDelta, Ledger, LedgerDelta,
-    Preconditions, RevocationChannelSet, ValueCommitment, ValueCommitmentBytes,
+    RevocationChannelSet, ValueCommitment, ValueCommitmentBytes,
     note::NoteError,
     note_bridge::{BridgedNullifierSet, PendingBridgeSet},
     nullifier_set::NullifierSet,
@@ -55,10 +55,10 @@ use pyana_cell::{
 use pyana_types::AttestedRoot;
 use serde::{Deserialize, Serialize};
 
-use crate::action::{Action, Authorization, DelegationMode, Effect};
+use crate::action::{Action, Authorization, DelegationMode, Effect, Event};
 use crate::budget_gate::BudgetGate;
 use crate::error::TurnError;
-use crate::escrow::{CommittedEscrow, EscrowCondition, EscrowRecord, verify_escrow_claim};
+use crate::escrow::{CommittedEscrow, EscrowClaimAuth, EscrowCondition, EscrowRecord, verify_escrow_claim};
 use crate::forest::CallTree;
 use crate::journal::{JournalEntry, LedgerJournal};
 use crate::routing::RoutingDirective;
