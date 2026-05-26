@@ -74,7 +74,17 @@ fn all_schema_variants_prove_and_verify() {
         (
             "EmitEvent",
             Effect::EmitEvent {
-                event_hash: BabyBear::new(0xEEEE),
+                topic_hash: [
+                    BabyBear::new(0xEEEE),
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                    BabyBear::ZERO,
+                ],
+                payload_hash: [BabyBear::ZERO; 8],
             },
         ),
         (

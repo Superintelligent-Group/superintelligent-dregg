@@ -188,13 +188,33 @@ fn project_turn_to_vm(cell_id: &CellId, turn: &Turn) -> Vec<VmEffect> {
                     });
                 }
                 Effect::EmitEvent { cell, event } if cell == cell_id => {
-                    let mut h = blake3::Hasher::new();
-                    h.update(&event.topic);
+                    // #110: project to canonical (topic_hash, payload_hash)
+                    // 8-felt form. Mirrors the executor's effect_vm_bridge
+                    // projection; the differential check requires byte-for-byte
+                    // equivalence with the executor.
+                    let topic_bytes = *blake3::hash(&event.topic).as_bytes();
+                    let mut ph = blake3::Hasher::new();
                     for d in &event.data {
-                        h.update(d);
+                        ph.update(d);
+                    }
+                    let payload_bytes = *ph.finalize().as_bytes();
+                    fn bytes32_to_8_felts(b: &[u8; 32]) -> [BabyBear; 8] {
+                        let mut out = [BabyBear::ZERO; 8];
+                        for i in 0..8 {
+                            let off = i * 4;
+                            let v = u32::from_le_bytes([
+                                b[off],
+                                b[off + 1],
+                                b[off + 2],
+                                b[off + 3],
+                            ]);
+                            out[i] = BabyBear::new(v % pyana_circuit::field::BABYBEAR_P);
+                        }
+                        out
                     }
                     out.push(VmEffect::EmitEvent {
-                        event_hash: hash_to_bb(h.finalize().as_bytes()),
+                        topic_hash: bytes32_to_8_felts(&topic_bytes),
+                        payload_hash: bytes32_to_8_felts(&payload_bytes),
                     });
                 }
                 Effect::SetPermissions {

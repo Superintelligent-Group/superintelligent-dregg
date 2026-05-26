@@ -4841,6 +4841,20 @@ impl AgentCipherclerk {
             BabyBear::new(val_u32 % pyana_circuit::field::BABYBEAR_P)
         }
 
+        // #110: full 32-byte → 8-felt projection (4 bytes per felt,
+        // little-endian). Used for EmitEvent topic_hash / payload_hash and
+        // related event-shaped variants that need full ~256-bit binding.
+        fn bytes32_to_8_felts(b: &[u8; 32]) -> [BabyBear; 8] {
+            let mut out = [BabyBear::ZERO; 8];
+            for i in 0..8 {
+                let off = i * 4;
+                let v =
+                    u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]);
+                out[i] = BabyBear::new(v % pyana_circuit::field::BABYBEAR_P);
+            }
+            out
+        }
+
         let mut vm_effects = Vec::new();
         for effect in effects {
             match effect {
@@ -5085,12 +5099,17 @@ impl AgentCipherclerk {
                     hasher.update(&prefix_end_height.to_le_bytes());
                     hasher.update(checkpoint.cell_id.as_bytes());
                     hasher.update(&checkpoint.archive_blob_hash);
-                    let archive_hash = hasher.finalize();
+                    let archive_hash_bytes = *hasher.finalize().as_bytes();
+                    // #110: ReceiptArchive borrows the EmitEvent shape; use
+                    // a stable synthetic topic ("pyana-receipt-archive-v1")
+                    // and treat archive_hash as the payload so the (topic,
+                    // payload) PI slots distinguish ReceiptArchive from a
+                    // genuine event emission.
+                    let topic_bytes =
+                        *blake3::hash(b"pyana-receipt-archive-v1").as_bytes();
                     vm_effects.push(VmEffect::EmitEvent {
-                        // ReceiptArchive is structurally an event-emission
-                        // with no state change (the archive lives off-trace).
-                        // Reuse EmitEvent shape with archive_hash as event_hash.
-                        event_hash: hash_to_bb(archive_hash.as_bytes()),
+                        topic_hash: bytes32_to_8_felts(&topic_bytes),
+                        payload_hash: bytes32_to_8_felts(&archive_hash_bytes),
                     });
                 }
 
@@ -5113,14 +5132,18 @@ impl AgentCipherclerk {
 
                 // -- Emit event -------------------------------------------------
                 Effect::EmitEvent { cell, event } if cell == cell_id => {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(&event.topic);
+                    // #110: canonical (topic_hash, payload_hash) projection.
+                    // Must match `turn::executor::effect_vm_bridge` byte-for-byte
+                    // (differential test asserts equivalence).
+                    let topic_bytes = *blake3::hash(&event.topic).as_bytes();
+                    let mut ph = blake3::Hasher::new();
                     for d in &event.data {
-                        hasher.update(d);
+                        ph.update(d);
                     }
-                    let event_hash_bytes = hasher.finalize();
+                    let payload_bytes = *ph.finalize().as_bytes();
                     vm_effects.push(VmEffect::EmitEvent {
-                        event_hash: hash_to_bb(event_hash_bytes.as_bytes()),
+                        topic_hash: bytes32_to_8_felts(&topic_bytes),
+                        payload_hash: bytes32_to_8_felts(&payload_bytes),
                     });
                 }
 
@@ -5543,12 +5566,14 @@ impl AgentCipherclerk {
                     offered_action_commitment,
                     ..
                 } if cell == cell_id => {
-                    // Bind the offered_action_commitment so the proof
-                    // records which action was refused. RefusalReason is
-                    // not separately encoded here — the non-action witness
-                    // (proof_witness_index) carries that burden.
+                    // #110: bind the offered_action_commitment as the
+                    // event payload, with a stable synthetic topic
+                    // ("pyana-refusal-v1") so the (topic, payload) PI
+                    // distinguish Refusals from genuine events.
+                    let topic_bytes = *blake3::hash(b"pyana-refusal-v1").as_bytes();
                     vm_effects.push(VmEffect::EmitEvent {
-                        event_hash: hash_to_bb(offered_action_commitment),
+                        topic_hash: bytes32_to_8_felts(&topic_bytes),
+                        payload_hash: bytes32_to_8_felts(offered_action_commitment),
                     });
                 }
 

@@ -477,7 +477,12 @@ fn test_stage3_multi_variant_compose() {
         },
         // Stateless side-effects (passthrough):
         Effect::EmitEvent {
-            event_hash: BabyBear::new(0xE1),
+            topic_hash: {
+                let mut a = [BabyBear::ZERO; 8];
+                a[0] = BabyBear::new(0xE1);
+                a
+            },
+            payload_hash: [BabyBear::ZERO; 8],
         },
         Effect::SetPermissions {
             permissions_hash: BabyBear::new(0xE2),
@@ -653,7 +658,12 @@ fn test_basic_effect_constraints() {
         },
         Case {
             effect: Effect::EmitEvent {
-                event_hash: BabyBear::new(0xABCDEF),
+                topic_hash: {
+                    let mut a = [BabyBear::ZERO; 8];
+                    a[0] = BabyBear::new(0xABCDEF);
+                    a
+                },
+                payload_hash: [BabyBear::ZERO; 8],
             },
             balance: 500,
             extra_assert: |trace| {
