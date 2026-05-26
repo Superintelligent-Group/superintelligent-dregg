@@ -11048,6 +11048,122 @@ mod binding_proof_executor_tests {
             "expected InvalidExecutionProof when target missing from ledger, got: {r:?}"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Adversarial end-to-end: executor.execute() must REJECT a turn whose
+    // effect_binding_proofs carry forged (garbage) proof bytes.
+    //
+    // Before this commit the binding sweep was never invoked from execute(),
+    // so the executor silently accepted the turn and committed the forged
+    // proof.  Now the BINDING-SWEEP GATE fires before Phase 2 and the turn
+    // is rejected with InvalidExecutionProof before any ledger mutation
+    // occurs (other than the already-committed fee/nonce — those are Phase 1
+    // and are not rolled back on action failures by design).
+    // -----------------------------------------------------------------------
+
+    /// Forged effect-binding-proof bytes → executor rejects.
+    ///
+    /// This is the primary adversarial test for Issue #104.  A turn carries
+    /// an `EffectBindingProof` with completely fabricated proof bytes (all
+    /// 0xAA bytes — not a valid STARK proof).  Before the binding-sweep gate
+    /// was wired, `execute()` would happily commit the turn; now it must
+    /// return `TurnResult::Rejected { reason: TurnError::InvalidExecutionProof(..) }`.
+    #[test]
+    fn executor_rejects_forged_effect_binding_proof_bytes() {
+        // Build a two-cell ledger: agent has enough balance for the fee, and
+        // the target is reachable via a capability on the agent.
+        let agent_balance: u64 = 1_000;
+        let (mut ledger, agent_id, target_id) =
+            super::setup_two_open_cells(agent_balance, 500);
+
+        let executor = super::zero_cost_executor();
+
+        // Build a turn with a NoteSpend-schema binding proof that carries
+        // 64 bytes of 0xAA (garbage — not a valid Plonky3/STARK proof).
+        // The wire-PI check or the STARK deserialise step will reject it.
+        let action = crate::action::Action {
+            target: agent_id,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: pyana_cell::Preconditions::default(),
+            effects: vec![crate::action::Effect::NoteSpend {
+                nullifier: pyana_cell::Nullifier([0xDE; 32]),
+                note_tree_root: [0u8; 32],
+                value: 1,
+                asset_type: 0,
+                spending_proof: vec![],
+                value_commitment: None,
+            }],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        let tree = crate::forest::CallTree {
+            action,
+            children: vec![],
+            hash: [0u8; 32],
+        };
+        let mut turn = Turn {
+            agent: agent_id,
+            nonce: 0,
+            call_forest: crate::forest::CallForest {
+                roots: vec![tree],
+                forest_hash: [0u8; 32],
+            },
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: None,
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        };
+        // Attach a forged binding proof: correct schema_id, but proof_bytes is
+        // garbage (0xAA * 64) and public_inputs is empty → will fail PI
+        // length check or STARK deserialisation before the AIR ever runs.
+        turn.effect_binding_proofs.push(EffectBindingProof {
+            effect_index: 0,
+            schema_id: "pyana-effect-note-spend-v1".to_string(),
+            proof_bytes: vec![0xAAu8; 64],
+            public_inputs: vec![],
+        });
+
+        let result = executor.execute(&turn, &mut ledger);
+
+        // The executor MUST reject — not commit — a turn with a forged
+        // effect-binding proof.
+        assert!(
+            result.is_rejected(),
+            "executor must reject forged binding-proof bytes, got: {:?}",
+            result
+        );
+        let (err, _path) = result.unwrap_rejected();
+        assert!(
+            matches!(err, crate::error::TurnError::InvalidExecutionProof(_)),
+            "expected InvalidExecutionProof, got: {:?}",
+            err
+        );
+
+        // Verify the target cell was not mutated (no NoteSpend was applied).
+        // The agent balance should be unchanged because fee=0 and the turn
+        // was rejected before Phase 2.
+        let agent_cell = ledger.get(&agent_id).unwrap();
+        assert_eq!(
+            agent_cell.state.balance(),
+            agent_balance,
+            "agent balance must be unchanged after forged-proof rejection"
+        );
+        let _ = target_id; // suppress unused-variable warning
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -11533,4 +11649,346 @@ mod lifecycle_effects_adversarial {
             "swapping cert (different reason) must change effects_hash"
         );
     }
+}
+
+// =============================================================================
+// ADVERSARIAL TESTS: P0 bugs #111, #112, #113
+// =============================================================================
+
+/// #111: ExerciseViaCapability must reject a Transfer whose `from` is not the
+/// cap_target when the actor does NOT hold an explicit capability to `from`.
+///
+/// Attack: actor exercises cap_slot targeting cell A, but includes a Transfer
+/// whose `from` is cell B (which actor has no cap for). Without the fix the
+/// pre-validation loop skips the gate (only matched `from == cap_target`), so
+/// `apply_transfer` would call `check_cross_cell_permission(actor, B, Send)`
+/// which correctly rejects — but the explicit pre-loop validation is also
+/// missing, so the behavior is inconsistent with the stated invariant.
+/// With the fix the pre-loop calls `check_cross_cell_permission` for
+/// `from != cap_target`, producing a clean `CapabilityNotHeld` before the
+/// inner dispatch even runs.
+#[test]
+fn test_adversarial_exercise_via_cap_transfer_foreign_from_no_cap() {
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 5000);
+    let (cap_target, _) = make_open_cell(2, 2000);
+    let (foreign, _) = make_open_cell(3, 3000); // agent has NO cap to this cell
+    let agent_id = agent.id();
+    let cap_target_id = cap_target.id();
+    let foreign_id = foreign.id();
+
+    // Agent holds a cap to cap_target (slot 0) but NOT to foreign.
+    let mut agent_with_cap = agent;
+    agent_with_cap
+        .capabilities
+        .grant(cap_target_id, AuthRequired::None);
+
+    ledger.insert_cell(agent_with_cap).unwrap();
+    ledger.insert_cell(cap_target).unwrap();
+    ledger.insert_cell(foreign).unwrap();
+
+    let executor = zero_cost_executor();
+
+    // Exercise slot 0 (cap to cap_target) but Transfer FROM foreign (no cap held).
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = ActionBuilder::new_unchecked_for_tests(agent_id, "evil_exercise", agent_id)
+            .effect(Effect::ExerciseViaCapability {
+                cap_slot: 0,
+                inner_effects: vec![Effect::Transfer {
+                    from: foreign_id,   // NOT cap_target -- actor has no cap here
+                    to: agent_id,
+                    amount: 500,
+                }],
+            })
+            .build();
+        builder.add_action(action);
+    }
+    let turn = builder.fee(0).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    match result {
+        crate::turn::TurnResult::Rejected { reason, .. } => {
+            assert!(
+                matches!(
+                    reason,
+                    TurnError::CapabilityNotHeld { .. } | TurnError::PermissionDenied { .. }
+                ),
+                "Expected CapabilityNotHeld or PermissionDenied, got: {:?}",
+                reason
+            );
+        }
+        other => panic!(
+            "Expected Rejected (no cap to foreign), got: {:?}",
+            other
+        ),
+    }
+
+    // Verify foreign's balance is unchanged (no funds moved).
+    let foreign_cell = ledger.get(&foreign_id).unwrap();
+    assert_eq!(
+        foreign_cell.state.balance(),
+        3000,
+        "foreign balance must be unchanged"
+    );
+}
+
+/// #111 (positive): ExerciseViaCapability SHOULD allow a Transfer from a third
+/// cell when the actor explicitly holds a capability to that cell.
+#[test]
+fn test_exercise_via_cap_transfer_foreign_from_with_cap_succeeds() {
+    let mut ledger = Ledger::new();
+    let (agent, _) = make_open_cell(1, 5000);
+    let (cap_target, _) = make_open_cell(2, 2000);
+    let (foreign, _) = make_open_cell(3, 3000); // agent DOES hold a cap here
+    let agent_id = agent.id();
+    let cap_target_id = cap_target.id();
+    let foreign_id = foreign.id();
+
+    // Agent holds cap to cap_target (slot 0) AND to foreign (slot 1).
+    let mut agent_with_caps = agent;
+    agent_with_caps
+        .capabilities
+        .grant(cap_target_id, AuthRequired::None);
+    agent_with_caps
+        .capabilities
+        .grant(foreign_id, AuthRequired::None);
+
+    ledger.insert_cell(agent_with_caps).unwrap();
+    ledger.insert_cell(cap_target).unwrap();
+    ledger.insert_cell(foreign).unwrap();
+
+    let executor = zero_cost_executor();
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action =
+            ActionBuilder::new_unchecked_for_tests(agent_id, "exercise_with_cap", agent_id)
+                .effect(Effect::ExerciseViaCapability {
+                    cap_slot: 0,
+                    inner_effects: vec![Effect::Transfer {
+                        from: foreign_id, // actor holds slot 1 for this cell
+                        to: agent_id,
+                        amount: 500,
+                    }],
+                })
+                .build();
+        builder.add_action(action);
+    }
+    let turn = builder.fee(0).build();
+
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(
+        result.is_committed(),
+        "Transfer from foreign (with cap) inside ExerciseViaCapability must succeed: {:?}",
+        result
+    );
+
+    let foreign_cell = ledger.get(&foreign_id).unwrap();
+    assert_eq!(foreign_cell.state.balance(), 3000 - 500);
+    let agent_cell = ledger.get(&agent_id).unwrap();
+    assert_eq!(agent_cell.state.balance(), 5000 + 500);
+}
+
+/// #112: FulfillObligation must be rejected (fail-closed) when a StarkProof is
+/// provided but no proof_verifier is configured on the executor.
+///
+/// Previously, the `if let Some(verifier) = &self.proof_verifier` guard would
+/// simply skip verification and silently mark the obligation fulfilled.
+#[test]
+fn test_adversarial_fulfill_obligation_no_verifier_stark_proof() {
+    let (mut ledger, agent_id, beneficiary_id) = setup_two_open_cells(10000, 5000);
+    let mut executor = zero_cost_executor();
+    // Deliberately do NOT set a proof_verifier (executor default is None).
+    executor.set_block_height(10);
+
+    let stake_commitment = pyana_cell::NoteCommitment([0xCC; 32]);
+
+    // First: create the obligation.
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action =
+            ActionBuilder::new_unchecked_for_tests(agent_id, "create_obligation", agent_id)
+                .effect(Effect::CreateObligation {
+                    beneficiary: beneficiary_id,
+                    condition: crate::conditional::ProofCondition::LocalProof {
+                        expected_air: "some-air".to_string(),
+                        expected_public_inputs: vec![1, 2, 3],
+                    },
+                    deadline_height: 100,
+                    stake: stake_commitment,
+                    stake_amount: 1000,
+                })
+                .build();
+        builder.add_action(action);
+    }
+    let turn = builder.fee(0).build();
+    let result = executor.execute(&turn, &mut ledger);
+    assert!(result.is_committed(), "CreateObligation must succeed: {:?}", result);
+
+    // Derive the obligation_id (must include the condition now -- #113 fix).
+    let obligation_id = {
+        let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        hasher.update(agent_id.as_bytes());
+        hasher.update(beneficiary_id.as_bytes());
+        hasher.update(&100u64.to_le_bytes());
+        hasher.update(&stake_commitment.0);
+        // LocalProof discriminant = 2
+        hasher.update(&[2u8]);
+        hasher.update(b"some-air");
+        for pi in [1u32, 2u32, 3u32] {
+            hasher.update(&pi.to_le_bytes());
+        }
+        *hasher.finalize().as_bytes()
+    };
+
+    // Attempt to fulfill with a non-empty StarkProof, but no verifier configured.
+    let mut builder2 = TurnBuilder::new(agent_id, 1);
+    {
+        let action =
+            ActionBuilder::new_unchecked_for_tests(agent_id, "fulfill_no_verifier", agent_id)
+                .effect(Effect::FulfillObligation {
+                    obligation_id,
+                    proof: crate::conditional::ConditionProof::StarkProof {
+                        proof_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF], // non-empty
+                        public_inputs: vec![],
+                    },
+                })
+                .build();
+        builder2.add_action(action);
+    }
+    let turn2 = builder2.fee(0).build();
+    let result2 = execute_chained(&executor, &turn2, &mut ledger);
+
+    assert!(
+        result2.is_rejected(),
+        "FulfillObligation with StarkProof but no verifier must be REJECTED (fail-closed), got: {:?}",
+        result2
+    );
+    let (error, _) = result2.unwrap_rejected();
+    match error {
+        TurnError::InvalidEffect { ref reason } => {
+            assert!(
+                reason.contains("no proof verifier"),
+                "Expected 'no proof verifier' error, got: {reason}"
+            );
+        }
+        other => panic!("Expected InvalidEffect, got: {other:?}"),
+    }
+
+    // Verify the obligation is still unresolved (stake not returned).
+    let obligations = executor.obligations.lock().unwrap();
+    let record = obligations.get(&obligation_id).expect("obligation must still exist");
+    assert!(!record.resolved, "obligation must remain unresolved");
+    drop(obligations);
+
+    let agent = ledger.get(&agent_id).unwrap();
+    // balance = 10000 (original) - 1000 (stake locked) -- no stake return
+    assert_eq!(
+        agent.state.balance(),
+        10000 - 1000,
+        "stake must not be returned when verification cannot proceed"
+    );
+}
+
+/// #113: Two CreateObligations with identical payer/payee/stake but different
+/// `condition`s must produce distinct `obligation_id`s.
+///
+/// Previously the condition field was discarded (`condition: _`) in both the
+/// dispatcher and the hasher, so the two IDs were equal -- meaning a
+/// FulfillObligation proof built for the weaker condition would resolve both.
+#[test]
+fn test_adversarial_create_obligation_distinct_ids_for_distinct_conditions() {
+    let (mut ledger, agent_id, beneficiary_id) = setup_two_open_cells(10000, 5000);
+    let mut executor = zero_cost_executor();
+    executor.set_block_height(10);
+
+    let stake_a = pyana_cell::NoteCommitment([0xAA; 32]);
+    let stake_b = pyana_cell::NoteCommitment([0xAA; 32]); // identical stake
+
+    // Create obligation A: HashPreimage condition.
+    let mut builder_a = TurnBuilder::new(agent_id, 0);
+    {
+        let action =
+            ActionBuilder::new_unchecked_for_tests(agent_id, "create_obligation_a", agent_id)
+                .effect(Effect::CreateObligation {
+                    beneficiary: beneficiary_id,
+                    condition: crate::conditional::ProofCondition::HashPreimage {
+                        hash: [0x11; 32],
+                    },
+                    deadline_height: 100,
+                    stake: stake_a,
+                    stake_amount: 500,
+                })
+                .build();
+        builder_a.add_action(action);
+    }
+    let turn_a = builder_a.fee(0).build();
+    let result_a = executor.execute(&turn_a, &mut ledger);
+    assert!(result_a.is_committed(), "CreateObligation A must succeed: {:?}", result_a);
+
+    // Create obligation B: TurnExecuted condition (same payer/payee/stake/deadline).
+    let mut builder_b = TurnBuilder::new(agent_id, 1);
+    {
+        let action =
+            ActionBuilder::new_unchecked_for_tests(agent_id, "create_obligation_b", agent_id)
+                .effect(Effect::CreateObligation {
+                    beneficiary: beneficiary_id,
+                    condition: crate::conditional::ProofCondition::TurnExecuted {
+                        turn_hash: [0x22; 32],
+                    },
+                    deadline_height: 100,
+                    stake: stake_b,
+                    stake_amount: 500,
+                })
+                .build();
+        builder_b.add_action(action);
+    }
+    let turn_b_built = builder_b.fee(0).build();
+    let result_b = execute_chained(&executor, &turn_b_built, &mut ledger);
+    assert!(result_b.is_committed(), "CreateObligation B must succeed: {:?}", result_b);
+
+    // Derive both obligation IDs using the same hash logic as the executor.
+    let id_a = {
+        let mut h = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        h.update(agent_id.as_bytes());
+        h.update(beneficiary_id.as_bytes());
+        h.update(&100u64.to_le_bytes());
+        h.update(&stake_a.0);
+        h.update(&[0u8]); // HashPreimage discriminant
+        h.update(&[0x11u8; 32]);
+        *h.finalize().as_bytes()
+    };
+    let id_b = {
+        let mut h = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
+        h.update(agent_id.as_bytes());
+        h.update(beneficiary_id.as_bytes());
+        h.update(&100u64.to_le_bytes());
+        h.update(&stake_b.0);
+        h.update(&[3u8]); // TurnExecuted discriminant
+        h.update(&[0x22u8; 32]);
+        *h.finalize().as_bytes()
+    };
+
+    assert_ne!(
+        id_a, id_b,
+        "Obligations with different conditions must have distinct IDs"
+    );
+
+    // Both obligations must exist and be unresolved in the executor's map.
+    let obligations = executor.obligations.lock().unwrap();
+    assert!(
+        obligations.contains_key(&id_a),
+        "Obligation A must be in registry"
+    );
+    assert!(
+        obligations.contains_key(&id_b),
+        "Obligation B must be in registry"
+    );
+    assert_eq!(
+        obligations.len(),
+        2,
+        "Must have exactly 2 distinct obligations, got {}",
+        obligations.len()
+    );
 }
