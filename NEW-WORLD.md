@@ -179,7 +179,7 @@ The slop-list (`amm`, `lending`, `orderbook`, `stablecoin`, `dao-treasury`, `pre
 
 ## Inventory: what landed this season
 
-**Substrate:**
+**Substrate (prior session — 2026-05-24):**
 - Slot caveats v1 (21+ `StateConstraint` variants) + the three surface variants (`StateConstraint::Witnessed`, `Precondition::Witnessed`, `CapabilityCaveat::Witnessed`)
 - `WitnessedPredicate` unification + kind registry (Dfa, TemporalPredicate, BlindedSet, MerkleMembership, Custom)
 - `Action::witness_blobs` canonical carrier
@@ -196,7 +196,23 @@ The slop-list (`amm`, `lending`, `orderbook`, `stablecoin`, `dao-treasury`, `pre
 - `StarkMembership` variant deleted (no longer always-errors)
 - `plonky3_recursion_impl` generalized past `P3MerklePoseidon2Air` (Golden-Edge Block 1)
 
-**Userspace:**
+**Substrate (session 2026-05-25 — soundness emergency + receipt foundation):**
+- **Temporal AIR boundary binding** — `THRESHOLD`, `STATE_ROOT_INITIAL`, `STATE_ROOT_FINAL` now bound into STARK PI; forged-threshold attack closed (`df122d4c`, SILVER-DEBT T1.5)
+- **NonMembership adjacency_tag** — `CONSECUTIVE_TAG = [0xFE;32]` public sentinel replaced with per-`(commitment, lower, upper)` derived tag; sorted-neighbor bypass attack closed (`5d557969`, SILVER-DEBT T2.7 Silver-Sound interim)
+- **NotYetWiredVerifier registry** — `default_builtins()` switched from `StubVerifier` (accept-all) to `NotYetWiredVerifier` (reject-all) for every non-NonMembership kind; honest fail-closed posture (`c86aecd7`, SILVER-DEBT T2.8)
+- **Executor signature widening** — `canonical_executor_signed_message` promoted to `v3`, now covers full `receipt_hash` field set (`e0fe3316`, SILVER-DEBT T1.6)
+- **VK integrity gate** — `SetVerificationKey` apply now enforces `hash == blake3(data)`; `from_parts_checked` added for untrusted-input call sites (`08e01ea7`, SILVER-DEBT T1.3 partial)
+- **block1-bind TODO closure** — `convert_turn_effects_to_vm` queue/capability arms now source real ledger values (queue_len, old_capacity, permissions, refcount) instead of zero/synthetic placeholders (`9834b3d4`, SILVER-DEBT T2.1 + T2.2)
+- **Custom-effect VK widened to 8 BabyBear felts** — `expand_vk_hash_16_to_32` retired; dispatch now carries full 32-byte VK hash (`46a886a5`, SILVER-DEBT T3.3)
+- **Proof-carrying receipt real effects_hash** — `verify_and_commit_proof` path now populates `effects_hash`, `action_count`, `computrons_used` from PI rather than emitting stub zeros (`57f2b041`, SILVER-DEBT T1.7 partial)
+- **Cclerk strict receipt-chain** — `append_receipt` now rejects mismatched `previous_receipt_hash` instead of silently rewriting it; strict atomicity semantics (`83718782`)
+- **AttestedRoot `receipt_stream_root` wired** — threaded through stand-in constructors in federation/node (`aab40d37`)
+- **Lifecycle Effects shipped** — `Effect::LifecycleActivate`, `LifecycleSuspend`, `LifecycleTerminate`, `LifecycleDestroy` variants with adversarial test suite (`f4a4fd17`)
+- **`SCHEMA_BURN` AIR** — algebraic Burn invariant with nullifier binding (`bf7060fc`)
+- **Poseidon24To1 OOB panic fixed** — evaluation-domain out-of-bounds access repaired (was breaking 30+ tests) (`2a06e669`)
+- **CellProgram::Cases default-deny** — unknown-method calls to Cases programs now return an error instead of silently succeeding (`1597c528`)
+
+**Userspace (prior session):**
 - `AppCipherclerk` + `EmbeddedExecutor` + `StarbridgeAppContext`
 - `pyana-credentials` crate (G31 from PYANA-FLAWS-FROM-APPS: promotes `bridge::present`)
 - `pyana-directory` crate (G32/G33: promotes nameservice/governed-namespace directory pattern)
@@ -204,7 +220,15 @@ The slop-list (`amm`, `lending`, `orderbook`, `stablecoin`, `dao-treasury`, `pre
 - `starbridge-apps/nameservice` bootstrap
 - `starbridge-apps/identity` bootstrap
 
-**Cleanup / retirement:**
+**Tests (session 2026-05-25 — ~200 new integration tests):**
+- `CELL-TURN-TEST-AUDIT.md` + integration suites: `integration_lifecycle`, `integration_burn_receipt`, `integration_attenuate_capability`, `integration_destroy_terminal`, `integration_attestation_archive`
+- Starbridge-apps executor-invoking tests for all 4 current apps (`d235a86b`)
+- Intent/bridge integration tests (40 tests, `e404a0af`)
+- SDK/node/wire integration tests (`f49b732b`)
+- Substrate integration tests for storage-templates, credentials, app-framework (`2f3d5977`)
+- Meta-test audit + labeling of fake assertions (`5dd9106f`)
+
+**Cleanup / retirement (prior session):**
 - 6 slop apps deleted (amm, lending, orderbook, stablecoin, dao-treasury, prediction-market)
 - discord-bot promoted to toplevel; migrated to AppCipherclerk
 - `cod/` deleted
@@ -213,7 +237,7 @@ The slop-list (`amm`, `lending`, `orderbook`, `stablecoin`, `dao-treasury`, `pre
 - `hints/` edition 2024 + profile override removed
 - Morpheus retirement Blocks 1-5 + 7-8 (Block 6: physical deletion of the 2515-LOC simulator pending teasting/wasm/sdc migrations)
 
-**Design (canonical docs):**
+**Design (canonical docs — prior session):**
 - `BOUNDARIES.md` — the 14-boundary vocabulary
 - `PREDICATE-INVENTORY.md` — the unified predicate taxonomy
 - `SLOT-CAVEATS-DESIGN.md` + `SLOT-CAVEATS-EVALUATION.md` — the StateConstraint vocabulary
@@ -230,21 +254,37 @@ The slop-list (`amm`, `lending`, `orderbook`, `stablecoin`, `dao-treasury`, `pre
 - `STARBRIDGE-APPS-PLAN.md` — the userspace migration plan
 - 8 audit docs (`AUDIT-distributed-semantics`, `AUDIT-offline-mode`, `AUDIT-blocklace-consensus`, `AUDIT-federation`, `AUDIT-protocol-composition`, `AUDIT-privacy`, `AUDIT-nullifiers`, `AUDIT-sovereign-witness-teeth`, `AUDIT-coord-crate`, `AUDIT-trace-crate`, `BACKWATER-CRATES-AUDIT`, `CELL-CRATE-REVIEW`, `STORAGE-REFLECTIVITY-RBG-DFA-AUDIT`)
 
+**Audit + study docs (session 2026-05-25 — 20+ new documents):**
+- `SILVER-DEBT.md` — the canonical Silver-vs-Golden debt ledger (T1–T3 items; CI enforcement design)
+- `AIR-SOUNDNESS-AUDIT.md` — complete AIR soundness sweep (attack sketches for T1.5, T2.7, T2.9, T2.5, T2.11)
+- `EXECUTOR-VK-AUDIT.md` — executor + VK layering audit (closure plans for T1.3, T1.6, T1.7, T2.17, T2.18, T3.3)
+- `RECEIPT-ARCHITECTURE-STUDY.md` — receipt chain / audit trail deep dive
+- `HOUYHNHNM-COMPARISON.md` + `HOUYHNHNM-DEEP-CRITIQUE.md` — Houyhnhnm system comparison + deep critique
+- `PROTOCOL-CATEGORICAL-ANALYSIS.md` — categorical treatment of pyana's protocol primitives
+- `KIMI-DAMAGE-AUDIT.md` — audit of prior Kimi-authored code for soundness regressions
+- `TEST-REALITY-AUDIT.md` — test suite honesty audit (fake assertions, scaffold must_pass)
+- `MULTI-NODE-DEVNET-RUN.md` — first end-to-end multi-node devnet run report
+- `PREV-SESSION-AUDIT.md` — cross-session state reconciliation
+- `DEMO-INTERACTION-MATRIX.md` — demo scenario matrix for the two-AI handoff
+- `STORAGE-SECONDARIES-TRIAGE.md`, `CELL-TURN-TEST-AUDIT.md`, `CIRCUIT-VERIFIER-TEST-AUDIT.md`, `INTENT-BRIDGE-TEST-AUDIT.md`, `FEDERATION-CAPTP-TEST-AUDIT.md`, `SDK-NODE-WIRE-TEST-AUDIT.md`, `STARBRIDGE-APPS-TEST-AUDIT.md`, `META-TEST-AUDIT.md`, `SUBSTRATE-TEST-AUDIT.md` — per-layer test audit suite
+- `BLOCK1-BIND-CLOSURE-NOTES.md` — closure notes for the block1-bind debt wave
+
 ## What's not done (honest)
 
 The remaining Silver Vision items, in priority order:
 
-1. **AIR completeness** — 9 placeholder Effect VM PI variants (`QueueAtomicTx`, `ValidateHandoff`, `QueueDequeue`, `EnlivenRef`, 5 others); 30-bit value truncations (`BridgeMint/BridgeLock/CreateEscrow`).
+1. **AIR completeness** — `ValidateHandoff` recipient/introducer pk placeholders (T2.3); 30-bit value truncations in interior balance arithmetic (`BridgeMint/BridgeLock/CreateEscrow`, T2.5); `EffectVmShapeAir` covers only a structural subset of `EffectVmAir` constraints (T2.6). The main queue/capability block1-bind group is closed (`9834b3d4`).
 2. **StateConstraint AIR teeth** — most variants are executor-side only; AIR boundary constraints are opt-in per variant (start with `SenderAuthorized` since the swiss-table-membership gadget exists).
 3. **Sovereign-witness AIR Phase 1 + 2** — Phase 1 implementation; Phase 2 depends on plonky3 recursion completion.
 4. **Bridge proof-to-action binding** — backwater audit: lives in executor comments, not the circuit.
 5. **`coord::BudgetCoordinator` signature verification** — two real security bugs (test has comment "Forged signature not verified in rebalance yet").
 6. **Storage primitive migrations** — Phase 1 (ProgrammableQueue → cell-program) and Phase 2 (CapInbox → cell-program) bring the design's thesis into code.
 7. **Morpheus retirement Block 6** — physical deletion of ~2515 LOC dead simulator after teasting/wasm/sdc migrations.
-8. **Comprehensive test suite** across `tests/`, `protocol-tests/`, `teasting/`, `preflight/`, `pyana-dsl-differential/`, `demo/two-ai-handoff/`, `demo/silver-vision-e2e/` — atomic + composition tests for every constraint variant × layer × threat.
+8. **Test suite coverage** — 200 new integration tests landed this session; remaining gaps catalogued in `META-TEST-AUDIT.md` and the per-layer test audit docs.
 9. **Token caveat modernization** — discard the 12 ancient caveat types; converge the 3 shape-similar ones with `cell::CapabilityCaveat`.
-10. **Real STARK ProofVerifier for intent fulfillment** — currently still `MockProofVerifier`; now that the predicate registry exists, can be wired.
+10. **Real STARK ProofVerifier for intent fulfillment** — `TrustlessIntentEngine::new` still defaults to `WitnessedProofVerifier::with_stub_registry()` (SILVER-DEBT T1.2); the registry plumbing exists, wiring it is the remaining work.
 11. **Studio integration** — `STUDIO-REFACTOR-PICKUP.md` documents 13 refactors the resumed studio agent absorbs; we wrote the substrate.
+12. **`pyana-witnessed-registry-default` crate** — no in-tree host binary installs real verifiers for all 6 `WitnessedPredicateKind` variants; `default_builtins()` correctly rejects them but doesn't provide them (SILVER-DEBT T1.4, T2.8).
 
 The Golden Vision items (γ.2 Phase 2 joint aggregation AIR, full mesh attestation) sit on top of these.
 
