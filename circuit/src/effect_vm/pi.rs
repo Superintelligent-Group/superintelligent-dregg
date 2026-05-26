@@ -310,6 +310,9 @@ pub const VK_PI_LAYOUT_VERSION: u32 = 2;
 ///   152..168 WITNESS_INDEX_MAP[16]              (Proof-to-Action §3.2)
 ///   168     UNILATERAL_ATTESTATIONS_COUNT       (γ.2 unilateral)
 ///   169..173 UNILATERAL_ATTESTATIONS_ROOT[4]    (γ.2 unilateral)
+///   173     EMIT_EVENT_COUNT                    (closes #110)
+///   174..182 EMIT_EVENT_TOPIC_HASH[8]            (closes #110)
+///   182..190 EMIT_EVENT_PAYLOAD_HASH[8]          (closes #110)
 ///
 /// ---- Slot-caveat manifest (Cav-Codex Block 3) ----
 ///
@@ -475,7 +478,47 @@ pub const UNILATERAL_ATTESTATION_KIND_SOVEREIGN_WITNESS: u32 = 3;
 /// bits and OR'd with this discriminant.
 pub const UNILATERAL_ATTESTATION_KIND_CUSTOM_BASE: u32 = 0x4000_0000;
 
-pub const BASE_COUNT: usize = UNILATERAL_ATTESTATIONS_ROOT_BASE + UNILATERAL_ATTESTATIONS_ROOT_LEN; // 173
+// ---- EmitEvent algebraic binding (closes #110) ----
+//
+// Per `EFFECT-VM-EMIT-EVENT.md` (lane Opus AIR-structural, 2026-05-25):
+// the EffectVmAir previously only carried a single-felt `event_hash` for
+// `Effect::EmitEvent`, which collided with the runtime `Event { topic,
+// data }` canonical encoding (32B topic ‖ 32B payload). The MCP
+// `pyana_register_service` tool was synthesising a `SetField` row as a
+// workaround. These PI slots replace that workaround with a real
+// algebraic binding:
+//
+//   PI[EMIT_EVENT_COUNT]                          number of EmitEvent rows
+//                                                 in this trace.
+//   PI[EMIT_EVENT_TOPIC_HASH_BASE..+8]            8-felt projection of the
+//                                                 canonical topic hash (full
+//                                                 256-bit binding).
+//   PI[EMIT_EVENT_PAYLOAD_HASH_BASE..+8]          8-felt projection of the
+//                                                 canonical payload hash
+//                                                 (full 256-bit binding).
+//
+// The AIR per-row constraint (gated by `sel::EMIT_EVENT`) pins
+// `params[0..4]` to `PI[EMIT_EVENT_TOPIC_HASH][0..4]` and `params[4..8]`
+// to `PI[EMIT_EVENT_PAYLOAD_HASH][0..4]`, giving algebraic ~124-bit
+// binding inside the AIR. The high halves (`[4..8]` of each) are bound
+// via `compute_effects_hash` absorption (which ingests all 16 felts
+// per emit-event row) and via the off-AIR verifier's PI-match loop
+// (which recomputes the canonical hashes from the runtime `Event`).
+//
+// Sentinel: when count == 0, both 8-felt slots are `[BabyBear::ZERO; 8]`.
+// Soundness: with the per-row equality constraint, all emit-event rows
+// in one proof must share the same hashes. Multi-emit-distinct-hashes
+// requires PI extension (deferred).
+pub const EMIT_EVENT_COUNT: usize =
+    UNILATERAL_ATTESTATIONS_ROOT_BASE + UNILATERAL_ATTESTATIONS_ROOT_LEN; // 173
+pub const EMIT_EVENT_TOPIC_HASH_BASE: usize = EMIT_EVENT_COUNT + 1; // 174
+pub const EMIT_EVENT_TOPIC_HASH_LEN: usize = 8;
+pub const EMIT_EVENT_PAYLOAD_HASH_BASE: usize =
+    EMIT_EVENT_TOPIC_HASH_BASE + EMIT_EVENT_TOPIC_HASH_LEN; // 182
+pub const EMIT_EVENT_PAYLOAD_HASH_LEN: usize = 8;
+
+pub const BASE_COUNT: usize =
+    EMIT_EVENT_PAYLOAD_HASH_BASE + EMIT_EVENT_PAYLOAD_HASH_LEN; // 190
 /// Elements per custom effect entry in PI (8 vk_hash + 4 proof_commit).
 /// Was 8 in PI layout v1; widened to 12 in v2 (`VK_PI_LAYOUT_VERSION == 2`).
 pub const CUSTOM_ENTRY_SIZE: usize = 12;

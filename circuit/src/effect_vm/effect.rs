@@ -27,11 +27,32 @@ pub enum Effect {
     /// `new_cap_root == hash_2_to_1(old_cap_root, slot_hash)` so a malicious
     /// prover cannot make up an arbitrary new root.
     RevokeCapability { slot_hash: BabyBear },
-    /// EmitEvent: stateless side-effect. The `event_hash` parameter contributes
-    /// to `effects_hash` (binding the prover to which event was emitted), but
-    /// the AIR constraint enforces full state passthrough — no balance,
-    /// field, or cap_root change. Nonce increments by 1 like any non-NoOp effect.
-    EmitEvent { event_hash: BabyBear },
+    /// EmitEvent: stateless side-effect. Mirrors the runtime `Event` canonical
+    /// encoding (topic ‖ data): `topic_hash` is the 32-byte BLAKE3 of the topic
+    /// symbol, projected into 8 BabyBear felts (4 bytes per felt), and
+    /// `payload_hash` is the 32-byte BLAKE3 of the concatenated `Vec<FieldElement>`
+    /// data, projected the same way. Both contribute to `effects_hash`
+    /// (binding the prover to the exact (topic, payload) bytes the executor
+    /// observed), and the AIR additionally pins the low 4 felts of each into
+    /// row params via a selector-gated PI-equality constraint (see
+    /// `EMIT_EVENT_TOPIC_HASH` / `EMIT_EVENT_PAYLOAD_HASH` PI slots). The AIR
+    /// constraint enforces full state passthrough — no balance, field, or
+    /// cap_root change. Nonce increments by 1 like any non-NoOp effect.
+    ///
+    /// Soundness note: the per-row PI-equality constraint forces all
+    /// emit-event rows in one proof to share the same (topic, payload) hashes.
+    /// Multi-emit-distinct-hashes per proof is out of current scope; the
+    /// off-AIR verifier's PI-match loop reads `EMIT_EVENT_COUNT` and refuses
+    /// to derive multi-hash PI from the runtime turn (forcing the executor
+    /// to split the turn into separate proofs if needed).
+    EmitEvent {
+        /// 32-byte BLAKE3 of the event topic symbol, projected into 8 BabyBear
+        /// felts via 4-bytes-per-felt little-endian packing. Position 0 carries
+        /// the low 4 bytes; position 7 the high 4 bytes.
+        topic_hash: [BabyBear; 8],
+        /// 32-byte BLAKE3 of the concatenated event data fields, same packing.
+        payload_hash: [BabyBear; 8],
+    },
     /// SetPermissions: update a cell's permission table. Permissions live
     /// outside the VM's tracked state, so the AIR enforces full state
     /// passthrough (balance / fields / cap_root unchanged) and the
