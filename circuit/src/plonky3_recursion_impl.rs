@@ -32,7 +32,7 @@
 pub mod recursive {
     use std::sync::Arc;
 
-    use p3_air::{Air, BaseAir, SymbolicExpressionExt};
+    use p3_air::{Air, BaseAir};
     use p3_baby_bear::{BabyBear as P3BabyBear, Poseidon2BabyBear, default_babybear_poseidon2_16};
     use p3_challenger::DuplexChallenger;
     use p3_circuit::{CircuitBuilder, CircuitRunner, NonPrimitiveOpId};
@@ -40,7 +40,7 @@ pub mod recursive {
     use p3_commit::{ExtensionMmcs, Pcs};
     use p3_dft::Radix2DitParallel;
     use p3_field::extension::BinomialExtensionField;
-    use p3_field::{Algebra, Field};
+    use p3_field::Field;
     use p3_fri::{FriParameters, TwoAdicFriPcs};
     use p3_lookup::logup::LogUpGadget;
     use p3_lookup::symbolic::InteractionSymbolicBuilder;
@@ -56,7 +56,7 @@ pub mod recursive {
     };
     use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
     use p3_uni_stark::{
-        Proof, StarkConfig, StarkGenericConfig, SymbolicExpression, Val, prove, verify,
+        Proof, StarkConfig, StarkGenericConfig, Val, prove, verify,
     };
 
     use crate::field::BabyBear;

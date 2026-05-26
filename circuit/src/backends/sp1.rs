@@ -1708,13 +1708,6 @@ impl HostSubstitution {
         self.bindings.get(var as usize).copied().flatten()
     }
 
-    fn resolve_term(&self, term: &Sp1Term) -> Option<u64> {
-        match term {
-            Sp1Term::Const(c) => Some(*c),
-            Sp1Term::Var(v) => self.get(*v),
-            Sp1Term::Wildcard => None,
-        }
-    }
 }
 
 fn unify_atom_host(

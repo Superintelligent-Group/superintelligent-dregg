@@ -7,7 +7,7 @@ use crate::poseidon2::{hash_2_to_1, hash_4_to_1};
 use crate::stark::{BoundaryConstraint, StarkAir};
 
 use super::{
-    AUX_BASE, EFFECT_VM_WIDTH, NUM_AUX, NUM_EFFECTS, NUM_PARAMS, PARAM_BASE, STATE_AFTER_BASE,
+    AUX_BASE, EFFECT_VM_WIDTH, NUM_EFFECTS, PARAM_BASE, STATE_AFTER_BASE,
     STATE_BEFORE_BASE, aux_off, param, pi, sel, state,
 };
 

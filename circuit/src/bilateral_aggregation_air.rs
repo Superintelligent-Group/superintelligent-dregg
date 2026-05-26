@@ -233,8 +233,6 @@ impl<AB: AirBuilder> Air<AB> for BilateralAggregationAir {
             .collect();
         let pv_consistent: AB::Expr = pv[OUTER_BILATERAL_CONSISTENT].into();
         let pv_n_cells: AB::Expr = pv[OUTER_N_CELLS].into();
-        // `pv` borrow released here — subsequent code uses owned pv_* copies.
-        drop(pv);
 
         // ---- CG-2: turn-identity agreement (4 + 4 + 1 + 4 = 13 equalities per row) ----
         for i in 0..OUTER_TURN_HASH_LEN {

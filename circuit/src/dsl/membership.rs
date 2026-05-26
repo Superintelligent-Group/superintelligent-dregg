@@ -122,7 +122,6 @@ pub fn create_test_witness(
             BabyBear::new((i * 3 + 2) as u32),
             BabyBear::new((i * 3 + 3) as u32),
         ];
-        let position = BabyBear::new(pos as u32);
         let mut children = [BabyBear::ZERO; 4];
         children[pos as usize] = current;
         let mut sib_idx = 0;

@@ -363,7 +363,6 @@ impl StarkAir for EffectActionAir {
                 alpha_pow = alpha_pow * alpha;
                 let c_was_burn_hi = was_burn_hi;
                 combined = combined + alpha_pow * c_was_burn_hi;
-                alpha_pow = alpha_pow * alpha;
                 //
                 // `old_balance >= amount` enforcement (range-check note):
                 // The four arithmetic constraints above pin the subtraction

@@ -196,7 +196,6 @@ macro_rules! define_ec_witness_helpers {
         $field:ty,
         $point_double:ident,
         $point_add:ident,
-        $scalar_mul_2_128:ident,
         $scalar_to_bits_128:ident,
         $decompose_to_limbs:ident,
         $endosclmul_witness_fill:ident,
@@ -250,14 +249,6 @@ macro_rules! define_ec_witness_helpers {
                 let y3 = s * (x1 - x3) - y1;
                 (x3, y3)
             }
-        }
-
-        pub(crate) fn $scalar_mul_2_128(p: ($field, $field)) -> ($field, $field) {
-            let mut acc = p;
-            for _ in 0..128 {
-                acc = $point_double(acc);
-            }
-            acc
         }
 
         pub(crate) fn $endosclmul_witness_fill(
@@ -424,7 +415,6 @@ define_ec_witness_helpers!(
     Fq,
     point_double_fq,
     point_add_fq,
-    scalar_mul_2_128_fq,
     scalar_to_bits_128_fq,
     decompose_to_limbs_fq,
     endosclmul_witness_fill_fq,

@@ -243,7 +243,7 @@ fn compile_recursive(expr: &ArithExpr, ops: &mut Vec<CompiledOp>, num_inputs: us
 
 /// Auxiliary column info for a complex operation.
 #[derive(Clone, Debug)]
-struct OpAux {
+pub struct OpAux {
     /// Index of the compiled op this auxiliary data belongs to.
     op_idx: usize,
     /// Whether this is in expression B (for ExprCompare).

@@ -27,7 +27,7 @@ use crate::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
 use crate::multi_step_air;
 use crate::poseidon2::hash_fact;
 #[allow(deprecated)]
-use crate::stark::{self, MerkleStarkAir, StarkAir, StarkProof};
+use crate::stark::{self, MerkleStarkAir, StarkProof};
 use crate::temporal_predicate_dsl::{TemporalPredicateProof, verify_temporal_predicate};
 
 /// The complete presentation witness (all private data).

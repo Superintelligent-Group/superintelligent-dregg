@@ -23,9 +23,6 @@ use crate::poseidon2::{
 };
 use crate::stark::{BoundaryConstraint, StarkAir};
 
-/// State width for the Merkle Poseidon2 AIR.
-const MERKLE_P2_STATE_WIDTH: usize = WIDTH;
-
 /// Number of rows per Poseidon2 permutation in the trace.
 pub const POSEIDON2_ROWS: usize = TOTAL_ROUNDS + 1;
 
