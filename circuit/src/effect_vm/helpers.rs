@@ -437,6 +437,32 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(*cap_slot_hash);
                 hasher_inputs.push(*narrower_commitment);
             }
+            // ---- AIR-impl lane #119: CellSeal / CellUnseal / ReceiptArchive / Refusal ----
+            // Domain tags 49–52 match `sel::CELL_SEAL` through `sel::REFUSAL`.
+            Effect::CellSeal { target, reason_hash } => {
+                hasher_inputs.push(BabyBear::new(49));
+                hasher_inputs.push(*target);
+                hasher_inputs.push(*reason_hash);
+            }
+            Effect::CellUnseal { target } => {
+                hasher_inputs.push(BabyBear::new(50));
+                hasher_inputs.push(*target);
+            }
+            Effect::ReceiptArchive {
+                target,
+                archive_end_height,
+                terminal_receipt_hash,
+            } => {
+                hasher_inputs.push(BabyBear::new(51));
+                hasher_inputs.push(*target);
+                hasher_inputs.push(*archive_end_height);
+                hasher_inputs.push(*terminal_receipt_hash);
+            }
+            Effect::Refusal { target, reason_hash } => {
+                hasher_inputs.push(BabyBear::new(52));
+                hasher_inputs.push(*target);
+                hasher_inputs.push(*reason_hash);
+            }
         }
     }
     let h = hash_many(&hasher_inputs);

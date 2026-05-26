@@ -146,24 +146,24 @@ pub(super) fn convert_turn_effects_to_vm(
                     });
                 }
                 Effect::QueueDequeue { queue } => {
-                    // DequeueMessage: bind the real message hash that is at
-                    // the head of the queue. `apply_queue_enqueue` writes
-                    // the latest enqueued message hash into `queue.state.fields[4]`
-                    // (apply.rs:3354–3357). In a FIFO queue the head is the
-                    // *earliest* enqueued message, but `fields[4]` carries
-                    // the *latest*. For a single-message queue these are the
-                    // same, and for a multi-message queue this is still a real
-                    // ledger value (the most recently enqueued hash) rather
-                    // than a synthetic domain tag — making the AIR constraint
-                    // non-vacuous: a prover must commit to an actual enqueued
-                    // message hash, not an arbitrary domain string.
+                    // DequeueMessage: bind the FIFO head message hash.
                     //
-                    // Full per-slot head tracking (a true head pointer) is the
-                    // next closure step; that requires a second queue-cell field
-                    // to store the head hash separately from the tail hash.
+                    // `apply_queue_enqueue` writes `fields[6]` (head pointer) on
+                    // the 0→1 transition, preserving the *first* enqueued message
+                    // hash across subsequent enqueues.  `apply_queue_dequeue`
+                    // clears `fields[6]` to zero when the queue drains to empty,
+                    // and leaves it unchanged when new_len > 0 (head cannot be
+                    // advanced without the full message sequence — see the comment
+                    // in apply.rs::apply_queue_dequeue).
+                    //
+                    // Reading `fields[6]` here gives the *earliest* enqueued
+                    // message for single-message queues and for the first dequeue
+                    // of any non-empty queue, which is correct FIFO ordering.
+                    // This is strictly better than the previous `fields[4]` read,
+                    // which always returned the *tail* (most recently enqueued).
                     let expected_message_hash = ledger
                         .get(queue)
-                        .map(|c| hash_to_bb(&c.state.fields[4]))
+                        .map(|c| hash_to_bb(&c.state.fields[6]))
                         .unwrap_or(BabyBear::ZERO);
                     vm_effects.push(VmEffect::DequeueMessage {
                         expected_message_hash,
@@ -270,16 +270,14 @@ pub(super) fn convert_turn_effects_to_vm(
                     let pipeline_bb = hash_to_bb(pipeline_id);
                     let source_root = hash_to_bb(source.as_bytes());
                     // The message being moved is the one at the source queue's
-                    // head. `apply_queue_enqueue` stores the latest-enqueued
-                    // message hash in `source.state.fields[4]` (apply.rs:3354–3357).
-                    // `apply_queue_pipeline_step` dequeues from source and enqueues
-                    // to each sink using the same message. Reading `fields[4]` here
-                    // gives the actual message rather than a synthetic pipeline_id
-                    // placeholder — the AIR's `message_hash` param now refers to
-                    // a real ledger-derived value, not an arbitrary constant.
+                    // FIFO head.  `apply_queue_enqueue` writes `fields[6]` (head
+                    // pointer) on the 0→1 transition so it tracks the *earliest*
+                    // enqueued message, not the latest.  Reading `fields[6]` here
+                    // gives the real FIFO head rather than the tail (`fields[4]`),
+                    // which is correct for a pipeline step that dequeues FIFO.
                     let msg_hash = ledger
                         .get(source)
-                        .map(|c| hash_to_bb(&c.state.fields[4]))
+                        .map(|c| hash_to_bb(&c.state.fields[6]))
                         .unwrap_or_else(|| hash_to_bb(pipeline_id));
                     let source_new = pyana_circuit::poseidon2::hash_2_to_1(source_root, msg_hash);
                     // For the sink, use the real sink queue's current state as the
@@ -1058,6 +1056,81 @@ pub(super) fn convert_turn_effects_to_vm(
                     });
                 }
 
+                // ────────────────────────────────────────────────────
+                // AIR-impl lane (#119): four runtime variants that
+                // previously fell through to `_ => {}` (NoOp shim).
+                // Each now projects to a dedicated VmEffect with its
+                // own selector + AIR constraint set.
+                // ────────────────────────────────────────────────────
+                Effect::CellSeal { target, reason } if target == cell_id => {
+                    let target_hash = hash_to_bb(target.as_bytes());
+                    // `reason` is a 32-byte commitment to the sealing
+                    // rationale; we project it as a BabyBear truncation.
+                    let reason_hash = hash_to_bb(reason);
+                    vm_effects.push(VmEffect::CellSeal {
+                        target: target_hash,
+                        reason_hash,
+                    });
+                }
+                Effect::CellUnseal { target } if target == cell_id => {
+                    let target_hash = hash_to_bb(target.as_bytes());
+                    vm_effects.push(VmEffect::CellUnseal {
+                        target: target_hash,
+                    });
+                }
+                Effect::ReceiptArchive {
+                    prefix_end_height,
+                    checkpoint,
+                } if checkpoint.cell_id == *cell_id => {
+                    use pyana_circuit::field::BabyBear;
+                    let target_hash = hash_to_bb(checkpoint.cell_id.as_bytes());
+                    // Low-30-bit truncation of the end height for the AIR
+                    // balance-arithmetic shape; consistent with how other
+                    // u64-height fields are projected in this bridge.
+                    let end_height_bb = BabyBear::new(
+                        (*prefix_end_height & ((1u64 << 30) - 1)) as u32,
+                    );
+                    let terminal_hash =
+                        hash_to_bb(&checkpoint.archive_terminal_receipt_hash);
+                    vm_effects.push(VmEffect::ReceiptArchive {
+                        target: target_hash,
+                        archive_end_height: end_height_bb,
+                        terminal_receipt_hash: terminal_hash,
+                    });
+                }
+                Effect::Refusal {
+                    cell,
+                    offered_action_commitment,
+                    refusal_reason,
+                    proof_witness_index: _,
+                } if cell == cell_id => {
+                    use pyana_circuit::field::BabyBear;
+                    let target_hash = hash_to_bb(cell.as_bytes());
+                    // Encode `reason_hash` = discriminant ^ trunc(commitment)
+                    // so the proof binds to a specific (cell, reason, commitment)
+                    // triple without exposing the full 32 bytes in params.
+                    let discriminant = match refusal_reason {
+                        crate::action::RefusalReason::Declined => 0u32,
+                        crate::action::RefusalReason::NoAuthority => 1u32,
+                        crate::action::RefusalReason::WindowExpired => 2u32,
+                        crate::action::RefusalReason::Custom { .. } => 3u32,
+                    };
+                    let commitment_trunc = u32::from_le_bytes([
+                        offered_action_commitment[0],
+                        offered_action_commitment[1],
+                        offered_action_commitment[2],
+                        offered_action_commitment[3],
+                    ]);
+                    let reason_hash = BabyBear::new(
+                        (discriminant ^ commitment_trunc)
+                            % pyana_circuit::field::BABYBEAR_P,
+                    );
+                    vm_effects.push(VmEffect::Refusal {
+                        target: target_hash,
+                        reason_hash,
+                    });
+                }
+
                 _ => {
                     // Effects not targeting `cell_id` or arms covered by
                     // explicit guards above (e.g., a cross-cell effect
@@ -1257,32 +1330,32 @@ mod tests {
         );
     }
 
-    // ─── Gap 3: QueueDequeue.expected_message_hash ────────────────────────────
-    // Adversarial: a queue cell with fields[4] = real_msg_hash must produce a
-    // different expected_message_hash from a queue cell with fields[4] = zeros
-    // (i.e., a queue into which nothing was ever enqueued).
+    // ─── Gap 3: QueueDequeue.expected_message_hash reads head (fields[6]) ──────
+    // Adversarial: the projection must read fields[6] (head pointer, set on the
+    // 0→1 enqueue transition) and NOT fields[4] (tail, latest enqueued).
+    // A queue with a real head hash in fields[6] must produce a different
+    // expected_message_hash than a queue with all-zero fields[6].
     #[test]
-    fn test_queue_dequeue_head_hash_from_fields_not_synthetic() {
+    fn test_queue_dequeue_reads_head_field_not_tail() {
         let actor_cell = make_cell_with_seed(1, 0);
-        let queue_cell_real_seed = make_cell_with_seed(5, 0);
         let cell_id = actor_cell.id();
-        let queue_id = queue_cell_real_seed.id();
-        let real_msg_hash = [0xDEu8; 32];
+        let queue_id = make_cell_with_seed(5, 0).id();
+        let head_msg_hash = [0xDEu8; 32];
 
-        // Ledger with real message hash in queue's fields[4].
+        // Ledger with real head hash in queue's fields[6].
         let mut ledger_honest = Ledger::new();
         {
             let mut q = make_cell_with_seed(5, 0);
-            q.state.fields[4] = real_msg_hash;
+            q.state.fields[6] = head_msg_hash; // head pointer
             // Set queue length to 1 (non-empty).
             q.state.fields[1][..8].copy_from_slice(&1u64.to_le_bytes());
             ledger_honest.insert_cell(q).unwrap();
         }
 
-        // Ledger with all-zero fields[4] (no message ever enqueued).
+        // Ledger with all-zero fields[6] (head pointer never written — empty queue state).
         let mut ledger_forged = Ledger::new();
         {
-            // fields[4] stays [0u8; 32] by default.
+            // fields[6] stays [0u8; 32] by default.
             ledger_forged.insert_cell(make_cell_with_seed(5, 0)).unwrap();
         }
 
@@ -1295,7 +1368,7 @@ mod tests {
         let effects_forged =
             convert_turn_effects_to_vm(&cell_id, &turn, &ledger_forged, &obligations);
 
-        // Both should project to DequeueMessage, but with different hashes.
+        // Both project to DequeueMessage, but honest reads the real head hash.
         match (&effects_honest[0], &effects_forged[0]) {
             (
                 VmEffect::DequeueMessage {
@@ -1309,10 +1382,70 @@ mod tests {
             ) => {
                 assert_ne!(
                     honest_hash, forged_hash,
-                    "dequeue projection must differ when fields[4] (message hash) differs"
+                    "dequeue projection must differ when fields[6] (head hash) differs"
                 );
             }
             other => panic!("expected two DequeueMessage effects, got {:?}", other),
+        }
+    }
+
+    // ─── FIFO ordering: 3-message queue — dequeue reads head not tail ─────────
+    // Adversarial: enqueue 3 messages (msg1, msg2, msg3), then project a dequeue.
+    // The projection must bind to msg1 (the head / first-in), NOT msg3 (the tail /
+    // last-in).  Before this fix the projection always read fields[4] = msg3.
+    #[test]
+    fn test_queue_dequeue_fifo_head_not_tail_three_messages() {
+        use pyana_circuit::field::BabyBear;
+        let actor_cell = make_cell_with_seed(1, 0);
+        let cell_id = actor_cell.id();
+        let queue_id = make_cell_with_seed(9, 0).id();
+
+        let msg1 = [0x11u8; 32]; // first enqueued → head (fields[6])
+        let msg3 = [0x33u8; 32]; // third enqueued → tail (fields[4])
+
+        // Simulate post-enqueue state of a 3-message queue:
+        //   fields[1] = len = 3
+        //   fields[4] = tail = msg3   (latest enqueued)
+        //   fields[6] = head = msg1   (first enqueued; set on 0→1 transition only)
+        let mut ledger = Ledger::new();
+        {
+            let mut q = make_cell_with_seed(9, 0);
+            q.state.fields[1][..8].copy_from_slice(&3u64.to_le_bytes()); // len = 3
+            q.state.fields[4] = msg3; // tail
+            q.state.fields[6] = msg1; // head
+            ledger.insert_cell(q).unwrap();
+        }
+
+        let turn =
+            make_single_effect_turn(cell_id, cell_id, Effect::QueueDequeue { queue: queue_id });
+        let obligations: HashMap<[u8; 32], ObligationRecord> = HashMap::new();
+
+        let effects = convert_turn_effects_to_vm(&cell_id, &turn, &ledger, &obligations);
+
+        match &effects[0] {
+            VmEffect::DequeueMessage {
+                expected_message_hash,
+                ..
+            } => {
+                // Compute what hash_to_bb produces for msg1 vs msg3.
+                let msg1_bb = BabyBear::new(
+                    u32::from_le_bytes([msg1[0], msg1[1], msg1[2], msg1[3]])
+                        % pyana_circuit::field::BABYBEAR_P,
+                );
+                let msg3_bb = BabyBear::new(
+                    u32::from_le_bytes([msg3[0], msg3[1], msg3[2], msg3[3]])
+                        % pyana_circuit::field::BABYBEAR_P,
+                );
+                assert_eq!(
+                    *expected_message_hash, msg1_bb,
+                    "dequeue must bind to msg1 (FIFO head), not msg3 (tail)"
+                );
+                assert_ne!(
+                    *expected_message_hash, msg3_bb,
+                    "dequeue must NOT bind to the tail (msg3)"
+                );
+            }
+            other => panic!("expected DequeueMessage, got {:?}", other),
         }
     }
 

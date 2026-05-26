@@ -60,10 +60,12 @@
 /// Sovereign-witness teeth: 110 (+ 5 sovereign-witness aux cols).
 /// Near-miss aliasing closure (#100 follow-up): 113 (+ 3 selectors for Burn,
 /// CellDestroy, AttenuateCapability — see those variants on `Effect`).
-pub const EFFECT_VM_WIDTH: usize = 113;
+/// AIR-impl lane (#119): 117 (+ 4 selectors for CellSeal, CellUnseal,
+/// ReceiptArchive, Refusal).
+pub const EFFECT_VM_WIDTH: usize = 117;
 
 /// Number of effect types (selectors).
-pub const NUM_EFFECTS: usize = 49;
+pub const NUM_EFFECTS: usize = 53;
 
 /// Selector column indices.
 pub mod sel {
@@ -210,6 +212,29 @@ pub mod sel {
     /// cap_root in a single step; attenuate folds a 2-of-2 leaf
     /// `hash_2_to_1(cap_slot_hash, narrower_commitment)` into cap_root.
     pub const ATTENUATE_CAPABILITY: usize = 48;
+    /// CellSeal: transition a cell lifecycle to `Sealed`. State passthrough;
+    /// `target_hash` (params[0]) and `reason_hash` (params[1]) bind the
+    /// cell and rationale into effects_hash (domain tag 49). A
+    /// `SetPermissions` row has only one non-zero param and a different
+    /// selector, so the two cannot alias algebraically.
+    pub const CELL_SEAL: usize = 49;
+    /// CellUnseal: reverse a cell seal (`Sealed` → `Live`). State passthrough;
+    /// `target_hash` (params[0]) binds the cell (domain tag 50). One param
+    /// vs. CellSeal's two makes the two variants algebraically distinct even
+    /// if a prover tries to alias by zeroing params[1].
+    pub const CELL_UNSEAL: usize = 50;
+    /// ReceiptArchive: summarize the cell's receipt-chain prefix. State
+    /// passthrough; `target_hash` (params[0]), `archive_end_height`
+    /// (params[1]), and `terminal_receipt_hash` (params[2]) all fold into
+    /// effects_hash (domain tag 51). Three params make this algebraically
+    /// distinct from any 1- or 2-param passthrough sibling.
+    pub const RECEIPT_ARCHIVE: usize = 51;
+    /// Refusal: evidence-of-absence. State passthrough; `target_hash`
+    /// (params[0]) and `reason_hash` (params[1]) bind the refusing cell and
+    /// commitment+reason discriminant into effects_hash (domain tag 52).
+    /// Distinct from CellSeal by selector alone; distinct from CellDestroy
+    /// by the absence of a `cert_hash` requirement in the AIR constraint.
+    pub const REFUSAL: usize = 52;
 
     // ---- Stage 7-γ.2 Phase 1.5 (planned): bilateral role selectors ----
     //
@@ -252,11 +277,11 @@ pub mod state {
 }
 
 /// Absolute column indices for state_before.
-pub const STATE_BEFORE_BASE: usize = NUM_EFFECTS; // 22
+pub const STATE_BEFORE_BASE: usize = NUM_EFFECTS; // 53 after #119
 /// Absolute column indices for state_after.
-pub const STATE_AFTER_BASE: usize = STATE_BEFORE_BASE + state::SIZE + NUM_PARAMS; // 22 + 14 + 8 = 44
+pub const STATE_AFTER_BASE: usize = STATE_BEFORE_BASE + state::SIZE + NUM_PARAMS; // 53 + 14 + 8 = 75
 /// Effect parameter base column.
-pub const PARAM_BASE: usize = STATE_BEFORE_BASE + state::SIZE; // 22 + 14 = 36
+pub const PARAM_BASE: usize = STATE_BEFORE_BASE + state::SIZE; // 53 + 14 = 67
 /// Number of parameter columns.
 pub const NUM_PARAMS: usize = 8;
 /// Auxiliary witness base column.
@@ -509,4 +534,28 @@ pub mod param {
     pub const PIPELINE_SINK_NEW_ROOT: usize = 3;
     /// Message hash (what was routed).
     pub const PIPELINE_MESSAGE_HASH: usize = 4;
+
+    // CellSeal params (AIR-impl lane #119, selector 49).
+    /// Hash of the cell being sealed.
+    pub const CELL_SEAL_TARGET: usize = 0;
+    /// BLAKE3 of the sealing reason (cleartext off-chain).
+    pub const CELL_SEAL_REASON_HASH: usize = 1;
+
+    // CellUnseal params (AIR-impl lane #119, selector 50).
+    /// Hash of the cell being unsealed.
+    pub const CELL_UNSEAL_TARGET: usize = 0;
+
+    // ReceiptArchive params (AIR-impl lane #119, selector 51).
+    /// Hash of the cell being archived.
+    pub const RECEIPT_ARCHIVE_TARGET: usize = 0;
+    /// `archive_end_height` as BabyBear (low-30-bit truncation of the u64).
+    pub const RECEIPT_ARCHIVE_END_HEIGHT: usize = 1;
+    /// BLAKE3 of the terminal receipt at `archive_end_height`.
+    pub const RECEIPT_ARCHIVE_TERMINAL_HASH: usize = 2;
+
+    // Refusal params (AIR-impl lane #119, selector 52).
+    /// Hash of the cell issuing the refusal.
+    pub const REFUSAL_TARGET: usize = 0;
+    /// Reason-encoded binding: `discriminant ^ trunc(offered_action_commitment)`.
+    pub const REFUSAL_REASON_HASH: usize = 1;
 }

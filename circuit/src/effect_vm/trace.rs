@@ -444,6 +444,10 @@ pub fn generate_effect_vm_trace_ext(
             Effect::Burn { .. } => sel::BURN,
             Effect::CellDestroy { .. } => sel::CELL_DESTROY,
             Effect::AttenuateCapability { .. } => sel::ATTENUATE_CAPABILITY,
+            Effect::CellSeal { .. } => sel::CELL_SEAL,
+            Effect::CellUnseal { .. } => sel::CELL_UNSEAL,
+            Effect::ReceiptArchive { .. } => sel::RECEIPT_ARCHIVE,
+            Effect::Refusal { .. } => sel::REFUSAL,
         };
         row[sel_idx] = BabyBear::ONE;
 
@@ -1151,6 +1155,42 @@ pub fn generate_effect_vm_trace_ext(
 
                 let leaf = hash_2_to_1(*cap_slot_hash, *narrower_commitment);
                 new_state.capability_root = hash_2_to_1(new_state.capability_root, leaf);
+                new_state.nonce += 1;
+            }
+
+            // ---- AIR-impl lane #119 ----
+            Effect::CellSeal { target, reason_hash } => {
+                // State passthrough: balance/fields/cap_root/reserved unchanged.
+                // Both params bind so the proof cannot alias SetPermissions
+                // (which only carries one non-zero param).
+                row[PARAM_BASE + param::CELL_SEAL_TARGET] = *target;
+                row[PARAM_BASE + param::CELL_SEAL_REASON_HASH] = *reason_hash;
+                new_state.nonce += 1;
+            }
+            Effect::CellUnseal { target } => {
+                // State passthrough; single target param distinguishes from
+                // CellSeal by param count and by selector.
+                row[PARAM_BASE + param::CELL_UNSEAL_TARGET] = *target;
+                new_state.nonce += 1;
+            }
+            Effect::ReceiptArchive {
+                target,
+                archive_end_height,
+                terminal_receipt_hash,
+            } => {
+                // State passthrough; three params make this algebraically
+                // distinct from any 1- or 2-param passthrough sibling.
+                row[PARAM_BASE + param::RECEIPT_ARCHIVE_TARGET] = *target;
+                row[PARAM_BASE + param::RECEIPT_ARCHIVE_END_HEIGHT] = *archive_end_height;
+                row[PARAM_BASE + param::RECEIPT_ARCHIVE_TERMINAL_HASH] = *terminal_receipt_hash;
+                new_state.nonce += 1;
+            }
+            Effect::Refusal { target, reason_hash } => {
+                // State passthrough; two params — same count as CellSeal —
+                // but algebraically distinct because the selector gate is
+                // different (`sel::REFUSAL` vs. `sel::CELL_SEAL`).
+                row[PARAM_BASE + param::REFUSAL_TARGET] = *target;
+                row[PARAM_BASE + param::REFUSAL_REASON_HASH] = *reason_hash;
                 new_state.nonce += 1;
             }
         }

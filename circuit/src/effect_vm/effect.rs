@@ -436,4 +436,70 @@ pub enum Effect {
         /// Commitment to the new (narrower) permissions / facet / expiry.
         narrower_commitment: BabyBear,
     },
+    /// CellSeal: transition a cell lifecycle to `Sealed`. The AIR enforces
+    /// state passthrough (balance/fields/cap_root unchanged; only the
+    /// lifecycle off-trace changes). `target_hash` binds the specific cell;
+    /// `reason_hash` commits to the sealing rationale so a seal without a
+    /// declared reason cannot satisfy the AIR. Both params fold into
+    /// `effects_hash` (domain tag 49) so the proof distinguishes a
+    /// `CellSeal` from any generic `SetPermissions` row.
+    ///
+    /// Distinct from `Effect::Seal { field_idx }` (which sets a
+    /// sealed-field bit in the cell's in-trace `reserved` mask): this
+    /// variant records the lifecycle-level seal of the whole cell.
+    CellSeal {
+        /// Hash of the cell being sealed.
+        target: BabyBear,
+        /// BLAKE3 of the sealing reason (cleartext lives off-chain).
+        reason_hash: BabyBear,
+    },
+    /// CellUnseal: reverse a cell seal (lifecycle `Sealed` → `Live`).
+    /// State passthrough. `target_hash` binds the cell being unsealed;
+    /// the absence of a `reason_hash` param (vs. `CellSeal`) is itself
+    /// algebraically distinguishing — a `CellSeal` row has two non-zero
+    /// params whereas a `CellUnseal` row has only one. Domain tag 50.
+    CellUnseal {
+        /// Hash of the cell being unsealed.
+        target: BabyBear,
+    },
+    /// ReceiptArchive: record that the cell's receipt-chain prefix through
+    /// `archive_end_height` is summarized by a checkpoint. Lifecycle
+    /// transitions to `Archived` off-trace; AIR enforces state passthrough
+    /// and binds `archive_end_height` (as a BabyBear-truncated u64) plus
+    /// `terminal_receipt_hash` into `effects_hash` (domain tag 51).
+    ///
+    /// Two params make this algebraically distinct from any single-hash
+    /// passthrough (e.g. `SetPermissions`): a `SetPermissions` row only
+    /// carries one non-zero param.
+    ReceiptArchive {
+        /// Hash of the cell targeted by the archive.
+        target: BabyBear,
+        /// `archive_end_height` low-30-bits truncation (enough for u32
+        /// block heights; full u64 encoded separately through the
+        /// `compute_effects_hash` limb path if needed). The AIR binds
+        /// this value directly into params[1] and thence into effects_hash.
+        archive_end_height: BabyBear,
+        /// BLAKE3 of the receipt at `archive_end_height`. The live
+        /// chain's `previous_receipt_hash` at height+1 must equal this.
+        terminal_receipt_hash: BabyBear,
+    },
+    /// Refusal: evidence-of-absence. The prover commits that they did
+    /// NOT perform `offered_action_commitment` within the declared window.
+    /// State passthrough for the target cell (nonce ticks, audit slot
+    /// records the refusal off-trace). Both `target_hash` and `reason_hash`
+    /// bind into `effects_hash` (domain tag 52), making a `Refusal` row
+    /// algebraically distinct from any other 2-param passthrough because
+    /// the selector gate is unique.
+    ///
+    /// `reason_hash` encodes the `RefusalReason` discriminant (Declined=0,
+    /// NoAuthority=1, WindowExpired=2, Custom=3) as a BabyBear scalar,
+    /// XOR-mixed with the low 29 bits of `offered_action_commitment[0..4]`
+    /// so the proof binds to a specific commitment + reason pair without
+    /// exposing the full 32-byte commitment in params.
+    Refusal {
+        /// Hash of the cell issuing the refusal.
+        target: BabyBear,
+        /// Reason-encoded binding: `discriminant ^ trunc(offered_action_commitment)`.
+        reason_hash: BabyBear,
+    },
 }

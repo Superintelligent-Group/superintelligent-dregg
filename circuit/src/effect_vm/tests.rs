@@ -3984,3 +3984,298 @@ fn test_attenuate_capability_forged_cap_root_rejected() {
         "AttenuateCapability with RevokeCapability-shaped cap_root must be rejected"
     );
 }
+
+// ============================================================================
+// AIR-impl lane #119 — CellSeal / CellUnseal / ReceiptArchive / Refusal.
+//
+// Per-variant:
+//   * Honest happy path: prove + verify succeeds; row algebraic fingerprint
+//     is distinct from the closest aliasing sibling.
+//   * Adversarial: forge one row cell and assert the verifier rejects.
+// ============================================================================
+
+#[test]
+fn test_cell_seal_happy_path() {
+    let state = make_initial_state(300);
+    let effect = Effect::CellSeal {
+        target: BabyBear::new(0x0CE1_15EA),
+        reason_hash: BabyBear::new(0xEA50_0001),
+    };
+    let (trace, _public_inputs, _air) =
+        assert_single_effect_roundtrip(&state, effect, "CellSeal happy path");
+
+    let cs_row = trace
+        .iter()
+        .position(|row| row[sel::CELL_SEAL] == BabyBear::ONE)
+        .expect("at least one row must carry sel::CELL_SEAL");
+
+    // Both params must be bound.
+    assert_eq!(
+        trace[cs_row][PARAM_BASE + param::CELL_SEAL_TARGET],
+        BabyBear::new(0x0CE1_15EA),
+        "CellSeal must bind target in params[0]"
+    );
+    assert_eq!(
+        trace[cs_row][PARAM_BASE + param::CELL_SEAL_REASON_HASH],
+        BabyBear::new(0xEA50_0001),
+        "CellSeal must bind reason_hash in params[1]"
+    );
+
+    // Sibling-distinction: a SetPermissions row has sel::SET_PERMISSIONS
+    // active, not sel::CELL_SEAL.
+    assert_eq!(
+        trace[cs_row][sel::SET_PERMISSIONS],
+        BabyBear::ZERO,
+        "CellSeal row must not also activate sel::SET_PERMISSIONS"
+    );
+
+    // State passthrough: balance and cap_root unchanged.
+    let old_bal = trace[cs_row][STATE_BEFORE_BASE + state::BALANCE_LO];
+    let new_bal = trace[cs_row][STATE_AFTER_BASE + state::BALANCE_LO];
+    assert_eq!(old_bal, new_bal, "CellSeal must not change balance");
+    let old_cap = trace[cs_row][STATE_BEFORE_BASE + state::CAP_ROOT];
+    let new_cap = trace[cs_row][STATE_AFTER_BASE + state::CAP_ROOT];
+    assert_eq!(old_cap, new_cap, "CellSeal must not change cap_root");
+}
+
+#[test]
+fn test_cell_seal_forged_balance_rejected() {
+    // Adversary: claim CellSeal debited balance. Passthrough constraint rejects.
+    let state = make_initial_state(300);
+    let effects = vec![Effect::CellSeal {
+        target: BabyBear::new(0x0CE1_15EA),
+        reason_hash: BabyBear::new(0xEA50_0001),
+    }];
+    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+    let cs_row = trace
+        .iter()
+        .position(|row| row[sel::CELL_SEAL] == BabyBear::ONE)
+        .expect("at least one row must carry sel::CELL_SEAL");
+    let old_bal = trace[cs_row][STATE_BEFORE_BASE + state::BALANCE_LO];
+    trace[cs_row][STATE_AFTER_BASE + state::BALANCE_LO] = old_bal - BabyBear::ONE;
+
+    let air = EffectVmAir::new(trace.len());
+    let proof = prove(&air, &trace, &public_inputs);
+    let result = verify(&air, &proof, &public_inputs);
+    assert!(
+        result.is_err(),
+        "CellSeal with forged balance debit must be rejected"
+    );
+}
+
+#[test]
+fn test_cell_unseal_happy_path() {
+    let state = make_initial_state(400);
+    let effect = Effect::CellUnseal {
+        target: BabyBear::new(0x005EA1ED),
+    };
+    let (trace, _public_inputs, _air) =
+        assert_single_effect_roundtrip(&state, effect, "CellUnseal happy path");
+
+    let cu_row = trace
+        .iter()
+        .position(|row| row[sel::CELL_UNSEAL] == BabyBear::ONE)
+        .expect("at least one row must carry sel::CELL_UNSEAL");
+
+    // Target param bound.
+    assert_eq!(
+        trace[cu_row][PARAM_BASE + param::CELL_UNSEAL_TARGET],
+        BabyBear::new(0x005EA1ED),
+        "CellUnseal must bind target in params[0]"
+    );
+
+    // params[1] is zero (CellUnseal has only one param — this distinguishes
+    // it from CellSeal which writes a non-zero reason_hash into params[1]).
+    assert_eq!(
+        trace[cu_row][PARAM_BASE + param::CELL_SEAL_REASON_HASH],
+        BabyBear::ZERO,
+        "CellUnseal row must leave params[1] zero (single-param variant)"
+    );
+
+    // Selector exclusion.
+    assert_eq!(
+        trace[cu_row][sel::CELL_SEAL],
+        BabyBear::ZERO,
+        "CellUnseal row must not also activate sel::CELL_SEAL"
+    );
+
+    // State passthrough.
+    let old_bal = trace[cu_row][STATE_BEFORE_BASE + state::BALANCE_LO];
+    let new_bal = trace[cu_row][STATE_AFTER_BASE + state::BALANCE_LO];
+    assert_eq!(old_bal, new_bal, "CellUnseal must not change balance");
+    let old_cap = trace[cu_row][STATE_BEFORE_BASE + state::CAP_ROOT];
+    let new_cap = trace[cu_row][STATE_AFTER_BASE + state::CAP_ROOT];
+    assert_eq!(old_cap, new_cap, "CellUnseal must not change cap_root");
+}
+
+#[test]
+fn test_cell_unseal_forged_target_rejected() {
+    // Adversary: swap the target hash to an impostor value AFTER proving.
+    // The AIR binds target_hash through effects_hash (PI); swapping the
+    // param post-generation produces an inconsistent trace.
+    let state = make_initial_state(400);
+    let effects = vec![Effect::CellUnseal {
+        target: BabyBear::new(0x005EA1ED),
+    }];
+    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+    let cu_row = trace
+        .iter()
+        .position(|row| row[sel::CELL_UNSEAL] == BabyBear::ONE)
+        .expect("at least one row must carry sel::CELL_UNSEAL");
+    // Replace the target with an impostor.
+    trace[cu_row][PARAM_BASE + param::CELL_UNSEAL_TARGET] = BabyBear::new(0xBAD_FEED);
+
+    let air = EffectVmAir::new(trace.len());
+    let proof = prove(&air, &trace, &public_inputs);
+    let result = verify(&air, &proof, &public_inputs);
+    assert!(
+        result.is_err(),
+        "CellUnseal with forged target must be rejected"
+    );
+}
+
+#[test]
+fn test_receipt_archive_happy_path() {
+    let state = make_initial_state(500);
+    let effect = Effect::ReceiptArchive {
+        target: BabyBear::new(0xABC1_DEF2),
+        archive_end_height: BabyBear::new(1234),
+        terminal_receipt_hash: BabyBear::new(0xFEED_DEAD),
+    };
+    let (trace, _public_inputs, _air) =
+        assert_single_effect_roundtrip(&state, effect, "ReceiptArchive happy path");
+
+    let ra_row = trace
+        .iter()
+        .position(|row| row[sel::RECEIPT_ARCHIVE] == BabyBear::ONE)
+        .expect("at least one row must carry sel::RECEIPT_ARCHIVE");
+
+    // All three params bound.
+    assert_eq!(
+        trace[ra_row][PARAM_BASE + param::RECEIPT_ARCHIVE_TARGET],
+        BabyBear::new(0xABC1_DEF2),
+        "ReceiptArchive must bind target in params[0]"
+    );
+    assert_eq!(
+        trace[ra_row][PARAM_BASE + param::RECEIPT_ARCHIVE_END_HEIGHT],
+        BabyBear::new(1234),
+        "ReceiptArchive must bind archive_end_height in params[1]"
+    );
+    assert_eq!(
+        trace[ra_row][PARAM_BASE + param::RECEIPT_ARCHIVE_TERMINAL_HASH],
+        BabyBear::new(0xFEED_DEAD),
+        "ReceiptArchive must bind terminal_receipt_hash in params[2]"
+    );
+
+    // Sibling-distinction: three non-zero params vs. SetPermissions (one).
+    assert_eq!(
+        trace[ra_row][sel::SET_PERMISSIONS],
+        BabyBear::ZERO,
+        "ReceiptArchive row must not also activate sel::SET_PERMISSIONS"
+    );
+
+    // State passthrough.
+    let old_bal = trace[ra_row][STATE_BEFORE_BASE + state::BALANCE_LO];
+    let new_bal = trace[ra_row][STATE_AFTER_BASE + state::BALANCE_LO];
+    assert_eq!(old_bal, new_bal, "ReceiptArchive must not change balance");
+    let old_cap = trace[ra_row][STATE_BEFORE_BASE + state::CAP_ROOT];
+    let new_cap = trace[ra_row][STATE_AFTER_BASE + state::CAP_ROOT];
+    assert_eq!(old_cap, new_cap, "ReceiptArchive must not change cap_root");
+}
+
+#[test]
+fn test_receipt_archive_forged_cap_root_rejected() {
+    // Adversary: claim ReceiptArchive advanced cap_root.
+    // The passthrough constraint rejects.
+    let state = make_initial_state(500);
+    let effects = vec![Effect::ReceiptArchive {
+        target: BabyBear::new(0xABC1_DEF2),
+        archive_end_height: BabyBear::new(1234),
+        terminal_receipt_hash: BabyBear::new(0xFEED_DEAD),
+    }];
+    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+    let ra_row = trace
+        .iter()
+        .position(|row| row[sel::RECEIPT_ARCHIVE] == BabyBear::ONE)
+        .expect("at least one row must carry sel::RECEIPT_ARCHIVE");
+    // Forge: advance cap_root by hashing with an arbitrary value.
+    let old_cap = trace[ra_row][STATE_BEFORE_BASE + state::CAP_ROOT];
+    trace[ra_row][STATE_AFTER_BASE + state::CAP_ROOT] =
+        hash_2_to_1(old_cap, BabyBear::new(0xBAD));
+
+    let air = EffectVmAir::new(trace.len());
+    let proof = prove(&air, &trace, &public_inputs);
+    let result = verify(&air, &proof, &public_inputs);
+    assert!(
+        result.is_err(),
+        "ReceiptArchive with forged cap_root advance must be rejected"
+    );
+}
+
+#[test]
+fn test_refusal_happy_path() {
+    let state = make_initial_state(200);
+    let effect = Effect::Refusal {
+        target: BabyBear::new(0x0DEC_1337),
+        reason_hash: BabyBear::new(0x2025_0101),
+    };
+    let (trace, _public_inputs, _air) =
+        assert_single_effect_roundtrip(&state, effect, "Refusal happy path");
+
+    let rf_row = trace
+        .iter()
+        .position(|row| row[sel::REFUSAL] == BabyBear::ONE)
+        .expect("at least one row must carry sel::REFUSAL");
+
+    // Both params bound.
+    assert_eq!(
+        trace[rf_row][PARAM_BASE + param::REFUSAL_TARGET],
+        BabyBear::new(0x0DEC_1337),
+        "Refusal must bind target in params[0]"
+    );
+    assert_eq!(
+        trace[rf_row][PARAM_BASE + param::REFUSAL_REASON_HASH],
+        BabyBear::new(0x2025_0101),
+        "Refusal must bind reason_hash in params[1]"
+    );
+
+    // Selector exclusion: distinct from CellSeal (same 2-param shape).
+    assert_eq!(
+        trace[rf_row][sel::CELL_SEAL],
+        BabyBear::ZERO,
+        "Refusal row must not also activate sel::CELL_SEAL"
+    );
+
+    // State passthrough.
+    let old_bal = trace[rf_row][STATE_BEFORE_BASE + state::BALANCE_LO];
+    let new_bal = trace[rf_row][STATE_AFTER_BASE + state::BALANCE_LO];
+    assert_eq!(old_bal, new_bal, "Refusal must not change balance");
+    let old_cap = trace[rf_row][STATE_BEFORE_BASE + state::CAP_ROOT];
+    let new_cap = trace[rf_row][STATE_AFTER_BASE + state::CAP_ROOT];
+    assert_eq!(old_cap, new_cap, "Refusal must not change cap_root");
+}
+
+#[test]
+fn test_refusal_forged_balance_rejected() {
+    // Adversary: claim Refusal debited balance. Passthrough constraint rejects.
+    let state = make_initial_state(200);
+    let effects = vec![Effect::Refusal {
+        target: BabyBear::new(0x0DEC_1337),
+        reason_hash: BabyBear::new(0x2025_0101),
+    }];
+    let (mut trace, public_inputs) = generate_effect_vm_trace(&state, &effects);
+    let rf_row = trace
+        .iter()
+        .position(|row| row[sel::REFUSAL] == BabyBear::ONE)
+        .expect("at least one row must carry sel::REFUSAL");
+    let old_bal = trace[rf_row][STATE_BEFORE_BASE + state::BALANCE_LO];
+    trace[rf_row][STATE_AFTER_BASE + state::BALANCE_LO] = old_bal - BabyBear::ONE;
+
+    let air = EffectVmAir::new(trace.len());
+    let proof = prove(&air, &trace, &public_inputs);
+    let result = verify(&air, &proof, &public_inputs);
+    assert!(
+        result.is_err(),
+        "Refusal with forged balance debit must be rejected"
+    );
+}

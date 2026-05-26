@@ -31,6 +31,13 @@
 //! - ResizeQueue (21): Change queue capacity (storage Phase 2).
 //! - AtomicQueueTx (22): Prove atomic cross-queue transaction (storage Phase 3).
 //! - PipelineStep (23): Prove pipeline step correctly routed a message (storage Phase 3).
+//! - Burn (46): Explicit non-conservation balance reduction (near-miss aliasing closure).
+//! - CellDestroy (47): Permanently retire a cell (near-miss aliasing closure).
+//! - AttenuateCapability (48): Narrow a c-list cap (near-miss aliasing closure).
+//! - CellSeal (49): Transition cell lifecycle to Sealed (AIR-impl lane #119).
+//! - CellUnseal (50): Reverse a cell seal (AIR-impl lane #119).
+//! - ReceiptArchive (51): Summarize receipt-chain prefix (AIR-impl lane #119).
+//! - Refusal (52): Evidence-of-absence attestation (AIR-impl lane #119).
 //!
 //! # Trace Layout (one row per effect)
 //!

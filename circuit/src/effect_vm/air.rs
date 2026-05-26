@@ -2186,6 +2186,150 @@ impl StarkAir for EffectVmAir {
             alpha_pow = alpha_pow * alpha;
         }
 
+        // -- CellSeal: state-passthrough with 2-param binding --
+        //
+        // AIR-impl lane (#119). Both `target_hash` (params[0]) and
+        // `reason_hash` (params[1]) fold into effects_hash (domain tag 49),
+        // binding the proof to a specific (cell, reason) pair. A
+        // `SetPermissions` row carries only one non-zero param; a `CellDestroy`
+        // row has two params but a different selector. So no aliasing is
+        // possible at the algebraic level.
+        //
+        // Constraints:
+        //   1. balance_lo passthrough
+        //   2. balance_hi passthrough
+        //   3. cap_root passthrough
+        //   4. fields[0..8] passthrough
+        //   5. reserved passthrough
+        //   (reason_hash param is unconstrained here beyond being bound into
+        //    effects_hash; its presence in params[1] is what distinguishes
+        //    CellSeal from CellUnseal which has only params[0].)
+        let s_cell_seal = local[sel::CELL_SEAL];
+        {
+            let c_cs_bal_lo = s_cell_seal * (new_bal_lo - old_bal_lo);
+            combined = combined + alpha_pow * c_cs_bal_lo;
+            alpha_pow = alpha_pow * alpha;
+            let c_cs_bal_hi = s_cell_seal * (new_bal_hi - old_bal_hi);
+            combined = combined + alpha_pow * c_cs_bal_hi;
+            alpha_pow = alpha_pow * alpha;
+            let c_cs_cap = s_cell_seal * (new_cap_root - old_cap_root);
+            combined = combined + alpha_pow * c_cs_cap;
+            alpha_pow = alpha_pow * alpha;
+            for i in 0..8 {
+                let c = s_cell_seal
+                    * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
+                        - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
+                combined = combined + alpha_pow * c;
+                alpha_pow = alpha_pow * alpha;
+            }
+            let c_cs_reserved = s_cell_seal
+                * (local[STATE_AFTER_BASE + state::RESERVED]
+                    - local[STATE_BEFORE_BASE + state::RESERVED]);
+            combined = combined + alpha_pow * c_cs_reserved;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // -- CellUnseal: state-passthrough with 1-param binding --
+        //
+        // AIR-impl lane (#119). `target_hash` (params[0]) folds into
+        // effects_hash (domain tag 50). The single-param shape distinguishes
+        // CellUnseal from CellSeal (two params) even if a prover zeros
+        // params[1] on a CellSeal row — the selector gate (`sel::CELL_UNSEAL`)
+        // is different and the domain tag is different. Full state passthrough.
+        let s_cell_unseal = local[sel::CELL_UNSEAL];
+        {
+            let c_cu_bal_lo = s_cell_unseal * (new_bal_lo - old_bal_lo);
+            combined = combined + alpha_pow * c_cu_bal_lo;
+            alpha_pow = alpha_pow * alpha;
+            let c_cu_bal_hi = s_cell_unseal * (new_bal_hi - old_bal_hi);
+            combined = combined + alpha_pow * c_cu_bal_hi;
+            alpha_pow = alpha_pow * alpha;
+            let c_cu_cap = s_cell_unseal * (new_cap_root - old_cap_root);
+            combined = combined + alpha_pow * c_cu_cap;
+            alpha_pow = alpha_pow * alpha;
+            for i in 0..8 {
+                let c = s_cell_unseal
+                    * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
+                        - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
+                combined = combined + alpha_pow * c;
+                alpha_pow = alpha_pow * alpha;
+            }
+            let c_cu_reserved = s_cell_unseal
+                * (local[STATE_AFTER_BASE + state::RESERVED]
+                    - local[STATE_BEFORE_BASE + state::RESERVED]);
+            combined = combined + alpha_pow * c_cu_reserved;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // -- ReceiptArchive: state-passthrough with 3-param binding --
+        //
+        // AIR-impl lane (#119). Three params — `target_hash` (params[0]),
+        // `archive_end_height` (params[1]), `terminal_receipt_hash` (params[2])
+        // — fold into effects_hash (domain tag 51). Three non-zero params make
+        // this algebraically distinct from any 1- or 2-param passthrough.
+        //
+        // Additional constraint: `archive_end_height` param must equal the
+        // value written into params[1] by the trace generator, which the AIR
+        // pins via the standard effects_hash binding path. No extra in-circuit
+        // constraint is needed beyond state passthrough + param binding.
+        let s_receipt_archive = local[sel::RECEIPT_ARCHIVE];
+        {
+            let c_ra_bal_lo = s_receipt_archive * (new_bal_lo - old_bal_lo);
+            combined = combined + alpha_pow * c_ra_bal_lo;
+            alpha_pow = alpha_pow * alpha;
+            let c_ra_bal_hi = s_receipt_archive * (new_bal_hi - old_bal_hi);
+            combined = combined + alpha_pow * c_ra_bal_hi;
+            alpha_pow = alpha_pow * alpha;
+            let c_ra_cap = s_receipt_archive * (new_cap_root - old_cap_root);
+            combined = combined + alpha_pow * c_ra_cap;
+            alpha_pow = alpha_pow * alpha;
+            for i in 0..8 {
+                let c = s_receipt_archive
+                    * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
+                        - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
+                combined = combined + alpha_pow * c;
+                alpha_pow = alpha_pow * alpha;
+            }
+            let c_ra_reserved = s_receipt_archive
+                * (local[STATE_AFTER_BASE + state::RESERVED]
+                    - local[STATE_BEFORE_BASE + state::RESERVED]);
+            combined = combined + alpha_pow * c_ra_reserved;
+            alpha_pow = alpha_pow * alpha;
+        }
+
+        // -- Refusal: state-passthrough with 2-param binding --
+        //
+        // AIR-impl lane (#119). `target_hash` (params[0]) and `reason_hash`
+        // (params[1]) fold into effects_hash (domain tag 52). Shape is the
+        // same as CellSeal (two params, state passthrough) but the selector
+        // gate is distinct (`sel::REFUSAL` vs. `sel::CELL_SEAL`) and the
+        // domain tag differs (52 vs. 49), so a `Refusal` proof cannot satisfy
+        // a `CellSeal` constraint and vice versa.
+        let s_refusal = local[sel::REFUSAL];
+        {
+            let c_rf_bal_lo = s_refusal * (new_bal_lo - old_bal_lo);
+            combined = combined + alpha_pow * c_rf_bal_lo;
+            alpha_pow = alpha_pow * alpha;
+            let c_rf_bal_hi = s_refusal * (new_bal_hi - old_bal_hi);
+            combined = combined + alpha_pow * c_rf_bal_hi;
+            alpha_pow = alpha_pow * alpha;
+            let c_rf_cap = s_refusal * (new_cap_root - old_cap_root);
+            combined = combined + alpha_pow * c_rf_cap;
+            alpha_pow = alpha_pow * alpha;
+            for i in 0..8 {
+                let c = s_refusal
+                    * (local[STATE_AFTER_BASE + state::FIELD_BASE + i]
+                        - local[STATE_BEFORE_BASE + state::FIELD_BASE + i]);
+                combined = combined + alpha_pow * c;
+                alpha_pow = alpha_pow * alpha;
+            }
+            let c_rf_reserved = s_refusal
+                * (local[STATE_AFTER_BASE + state::RESERVED]
+                    - local[STATE_BEFORE_BASE + state::RESERVED]);
+            combined = combined + alpha_pow * c_rf_reserved;
+            alpha_pow = alpha_pow * alpha;
+        }
+
         // ====================================================================
         // CONSTRAINT GROUP 5: Balance range check and net_delta soundness
         // ====================================================================
