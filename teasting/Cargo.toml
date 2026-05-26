@@ -14,6 +14,7 @@ pyana-dsl-runtime = { path = "../pyana-dsl-runtime" }
 pyana-federation = { path = "../federation" }
 pyana-sdk = { path = "../sdk" }
 pyana-bridge = { path = "../bridge", features = ["test-utils"] }
+pyana-verifier = { path = "../verifier" }
 pyana-wire = { path = "../wire" }
 pyana-blocklace = { path = "../blocklace" }
 # pyana-node is a binary crate (no lib target); use its deps directly instead.

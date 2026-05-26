@@ -6562,13 +6562,16 @@ fn test_adversarial_fulfill_obligation_wrong_caller() {
     let result = executor.execute(&turn, &mut ledger);
     assert!(result.is_committed(), "CreateObligation should succeed");
 
-    // Get the obligation_id (same derivation as executor).
+    // Get the obligation_id (same derivation as executor, now includes condition).
     let obligation_id = {
         let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
         hasher.update(agent_id.as_bytes());
         hasher.update(target_id.as_bytes());
         hasher.update(&100u64.to_le_bytes());
         hasher.update(&stake_commitment.0);
+        // HashPreimage discriminant = 0, hash = [0u8; 32] (matches CreateObligation above).
+        hasher.update(&[0u8]);
+        hasher.update(&[0u8; 32]);
         *hasher.finalize().as_bytes()
     };
 
@@ -11991,4 +11994,259 @@ fn test_adversarial_create_obligation_distinct_ids_for_distinct_conditions() {
         "Must have exactly 2 distinct obligations, got {}",
         obligations.len()
     );
+}
+
+// =============================================================================
+// Adversarial tests: Bug #114 — Queue ACL enforcement
+// =============================================================================
+
+/// Adversarial test: an actor without queue-write authorization tries
+/// QueueEnqueue → must be rejected.
+#[test]
+fn test_queue_enqueue_unauthorized_actor_rejected() {
+    let (mut ledger, owner_id) = setup_queue_test(2000);
+    let executor = zero_cost_executor();
+
+    // Owner allocates a queue.
+    let queue_id = allocate_queue(&executor, &mut ledger, owner_id, 10);
+
+    // Set field[5] of the queue cell to owner_id (restrict writes to owner only).
+    // field[5] all-zero means open; non-zero means restricted to that CellId.
+    {
+        let queue_cell = ledger.get_mut(&queue_id).unwrap();
+        queue_cell.state.fields[5] = *owner_id.as_bytes();
+    }
+
+    // Create an attacker cell with budget.
+    let (attacker_cell, _) = make_open_cell(99, 5000);
+    let attacker_id = attacker_cell.id();
+    ledger.insert_cell(attacker_cell).unwrap();
+
+    // Attacker tries to enqueue into the restricted queue.
+    let mut builder = TurnBuilder::new(attacker_id, 0);
+    {
+        let action =
+            ActionBuilder::new_unchecked_for_tests(attacker_id, "enqueue_attack", attacker_id)
+                .effect(Effect::QueueEnqueue {
+                    queue: queue_id,
+                    message_hash: [0xDEu8; 32],
+                    deposit: 10,
+                })
+                .build();
+        builder.add_action(action);
+    }
+    let turn = builder.fee(0).build();
+    let result = executor.execute(&turn, &mut ledger);
+
+    match result {
+        crate::turn::TurnResult::Rejected { reason, .. } => match reason {
+            TurnError::InvalidEffect { reason: msg } => {
+                assert!(
+                    msg.contains("authorized writer") || msg.contains("denied"),
+                    "expected ACL denial message, got: {msg}"
+                );
+            }
+            other => panic!("expected InvalidEffect for ACL denial, got: {:?}", other),
+        },
+        other => panic!("expected Rejected, got: {:?}", other),
+    }
+
+    // Verify queue is still empty.
+    let queue_cell = ledger.get(&queue_id).unwrap();
+    let length = u64::from_le_bytes(queue_cell.state.fields[1][..8].try_into().unwrap());
+    assert_eq!(length, 0, "queue must remain empty after unauthorized enqueue attempt");
+}
+
+/// Adversarial test: QueuePipelineStep from owned source to victim's
+/// restricted queue → reject.
+#[test]
+fn test_queue_pipeline_step_into_restricted_sink_rejected() {
+    // Setup: owner allocates a source queue.
+    let (mut ledger, owner_id) = setup_queue_test(2000);
+    let executor = zero_cost_executor();
+    let source_id = allocate_queue(&executor, &mut ledger, owner_id, 10);
+
+    // Enqueue something into the source so the pipeline step has something to move.
+    {
+        let nonce = ledger.get(&owner_id).unwrap().state.nonce();
+        let mut builder = TurnBuilder::new(owner_id, nonce);
+        let action =
+            ActionBuilder::new_unchecked_for_tests(owner_id, "fill_source", owner_id)
+                .effect(Effect::QueueEnqueue {
+                    queue: source_id,
+                    message_hash: [0xAAu8; 32],
+                    deposit: 10,
+                })
+                .build();
+        builder.add_action(action);
+        let turn = builder.fee(0).build();
+        let result = execute_chained(&executor, &turn, &mut ledger);
+        assert!(result.is_committed(), "source fill failed: {:?}", result);
+    }
+
+    // Victim creates their own queue and restricts it.
+    let (victim_cell, _) = make_open_cell(77, 5000);
+    let victim_id = victim_cell.id();
+    ledger.insert_cell(victim_cell).unwrap();
+    let victim_sink_id = allocate_queue(&executor, &mut ledger, victim_id, 10);
+
+    // Victim sets field[5] of their sink to victim_id (only victim can enqueue).
+    {
+        let sink_cell = ledger.get_mut(&victim_sink_id).unwrap();
+        sink_cell.state.fields[5] = *victim_id.as_bytes();
+    }
+
+    // Owner tries to pipeline-step from their source into victim's sink.
+    let nonce = ledger.get(&owner_id).unwrap().state.nonce();
+    let mut builder = TurnBuilder::new(owner_id, nonce);
+    {
+        let action =
+            ActionBuilder::new_unchecked_for_tests(owner_id, "pipeline_attack", owner_id)
+                .effect(Effect::QueuePipelineStep {
+                    pipeline_id: [0u8; 32],
+                    source: source_id,
+                    sinks: vec![victim_sink_id],
+                })
+                .build();
+        builder.add_action(action);
+    }
+    let turn = builder.fee(0).build();
+    let result = execute_chained(&executor, &turn, &mut ledger);
+
+    match result {
+        crate::turn::TurnResult::Rejected { reason, .. } => match reason {
+            TurnError::InvalidEffect { reason: msg } => {
+                assert!(
+                    msg.contains("authorized writer") || msg.contains("pipeline step"),
+                    "expected sink-ACL denial message, got: {msg}"
+                );
+            }
+            other => panic!(
+                "expected InvalidEffect for sink ACL denial, got: {:?}",
+                other
+            ),
+        },
+        other => panic!("expected Rejected, got: {:?}", other),
+    }
+
+    // Victim's sink must remain empty.
+    let sink_cell = ledger.get(&victim_sink_id).unwrap();
+    let sink_len = u64::from_le_bytes(sink_cell.state.fields[1][..8].try_into().unwrap());
+    assert_eq!(
+        sink_len, 0,
+        "victim sink must remain empty after unauthorized pipeline step"
+    );
+}
+
+// =============================================================================
+// Adversarial tests: Bug #115 — NoteCreate/NoteSpend value_commitment +
+// range_proof validation at apply time
+// =============================================================================
+
+/// Adversarial test: NoteCreate with value_commitment but invalid range_proof
+/// (garbage bytes) → reject at apply time.
+#[test]
+fn test_note_create_invalid_range_proof_rejected() {
+    use curve25519_dalek::scalar::Scalar;
+    use pyana_cell::ValueCommitment;
+
+    let (mut ledger, agent_id, _) = setup_two_open_cells(100000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
+
+    let r_out = {
+        let mut bytes = [0u8; 64];
+        bytes[0] = 42;
+        Scalar::from_bytes_mod_order_wide(&bytes)
+    };
+    let output_vc = ValueCommitment::commit(100, &r_out);
+    let output_vc_bytes = output_vc.to_bytes().0;
+
+    // Construct a NoteCreate with a valid value_commitment but garbage range_proof.
+    let commitment = pyana_cell::NoteCommitment([0xEEu8; 32]);
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action = ActionBuilder::new_unchecked_for_tests(agent_id, "bad_range", agent_id)
+            .effect(Effect::NoteCreate {
+                commitment,
+                value: 100,
+                asset_type: 1,
+                encrypted_note: vec![],
+                value_commitment: Some(output_vc_bytes),
+                // Garbage bytes: not a valid Bulletproof serialization.
+                range_proof: Some(vec![0xBAu8; 64]),
+            })
+            .build();
+        builder.add_action(action);
+    }
+    let turn = builder.fee(0).build();
+    let result = executor.execute(&turn, &mut ledger);
+
+    match result {
+        crate::turn::TurnResult::Rejected { reason, .. } => match reason {
+            TurnError::InvalidEffect { reason: msg } => {
+                assert!(
+                    msg.contains("range proof") || msg.contains("range_proof"),
+                    "expected range proof error, got: {msg}"
+                );
+            }
+            other => panic!("expected InvalidEffect for bad range proof, got: {:?}", other),
+        },
+        other => panic!("expected Rejected, got: {:?}", other),
+    }
+}
+
+/// Adversarial test: NoteSpend with value_commitment bytes that are not a valid
+/// compressed Ristretto point → reject at apply time.
+#[test]
+fn test_note_spend_malformed_value_commitment_rejected() {
+    let (mut ledger, agent_id, _) = setup_two_open_cells(100000, 0);
+    let mut executor = zero_cost_executor();
+    executor.set_proof_verifier(Box::new(AlwaysAcceptVerifier));
+
+    let nullifier = pyana_cell::Nullifier([0x55u8; 32]);
+    // All-0xFF bytes are not a valid compressed Ristretto point.
+    let bad_vc_bytes = [0xFFu8; 32];
+
+    let mut builder = TurnBuilder::new(agent_id, 0);
+    {
+        let action =
+            ActionBuilder::new_unchecked_for_tests(agent_id, "bad_vc_spend", agent_id)
+                .effect(Effect::NoteSpend {
+                    nullifier,
+                    note_tree_root: [0x01u8; 32],
+                    value: 0,
+                    asset_type: 0,
+                    spending_proof: vec![0x01u8],
+                    value_commitment: Some(bad_vc_bytes),
+                })
+                .effect(Effect::NoteCreate {
+                    commitment: pyana_cell::NoteCommitment([0xCCu8; 32]),
+                    value: 0,
+                    asset_type: 0,
+                    encrypted_note: vec![],
+                    value_commitment: None,
+                    range_proof: None,
+                })
+                .build();
+        builder.add_action(action);
+    }
+    let turn = builder.fee(0).build();
+    let result = executor.execute(&turn, &mut ledger);
+
+    match result {
+        crate::turn::TurnResult::Rejected { reason, .. } => match reason {
+            TurnError::InvalidEffect { reason: msg } => {
+                assert!(
+                    msg.contains("Ristretto") || msg.contains("value_commitment"),
+                    "expected Ristretto point error, got: {msg}"
+                );
+            }
+            other => panic!(
+                "expected InvalidEffect for malformed vc, got: {:?}",
+                other
+            ),
+        },
+        other => panic!("expected Rejected, got: {:?}", other),
+    }
 }

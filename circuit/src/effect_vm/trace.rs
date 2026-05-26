@@ -468,10 +468,24 @@ pub fn generate_effect_vm_trace_ext(
                 new_state.capability_root = new_cap;
                 new_state.nonce += 1;
             }
-            Effect::EmitEvent { event_hash } => {
-                // Park the event hash in param 0 so the AIR can bind it into
-                // effects_hash. No state column changes.
-                row[PARAM_BASE + 0] = *event_hash;
+            Effect::EmitEvent {
+                topic_hash,
+                payload_hash,
+            } => {
+                // Park the low 4 felts of topic_hash into params[0..4] and the
+                // low 4 felts of payload_hash into params[4..8]. The AIR's
+                // per-row PI-equality constraint pins these to
+                // `PI[EMIT_EVENT_TOPIC_HASH][0..4]` and
+                // `PI[EMIT_EVENT_PAYLOAD_HASH][0..4]`. The high 4 felts of
+                // each hash are bound via `compute_effects_hash` (which
+                // absorbs all 16 felts) and via the off-AIR verifier's
+                // PI-match loop (which recomputes the full canonical
+                // (topic, payload) hashes from the runtime Event). No state
+                // column changes — pure side-effect.
+                for i in 0..4 {
+                    row[PARAM_BASE + i] = topic_hash[i];
+                    row[PARAM_BASE + 4 + i] = payload_hash[i];
+                }
                 new_state.nonce += 1;
             }
             Effect::SetPermissions { permissions_hash } => {
@@ -1377,6 +1391,47 @@ pub fn generate_effect_vm_trace_ext(
         context.bridge_lock_value_limbs,
         context.create_escrow_amount_limbs,
     );
+
+    // ---- EmitEvent binding (closes #110) ----
+    //
+    // Project the canonical (topic_hash, payload_hash) of the first
+    // EmitEvent row into PI[EMIT_EVENT_TOPIC_HASH] / PI[EMIT_EVENT_PAYLOAD_HASH]
+    // and pin the count. The AIR's per-row PI-equality constraint (gated by
+    // `sel::EMIT_EVENT`) pins each emit-event row's params[0..8] to the low
+    // 4 felts of each hash; the high 4 felts are bound via
+    // `compute_effects_hash` absorption and the off-AIR PI-match loop.
+    //
+    // Sentinel: when no EmitEvent rows are present, both 8-felt slots stay
+    // at the zero default. When multiple emit-event rows are present, the
+    // per-row equality constraint forces them all to share the same
+    // (topic, payload); the off-AIR verifier rejects bundles whose
+    // EMIT_EVENT_COUNT > 1 disagree on hashes (out-of-scope for this lane;
+    // documented in the EmitEvent variant docstring).
+    let mut emit_event_count: u32 = 0;
+    let mut first_emit_topic: Option<[BabyBear; 8]> = None;
+    let mut first_emit_payload: Option<[BabyBear; 8]> = None;
+    for eff in effects {
+        if let Effect::EmitEvent {
+            topic_hash,
+            payload_hash,
+        } = eff
+        {
+            emit_event_count += 1;
+            if first_emit_topic.is_none() {
+                first_emit_topic = Some(*topic_hash);
+                first_emit_payload = Some(*payload_hash);
+            }
+        }
+    }
+    public_inputs[pi::EMIT_EVENT_COUNT] = BabyBear::new(emit_event_count);
+    if let (Some(t), Some(p)) = (first_emit_topic, first_emit_payload) {
+        for i in 0..pi::EMIT_EVENT_TOPIC_HASH_LEN {
+            public_inputs[pi::EMIT_EVENT_TOPIC_HASH_BASE + i] = t[i];
+        }
+        for i in 0..pi::EMIT_EVENT_PAYLOAD_HASH_LEN {
+            public_inputs[pi::EMIT_EVENT_PAYLOAD_HASH_BASE + i] = p[i];
+        }
+    }
 
     // ---- Slot-caveat manifest (Cav-Codex Block 3) ----
     //

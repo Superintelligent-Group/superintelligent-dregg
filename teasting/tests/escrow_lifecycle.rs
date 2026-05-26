@@ -360,13 +360,16 @@ fn test_obligation_create_and_fulfill() {
     // Alice's balance decreased by stake_amount.
     assert_eq!(ledger.get(&alice).unwrap().state.balance(), 9_000);
 
-    // Derive the obligation ID (same derivation as executor).
+    // Derive the obligation ID (same derivation as executor, including condition).
     let obligation_id = {
         let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
         hasher.update(alice.as_bytes());
         hasher.update(bob.as_bytes());
         hasher.update(&100u64.to_le_bytes());
         hasher.update(&stake.0);
+        // HashPreimage discriminant = 0, hash = [0xCC; 32] (matches CreateObligation above).
+        hasher.update(&[0u8]);
+        hasher.update(&[0xCCu8; 32]);
         *hasher.finalize().as_bytes()
     };
 
@@ -418,6 +421,9 @@ fn test_obligation_slash_after_deadline() {
         hasher.update(bob.as_bytes());
         hasher.update(&50u64.to_le_bytes());
         hasher.update(&stake.0);
+        // HashPreimage discriminant = 0, hash = [0xCC; 32] (matches CreateObligation above).
+        hasher.update(&[0u8]);
+        hasher.update(&[0xCCu8; 32]);
         *hasher.finalize().as_bytes()
     };
 
@@ -466,6 +472,9 @@ fn test_obligation_slash_before_deadline_rejected() {
         hasher.update(bob.as_bytes());
         hasher.update(&100u64.to_le_bytes());
         hasher.update(&stake.0);
+        // HashPreimage discriminant = 0, hash = [0xCC; 32] (matches CreateObligation above).
+        hasher.update(&[0u8]);
+        hasher.update(&[0xCCu8; 32]);
         *hasher.finalize().as_bytes()
     };
 
@@ -509,6 +518,9 @@ fn test_obligation_fulfill_after_deadline_rejected() {
         hasher.update(bob.as_bytes());
         hasher.update(&50u64.to_le_bytes());
         hasher.update(&stake.0);
+        // HashPreimage discriminant = 0, hash = [0xCC; 32] (matches CreateObligation above).
+        hasher.update(&[0u8]);
+        hasher.update(&[0xCCu8; 32]);
         *hasher.finalize().as_bytes()
     };
 

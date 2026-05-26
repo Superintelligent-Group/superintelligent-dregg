@@ -98,9 +98,13 @@ pub fn compute_effects_hash(effects: &[Effect]) -> (BabyBear, BabyBear) {
                 hasher_inputs.push(BabyBear::new(24));
                 hasher_inputs.push(*slot_hash);
             }
-            Effect::EmitEvent { event_hash } => {
+            Effect::EmitEvent {
+                topic_hash,
+                payload_hash,
+            } => {
                 hasher_inputs.push(BabyBear::new(25));
-                hasher_inputs.push(*event_hash);
+                hasher_inputs.extend_from_slice(topic_hash);
+                hasher_inputs.extend_from_slice(payload_hash);
             }
             Effect::SetPermissions { permissions_hash } => {
                 hasher_inputs.push(BabyBear::new(26));

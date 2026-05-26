@@ -109,7 +109,7 @@ impl TurnExecutor {
                 spending_proof,
                 value,
                 asset_type,
-                ..
+                value_commitment,
             } => self.apply_note_spend(
                 path,
                 journal,
@@ -118,10 +118,20 @@ impl TurnExecutor {
                 spending_proof,
                 *value,
                 *asset_type,
+                value_commitment.as_ref(),
             ),
-            Effect::NoteCreate { commitment, .. } => {
-                self.apply_note_create(path, journal, commitment)
-            }
+            Effect::NoteCreate {
+                commitment,
+                value_commitment,
+                range_proof,
+                ..
+            } => self.apply_note_create(
+                path,
+                journal,
+                commitment,
+                value_commitment.as_ref(),
+                range_proof.as_deref(),
+            ),
             Effect::BridgeMint { portable_proof } => {
                 self.apply_bridge_mint(path, journal, portable_proof)
             }
@@ -847,6 +857,13 @@ impl TurnExecutor {
         spending_proof: &[u8],
         value: u64,
         asset_type: u64,
+        // BUG #115: previously dropped via `..`; now validated and bound.
+        // When present, `value_commitment` must be a valid compressed Ristretto
+        // point. Binding it here (via journal.record_note_spend_commitment)
+        // makes it observable in the turn receipt. Conservation and
+        // Schnorr-excess proof are verified at the finalize layer
+        // (`check_committed_conservation`).
+        value_commitment: Option<&[u8; 32]>,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         // Validate nullifier is well-formed (non-zero).
         if nullifier.0.iter().all(|&b| b == 0) {
@@ -944,6 +961,24 @@ impl TurnExecutor {
         journal.record_note_nullifier_inserted(*nullifier);
         // Record for the note layer to process after turn commits.
         journal.record_note_spend(*nullifier);
+
+        // BUG #115: validate value_commitment if present.
+        // Reject malformed compressed Ristretto points immediately at apply
+        // time so that the effect can never reach the finalize layer with a
+        // value_commitment that is not a valid group element. The
+        // conservation-proof check (Schnorr excess) and cross-note consistency
+        // are verified at the finalize layer (`check_committed_conservation`).
+        if let Some(vc_bytes) = value_commitment {
+            if ValueCommitment::from_bytes(&ValueCommitmentBytes(*vc_bytes)).is_none() {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "NoteSpend value_commitment is not a valid Ristretto point".into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -952,6 +987,14 @@ impl TurnExecutor {
         path: &[usize],
         journal: &mut LedgerJournal,
         commitment: &NoteCommitment,
+        // BUG #115: previously dropped via `..`; now validated at apply time.
+        // If `value_commitment` is present, `range_proof` must also be present
+        // and must verify against the commitment. This is defense-in-depth:
+        // the finalize layer (`verify_output_range_proofs`) also checks this
+        // for the Committed conservation path, but we reject here early so
+        // that malformed effects never reach the journal.
+        value_commitment: Option<&[u8; 32]>,
+        range_proof: Option<&[u8]>,
     ) -> Result<(), (TurnError, Vec<usize>)> {
         // Validate commitment is well-formed (non-zero).
         if commitment.0.iter().all(|&b| b == 0) {
@@ -964,6 +1007,79 @@ impl TurnExecutor {
         }
         // Note: zero-value notes are legitimate (e.g., NFTs where asset_type
         // is the unique identifier and value=0 represents ownership).
+
+        // BUG #115 (defense-in-depth): validate value_commitment + range_proof
+        // at apply time. The finalize layer also checks this, but we reject
+        // early so that malformed effects never persist through the journal.
+        //
+        // Rules:
+        //   (a) value_commitment, if present, must be a valid compressed
+        //       Ristretto point.
+        //   (b) if value_commitment is present, range_proof must also be
+        //       present and non-empty, and must verify against the commitment.
+        //       This prevents a prover from hiding a negative value behind a
+        //       commitment without proving the value is in [0, 2^64).
+        //   (c) range_proof without value_commitment is incoherent — reject.
+        match (value_commitment, range_proof) {
+            (None, None) => {
+                // Cleartext path: no commitment, no range proof — OK.
+            }
+            (None, Some(_)) => {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "NoteCreate has range_proof but no value_commitment".into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            (Some(vc_bytes), rp_opt) => {
+                // Decode the compressed Ristretto point.
+                let vc =
+                    ValueCommitment::from_bytes(&ValueCommitmentBytes(*vc_bytes)).ok_or_else(
+                        || {
+                            (
+                                TurnError::InvalidEffect {
+                                    reason: "NoteCreate value_commitment is not a valid Ristretto point".into(),
+                                },
+                                path.to_vec(),
+                            )
+                        },
+                    )?;
+                // Range proof is required when a value commitment is present.
+                let rp_bytes = rp_opt.ok_or_else(|| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: "NoteCreate has value_commitment but no range_proof".into(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                if rp_bytes.is_empty() {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "NoteCreate range_proof is empty".into(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                // Verify the Bulletproof range proof against the commitment.
+                let bulletproof = BulletproofRangeProof {
+                    proof_bytes: rp_bytes.to_vec(),
+                };
+                bulletproof.verify_range(&vc).map_err(|e| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason: format!(
+                                "NoteCreate range proof verification failed: {}",
+                                e
+                            ),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+            }
+        }
+
         // Record for the note layer to process after turn commits.
         journal.record_note_create(*commitment);
         Ok(())
@@ -1280,12 +1396,49 @@ impl TurnExecutor {
             .set_balance(old_balance - stake_amount);
 
         // Derive obligation ID and store in registry.
+        // SECURITY (#113): the condition field must be bound into the obligation_id so
+        // that two CreateObligations with identical payer/payee/stake but different
+        // conditions produce distinct IDs.  Without this, a prover could re-use a
+        // fulfillment proof built for a weak condition (e.g. HashPreimage) against an
+        // obligation that was created with a stronger condition (e.g. LocalProof).
         let obligation_id = {
             let mut hasher = blake3::Hasher::new_derive_key("pyana-obligation-id-v1");
             hasher.update(action_target.as_bytes());
             hasher.update(beneficiary.as_bytes());
             hasher.update(&deadline_height.to_le_bytes());
             hasher.update(&stake.0);
+            // Bind the condition: include a discriminant byte followed by the
+            // condition-specific bytes so every variant produces a distinct prefix.
+            match condition {
+                crate::conditional::ProofCondition::HashPreimage { hash } => {
+                    hasher.update(&[0u8]);
+                    hasher.update(hash);
+                }
+                crate::conditional::ProofCondition::RemoteProof {
+                    federation_root,
+                    expected_air,
+                    expected_conclusion,
+                } => {
+                    hasher.update(&[1u8]);
+                    hasher.update(federation_root);
+                    hasher.update(expected_air.as_bytes());
+                    hasher.update(&expected_conclusion.to_le_bytes());
+                }
+                crate::conditional::ProofCondition::LocalProof {
+                    expected_air,
+                    expected_public_inputs,
+                } => {
+                    hasher.update(&[2u8]);
+                    hasher.update(expected_air.as_bytes());
+                    for pi in expected_public_inputs {
+                        hasher.update(&pi.to_le_bytes());
+                    }
+                }
+                crate::conditional::ProofCondition::TurnExecuted { turn_hash } => {
+                    hasher.update(&[3u8]);
+                    hasher.update(turn_hash);
+                }
+            }
             *hasher.finalize().as_bytes()
         };
         {
@@ -1368,27 +1521,36 @@ impl TurnExecutor {
                 path.to_vec(),
             ));
         }
-        // Verify the fulfillment proof if a proof verifier is configured and
-        // a STARK proof is provided in the ConditionProof.
+        // Verify the fulfillment proof.  SECURITY (#112): fail-closed — any
+        // StarkProof (even with non-empty bytes) must be actively verified.
+        // If no proof_verifier is configured, presenting a STARK proof is
+        // an outright error rather than a silent pass.  Non-STARK conditions
+        // (HashPreimage, Preimage) are verified inline without a verifier.
         if let crate::conditional::ConditionProof::StarkProof { proof_bytes, .. } = proof {
             if !proof_bytes.is_empty() {
-                if let Some(verifier) = &self.proof_verifier {
-                    if !verifier.verify(
-                        proof_bytes,
-                        "obligation-fulfill",
-                        "obligation",
-                        obligation_id,
-                    ) {
-                        return Err((
-                            TurnError::InvalidEffect {
-                                reason: "obligation fulfillment proof verification failed".into(),
-                            },
-                            path.to_vec(),
-                        ));
-                    }
+                let verifier = self.proof_verifier.as_ref().ok_or_else(|| {
+                    (
+                        TurnError::InvalidEffect {
+                            reason:
+                                "no proof verifier configured; cannot verify obligation fulfillment proof"
+                                    .into(),
+                        },
+                        path.to_vec(),
+                    )
+                })?;
+                if !verifier.verify(
+                    proof_bytes,
+                    "obligation-fulfill",
+                    "obligation",
+                    obligation_id,
+                ) {
+                    return Err((
+                        TurnError::InvalidEffect {
+                            reason: "obligation fulfillment proof verification failed".into(),
+                        },
+                        path.to_vec(),
+                    ));
                 }
-                // If no verifier configured but proof is provided, that's acceptable
-                // (fail-open for the proof, but access control still enforced above).
             }
         }
         // Return locked stake to the obligor.
@@ -2350,6 +2512,29 @@ impl TurnExecutor {
         // TARGET CELL's requirements for each inner effect's operation.
         // This prevents bypassing target cell permissions via capability exercise.
         for inner_effect in inner_effects.iter() {
+            // SECURITY (#111): Transfer with from != cap_target must be gated too.
+            // Previously only `from == cap_target` matched the Send arm, so any
+            // Transfer that names a third cell as `from` fell through to `_ => None`
+            // and skipped both the cap-target permission check and the explicit
+            // cap-to-from check.  Fix: handle all Transfer variants explicitly.
+            if let Effect::Transfer { from, .. } = inner_effect {
+                if from != &cap_target {
+                    // The actor must hold an explicit capability covering `from`.
+                    // We re-use check_cross_cell_permission which verifies both the
+                    // c-list entry and `from`'s Send permission level.
+                    self.check_cross_cell_permission(
+                        ledger,
+                        actor,
+                        from,
+                        pyana_cell::permissions::Action::Send,
+                        "Send (Transfer.from via ExerciseViaCapability)",
+                        path,
+                    )?;
+                    // Handled; skip the generic required_perm_action path below.
+                    continue;
+                }
+            }
+
             let required_perm_action = match inner_effect {
                 Effect::SetField { .. } => {
                     Some((pyana_cell::permissions::Action::SetState, "SetState"))
@@ -3098,6 +3283,27 @@ impl TurnExecutor {
         let capacity = u64::from_le_bytes(queue_cell.state.fields[0][..8].try_into().unwrap());
         let current_len = u64::from_le_bytes(queue_cell.state.fields[1][..8].try_into().unwrap());
 
+        // BUG #114: ACL check.
+        // field[5] encodes the authorized-writer cell ID.
+        //   - All-zero (default for new queues): open write — any actor may enqueue.
+        //   - Non-zero: only the cell whose id bytes match field[5] may enqueue.
+        // The owner can set field[5] via a SetField effect to restrict enqueue access.
+        // This is a single-writer ACL; multi-writer is future work (field[5] as a
+        // commitment to a writer set, checked via a separate proof).
+        let authorized_writer_bytes = queue_cell.state.fields[5];
+        let is_open = authorized_writer_bytes.iter().all(|&b| b == 0);
+        if !is_open && authorized_writer_bytes != *actor.as_bytes() {
+            return Err((
+                TurnError::InvalidEffect {
+                    reason: format!(
+                        "QueueEnqueue denied: actor {:?} is not the authorized writer for queue {:?}",
+                        actor, queue
+                    ),
+                },
+                path.to_vec(),
+            ));
+        }
+
         if current_len >= capacity {
             return Err((
                 TurnError::InvalidEffect {
@@ -3459,7 +3665,16 @@ impl TurnExecutor {
             ));
         }
 
-        // Validate all sink queues exist and have capacity.
+        // Validate all sink queues exist, have capacity, and accept writes from
+        // this actor.
+        //
+        // BUG #114 (sink check): the original code checked source ownership but
+        // not sink authorization. Without this check, the pipeline step owner
+        // could fan-out into any queue they don't control, filling a victim's
+        // queue with attacker-controlled messages. We apply the same
+        // authorized-writer check that `apply_queue_enqueue` uses:
+        //   - field[5] all-zero  → open sink, anyone may route into it.
+        //   - field[5] non-zero  → only the matching actor may route into it.
         for sink in sinks {
             let sink_cell = ledger
                 .get(sink)
@@ -3471,6 +3686,20 @@ impl TurnExecutor {
                 return Err((
                     TurnError::InvalidEffect {
                         reason: format!("pipeline step: sink queue {:?} is full", sink),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            // ACL: sink must accept writes from this actor.
+            let sink_authorized_writer = sink_cell.state.fields[5];
+            let sink_is_open = sink_authorized_writer.iter().all(|&b| b == 0);
+            if !sink_is_open && sink_authorized_writer != *action_target.as_bytes() {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: format!(
+                            "pipeline step: actor {:?} is not the authorized writer for sink queue {:?}",
+                            action_target, sink
+                        ),
                     },
                     path.to_vec(),
                 ));
