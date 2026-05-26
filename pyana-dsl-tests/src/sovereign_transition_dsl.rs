@@ -349,12 +349,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "sovereign_transition_air module was removed"]
-    fn dsl_matches_handwritten_air() {
-        // sovereign_transition_air module has been removed from pyana-circuit
-    }
-
-    #[test]
     fn stark_prove_verify() {
         let (trace, pi) = generate_sovereign_transition_trace(
             1000, 100, 1, &[1u8; 32], &[2u8; 32], &[3u8; 32], &[4u8; 32],
