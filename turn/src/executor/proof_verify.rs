@@ -1582,23 +1582,52 @@ impl TurnExecutor {
         Self::commitment_to_4bb(bytes)[0]
     }
 
-    /// Encode a 32-byte canonical state commitment as 4 BabyBear field
-    /// elements (Stage 1 widening; ~124-bit collision resistance).
+    /// Decode a 32-byte stored commitment into the 4-felt Poseidon2 form used
+    /// by the Effect VM AIR's PI[OLD_COMMIT_BASE..+4] / PI[NEW_COMMIT_BASE..+4].
     ///
-    /// Uses `pyana_commit::typed::canonical_32_to_felts_4`, which packs the
-    /// 32 bytes into 8 BabyBears at 30 bits/limb (no truncation), then
-    /// folds via two `hash_4_to_1` compressions to yield 4 felts.
+    /// The stored commitment format (written by [`commitment_4bb_to_bytes`]) packs
+    /// 4 BabyBear felts as 4 consecutive LE u32 values in bytes 0..15. The upper
+    /// 16 bytes are zero padding. This is the canonical round-trip format that
+    /// matches `CellState::compute_commitment_4` — the function the AIR trace
+    /// generator uses to populate the commitment PI slots.
     ///
-    /// The 4 felts are the PI[OLD_COMMIT_BASE..+4] / PI[NEW_COMMIT_BASE..+4]
-    /// values consumed by the Effect VM verifier. The verifier's PI matching
-    /// loop ensures the proof's PI matches these felts byte-for-byte.
+    /// This replaces the former `canonical_32_to_felts_4` call which hashed the
+    /// stored bytes (a one-way operation producing different values than
+    /// `compute_commitment_4`), causing a byte-incompatible PI mismatch between
+    /// trace generation and verification (Silver-Vision bug: sovereign-cell proofs
+    /// always rejected, GitHub #99).
     pub fn commitment_to_4bb(bytes: &[u8; 32]) -> [pyana_circuit::field::BabyBear; 4] {
-        pyana_commit::typed::canonical_32_to_felts_4(bytes)
+        use pyana_circuit::field::BabyBear;
+        [
+            BabyBear::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap())),
+            BabyBear::new(u32::from_le_bytes(bytes[4..8].try_into().unwrap())),
+            BabyBear::new(u32::from_le_bytes(bytes[8..12].try_into().unwrap())),
+            BabyBear::new(u32::from_le_bytes(bytes[12..16].try_into().unwrap())),
+        ]
     }
 
-    /// Encode a BabyBear field element as a [u8; 32] stored commitment.
+    /// Pack 4 BabyBear felts into a 32-byte stored commitment.
+    ///
+    /// Writes each felt as a LE u32 into bytes 0..15; zeros bytes 16..31.
+    /// This is the canonical format read back by [`commitment_to_4bb`].
+    /// Use this instead of [`babybear_to_commitment`] when the proof's PI carries
+    /// a widened 4-felt commitment (`CellState::compute_commitment_4` output).
+    pub fn commitment_4bb_to_bytes(
+        felts: [pyana_circuit::field::BabyBear; 4],
+    ) -> [u8; 32] {
+        let mut result = [0u8; 32];
+        result[0..4].copy_from_slice(&felts[0].0.to_le_bytes());
+        result[4..8].copy_from_slice(&felts[1].0.to_le_bytes());
+        result[8..12].copy_from_slice(&felts[2].0.to_le_bytes());
+        result[12..16].copy_from_slice(&felts[3].0.to_le_bytes());
+        result
+    }
+
+    /// Encode a single BabyBear field element as a [u8; 32] stored commitment.
     ///
     /// Packs the u32 value into the first 4 bytes (LE), zeroes the rest.
+    /// Legacy single-felt encoding; prefer [`commitment_4bb_to_bytes`] for new
+    /// proof-carrying paths that use the widened 4-felt PI layout.
     pub fn babybear_to_commitment(bb: pyana_circuit::field::BabyBear) -> [u8; 32] {
         let mut result = [0u8; 32];
         result[..4].copy_from_slice(&bb.0.to_le_bytes());

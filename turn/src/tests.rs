@@ -7717,14 +7717,23 @@ fn setup_sovereign_cell_for_proof_test() -> (Ledger, CellId, CellId, [u8; 32]) {
     // Create a cell, then make it sovereign.
     let (sovereign_cell, _) = make_open_cell(10, 5000);
     let sovereign_id = sovereign_cell.id();
-    // Compute the Poseidon2 CellState commitment (matches what EffectVmAir uses).
+    // Compute the 4-felt Poseidon2 CellState commitment and pack it into 32 bytes.
+    // This matches the format that TurnExecutor::commitment_to_4bb reads back, and
+    // matches what EffectVmAir puts into PI[OLD_COMMIT_BASE..+4] via
+    // CellState::compute_commitment_4 (resolves Silver-Vision bug #99).
     let vm_state = pyana_circuit::CellState::new(
         sovereign_cell.state.balance(),
         sovereign_cell.state.nonce() as u32,
     );
-    let commitment = TurnExecutor::babybear_to_commitment(vm_state.state_commitment);
+    let commit_4bb = pyana_circuit::CellState::compute_commitment_4(
+        vm_state.balance,
+        vm_state.nonce,
+        &vm_state.fields,
+        vm_state.capability_root,
+    );
+    let commitment = TurnExecutor::commitment_4bb_to_bytes(commit_4bb);
     ledger.insert_cell(sovereign_cell).unwrap();
-    // Override the stored commitment with the Poseidon2 value.
+    // Override the stored commitment with the 4-felt-packed Poseidon2 value.
     let _ = ledger.make_sovereign(&sovereign_id).unwrap();
     let _ = ledger.update_sovereign_commitment(&sovereign_id, commitment);
 
@@ -7751,21 +7760,28 @@ fn generate_valid_sovereign_proof(
 }
 
 /// Generate a valid Effect VM proof and return (proof_bytes, new_commitment_bytes).
+///
+/// The `old_commitment` is a 32-byte value previously stored via
+/// `TurnExecutor::commitment_4bb_to_bytes` (4 LE u32 felts in bytes 0..15).
+/// The returned `new_commitment` is in the same format, ready to be stored in the
+/// ledger and verified by `TurnExecutor::commitment_to_4bb`.
 fn generate_valid_sovereign_proof_with_new_commit(
     old_commitment: &[u8; 32],
 ) -> (Vec<u8>, [u8; 32]) {
-    use pyana_circuit::effect_vm::{CellState, Effect as VmEffect};
+    use pyana_circuit::effect_vm::{CellState, Effect as VmEffect, pi};
     use pyana_circuit::field::BabyBear;
     use pyana_circuit::stark::{proof_to_bytes, prove};
     use pyana_circuit::{EffectVmAir, generate_effect_vm_trace};
 
-    // Decode the old commitment to get the expected initial state commitment.
-    let old_commit_bb = TurnExecutor::commitment_to_babybear(old_commitment);
-
-    // Create a CellState with balance=5000, nonce=0 (matches setup_sovereign_cell_for_proof_test).
-    let mut initial_state = CellState::new(5000, 0);
-    // Override the state_commitment to match what was stored (ensures PI[0] binding).
-    initial_state.state_commitment = old_commit_bb;
+    // Decode the old 4-felt commitment from the stored 32 bytes.
+    // The stored format is 4 LE u32 values in bytes 0..15 (written by commitment_4bb_to_bytes).
+    // We create a CellState with the correct balance/nonce so that compute_commitment_4
+    // reproduces the same 4 felts — the AIR will then accept them as the old-state PI.
+    // NOTE: we do NOT override state_commitment directly; instead we construct the CellState
+    // so that CellState::compute_commitment_4 matches old_commitment's packed felts.
+    // For the test (balance=5000, nonce=0, all fields ZERO), the default CellState::new
+    // is already consistent.
+    let initial_state = CellState::new(5000, 0);
 
     // Generate a transfer of 100 outgoing.
     let effects = vec![VmEffect::Transfer {
@@ -7775,31 +7791,30 @@ fn generate_valid_sovereign_proof_with_new_commit(
 
     let (trace, public_inputs) = generate_effect_vm_trace(&initial_state, &effects);
 
-    // Extract the new commitment from PI[1].
-    let new_commit_bb = public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT];
-    let new_commitment = TurnExecutor::babybear_to_commitment(new_commit_bb);
+    // Extract the 4-felt new commitment from PI[NEW_COMMIT_BASE..+4] and pack
+    // into 32 bytes using the same format as commitment_4bb_to_bytes.
+    let new_commit_4 = [
+        public_inputs[pi::NEW_COMMIT_BASE],
+        public_inputs[pi::NEW_COMMIT_BASE + 1],
+        public_inputs[pi::NEW_COMMIT_BASE + 2],
+        public_inputs[pi::NEW_COMMIT_BASE + 3],
+    ];
+    let new_commitment = TurnExecutor::commitment_4bb_to_bytes(new_commit_4);
 
     let air = EffectVmAir::new(trace.len());
     let proof = prove(&air, &trace, &public_inputs);
     (proof_to_bytes(&proof), new_commitment)
 }
 
-// REVIEW[stage2-canonical-vs-poseidon-mismatch]:
-// The trace generator uses CellState::compute_commitment_4 (Poseidon2 over
-// CellState fields) while the executor verifier consumes
-// canonical_32_to_felts_4 of the stored 32-byte canonical commitment.
-// These two are NOT byte-identical: trace gen produces a Poseidon2 hash
-// of the in-AIR state encoding; the stored commitment is a Blake3
-// canonical hash of the full Cell. Aligning them requires either:
-//   (a) make trace gen accept the Cell-canonical 4-felt form as input,
-//       and embed it in the in-trace continuity column; OR
-//   (b) replace canonical_32_to_felts_4 in the verifier with a
-//       recomputation of compute_commitment_4 from cell state.
-// Both are structural Stage 2 followup work (multi-file). The
-// proof-carrying turn tests below depend on this alignment and are
-// ignored until that work lands.
+// RESOLVED[stage2-canonical-vs-poseidon-mismatch / GitHub #99]:
+// The encoding mismatch has been fixed. The stored commitment format is now the
+// 4-felt Poseidon2 form packed as 4 LE u32 values in bytes 0..15 (written by
+// TurnExecutor::commitment_4bb_to_bytes, read by TurnExecutor::commitment_to_4bb).
+// This round-trips exactly through CellState::compute_commitment_4, which is what
+// the AIR trace generator puts into PI[OLD_COMMIT_BASE..+4] / PI[NEW_COMMIT_BASE..+4].
+// The former canonical_32_to_felts_4 path is no longer used for state commitments
+// (it hashed the stored bytes, producing values unrelated to compute_commitment_4).
 #[test]
-#[ignore = "REVIEW[stage2-canonical-vs-poseidon-mismatch]: trace gen and verifier use different commitment hashing paths"]
 fn test_proof_carrying_turn_accepted() {
     let (mut ledger, agent_id, sovereign_id, old_commitment) =
         setup_sovereign_cell_for_proof_test();

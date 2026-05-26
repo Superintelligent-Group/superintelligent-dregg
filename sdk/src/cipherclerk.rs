@@ -4707,12 +4707,19 @@ impl AgentCipherclerk {
         let (trace, public_inputs) =
             pyana_circuit::generate_effect_vm_trace(&initial_vm_state, &vm_effects);
 
-        // 6. Extract new commitment from the proof's public inputs (PI[1] = new state commitment).
-        // The executor verifies this matches, so we must use the Poseidon2-based commitment
-        // that the Effect VM computed (not the blake3 cell.state_commitment()).
-        let new_commitment = pyana_turn::TurnExecutor::babybear_to_commitment(
-            public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT],
-        );
+        // 6. Extract new commitment from the proof's public inputs (PI[NEW_COMMIT_BASE..+4]).
+        // Pack all 4 felts into 32 bytes using commitment_4bb_to_bytes — the executor's
+        // commitment_to_4bb reads them back the same way and compares against the proof's PI.
+        // Using babybear_to_commitment (only 1 felt) caused the stage2-canonical-vs-poseidon
+        // mismatch (GitHub #99): the verifier would see all-zero felts[1..3] while the proof
+        // carried compute_commitment_4's salted positions 1..3.
+        let new_commit_4 = [
+            public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT_BASE],
+            public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT_BASE + 1],
+            public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT_BASE + 2],
+            public_inputs[pyana_circuit::effect_vm::pi::NEW_COMMIT_BASE + 3],
+        ];
+        let new_commitment = pyana_turn::TurnExecutor::commitment_4bb_to_bytes(new_commit_4);
 
         let air = pyana_circuit::EffectVmAir::new(trace.len());
         let proof = pyana_circuit::stark::prove(&air, &trace, &public_inputs);
@@ -4928,12 +4935,544 @@ impl AgentCipherclerk {
                     // Nonce increment is implicit in the VM (row-to-row nonce+1).
                     // No explicit effect needed — skip.
                 }
-                _ => {
-                    // Other effects (EmitEvent, CreateCell, permissions, bridge ops, etc.)
-                    // map to NoOp — their constraints are either non-state-modifying or
-                    // handled externally by the executor.
-                    vm_effects.push(VmEffect::NoOp);
+
+                // ================================================================
+                // Stage 3 projections: ported from effect_vm_bridge.rs.
+                // The SDK function has no access to the live Ledger, so
+                // ledger-dependent fields (queue lengths, export counters,
+                // refcounts) use zero-sentinels. The proof still carries real
+                // effect-identity data bound into effects_hash; the ledger-
+                // sourced fields are wired at executor time where the Ledger is
+                // available. This matches the existing bridge pattern where
+                // several fields carry sentinel 0 for "resolved at apply time."
+                // ================================================================
+
+                // -- Permissions / VK / caps ------------------------------------
+                Effect::SetPermissions { cell, new_permissions } if cell == cell_id => {
+                    let perm_bytes = postcard::to_allocvec(new_permissions).unwrap_or_default();
+                    let perm_hash_bytes = blake3::hash(&perm_bytes);
+                    vm_effects.push(VmEffect::SetPermissions {
+                        permissions_hash: hash_to_bb(perm_hash_bytes.as_bytes()),
+                    });
                 }
+                Effect::SetVerificationKey { cell, new_vk } if cell == cell_id => {
+                    let vk_hash = match new_vk {
+                        Some(vk) => {
+                            let bytes = postcard::to_allocvec(vk).unwrap_or_default();
+                            let h = blake3::hash(&bytes);
+                            hash_to_bb(h.as_bytes())
+                        }
+                        None => BabyBear::ZERO,
+                    };
+                    vm_effects.push(VmEffect::SetVerificationKey { vk_hash });
+                }
+                Effect::RevokeCapability { cell, slot } if cell == cell_id => {
+                    let slot_bytes = slot.to_le_bytes();
+                    let slot_hash_bytes = blake3::hash(&slot_bytes);
+                    vm_effects.push(VmEffect::RevokeCapability {
+                        slot_hash: hash_to_bb(slot_hash_bytes.as_bytes()),
+                    });
+                }
+                Effect::AttenuateCapability { cell, slot, narrower_permissions, .. } if cell == cell_id => {
+                    // Bind slot + narrowed-permissions hash into effects_hash.
+                    // The AIR enforces monotonic narrowing via the executor;
+                    // the proof carries the identity of which slot was attenuated.
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(&slot.to_le_bytes());
+                    let perm_bytes = postcard::to_allocvec(narrower_permissions).unwrap_or_default();
+                    hasher.update(&perm_bytes);
+                    let attn_hash = hasher.finalize();
+                    vm_effects.push(VmEffect::RevokeCapability {
+                        // Reuse RevokeCapability shape: attenuate is a
+                        // monotone-narrowing on a slot — the same cap-root
+                        // mutation path as revoke. The slot_hash here is
+                        // hash(slot || new_perms) so it's distinct from a plain
+                        // RevokeCapability on the same slot.
+                        slot_hash: hash_to_bb(attn_hash.as_bytes()),
+                    });
+                }
+
+                // -- CreateCell / lifecycle -------------------------------------
+                Effect::CreateCell { public_key, token_id, balance } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(public_key);
+                    hasher.update(token_id);
+                    hasher.update(&balance.to_le_bytes());
+                    let create_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::CreateCell {
+                        create_hash: hash_to_bb(create_hash_bytes.as_bytes()),
+                    });
+                }
+                Effect::CellSeal { target, reason } if target == cell_id => {
+                    // Bind target + reason commitment into effects_hash.
+                    // CellSeal is a lifecycle gate: the proof carries the
+                    // 32-byte reason commitment so a verifier can attribute
+                    // the seal to the specific reason the actor committed to.
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(target.as_bytes());
+                    hasher.update(reason);
+                    let seal_hash = hasher.finalize();
+                    vm_effects.push(VmEffect::SetPermissions {
+                        // CellSeal mutates the cell's lifecycle field, which
+                        // is structurally a permissions-class mutation. Reuse
+                        // SetPermissions shape with the seal_hash as the
+                        // permissions_hash: distinct from any real permission
+                        // encoding (which is postcard of Permissions struct)
+                        // because reason is a raw 32-byte commitment.
+                        permissions_hash: hash_to_bb(seal_hash.as_bytes()),
+                    });
+                }
+                Effect::CellUnseal { target } if target == cell_id => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(b"CellUnseal");
+                    hasher.update(target.as_bytes());
+                    let unseal_hash = hasher.finalize();
+                    vm_effects.push(VmEffect::SetPermissions {
+                        permissions_hash: hash_to_bb(unseal_hash.as_bytes()),
+                    });
+                }
+                Effect::CellDestroy { target, certificate } if target == cell_id => {
+                    // CellDestroy is terminal and irreversible — it is
+                    // CRITICAL that the proof binds the death certificate
+                    // hash so a verifier can attribute the destruction to
+                    // the correct certificate. Bind target + cert_hash.
+                    let cert_hash_bytes = certificate.certificate_hash();
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(target.as_bytes());
+                    hasher.update(&cert_hash_bytes);
+                    let destroy_hash = hasher.finalize();
+                    vm_effects.push(VmEffect::SetPermissions {
+                        // Terminal lifecycle mutations share the permissions
+                        // shape (both mutate the lifecycle field). The
+                        // destroy_hash is structurally distinct from any
+                        // SetPermissions invocation (target||cert vs
+                        // postcard(Permissions)) so cross-kind confusion
+                        // would not verify under the same schema.
+                        permissions_hash: hash_to_bb(destroy_hash.as_bytes()),
+                    });
+                }
+                Effect::ReceiptArchive { prefix_end_height, checkpoint } => {
+                    // ReceiptArchive binds the archival attestation hash +
+                    // prefix_end_height. Neutral (no balance change); the
+                    // proof records that the actor committed to archiving
+                    // up to this height with this checkpoint.
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(&prefix_end_height.to_le_bytes());
+                    hasher.update(checkpoint.cell_id.as_bytes());
+                    hasher.update(&checkpoint.archive_blob_hash);
+                    let archive_hash = hasher.finalize();
+                    vm_effects.push(VmEffect::EmitEvent {
+                        // ReceiptArchive is structurally an event-emission
+                        // with no state change (the archive lives off-trace).
+                        // Reuse EmitEvent shape with archive_hash as event_hash.
+                        event_hash: hash_to_bb(archive_hash.as_bytes()),
+                    });
+                }
+
+                // -- Burn (CRITICAL: algebraic balance constraint) -------------
+                Effect::Burn { target, amount, .. } if target == cell_id => {
+                    // CRITICAL: Burn irreversibly reduces a cell's balance.
+                    // VmEffect::Transfer { direction: 1 } (outgoing/debit)
+                    // witnesses a balance decrement in the Effect VM's balance
+                    // continuity rows. The `was_burn` disclosure is separately
+                    // bound via effect_action_air SCHEMA_BURN's
+                    // AlgebraicConstraint::Burn. Without this arm the proof
+                    // attests to nothing about the balance destruction —
+                    // a forged receipt could claim any new balance.
+                    // direction=1 means outgoing/debit: new_balance = old - amount.
+                    vm_effects.push(VmEffect::Transfer {
+                        amount: *amount,
+                        direction: 1,
+                    });
+                }
+
+                // -- Emit event -------------------------------------------------
+                Effect::EmitEvent { cell, event } if cell == cell_id => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(&event.topic);
+                    for d in &event.data {
+                        hasher.update(d);
+                    }
+                    let event_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::EmitEvent {
+                        event_hash: hash_to_bb(event_hash_bytes.as_bytes()),
+                    });
+                }
+
+                // -- Sealing / sovereign / factory (already handled above except CreateSealPair)
+                Effect::CreateSealPair { sealer_holder, unsealer_holder } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(sealer_holder.as_bytes());
+                    hasher.update(unsealer_holder.as_bytes());
+                    let pair_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::CreateSealPair {
+                        pair_hash: hash_to_bb(pair_hash_bytes.as_bytes()),
+                    });
+                }
+
+                // -- Delegation -------------------------------------------------
+                Effect::SpawnWithDelegation { child_public_key, child_token_id, max_staleness } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(child_public_key);
+                    hasher.update(child_token_id);
+                    hasher.update(&max_staleness.to_le_bytes());
+                    let spawn_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::SpawnWithDelegation {
+                        spawn_hash: hash_to_bb(spawn_hash_bytes.as_bytes()),
+                    });
+                }
+                Effect::RefreshDelegation => {
+                    vm_effects.push(VmEffect::RefreshDelegation);
+                }
+                Effect::RevokeDelegation { child } => {
+                    vm_effects.push(VmEffect::RevokeDelegation {
+                        child_hash: hash_to_bb(child.as_bytes()),
+                    });
+                }
+
+                // -- Bridge ops (CRITICAL: cross-chain value transfer) ----------
+                Effect::BridgeMint { portable_proof } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(&portable_proof.nullifier);
+                    let root_bytes =
+                        postcard::to_allocvec(&portable_proof.source_root).unwrap_or_default();
+                    hasher.update(&root_bytes);
+                    hasher.update(&portable_proof.destination_federation);
+                    hasher.update(&portable_proof.asset_type.to_le_bytes());
+                    let mint_hash_bytes = hasher.finalize();
+                    let value_lo = BabyBear::new(
+                        (portable_proof.value & ((1u64 << 30) - 1)) as u32,
+                    );
+                    vm_effects.push(VmEffect::BridgeMint {
+                        value_lo,
+                        mint_hash: hash_to_bb(mint_hash_bytes.as_bytes()),
+                        value_full: portable_proof.value,
+                    });
+                }
+                Effect::BridgeLock { nullifier, destination, value, asset_type, .. } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(nullifier);
+                    hasher.update(destination);
+                    hasher.update(&asset_type.to_le_bytes());
+                    let lock_hash_bytes = hasher.finalize();
+                    let value_lo = BabyBear::new((*value & ((1u64 << 30) - 1)) as u32);
+                    vm_effects.push(VmEffect::BridgeLock {
+                        value_lo,
+                        lock_hash: hash_to_bb(lock_hash_bytes.as_bytes()),
+                        value_full: *value,
+                    });
+                }
+                Effect::BridgeFinalize { nullifier, receipt } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(nullifier);
+                    let receipt_bytes = postcard::to_allocvec(receipt).unwrap_or_default();
+                    hasher.update(&receipt_bytes);
+                    let finalize_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::BridgeFinalize {
+                        finalize_hash: hash_to_bb(finalize_hash_bytes.as_bytes()),
+                    });
+                }
+                Effect::BridgeCancel { nullifier } => {
+                    vm_effects.push(VmEffect::BridgeCancel {
+                        nullifier_hash: hash_to_bb(nullifier),
+                    });
+                }
+
+                // -- Introduce / pipelined send ---------------------------------
+                Effect::Introduce { introducer, recipient, target, permissions } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(introducer.as_bytes());
+                    hasher.update(recipient.as_bytes());
+                    hasher.update(target.as_bytes());
+                    let perm_byte: u8 = match permissions {
+                        pyana_cell::AuthRequired::None => 0,
+                        pyana_cell::AuthRequired::Signature => 1,
+                        pyana_cell::AuthRequired::Proof => 2,
+                        pyana_cell::AuthRequired::Either => 3,
+                        pyana_cell::AuthRequired::Impossible => 4,
+                        pyana_cell::AuthRequired::Custom { .. } => 5,
+                    };
+                    hasher.update(&[perm_byte]);
+                    if let pyana_cell::AuthRequired::Custom { vk_hash } = permissions {
+                        hasher.update(vk_hash);
+                    }
+                    let intro_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::Introduce {
+                        intro_hash: hash_to_bb(intro_hash_bytes.as_bytes()),
+                    });
+                }
+                Effect::PipelinedSend { target, action } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(&target.source_turn);
+                    hasher.update(&target.output_slot.to_le_bytes());
+                    hasher.update(&action.hash());
+                    let send_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::PipelinedSend {
+                        send_hash: hash_to_bb(send_hash_bytes.as_bytes()),
+                    });
+                }
+
+                // -- Escrow (CRITICAL: locked value) ----------------------------
+                Effect::CreateEscrow { cell, recipient, amount, condition, .. } if cell == cell_id => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(recipient.as_bytes());
+                    let cond_bytes = postcard::to_allocvec(condition).unwrap_or_default();
+                    hasher.update(&cond_bytes);
+                    let escrow_hash_bytes = hasher.finalize();
+                    let amount_lo = BabyBear::new((*amount & ((1u64 << 30) - 1)) as u32);
+                    vm_effects.push(VmEffect::CreateEscrow {
+                        amount_lo,
+                        escrow_hash: hash_to_bb(escrow_hash_bytes.as_bytes()),
+                        amount_full: *amount,
+                    });
+                }
+                Effect::ReleaseEscrow { escrow_id, .. } => {
+                    vm_effects.push(VmEffect::ReleaseEscrow {
+                        escrow_id_hash: hash_to_bb(escrow_id),
+                    });
+                }
+                Effect::RefundEscrow { escrow_id, .. } => {
+                    vm_effects.push(VmEffect::RefundEscrow {
+                        escrow_id_hash: hash_to_bb(escrow_id),
+                    });
+                }
+                Effect::CreateCommittedEscrow {
+                    creator_commitment,
+                    recipient_commitment,
+                    value_commitment,
+                    condition_commitment,
+                    ..
+                } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(creator_commitment);
+                    hasher.update(recipient_commitment);
+                    hasher.update(&value_commitment.0);
+                    hasher.update(condition_commitment);
+                    let commit_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::CreateCommittedEscrow {
+                        commit_hash: hash_to_bb(commit_hash_bytes.as_bytes()),
+                    });
+                }
+                Effect::ReleaseCommittedEscrow { escrow_id, recipient, .. } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(escrow_id);
+                    hasher.update(recipient.as_bytes());
+                    let commit_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::ReleaseCommittedEscrow {
+                        commit_hash: hash_to_bb(commit_hash_bytes.as_bytes()),
+                    });
+                }
+                Effect::RefundCommittedEscrow { escrow_id, creator, .. } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(escrow_id);
+                    hasher.update(creator.as_bytes());
+                    let commit_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::RefundCommittedEscrow {
+                        commit_hash: hash_to_bb(commit_hash_bytes.as_bytes()),
+                    });
+                }
+
+                // -- ExerciseViaCapability -------------------------------------
+                Effect::ExerciseViaCapability { cap_slot, inner_effects } => {
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(&cap_slot.to_le_bytes());
+                    for inner in inner_effects {
+                        hasher.update(&inner.hash());
+                    }
+                    let exercise_hash_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::ExerciseViaCapability {
+                        exercise_hash: hash_to_bb(exercise_hash_bytes.as_bytes()),
+                    });
+                }
+
+                // -- Queue ops -------------------------------------------------
+                Effect::QueueAllocate { capacity, .. } => {
+                    vm_effects.push(VmEffect::AllocateQueue {
+                        capacity: *capacity as u32,
+                        owner_quota_id: hash_to_bb(cell_id.as_bytes()),
+                        cost_per_slot: 1,
+                    });
+                }
+                Effect::QueueEnqueue { queue, message_hash, deposit } => {
+                    // Ledger not available in SDK function; use zero sentinel for
+                    // queue_len and program_vk. The bridge's ledger-sourced values
+                    // are the authoritative ones used at prove time by the executor.
+                    vm_effects.push(VmEffect::EnqueueMessage {
+                        message_hash: hash_to_bb(message_hash),
+                        deposit_amount: *deposit as u32,
+                        sender_id: hash_to_bb(cell_id.as_bytes()),
+                        queue_len: 0,
+                        program_vk: BabyBear::ZERO,
+                    });
+                    let _ = queue;
+                }
+                Effect::QueueDequeue { queue } => {
+                    // Sentinel head hash tagged with queue identity so two
+                    // dequeues on different queues produce distinct projections.
+                    let mut hasher = blake3::Hasher::new();
+                    hasher.update(b"PYANA_DEQUEUE_HEAD/v1");
+                    hasher.update(queue.as_bytes());
+                    // queue_len unknown without ledger; use 0.
+                    hasher.update(&0u64.to_le_bytes());
+                    let head_bytes = hasher.finalize();
+                    vm_effects.push(VmEffect::DequeueMessage {
+                        expected_message_hash: hash_to_bb(head_bytes.as_bytes()),
+                        deposit_refund: 0,
+                    });
+                }
+                Effect::QueueResize { queue, new_capacity } => {
+                    // old_capacity unknown without ledger; use 0.
+                    vm_effects.push(VmEffect::ResizeQueue {
+                        new_capacity: *new_capacity as u32,
+                        queue_id: hash_to_bb(queue.as_bytes()),
+                        cost_per_slot: 1,
+                        old_capacity: 0,
+                    });
+                }
+                Effect::QueueAtomicTx { operations } => {
+                    let mut net_deposit: u64 = 0;
+                    for op in operations {
+                        match op {
+                            pyana_turn::QueueTxOp::Enqueue { deposit, .. } => {
+                                net_deposit += deposit;
+                            }
+                            pyana_turn::QueueTxOp::Dequeue { .. } => {}
+                        }
+                    }
+                    let op_count = operations.len() as u32;
+                    let tx_hash_input: Vec<u8> = operations
+                        .iter()
+                        .flat_map(|op| match op {
+                            pyana_turn::QueueTxOp::Enqueue { message_hash, .. } => {
+                                message_hash.to_vec()
+                            }
+                            pyana_turn::QueueTxOp::Dequeue { queue } => {
+                                queue.as_bytes().to_vec()
+                            }
+                        })
+                        .collect();
+                    let tx_hash_bytes = blake3::hash(&tx_hash_input);
+                    let tx_hash = hash_to_bb(tx_hash_bytes.as_bytes());
+                    // combined_old_root unknown without ledger; use cell_id sentinel.
+                    let combined_old_root = hash_to_bb(cell_id.as_bytes());
+                    let combined_new_root =
+                        pyana_circuit::poseidon2::hash_2_to_1(combined_old_root, tx_hash);
+                    vm_effects.push(VmEffect::AtomicQueueTx {
+                        op_count,
+                        tx_hash,
+                        combined_old_root,
+                        combined_new_root,
+                        net_deposit: net_deposit as u32,
+                    });
+                }
+                Effect::QueuePipelineStep { pipeline_id, source, sinks } => {
+                    let pipeline_bb = hash_to_bb(pipeline_id);
+                    let source_root = hash_to_bb(source.as_bytes());
+                    let msg_hash = hash_to_bb(pipeline_id);
+                    let source_new = pyana_circuit::poseidon2::hash_2_to_1(source_root, msg_hash);
+                    let sink_root = if let Some(sink) = sinks.first() {
+                        hash_to_bb(sink.as_bytes())
+                    } else {
+                        BabyBear::ZERO
+                    };
+                    let sink_new = pyana_circuit::poseidon2::hash_2_to_1(sink_root, msg_hash);
+                    vm_effects.push(VmEffect::PipelineStep {
+                        pipeline_id: pipeline_bb,
+                        source_old_root: source_root,
+                        source_new_root: source_new,
+                        sink_new_root: sink_new,
+                        message_hash: msg_hash,
+                    });
+                }
+
+                // -- CapTP runtime effects (CRITICAL: cap authority) -----------
+                Effect::ExportSturdyRef { swiss_number, target, permissions } => {
+                    // Without Ledger we cannot read the export_counter from
+                    // target.state.fields[7]. Use sentinel 0 (same as the
+                    // bridge when the cell is missing from the ledger).
+                    let cell_id_bb = hash_to_bb(target.as_bytes());
+                    let random_seed_bb = hash_to_bb(swiss_number);
+                    let permissions_bb = match permissions {
+                        pyana_cell::permissions::AuthRequired::None => BabyBear::new(0),
+                        pyana_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
+                        pyana_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
+                        pyana_cell::permissions::AuthRequired::Either => BabyBear::new(3),
+                        pyana_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
+                        pyana_cell::permissions::AuthRequired::Custom { vk_hash } => {
+                            let mut h = blake3::Hasher::new();
+                            h.update(&[5u8]);
+                            h.update(vk_hash);
+                            hash_to_bb(h.finalize().as_bytes())
+                        }
+                    };
+                    vm_effects.push(VmEffect::ExportSturdyRef {
+                        cell_id: cell_id_bb,
+                        permissions: permissions_bb,
+                        random_seed: random_seed_bb,
+                        export_counter: 0, // Sentinel; live value sourced from Ledger at executor prove time.
+                    });
+                }
+                Effect::EnlivenRef { swiss_number, bearer, expected_cell_id, expected_permissions } => {
+                    let swiss_bb = hash_to_bb(swiss_number);
+                    let presenter_bb = hash_to_bb(bearer.as_bytes());
+                    let expected_cell_id_bb = hash_to_bb(expected_cell_id.as_bytes());
+                    let permissions_bb = match expected_permissions {
+                        pyana_cell::permissions::AuthRequired::None => BabyBear::new(0),
+                        pyana_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
+                        pyana_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
+                        pyana_cell::permissions::AuthRequired::Either => BabyBear::new(3),
+                        pyana_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
+                        pyana_cell::permissions::AuthRequired::Custom { vk_hash } => {
+                            let mut h = blake3::Hasher::new();
+                            h.update(&[5u8]);
+                            h.update(vk_hash);
+                            hash_to_bb(h.finalize().as_bytes())
+                        }
+                    };
+                    vm_effects.push(VmEffect::EnlivenRef {
+                        swiss_number: swiss_bb,
+                        presenter_id: presenter_bb,
+                        expected_cell_id: expected_cell_id_bb,
+                        expected_permissions: permissions_bb,
+                    });
+                }
+                Effect::DropRef { ref_id } => {
+                    // current_refcount unknown without Ledger; use 0 sentinel.
+                    let cell_id_bb = hash_to_bb(cell_id.as_bytes());
+                    let ref_id_bb = hash_to_bb(ref_id);
+                    vm_effects.push(VmEffect::DropRef {
+                        cell_id: cell_id_bb,
+                        holder_federation: ref_id_bb,
+                        current_refcount: 0,
+                    });
+                }
+                Effect::ValidateHandoff { cert_hash, recipient_pk, introducer_pk } => {
+                    let cert_bb = hash_to_bb(cert_hash);
+                    let recipient_pk_bb = hash_to_bb(recipient_pk);
+                    let introducer_pk_bb = hash_to_bb(introducer_pk);
+                    vm_effects.push(VmEffect::ValidateHandoff {
+                        certificate_hash: cert_bb,
+                        recipient_pk: recipient_pk_bb,
+                        introducer_pk: introducer_pk_bb,
+                        approved_set_root: BabyBear::ZERO,
+                    });
+                }
+
+                // -- Refusal (evidence-of-absence) ----------------------------
+                Effect::Refusal { cell, offered_action_commitment, .. } if cell == cell_id => {
+                    // Bind the offered_action_commitment so the proof
+                    // records which action was refused. RefusalReason is
+                    // not separately encoded here — the non-action witness
+                    // (proof_witness_index) carries that burden.
+                    vm_effects.push(VmEffect::EmitEvent {
+                        event_hash: hash_to_bb(offered_action_commitment),
+                    });
+                }
+
+                // Cross-cell effects not targeting this cell_id fall through
+                // silently (they are not part of this cell's proof), matching
+                // the bridge's `_ => {}` behavior for non-self effects.
+                _ => {}
             }
         }
         // Must have at least one effect for the VM.

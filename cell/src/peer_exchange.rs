@@ -418,12 +418,23 @@ impl PeerExchange {
 
     /// Stage 1: encode a stored [u8; 32] commitment as 4 BabyBear felts.
     ///
-    /// Replaces the prior 4-byte truncation (~31-bit binding) with a
-    /// full 32-byte-derived 4-felt form (~124-bit binding) via
-    /// `pyana_commit::typed::canonical_32_to_felts_4`.
+    /// Decodes the 4-felt Poseidon2 commitment from the 32-byte stored format
+    /// (4 LE u32 values in bytes 0..15). This matches the format written by
+    /// `TurnExecutor::commitment_4bb_to_bytes` and matches what
+    /// `CellState::compute_commitment_4` puts into PI[OLD_COMMIT_BASE..+4].
+    ///
+    /// Replaces the former `canonical_32_to_felts_4` call (GitHub #99 fix):
+    /// that function hashed the stored bytes, producing values unrelated to
+    /// `compute_commitment_4`'s output, causing proof verification to always fail.
     #[cfg(feature = "zkvm")]
     fn commitment_to_4bb(bytes: &[u8; 32]) -> [pyana_circuit::field::BabyBear; 4] {
-        pyana_commit::typed::canonical_32_to_felts_4(bytes)
+        use pyana_circuit::field::BabyBear;
+        [
+            BabyBear::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap())),
+            BabyBear::new(u32::from_le_bytes(bytes[4..8].try_into().unwrap())),
+            BabyBear::new(u32::from_le_bytes(bytes[8..12].try_into().unwrap())),
+            BabyBear::new(u32::from_le_bytes(bytes[12..16].try_into().unwrap())),
+        ]
     }
 
     /// Get our current view of a peer's state commitment.

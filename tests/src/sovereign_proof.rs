@@ -25,11 +25,17 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     cell.mode = CellMode::Sovereign;
     let cell_id = cell.id();
 
-    // Compute the initial state commitment using the Effect VM's Poseidon2 scheme.
-    // The executor converts stored commitments to BabyBear for proof verification,
-    // so we must store the Poseidon2-based commitment (not blake3).
+    // Compute the initial 4-felt Poseidon2 commitment (matches what CellState::compute_commitment_4
+    // puts into PI[OLD_COMMIT_BASE..+4] during trace generation, and what commitment_to_4bb reads
+    // back from the ledger during verification). Fixes GitHub #99 / stage2-canonical-vs-poseidon-mismatch.
     let vm_state = VmCellState::new(balance, cell.state.nonce() as u32);
-    let commitment = TurnExecutor::babybear_to_commitment(vm_state.state_commitment);
+    let commit_4bb = VmCellState::compute_commitment_4(
+        vm_state.balance,
+        vm_state.nonce,
+        &vm_state.fields,
+        vm_state.capability_root,
+    );
+    let commitment = TurnExecutor::commitment_4bb_to_bytes(commit_4bb);
 
     // Store the cell state in the cclerk.
     let mut cclerk = cclerk;
@@ -46,7 +52,6 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
 }
 
 #[test]
-#[ignore = "REVIEW[stage2-canonical-vs-poseidon-mismatch]: setup_sovereign_cell stores babybear_to_commitment(vm.state_commitment) (4-byte LE pack) but the executor verifies via commitment_to_4bb (Poseidon2 over canonical_32_to_felts_4) — the two paths are not inverses. Aligning requires either (a) make trace gen accept the Cell-canonical 4-felt form, or (b) replace canonical_32_to_felts_4 in the verifier with compute_commitment_4 from cell state. Stage 2 structural followup. Parallel gap documented in turn/src/tests.rs REVIEW[stage2-canonical-vs-poseidon-mismatch]."]
 fn test_proof_carrying_sovereign_turn_accepted() {
     let (mut cclerk, cell_id, mut ledger) = setup_sovereign_cell(1000);
 
@@ -101,7 +106,6 @@ fn test_proof_carrying_sovereign_turn_accepted() {
 }
 
 #[test]
-#[ignore = "REVIEW[stage2-canonical-vs-poseidon-mismatch]: same commitment-hashing path mismatch as test_proof_carrying_sovereign_turn_accepted; blocked until Stage 2 alignment."]
 fn test_proof_carrying_turn_tampered_commitment_rejected() {
     let (mut cclerk, cell_id, mut ledger) = setup_sovereign_cell(1000);
 
