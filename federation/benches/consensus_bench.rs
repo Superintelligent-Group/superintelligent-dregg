@@ -1,13 +1,13 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use hints::{PartialSignature, sign as bls_sign};
-use pyana_federation::{FederationCommittee, MemberSecret, generate_test_committee};
+use pyana_federation::generate_test_committee;
 
 // =============================================================================
 // BLS Partial Signature benchmarks
 // =============================================================================
 
 fn bench_bls_partial_sign(c: &mut Criterion) {
-    let (committee, secrets) = generate_test_committee(5, 3).unwrap();
+    let (_committee, secrets) = generate_test_committee(5, 3).unwrap();
     let msg = b"revocation-block-42";
 
     c.bench_function("bls_partial_sign", |b| {

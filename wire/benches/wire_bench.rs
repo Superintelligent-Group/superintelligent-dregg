@@ -114,20 +114,28 @@ fn bench_throughput(c: &mut Criterion) {
 
 fn bench_stark_over_wire(c: &mut Criterion) {
     use pyana_circuit::field::BabyBear;
-    use pyana_circuit::stark::{self, MerkleStarkAir, generate_merkle_trace, proof_to_bytes};
+    use pyana_circuit::stark::{self, proof_to_bytes};
+    use pyana_circuit::dsl::descriptors::merkle_poseidon2_circuit;
+    use pyana_circuit::dsl::membership::prove_membership_dsl;
 
-    // Generate a real STARK proof
-    let siblings = [
-        [100u32, 200, 300],
-        [400, 500, 600],
-        [700, 800, 900],
-        [1000, 1100, 1200],
+    // Generate a real STARK proof using the Poseidon2-based membership circuit
+    // (replaces the deprecated MerkleStarkAir which uses a linear hash binding).
+    let leaf = BabyBear::new(12345);
+    let siblings: Vec<[BabyBear; 3]> = vec![
+        [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
+        [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
+        [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
+        [BabyBear::new(1000), BabyBear::new(1100), BabyBear::new(1200)],
     ];
-    let positions = [0u32, 1, 2, 3];
-    let (trace, public_inputs) = generate_merkle_trace(12345, &siblings, &positions);
-    let air = MerkleStarkAir;
-    let proof = stark::prove(&air, &trace, &public_inputs);
+    let positions: Vec<u8> = vec![0, 1, 2, 3];
+    let proof = prove_membership_dsl(leaf, &siblings, &positions)
+        .expect("bench proof generation must succeed");
     let proof_bytes = proof_to_bytes(&proof);
+
+    // Capture the circuit and public inputs for the verify step.
+    let circuit = merkle_poseidon2_circuit();
+    let root = proof.public_inputs[1];
+    let public_inputs = vec![leaf, BabyBear::new(root)];
 
     // Wrap in a WireMessage
     let msg = WireMessage::PresentToken {
@@ -146,7 +154,7 @@ fn bench_stark_over_wire(c: &mut Criterion) {
 
             // Extract proof and verify STARK
             if let WireMessage::PresentToken { proof: _, .. } = &decoded {
-                black_box(stark::verify(&air, &proof, &public_inputs).unwrap());
+                black_box(stark::verify(&circuit, &proof, &public_inputs).unwrap());
             }
         });
     });

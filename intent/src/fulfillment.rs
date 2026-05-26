@@ -1965,7 +1965,6 @@ mod tests {
             PredicateType, PredicateWitness, compute_fact_commitment, prove_predicate,
         };
 
-        let intent = test_intent(vec!["read"], None);
         // Create an intent with a predicate requirement
         let spec = MatchSpec {
             actions: vec![ActionPattern {

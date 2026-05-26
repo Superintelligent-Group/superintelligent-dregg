@@ -295,7 +295,7 @@ fn make_delivery_setup(
 #[test]
 fn captp_delivered_loop_closes_executor_accepts_and_commits() {
     use pyana_cell::{Cell, Ledger, Permissions, permissions::AuthRequired as P};
-    use pyana_turn::action::{Authorization, Effect};
+    use pyana_turn::action::Authorization;
     use pyana_turn::executor::{ComputronCosts, TurnExecutor};
 
     let target_cell = cell(0x42);

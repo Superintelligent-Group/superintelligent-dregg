@@ -13,7 +13,7 @@
 //!      known-sender path directly via `is_valid`).
 //!   5. Duplicate-signer replay does not count toward quorum.
 
-use pyana_types::{AttestedRoot, FederationId, PublicKey, Signature, generate_keypair, sign};
+use pyana_types::{AttestedRoot, FederationId, PublicKey, generate_keypair, sign};
 
 // ---------------------------------------------------------------------------
 // Helper
