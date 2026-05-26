@@ -654,7 +654,7 @@ mod tests {
     use crate::poseidon2_air::create_poseidon2_test_witness;
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: generates a real Plonky3 Merkle-membership proof (degree-7 AIR, 4-level tree); too slow for CI but structurally sound — run manually to validate the prover"]
     fn plonky3_prove_verify_basic() {
         let leaf = BabyBear::new(42424242);
         let witness = create_poseidon2_test_witness(leaf, 4);
@@ -707,7 +707,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: end-to-end prove_membership_plonky3 with a real Plonky3 proof; structurally sound, too slow for CI"]
     fn plonky3_prove_membership_end_to_end() {
         let leaf = BabyBear::new(7777);
         let witness = create_poseidon2_test_witness(leaf, 4);
@@ -724,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: depth-8 Plonky3 Merkle proof (8-row trace); structurally sound, too slow for CI"]
     fn plonky3_depth_8() {
         let leaf = BabyBear::new(999999);
         let witness = create_poseidon2_test_witness(leaf, 8);
@@ -737,7 +737,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW+RELEASE-ONLY: soundness test — forged parent hash must be rejected by inline Poseidon2 constraints; requires --release (debug prover panics before producing proof), too slow for CI"]
     #[cfg(not(debug_assertions))]
     fn plonky3_forged_parent_rejected() {
         // Key soundness test: a malicious prover forges a hash step.
@@ -876,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: minimal degree-7 AIR prove+verify (4 rows); diagnostic test to isolate config from AIR logic, too slow for CI"]
     fn plonky3_minimal_degree7_prove_verify() {
         // Create a 4-row trace where col0 = some values, col1 = col0^7
         let config = create_config();
@@ -903,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: minimal degree-7 AIR with 256 rows; rules out small-trace FRI issues, too slow for CI"]
     fn plonky3_minimal_degree7_more_rows() {
         // Try with 256 rows to rule out small-trace issues
         let config = create_config();
@@ -950,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: MulAir7 (a^6 * b == c, degree 7) prove+verify with our Plonky3 config; diagnostic, too slow for CI"]
     fn plonky3_mulair7_our_config() {
         let config = create_config();
         let air = MulAir7;
@@ -1002,7 +1002,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: degree-2 AIR prove+verify (16 rows); parametric config diagnostic, too slow for CI"]
     fn plonky3_minimal_degree2() {
         let config = create_config();
         let air = MinimalDegreeNAir::<2>;
@@ -1027,7 +1027,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: degree-3 AIR prove+verify (16 rows); parametric config diagnostic, too slow for CI"]
     fn plonky3_minimal_degree3() {
         let config = create_config();
         let air = MinimalDegreeNAir::<3>;
@@ -1052,7 +1052,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: degree-4 AIR prove+verify (16 rows); parametric config diagnostic, too slow for CI"]
     fn plonky3_minimal_degree4() {
         let config = create_config();
         let air = MinimalDegreeNAir::<4>;
@@ -1069,7 +1069,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: degree-5 AIR prove+verify (16 rows); parametric config diagnostic, too slow for CI"]
     fn plonky3_minimal_degree5() {
         let config = create_config();
         let air = MinimalDegreeNAir::<5>;
@@ -1086,7 +1086,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: degree-6 AIR prove+verify (16 rows); parametric config diagnostic, too slow for CI"]
     fn plonky3_minimal_degree6() {
         let config = create_config();
         let air = MinimalDegreeNAir::<6>;
@@ -1103,7 +1103,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "SLOW: non-power-of-2 depth (3→4 padding) Plonky3 Merkle proof; structurally sound, too slow for CI"]
     fn plonky3_non_power_of_2_depth() {
         // Depth 3 gets padded to 4
         let leaf = BabyBear::new(12345);
