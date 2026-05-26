@@ -37,7 +37,7 @@
 //!    the final proof against it.
 
 use crate::body_membership::MembershipEntry;
-use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationStarkAir, DerivationWitness};
+use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
 use crate::field::BabyBear;
 use crate::poseidon2::hash_4_to_1;
 use crate::stark::{self, StarkProof};
@@ -221,25 +221,9 @@ pub fn prove_cross_state_derivation_with_depth(
 }
 
 /// Generate a STARK proof for a single derivation witness.
-#[allow(deprecated)]
 fn prove_source_derivation_stark(witness: &DerivationWitness) -> StarkProof {
-    use crate::constraint_prover::Air;
-    use crate::derivation_air::DerivationAir;
-
-    let air = DerivationStarkAir::new(witness.clone());
-    let derivation_air = DerivationAir::new(witness.clone());
-
-    // Generate trace and public inputs.
-    let (trace, public_inputs) = derivation_air.generate_trace();
-
-    // Pad to at least 2 rows (power-of-two requirement for STARK).
-    let padded_len = trace.len().next_power_of_two().max(2);
-    let mut padded_trace = trace;
-    while padded_trace.len() < padded_len {
-        padded_trace.push(padded_trace.last().unwrap().clone());
-    }
-
-    stark::prove(&air, &padded_trace, &public_inputs)
+    crate::dsl::derivation::prove_derivation_dsl(witness)
+        .expect("honestly-constructed derivation witness should always prove")
 }
 
 /// Build the final combining derivation witness.

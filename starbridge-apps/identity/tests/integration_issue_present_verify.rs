@@ -17,9 +17,10 @@
 //! - Revocation root monotonicity enforcement through the executor.
 
 use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
+use pyana_cell::{CellProgram, StateConstraint};
 use starbridge_identity::{
     AttrValue, CredentialAttributes, IssuerKeys, Predicate, PredicateRequest, PresentationOptions,
-    RevocationRegistry, VerificationOptions, build_issue_credential_action,
+    REVOCATION_ROOT_SLOT, RevocationRegistry, VerificationOptions, build_issue_credential_action,
     build_present_credential_action, build_revoke_credential_action,
     build_verify_presentation_action, issue, kyc_schema, present, present_anonymous, revoke,
     verify,
@@ -36,13 +37,25 @@ fn fixture_cipherclerk() -> AppCipherclerk {
 fn fixture_executor(cipherclerk: &AppCipherclerk) -> (EmbeddedExecutor, CellId) {
     let executor = EmbeddedExecutor::new(cipherclerk, "default");
     let cell = executor.cell_id();
+    // Install the minimal program that enforces revocation-root monotonicity,
+    // so the executor rejects rollback attempts in the adversarial test.
+    executor.install_program(
+        cell,
+        CellProgram::Predicate(vec![StateConstraint::Monotonic {
+            index: REVOCATION_ROOT_SLOT as u8,
+        }]),
+    );
     (executor, cell)
 }
 
 fn fixture_issuer() -> IssuerKeys {
+    // Poseidon2-path federation root (matches hash_4_to_1 / DSL circuit).
     IssuerKeys::new(
         [100u8; 32],
-        [50u8; 32],
+        [
+            3, 154, 242, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0,
+        ],
         b"integration-test",
         "starbridge-identity",
     )
@@ -146,6 +159,9 @@ fn executor_full_issue_present_verify_pipeline_accept_flag_is_one() {
         &pyana_token::AuthRequest {
             action: Some("read".into()),
             app_id: Some("integration-test".into()),
+            user_id: Some(
+                "0909090909090909090909090909090909090909090909090909090909090909".into(),
+            ),
             now: Some(1_700_000_000),
             ..Default::default()
         },
@@ -303,6 +319,11 @@ fn executor_verify_revoked_presentation_emits_reject_event() {
     let presentation = present(
         &credential,
         &pyana_token::AuthRequest {
+            action: Some("read".into()),
+            app_id: Some("integration-test".into()),
+            user_id: Some(
+                "0909090909090909090909090909090909090909090909090909090909090909".into(),
+            ),
             now: Some(1_700_000_000),
             ..Default::default()
         },
@@ -357,6 +378,11 @@ fn executor_anonymous_presentation_action_emits_zero_holder_commitment() {
     let presentation = present_anonymous(
         &credential,
         &pyana_token::AuthRequest {
+            action: Some("read".into()),
+            app_id: Some("integration-test".into()),
+            user_id: Some(
+                "0909090909090909090909090909090909090909090909090909090909090909".into(),
+            ),
             now: Some(1_700_000_000),
             ..Default::default()
         },

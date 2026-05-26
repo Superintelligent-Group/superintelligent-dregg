@@ -430,7 +430,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// This replicates `AgentCipherclerk::compute_federation_root_bb` so the bounty board's
 /// root matches what the cclerk produces as public input in its STARK proof.
 fn compute_synthetic_federation_root(issuer_key: &[u8; 32]) -> BabyBear {
-    use pyana_circuit::merkle_air::MerkleAir;
+    use pyana_circuit::merkle_air::compute_parent_poseidon2;
 
     let issuer_hash = bytes_to_babybear(issuer_key);
     let depth = 8;
@@ -442,7 +442,7 @@ fn compute_synthetic_federation_root(issuer_key: &[u8; 32]) -> BabyBear {
             BabyBear::new(hash_index(i, 1, issuer_key)),
             BabyBear::new(hash_index(i, 2, issuer_key)),
         ];
-        current = MerkleAir::compute_parent(current, position, &siblings);
+        current = compute_parent_poseidon2(current, position, &siblings);
     }
     current
 }

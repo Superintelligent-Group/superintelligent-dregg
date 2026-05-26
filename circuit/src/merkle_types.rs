@@ -4,7 +4,31 @@
 
 use crate::constraint_prover::{Air, Constraint};
 use crate::field::BabyBear;
-use crate::poseidon2::hash_fact;
+
+/// Compute a 4-ary Merkle parent using Poseidon2 `hash_4_to_1`.
+///
+/// The `current` node is placed at `position` among four children, and the
+/// three `siblings` fill the remaining slots. This matches the hashing used
+/// by the DSL `merkle_poseidon2_circuit()` and `build_shared_tree`.
+pub fn compute_parent_poseidon2(
+    current: BabyBear,
+    position: u8,
+    siblings: &[BabyBear; 3],
+) -> BabyBear {
+    if position > 3 {
+        return BabyBear::ZERO;
+    }
+    let mut children = [BabyBear::ZERO; 4];
+    children[position as usize] = current;
+    let mut sib_idx = 0;
+    for i in 0..4u8 {
+        if i != position {
+            children[i as usize] = siblings[sib_idx];
+            sib_idx += 1;
+        }
+    }
+    crate::poseidon2::hash_4_to_1(&children)
+}
 
 /// The tree depth (number of levels from leaf to root).
 pub const TREE_DEPTH: usize = 16;
@@ -53,21 +77,6 @@ impl MerkleAir {
     pub fn new(witness: MerkleWitness) -> Self {
         Self { witness }
     }
-
-    /// Compute what the parent hash should be given the current hash, position, and siblings.
-    /// Uses hash_fact(current, [sib0, sib1, sib2, position]) to match the DSL circuit's
-    /// ConstraintExpr::Hash constraint.
-    /// If position is out of range (>3), returns ZERO (constraint will catch this).
-    pub fn compute_parent(current: BabyBear, position: u8, siblings: &[BabyBear; 3]) -> BabyBear {
-        if position > 3 {
-            return BabyBear::ZERO;
-        }
-        let position_bb = BabyBear::new(position as u32);
-        hash_fact(
-            current,
-            &[siblings[0], siblings[1], siblings[2], position_bb],
-        )
-    }
 }
 
 impl Air for MerkleAir {
@@ -93,7 +102,7 @@ impl Air for MerkleAir {
                     let position = row[col::POSITION].0 as u8;
                     let siblings = [row[col::SIB0], row[col::SIB1], row[col::SIB2]];
                     let parent = row[col::PARENT];
-                    let expected = MerkleAir::compute_parent(current, position, &siblings);
+                    let expected = compute_parent_poseidon2(current, position, &siblings);
                     parent - expected
                 }),
             },
@@ -116,7 +125,7 @@ impl Air for MerkleAir {
         let mut trace = Vec::new();
         let mut current = w.leaf_hash;
         for level in &w.levels {
-            let parent = MerkleAir::compute_parent(current, level.position, &level.siblings);
+            let parent = compute_parent_poseidon2(current, level.position, &level.siblings);
             trace.push(vec![
                 current,
                 level.siblings[0],
@@ -144,7 +153,7 @@ pub fn create_test_witness(leaf_hash: BabyBear, depth: usize) -> MerkleWitness {
             BabyBear::new((i * 3 + 2) as u32),
             BabyBear::new((i * 3 + 3) as u32),
         ];
-        let parent = MerkleAir::compute_parent(current, position, &siblings);
+        let parent = compute_parent_poseidon2(current, position, &siblings);
         levels.push(MerkleLevelWitness { position, siblings });
         current = parent;
     }

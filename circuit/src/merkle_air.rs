@@ -4,5 +4,6 @@
 //! Legacy types are defined in [`crate::merkle_types`].
 
 pub use crate::merkle_types::{
-    MERKLE_AIR_WIDTH, MerkleAir, MerkleLevelWitness, MerkleWitness, TREE_DEPTH, create_test_witness,
+    MERKLE_AIR_WIDTH, MerkleAir, MerkleLevelWitness, MerkleWitness, TREE_DEPTH,
+    compute_parent_poseidon2, create_test_witness,
 };

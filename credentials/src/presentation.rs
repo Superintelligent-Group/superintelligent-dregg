@@ -210,10 +210,21 @@ fn present_impl(
         features.push(format!("{}:{}", name, hex_encode(&term)));
     }
 
+    // Bind the presentation to the requested app/action so that the bridge
+    // authorization trace can derive `allow` via standard_policy().
+    // Credentials are identity proofs; the holder attenuates them to the
+    // specific app at presentation time (standard macaroon semantics).
+    let mut apps = Vec::new();
+    if let Some(app_id) = &request.app_id {
+        let actions = request.action.as_deref().unwrap_or("*");
+        apps.push((app_id.clone(), actions.to_string()));
+    }
+
     let att = pyana_token::Attenuation {
         confine_user: Some(holder_user),
         features,
         not_after: credential.not_after,
+        apps,
         ..Default::default()
     };
     builder.add_attenuation(&att);

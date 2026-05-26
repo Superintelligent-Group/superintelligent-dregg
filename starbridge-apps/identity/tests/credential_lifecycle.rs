@@ -44,9 +44,13 @@ fn fixture_cell(seed: u8) -> CellId {
 }
 
 fn fixture_issuer() -> IssuerKeys {
+    // Poseidon2-path federation root (matches hash_4_to_1 / DSL circuit).
     IssuerKeys::new(
         [100u8; 32],
-        [50u8; 32],
+        [
+            3, 154, 242, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0,
+        ],
         b"starbridge-identity-test",
         "starbridge-identity",
     )
@@ -56,6 +60,7 @@ fn fixture_request() -> AuthRequest {
     AuthRequest {
         action: Some("read".into()),
         app_id: Some("starbridge-identity-test".into()),
+        user_id: Some("0909090909090909090909090909090909090909090909090909090909090909".into()),
         now: Some(1_700_000_000),
         ..Default::default()
     }

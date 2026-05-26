@@ -63,7 +63,7 @@ pub const FOLD_DSL_PI_COUNT: usize = 6;
 // ============================================================================
 
 use crate::constraint_prover::{Air, Constraint};
-use crate::merkle_types::{MerkleAir, MerkleLevelWitness, MerkleWitness};
+use crate::merkle_types::{MerkleLevelWitness, MerkleWitness};
 use crate::poseidon2::{hash_4_to_1, hash_fact, hash_many};
 
 pub const FOLD_AIR_WIDTH: usize = 12;
@@ -85,16 +85,8 @@ impl RemovedFact {
         if proof.leaf_hash != self.hash() {
             return None;
         }
-        // Try hash_fact path first (synthetic/single-member proofs from build_membership_proof).
+        // Poseidon2 hash_4_to_1 path (multi-member proofs from build_shared_tree).
         let mut current = proof.leaf_hash;
-        for level in &proof.levels {
-            current = MerkleAir::compute_parent(current, level.position, &level.siblings);
-        }
-        if current == old_root {
-            return Some(current);
-        }
-        // Fallback: try hash_4_to_1 path (multi-member proofs from build_shared_tree).
-        current = proof.leaf_hash;
         for level in &proof.levels {
             let mut children = [BabyBear::ZERO; 4];
             let mut sib_idx = 0;
@@ -405,6 +397,7 @@ pub fn build_shared_tree(leaves: &[BabyBear], depth: usize) -> (BabyBear, Vec<Me
 }
 
 pub fn build_membership_proof(leaf_hash: BabyBear, depth: usize) -> MerkleWitness {
+    use crate::merkle_air::compute_parent_poseidon2;
     let mut current = leaf_hash;
     let mut levels = Vec::with_capacity(depth);
     for i in 0..depth {
@@ -414,7 +407,7 @@ pub fn build_membership_proof(leaf_hash: BabyBear, depth: usize) -> MerkleWitnes
             BabyBear::new((leaf_hash.0.wrapping_add(i as u32 * 7 + 2)) % crate::field::BABYBEAR_P),
             BabyBear::new((leaf_hash.0.wrapping_add(i as u32 * 7 + 3)) % crate::field::BABYBEAR_P),
         ];
-        let parent = MerkleAir::compute_parent(current, position, &siblings);
+        let parent = compute_parent_poseidon2(current, position, &siblings);
         levels.push(MerkleLevelWitness { position, siblings });
         current = parent;
     }

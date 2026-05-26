@@ -42,6 +42,10 @@ pub mod rule_ids {
     pub const SERVICE_ACTION_SECURE: u32 = 41;
     /// deny if valid_after($start), request_time($t), $t < $start (not-before enforcement)
     pub const NOT_BEFORE_DENY: u32 = 50;
+    /// deny if valid_until($exp), request_time($t), $t >= $exp (expired token enforcement)
+    pub const EXPIRED_DENY: u32 = 51;
+    /// deny if confine_user($uid), request_user($u), $u != $uid (user confinement enforcement)
+    pub const CONFINE_USER_DENY: u32 = 52;
 }
 
 /// Returns the standard pyana authorization policy rule set.
@@ -225,6 +229,29 @@ pub fn standard_policy() -> Vec<Rule> {
             ],
             checks: vec![
                 Check::LessThan(Term::Var(1), Term::Var(0)), // $t < $start → deny
+            ],
+        },
+        // Rule 51: deny if valid_until($exp), request_time($t), $t >= $exp
+        // Expired-token enforcement: deny access after the token's expiry time.
+        // This catches tokens that Rule 40/41 would otherwise allow.
+        Rule {
+            id: rule_ids::EXPIRED_DENY,
+            head: Atom {
+                predicate: symbol_from_str("deny"),
+                terms: vec![],
+            },
+            body: vec![
+                Atom {
+                    predicate: symbol_from_str("valid_until"),
+                    terms: vec![Term::Var(0)], // $exp
+                },
+                Atom {
+                    predicate: symbol_from_str("request_time"),
+                    terms: vec![Term::Var(1)], // $t
+                },
+            ],
+            checks: vec![
+                Check::GreaterThanOrEqual(Term::Var(1), Term::Var(0)), // $t >= $exp → deny
             ],
         },
     ];

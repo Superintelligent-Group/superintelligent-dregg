@@ -122,6 +122,8 @@ fn enforce_budget_and_revocation(
 ) -> Result<(), AuthError> {
     let budget_pred = FieldElement::from_symbol("budget");
     let revocable_pred = FieldElement::from_symbol("revocable");
+    let confine_user_pred = FieldElement::from_symbol("confine_user");
+    let valid_until_pred = FieldElement::from_symbol("valid_until");
 
     let mut budgets: Vec<(String, u64)> = Vec::new();
     let mut revocable_ids: Vec<String> = Vec::new();
@@ -140,6 +142,33 @@ fn enforce_budget_and_revocation(
             let id_str = symbols.resolve(fact.terms[0]).unwrap_or("").to_string();
             if !id_str.is_empty() {
                 revocable_ids.push(id_str);
+            }
+        } else if fact.predicate == confine_user_pred {
+            // confine_user(uid) — unary fact
+            let allowed_user = symbols.resolve(fact.terms[0]).unwrap_or("").to_string();
+            if !allowed_user.is_empty() {
+                match &request.user_id {
+                    Some(request_user) => {
+                        if request_user != &allowed_user {
+                            return Err(AuthError::Denied);
+                        }
+                    }
+                    None => {
+                        return Err(AuthError::Denied);
+                    }
+                }
+            }
+        } else if fact.predicate == valid_until_pred {
+            // valid_until(timestamp) — unary fact
+            let expiry = field_element_to_int(&fact.terms[0]).unwrap_or(0);
+            let now = request.now.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64
+            });
+            if now >= expiry {
+                return Err(AuthError::Denied);
             }
         }
     }

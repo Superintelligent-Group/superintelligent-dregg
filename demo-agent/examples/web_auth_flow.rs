@@ -13,7 +13,7 @@ use std::time::Instant;
 use pyana_bridge::present::{bytes_to_babybear, hash_index};
 use pyana_bridge::{BridgePresentationBuilder, BridgePresentationProof};
 use pyana_circuit::BabyBear;
-use pyana_circuit::merkle_air::MerkleAir;
+
 use pyana_circuit::stark;
 use pyana_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 
@@ -31,6 +31,7 @@ fn short_hex(bytes: &[u8]) -> String {
 }
 
 fn compute_federation_root_bb(issuer_key: &[u8; 32]) -> BabyBear {
+    use pyana_circuit::merkle_air::compute_parent_poseidon2;
     let issuer_hash = bytes_to_babybear(issuer_key);
     let depth = 8;
     let mut current = issuer_hash;
@@ -41,7 +42,7 @@ fn compute_federation_root_bb(issuer_key: &[u8; 32]) -> BabyBear {
             BabyBear::new(hash_index(i, 1, issuer_key)),
             BabyBear::new(hash_index(i, 2, issuer_key)),
         ];
-        current = MerkleAir::compute_parent(current, position, &siblings);
+        current = compute_parent_poseidon2(current, position, &siblings);
     }
     current
 }

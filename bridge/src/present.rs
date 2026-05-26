@@ -17,6 +17,7 @@ use pyana_circuit::binding::WideHash;
 use pyana_circuit::derivation_air::{CircuitRule, DerivationWitness};
 use pyana_circuit::fold_types::{FoldWitness, RemovedFact};
 use pyana_circuit::merkle_air::{MerkleAir, MerkleLevelWitness, MerkleWitness};
+use pyana_circuit::merkle_types::compute_parent_poseidon2;
 use pyana_circuit::poseidon2;
 use pyana_circuit::stark;
 use pyana_circuit::{
@@ -710,8 +711,8 @@ impl BridgePresentationBuilder {
         let mut final_state_clone = final_state.clone();
         let final_root_bytes = final_state_clone.root();
 
-        // 4. Build the circuit witness.
-        let circuit_witness = self.build_circuit_witness(&trace, request)?;
+        // 4. Build the circuit witness (Poseidon2 path — legacy linear path removed).
+        let circuit_witness = self.build_circuit_witness_poseidon2(&trace, request)?;
 
         // 5. Generate the presentation proof.
         let air = PresentationAir::new(circuit_witness.clone());
@@ -832,61 +833,6 @@ impl BridgePresentationBuilder {
     /// forgeable algebraic binding (parent = current + sib0 + sib1 + sib2 + position).
     /// An adversary can find collisions in polynomial time. This method is retained
     /// ONLY for internal benchmarking of proof generation throughput.**
-    ///
-    /// For production use, call [`prove`](Self::prove) which uses Poseidon2.
-    ///
-    /// This method is intentionally NOT public to prevent misuse by external callers.
-    #[cfg(any(test, feature = "test-utils"))]
-    #[deprecated(
-        note = "prove_linear uses a trivially forgeable AIR (linear sum). NEVER use in production. Use prove() with Poseidon2 instead."
-    )]
-    #[allow(deprecated)]
-    pub fn prove_linear(
-        &mut self,
-        request: &AuthRequest,
-    ) -> Result<BridgePresentationProof, AuthError> {
-        // 1. Get the final state.
-        let final_step = self.chain.last().ok_or(AuthError::EmptyState)?;
-        let final_state = &final_step.state;
-
-        // 2. Evaluate authorization against the auth_state.
-        let trace = authorize::authorize_with_trace(&self.auth_state, request, &self.symbols)?;
-
-        // 3. Compute the final state root.
-        let mut final_state_clone = final_state.clone();
-        let final_root_bytes = final_state_clone.root();
-
-        // 4. Build the circuit witness (linear binding).
-        let circuit_witness = self.build_circuit_witness(&trace, request)?;
-
-        // 5. Generate the presentation proof using the linear STARK path.
-        let air = PresentationAir::new(circuit_witness.clone());
-        let verification = air.verify_all();
-
-        let stark_proof = air
-            .prove_stark()
-            .ok_or_else(|| AuthError::InvalidRequest("STARK proof generation failed".into()))?;
-
-        // Also generate the constraint proof for the circuit_proof field.
-        let circuit_proof = air
-            .prove()
-            .ok_or_else(|| AuthError::InvalidRequest("proof generation failed".into()))?;
-
-        Ok(BridgePresentationProof {
-            circuit_proof,
-            real_stark_proof: Some(stark_proof),
-            ivc_proof: None,
-            validated_ivc_proof: None,
-            trace,
-            chain_length: self.chain.len(),
-            final_state_root: final_root_bytes,
-            federation_root: self.federation_root,
-            verification,
-            revealed_facts_commitment: self.revealed_facts_commitment,
-            composition_commitment: WideHash::ZERO, // Linear AIR (legacy, test-only)
-        })
-    }
-
     /// Generate an IVC-based presentation proof for the given authorization request.
     ///
     /// This uses `PresentationAir::prove_ivc()` to accumulate the entire fold chain
@@ -1227,7 +1173,7 @@ impl BridgePresentationBuilder {
 
         // Build the issuer membership witness.
         let issuer_key_hash = bytes_to_babybear(&self.issuer_key);
-        let issuer_membership = self.build_issuer_membership(issuer_key_hash)?;
+        let issuer_membership = self.build_issuer_membership_poseidon2(issuer_key_hash)?;
 
         // Generate fresh presentation randomness for the presentation tag.
         let presentation_randomness = generate_presentation_randomness();
@@ -1737,177 +1683,10 @@ impl BridgePresentationBuilder {
     /// If a federation tree was attached via `with_federation_tree()`, this uses
     /// a real Merkle proof from the tree. In test/test-utils builds, it falls back
     /// to a synthetic deterministic path.
-    ///
-    /// In production builds without a federation tree, returns
-    /// `Err(AuthError::IssuerNotInFederation)`.
-    pub fn build_issuer_membership(
-        &self,
-        issuer_key_hash: BabyBear,
-    ) -> Result<MerkleWitness, AuthError> {
-        // Delegation path: use pre-generated membership proof if available.
-        // The delegator pre-generated this proof using the BLAKE3-derived proof key
-        // (which IS the tree leaf). The delegatee passes this proof directly.
-        if let Some(proof) = &self.pre_generated_membership_proof {
-            return self.build_issuer_membership_from_proof(proof, issuer_key_hash);
-        }
-
-        // Production path: use real federation tree if available.
-        if let Some(tree) = &self.federation_tree {
-            return self.build_issuer_membership_from_tree(tree, issuer_key_hash);
-        }
-
-        // TESTING FALLBACK: synthetic/deterministic Merkle path.
-        // Only available in test builds or with the `test-utils` feature.
-        #[cfg(any(test, feature = "test-utils"))]
-        {
-            self.build_issuer_membership_synthetic(issuer_key_hash)
-        }
-
-        #[cfg(not(any(test, feature = "test-utils")))]
-        {
-            Err(AuthError::IssuerNotInFederation)
-        }
-    }
-
-    /// Build issuer membership from a real federation Merkle tree.
-    ///
-    /// Looks up the issuer key's leaf hash in the tree and converts the resulting
-    /// `MerkleProof` (with `[u8; 32]` siblings) into the circuit's `MerkleWitness`
-    /// (with `BabyBear` field element siblings).
-    fn build_issuer_membership_from_tree(
-        &self,
-        tree: &MerkleTree,
-        issuer_key_hash: BabyBear,
-    ) -> Result<MerkleWitness, AuthError> {
-        // The federation tree stores issuer keys as leaf data.
-        // Look up the issuer key's membership proof.
-        let proof = tree
-            .membership_proof(&self.issuer_key)
-            .ok_or(AuthError::IssuerNotInFederation)?;
-
-        // Convert the MerkleProof (byte-level) to a circuit MerkleWitness (field-level).
-        let mut levels = Vec::with_capacity(proof.path_indices.len());
-        let mut current = issuer_key_hash;
-
-        for i in 0..proof.path_indices.len() {
-            let position = proof.path_indices[i];
-            // Convert 32-byte siblings to BabyBear via Poseidon2 hash compression.
-            let siblings = [
-                bytes_to_babybear(&proof.siblings[i][0]),
-                bytes_to_babybear(&proof.siblings[i][1]),
-                bytes_to_babybear(&proof.siblings[i][2]),
-            ];
-            let parent = MerkleAir::compute_parent(current, position, &siblings);
-            levels.push(MerkleLevelWitness { position, siblings });
-            current = parent;
-        }
-
-        // The computed root must match the federation root we were configured with.
-        if current != self.federation_root_bb {
-            return Err(AuthError::IssuerNotInFederation);
-        }
-
-        Ok(MerkleWitness {
-            leaf_hash: issuer_key_hash,
-            levels,
-            expected_root: current,
-        })
-    }
-
-    /// Build issuer membership from a pre-generated MerkleProof (linear binding).
-    ///
-    /// This is used in the delegation path: the delegator pre-generated the proof
-    /// using the BLAKE3-derived proof key (`derive_key("pyana-proof-key-v1",
-    /// root_key)`), which is what the federation Merkle tree actually stores as
-    /// a leaf. We do NOT use the raw root HMAC key as a leaf.
-    ///
-    /// The delegatee receives the proof and uses its `leaf_hash` directly (which
-    /// equals `bytes_to_babybear(derived_proof_key)`); the circuit witness then
-    /// recomputes parents from this leaf along the pre-generated path.
-    fn build_issuer_membership_from_proof(
-        &self,
-        proof: &MerkleProof,
-        _issuer_key_hash: BabyBear,
-    ) -> Result<MerkleWitness, AuthError> {
-        // The pre-generated proof's leaf_hash is the BabyBear encoding of the
-        // BLAKE3-derived proof key (the actual federation tree leaf).
-        let real_leaf_hash = bytes_to_babybear(&proof.leaf_hash);
-
-        let mut levels = Vec::with_capacity(proof.path_indices.len());
-        let mut current = real_leaf_hash;
-
-        for i in 0..proof.path_indices.len() {
-            let position = proof.path_indices[i];
-            let siblings = [
-                bytes_to_babybear(&proof.siblings[i][0]),
-                bytes_to_babybear(&proof.siblings[i][1]),
-                bytes_to_babybear(&proof.siblings[i][2]),
-            ];
-            let parent = MerkleAir::compute_parent(current, position, &siblings);
-            levels.push(MerkleLevelWitness { position, siblings });
-            current = parent;
-        }
-
-        // The computed root must match the federation root.
-        if current != self.federation_root_bb {
-            return Err(AuthError::IssuerNotInFederation);
-        }
-
-        Ok(MerkleWitness {
-            leaf_hash: real_leaf_hash,
-            levels,
-            expected_root: current,
-        })
-    }
-
-    /// Synthetic/deterministic issuer membership proof (TESTING ONLY).
-    ///
-    /// Constructs a Merkle path from BLAKE3-derived sibling values. This is NOT
-    /// connected to any real federation registry. The "membership" it proves is
-    /// purely that the path was built targeting the configured `federation_root_bb`.
-    ///
-    /// Use `with_federation_tree()` for production proofs.
-    #[cfg(any(test, feature = "test-utils"))]
-    fn build_issuer_membership_synthetic(
-        &self,
-        issuer_key_hash: BabyBear,
-    ) -> Result<MerkleWitness, AuthError> {
-        let depth = 8;
-        let mut current = issuer_key_hash;
-        let mut levels = Vec::with_capacity(depth);
-
-        // Derive sibling values deterministically from the issuer key.
-        for i in 0..depth {
-            let position = (i % 4) as u8;
-            let siblings = [
-                BabyBear::new(hash_index(i, 0, &self.issuer_key)),
-                BabyBear::new(hash_index(i, 1, &self.issuer_key)),
-                BabyBear::new(hash_index(i, 2, &self.issuer_key)),
-            ];
-            let parent = MerkleAir::compute_parent(current, position, &siblings);
-            levels.push(MerkleLevelWitness { position, siblings });
-            current = parent;
-        }
-
-        // Verify that the computed root matches the expected federation root.
-        // This prevents the tautological construction from silently passing:
-        // the builder cannot fabricate membership if the federation_root is a
-        // real, externally-provided public parameter.
-        if current != self.federation_root_bb {
-            return Err(AuthError::IssuerNotInFederation);
-        }
-
-        Ok(MerkleWitness {
-            leaf_hash: issuer_key_hash,
-            levels,
-            expected_root: current,
-        })
-    }
-
     /// Build the issuer membership Merkle witness using Poseidon2 hashing.
     ///
     /// This produces a witness compatible with the DSL `merkle_poseidon2_circuit()` where
-    /// parent = hash_fact(current, [sib0, sib1, sib2, position]). The resulting proof
+    /// parent = hash_4_to_1(children arranged by position). The resulting proof
     /// is collision-resistant (unlike the linear binding which has weaker security).
     ///
     /// If a federation tree is available, it uses real tree proofs with Poseidon2
@@ -1961,7 +1740,7 @@ impl BridgePresentationBuilder {
                 bytes_to_babybear(&proof.siblings[i][2]),
             ];
 
-            let parent = MerkleAir::compute_parent(current, position, &siblings);
+            let parent = compute_parent_poseidon2(current, position, &siblings);
 
             levels.push(MerkleLevelWitness { position, siblings });
             current = parent;
@@ -2005,7 +1784,7 @@ impl BridgePresentationBuilder {
                 bytes_to_babybear(&proof.siblings[i][2]),
             ];
 
-            let parent = MerkleAir::compute_parent(current, position, &siblings);
+            let parent = compute_parent_poseidon2(current, position, &siblings);
 
             levels.push(MerkleLevelWitness { position, siblings });
             current = parent;
@@ -2043,8 +1822,7 @@ impl BridgePresentationBuilder {
                 BabyBear::new(hash_index(i, 2, &self.issuer_key)),
             ];
 
-            // Use hash_fact to match the DSL circuit's Hash constraint:
-            let parent = MerkleAir::compute_parent(current, position, &siblings);
+            let parent = compute_parent_poseidon2(current, position, &siblings);
 
             levels.push(MerkleLevelWitness { position, siblings });
             current = parent;
@@ -3533,16 +3311,12 @@ mod tests {
         let builder = BridgePresentationBuilder::new(key, test_federation_root());
         let issuer_hash = bytes_to_babybear(&key);
 
-        for result in [
-            builder.build_issuer_membership(issuer_hash),
-            builder.build_issuer_membership_poseidon2(issuer_hash),
-        ] {
-            assert!(
-                result.is_err(),
-                "Synthetic proof should fail against an unrelated federation root"
-            );
-            assert_eq!(result.unwrap_err(), AuthError::IssuerNotInFederation);
-        }
+        let result = builder.build_issuer_membership_poseidon2(issuer_hash);
+        assert!(
+            result.is_err(),
+            "Synthetic proof should fail against an unrelated federation root"
+        );
+        assert_eq!(result.unwrap_err(), AuthError::IssuerNotInFederation);
     }
 
     #[test]
@@ -3560,25 +3334,25 @@ mod tests {
                 BabyBear::new(hash_index(i, 1, &key)),
                 BabyBear::new(hash_index(i, 2, &key)),
             ];
-            current = MerkleAir::compute_parent(current, position, &siblings);
+            current = compute_parent_poseidon2(current, position, &siblings);
         }
-        let expected_root_bb_linear = current;
+        let expected_root_bb_poseidon2 = current;
 
         let builder = BridgePresentationBuilder::new_with_root_bb(
             key,
             test_federation_root(),
-            expected_root_bb_linear,
+            expected_root_bb_poseidon2,
         );
-        let result = builder.build_issuer_membership(issuer_hash);
+        let result = builder.build_issuer_membership_poseidon2(issuer_hash);
         assert!(
             result.is_ok(),
-            "Linear membership should succeed with matching root"
+            "Poseidon2 membership should succeed with matching root"
         );
 
         let witness = result.unwrap();
         assert_eq!(witness.leaf_hash, issuer_hash);
         assert_eq!(witness.levels.len(), 8);
-        assert_eq!(witness.expected_root, expected_root_bb_linear);
+        assert_eq!(witness.expected_root, expected_root_bb_poseidon2);
 
         // The Merkle AIR should verify this witness.
         let air = MerkleAir::new(witness);
@@ -3597,11 +3371,7 @@ mod tests {
                 BabyBear::new(hash_index(i, 1, &key)),
                 BabyBear::new(hash_index(i, 2, &key)),
             ];
-            let position_bb = BabyBear::new(position as u32);
-            current = poseidon2::hash_fact(
-                current,
-                &[siblings[0], siblings[1], siblings[2], position_bb],
-            );
+            current = compute_parent_poseidon2(current, position, &siblings);
         }
         let expected_root_bb_poseidon2 = current;
 
@@ -3636,11 +3406,7 @@ mod tests {
                 BabyBear::new(hash_index(i, 1, &key)),
                 BabyBear::new(hash_index(i, 2, &key)),
             ];
-            let position_bb = BabyBear::new(position as u32);
-            current = poseidon2::hash_fact(
-                current,
-                &[siblings[0], siblings[1], siblings[2], position_bb],
-            );
+            current = compute_parent_poseidon2(current, position, &siblings);
         }
         let fed_root_bb = current;
         let mut fed_root_bytes = [0u8; 32];
@@ -3708,11 +3474,7 @@ mod tests {
                 BabyBear::new(hash_index(i, 1, &key)),
                 BabyBear::new(hash_index(i, 2, &key)),
             ];
-            let position_bb = BabyBear::new(position as u32);
-            current = poseidon2::hash_fact(
-                current,
-                &[siblings[0], siblings[1], siblings[2], position_bb],
-            );
+            current = compute_parent_poseidon2(current, position, &siblings);
         }
         let fed_root_bb = current;
         let mut fed_root_bytes = [0u8; 32];
@@ -3800,11 +3562,7 @@ mod tests {
                 BabyBear::new(hash_index(i, 1, &key)),
                 BabyBear::new(hash_index(i, 2, &key)),
             ];
-            let position_bb = BabyBear::new(position as u32);
-            current = poseidon2::hash_fact(
-                current,
-                &[siblings[0], siblings[1], siblings[2], position_bb],
-            );
+            current = compute_parent_poseidon2(current, position, &siblings);
         }
         let fed_root_bb = current;
         let mut fed_root_bytes = [0u8; 32];
@@ -3995,11 +3753,7 @@ mod tests {
                 BabyBear::new(hash_index(i, 1, &key)),
                 BabyBear::new(hash_index(i, 2, &key)),
             ];
-            let position_bb = BabyBear::new(position as u32);
-            current = poseidon2::hash_fact(
-                current,
-                &[siblings[0], siblings[1], siblings[2], position_bb],
-            );
+            current = compute_parent_poseidon2(current, position, &siblings);
         }
         let fed_root_bb = current;
         let mut fed_root_bytes = [0u8; 32];

@@ -27,7 +27,7 @@ use pyana_circuit::BabyBear;
 use pyana_circuit::IvcProof;
 use pyana_circuit::PredicateType;
 use pyana_circuit::ivc::IvcBuilder;
-use pyana_circuit::merkle_air::MerkleAir;
+use pyana_circuit::merkle_air::compute_parent_poseidon2;
 use pyana_circuit::poseidon2;
 use pyana_intent::sse::EncryptedIntent;
 use pyana_intent::{CommitmentId, IntentKind, MatchSpec};
@@ -4070,7 +4070,7 @@ impl AgentCipherclerk {
                 BabyBear::new(Self::hash_index(i, 1, issuer_key)),
                 BabyBear::new(Self::hash_index(i, 2, issuer_key)),
             ];
-            current = MerkleAir::compute_parent(current, position, &siblings);
+            current = compute_parent_poseidon2(current, position, &siblings);
         }
         current
     }
@@ -4183,7 +4183,7 @@ impl AgentCipherclerk {
                 Self::bytes_to_babybear(&proof.siblings[i][2]),
             ];
 
-            current = MerkleAir::compute_parent(current, position, &siblings);
+            current = compute_parent_poseidon2(current, position, &siblings);
         }
 
         Ok(current)

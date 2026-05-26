@@ -122,10 +122,10 @@ jobs:
 
       - name: Build site
         # BASE_PATH rewrites absolute hrefs/srcs so the site works under
-        # GitHub Pages' /pyana/ subpath. Drop to "" if a custom domain (CNAME)
-        # is configured for emberian.github.io/pyana later.
+        # GitHub Pages' /dregg/ subpath. Drop to "" if a custom domain (CNAME)
+        # is configured for emberian.github.io/dregg later.
         env:
-          BASE_PATH: /pyana
+          BASE_PATH: /dregg
         run: |
           cd site
           npm install

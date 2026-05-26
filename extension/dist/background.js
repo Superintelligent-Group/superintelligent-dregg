@@ -64,7 +64,7 @@
   var DEFAULT_NODE_URL = "https://devnet.pyana.fg-goose.online";
   var DEFAULT_NODE_WSS_URL = "wss://devnet.pyana.fg-goose.online/ws";
   var DEFAULT_NODE_WS_URL = "ws://localhost:8420/ws";
-  var DISCOVERY_URL = "https://emberian.github.io/pyana/discovery.json";
+  var DISCOVERY_URL = "https://emberian.github.io/dregg/discovery.json";
   var DISCOVERY_POLL_INTERVAL = 5 * 60 * 1e3;
   var PBKDF2_ITERATIONS = 6e5;
   var DISCLOSURE_PREFS_KEY = "pyana_disclosure_prefs";

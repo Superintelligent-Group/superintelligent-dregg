@@ -21,9 +21,13 @@ use pyana_token::AuthRequest;
 // ── fixture helpers ──────────────────────────────────────────────────────────
 
 fn fixture_issuer() -> IssuerKeys {
+    // Poseidon2-path federation root for key [11u8; 32].
     IssuerKeys::new(
         [11u8; 32],
-        [99u8; 32],
+        [
+            33, 181, 62, 99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0,
+        ],
         b"integration-test-kid",
         "integration-test-issuer",
     )
@@ -53,6 +57,7 @@ fn fixture_request() -> AuthRequest {
     AuthRequest {
         action: Some("api:read".into()),
         app_id: Some("employee-portal".into()),
+        user_id: Some("4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d".into()),
         now: Some(1_700_000_000),
         ..Default::default()
     }

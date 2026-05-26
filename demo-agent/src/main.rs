@@ -50,10 +50,11 @@ fn demo_token_id() -> [u8; 32] {
     *blake3::hash(b"pyana-e2e-demo:token-domain").as_bytes()
 }
 
-/// Compute the BabyBear federation root that the synthetic Merkle path produces
-/// for a given issuer key. This matches what `BridgePresentationBuilder::build_issuer_membership`
+/// Compute the BabyBear federation root that the synthetic Poseidon2 Merkle path
+/// produces for a given issuer key. This matches what `BridgePresentationBuilder::build_issuer_membership_poseidon2`
 /// computes internally.
 fn compute_federation_root_bb(issuer_key: &[u8; 32]) -> BabyBear {
+    use pyana_circuit::merkle_air::compute_parent_poseidon2;
     let issuer_hash = bytes_to_babybear(issuer_key);
     let depth = 8;
     let mut current = issuer_hash;
@@ -64,7 +65,7 @@ fn compute_federation_root_bb(issuer_key: &[u8; 32]) -> BabyBear {
             BabyBear::new(hash_index(i, 1, issuer_key)),
             BabyBear::new(hash_index(i, 2, issuer_key)),
         ];
-        current = MerkleAir::compute_parent(current, position, &siblings);
+        current = compute_parent_poseidon2(current, position, &siblings);
     }
     current
 }

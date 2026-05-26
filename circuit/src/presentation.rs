@@ -1492,7 +1492,13 @@ pub fn generate_merkle_poseidon2_stark_proof(witness: &MerkleWitness) -> Option<
     // Sanity check: verify our own proof
     match stark::verify(&circuit, &proof, &public_inputs) {
         Ok(()) => Some(proof),
-        Err(_) => None,
+        Err(e) => {
+            eprintln!(
+                "[DEBUG generate_merkle_poseidon2_stark_proof] verify failed: {}",
+                e
+            );
+            None
+        }
     }
 }
 
@@ -1663,7 +1669,7 @@ pub fn generate_blinded_merkle_poseidon2_stark_proof(
 /// making it compatible with the DSL `merkle_poseidon2_circuit()`.
 /// Use this instead of `create_stark_compatible_witness` for production proofs.
 pub fn create_poseidon2_compatible_witness(leaf_hash: BabyBear, depth: usize) -> MerkleWitness {
-    use crate::poseidon2::hash_fact;
+    use crate::poseidon2::hash_4_to_1;
 
     let mut current = leaf_hash;
     let mut levels = Vec::with_capacity(depth);
@@ -1676,16 +1682,19 @@ pub fn create_poseidon2_compatible_witness(leaf_hash: BabyBear, depth: usize) ->
             BabyBear::new((i * 3 + 3) as u32),
         ];
 
-        // Use DSL-compatible hash: hash_fact(current, [sib0, sib1, sib2, position])
-        let parent = hash_fact(
-            current,
-            &[
-                siblings[0],
-                siblings[1],
-                siblings[2],
-                BabyBear::new(position as u32),
-            ],
-        );
+        // DSL merkle_poseidon2_circuit uses hash_4_to_1(children) where
+        // children are arranged by position: current at `position`, siblings
+        // fill the remaining slots in order.
+        let mut children = [BabyBear::ZERO; 4];
+        children[position as usize] = current;
+        let mut sib_idx = 0;
+        for j in 0..4u8 {
+            if j != position {
+                children[j as usize] = siblings[sib_idx];
+                sib_idx += 1;
+            }
+        }
+        let parent = hash_4_to_1(&children);
         levels.push(MerkleLevelWitness { position, siblings });
         current = parent;
     }
@@ -1816,7 +1825,7 @@ pub fn create_test_presentation() -> PresentationWitness {
 
 /// Helper: Create a Merkle membership witness for the issuer key in the federation.
 fn create_issuer_membership(issuer_key: BabyBear, _federation_root: BabyBear) -> MerkleWitness {
-    use crate::merkle_air::MerkleAir;
+    use crate::merkle_air::compute_parent_poseidon2;
 
     // Build a witness that chains to the federation root
     let depth = 8; // shorter tree for federation
@@ -1830,7 +1839,7 @@ fn create_issuer_membership(issuer_key: BabyBear, _federation_root: BabyBear) ->
             BabyBear::new((i * 7 + 200) as u32),
             BabyBear::new((i * 7 + 300) as u32),
         ];
-        let parent = MerkleAir::compute_parent(current, position, &siblings);
+        let parent = compute_parent_poseidon2(current, position, &siblings);
         levels.push(MerkleLevelWitness { position, siblings });
         current = parent;
     }
