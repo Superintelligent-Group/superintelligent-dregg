@@ -111,7 +111,10 @@ fn attenuate_from_either_to_signature_accepted() {
         },
     );
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_committed(), "attenuation Either→Signature must commit; got {result:?}");
+    assert!(
+        result.is_committed(),
+        "attenuation Either→Signature must commit; got {result:?}"
+    );
 
     // Post-state: cap permissions are now Signature, not Either.
     let cap = ledger
@@ -162,11 +165,23 @@ fn attenuate_widening_rejected() {
         },
     );
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_rejected(), "widening attenuation must be rejected; got {result:?}");
+    assert!(
+        result.is_rejected(),
+        "widening attenuation must be rejected; got {result:?}"
+    );
 
     // Cap permissions unchanged.
-    let cap = ledger.get(&actor_id).unwrap().capabilities.lookup(slot).unwrap();
-    assert_eq!(cap.permissions, AuthRequired::Signature, "cap permissions must be unchanged");
+    let cap = ledger
+        .get(&actor_id)
+        .unwrap()
+        .capabilities
+        .lookup(slot)
+        .unwrap();
+    assert_eq!(
+        cap.permissions,
+        AuthRequired::Signature,
+        "cap permissions must be unchanged"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +210,10 @@ fn attenuate_nonexistent_slot_rejected() {
         },
     );
     let result = executor.execute(&turn, &mut ledger);
-    assert!(result.is_rejected(), "attenuating nonexistent slot must be rejected; got {result:?}");
+    assert!(
+        result.is_rejected(),
+        "attenuating nonexistent slot must be rejected; got {result:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -236,13 +254,13 @@ fn attenuate_other_actors_cap_rejected() {
     // "cell must match the actor" guard).
     let mut forest = CallForest::new();
     let action = Action {
-        target: other_id,   // action targets OTHER
+        target: other_id, // action targets OTHER
         method: [0u8; 32],
         args: vec![],
         authorization: Authorization::Unchecked,
         preconditions: Default::default(),
         effects: vec![Effect::AttenuateCapability {
-            cell: other_id,       // trying to narrow OTHER's slot
+            cell: other_id, // trying to narrow OTHER's slot
             slot: slot_in_other,
             narrower_permissions: AuthRequired::Signature,
             narrower_effects: None,
@@ -281,8 +299,17 @@ fn attenuate_other_actors_cap_rejected() {
     );
 
     // OTHER's cap is unchanged.
-    let cap = ledger.get(&other_id).unwrap().capabilities.lookup(slot_in_other).unwrap();
-    assert_eq!(cap.permissions, AuthRequired::Either, "OTHER's cap must be unchanged");
+    let cap = ledger
+        .get(&other_id)
+        .unwrap()
+        .capabilities
+        .lookup(slot_in_other)
+        .unwrap();
+    assert_eq!(
+        cap.permissions,
+        AuthRequired::Either,
+        "OTHER's cap must be unchanged"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -321,9 +348,17 @@ fn attenuate_chained_narrowing_accepted() {
             narrower_expiry: None,
         },
     );
-    assert!(executor.execute(&t1, &mut ledger).is_committed(), "first narrowing must commit");
+    assert!(
+        executor.execute(&t1, &mut ledger).is_committed(),
+        "first narrowing must commit"
+    );
 
-    let cap = ledger.get(&actor_id).unwrap().capabilities.lookup(slot).unwrap();
+    let cap = ledger
+        .get(&actor_id)
+        .unwrap()
+        .capabilities
+        .lookup(slot)
+        .unwrap();
     assert_eq!(cap.permissions, AuthRequired::Signature);
 
     // Step 2: Signature → Impossible.
@@ -339,8 +374,20 @@ fn attenuate_chained_narrowing_accepted() {
             narrower_expiry: None,
         },
     );
-    assert!(executor.execute(&t2, &mut ledger).is_committed(), "second narrowing must commit");
+    assert!(
+        executor.execute(&t2, &mut ledger).is_committed(),
+        "second narrowing must commit"
+    );
 
-    let cap = ledger.get(&actor_id).unwrap().capabilities.lookup(slot).unwrap();
-    assert_eq!(cap.permissions, AuthRequired::Impossible, "cap must be Impossible after chained narrowing");
+    let cap = ledger
+        .get(&actor_id)
+        .unwrap()
+        .capabilities
+        .lookup(slot)
+        .unwrap();
+    assert_eq!(
+        cap.permissions,
+        AuthRequired::Impossible,
+        "cap must be Impossible after chained narrowing"
+    );
 }

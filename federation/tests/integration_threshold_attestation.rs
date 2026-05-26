@@ -8,9 +8,9 @@
 //! - QC bytes serialization round-trip preserves validity
 //! - Cross-committee confusion: QC from committee A rejected by committee B
 
-use pyana_federation::threshold::{generate_test_committee, FederationCommittee, MemberSecret};
-use pyana_federation::{FederationReceipt, FederationReceiptBody};
 use pyana_federation::identity::derive_federation_id;
+use pyana_federation::threshold::{FederationCommittee, MemberSecret, generate_test_committee};
+use pyana_federation::{FederationReceipt, FederationReceiptBody};
 use pyana_types::{CellId, generate_keypair};
 
 // =============================================================================

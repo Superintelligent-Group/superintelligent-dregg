@@ -1013,7 +1013,10 @@ mod tests {
         let root_subset = root_with_receipts(same_ledger, &stream_subset);
 
         assert_eq!(root_full.merkle_root, root_subset.merkle_root);
-        assert_ne!(root_full.receipt_stream_root, root_subset.receipt_stream_root);
+        assert_ne!(
+            root_full.receipt_stream_root,
+            root_subset.receipt_stream_root
+        );
     }
 
     #[test]

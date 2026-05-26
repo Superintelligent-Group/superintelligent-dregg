@@ -1,5 +1,44 @@
 # cross-app-e2e: Design for a Real Executor-Invoking Verifier
 
+## Status (2026-05-25 lane)
+
+**Implementation landed:**
+- `cross_app_helper.rs` — Rust binary that drives all 7 story steps
+  through `EmbeddedExecutor::submit_action` for four independent
+  agents (alice / bob / carol / dan). Emits one
+  `<step>.receipt.json` artifact per step carrying:
+  `receipt_hash_hex`, `previous_receipt_hash_hex`,
+  `pre_state_hash_hex`, `post_state_hash_hex`, `effects_hash_hex`,
+  the postcard-serialized receipt bytes (hex), and per-step
+  cross-app `links` metadata. Also emits
+  `dan.claim.tampered.receipt.json` (one byte flipped) for the
+  must_not_pass tamper test.
+- `verify_real.py` — orthogonal verifier that reads the receipt
+  artifacts, walks per-agent receipt-chain integrity
+  (`previous_receipt_hash` continuity, `pre_state_hash` /
+  `post_state_hash` agreement), checks cross-app event/link
+  agreement (e.g. alice's credential id == event-data[0] of her
+  issuance event; alice's schema_commitment == bob's
+  registration commitment), and (when a verifier binary is
+  available) hands the chain to `pyana-verifier replay-chain` to
+  confirm the standalone verifier reports `Unwitnessable` (not
+  `Rejected`) for each receipt — the correct verdict for receipts
+  produced by `EmbeddedExecutor` (which does not run the prover).
+- `run.sh` step 11 — runs both when `cross-app-helper` is available
+  (built via `cargo build -p pyana-demo --bin cross-app-helper`,
+  out-of-band per `BOUNDARIES.md`). The existing structural
+  `verify.py` (step 10) is unchanged.
+
+**What's still NOT real here:** the receipts produced by
+`EmbeddedExecutor` carry no STARK proofs. Proof generation lives in
+`pyana-node`'s MCP layer (`generate_effect_vm_proof`), and no MCP
+tool exposes the four anchor starbridge-apps yet
+(no `pyana_register_name`, no `pyana_publish_subscription`, etc.).
+Adding those MCP tools is the next lane; once they land, the helper
+can be re-targeted at MCP and per-step `effect_vm_proof_hex` will
+populate the receipt artifacts (matching the
+`demo/two-ai-handoff/grant.proof.json` shape).
+
 ## What the current verify.py actually does
 
 `verify.py` is a **structural coherence checker**, not a cryptographic

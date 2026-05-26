@@ -67,14 +67,7 @@ fn make_pyana_to_midnight(
 #[test]
 fn pyana_to_midnight_self_consistent() {
     let sk = signing_key(0x01);
-    let msg = make_pyana_to_midnight(
-        [0x11; 32],
-        1_000,
-        vec![0xAB; 32],
-        7,
-        &sk,
-        1,
-    );
+    let msg = make_pyana_to_midnight([0x11; 32], 1_000, vec![0xAB; 32], 7, &sk, 1);
     assert!(
         msg.is_self_consistent(),
         "freshly created message must be self-consistent"
@@ -167,10 +160,10 @@ fn midnight_to_pyana_dedup_key() {
     };
     let msg_b = MidnightToPyanaMessage {
         midnight_tx_hash: [0x01; 32],
-        amount: 200,                   // different amount
-        pyana_recipient: [0xBB; 32],   // different recipient
-        midnight_height: 501,          // different height
-        log_index: 0,                  // SAME tx_hash + log_index
+        amount: 200,                 // different amount
+        pyana_recipient: [0xBB; 32], // different recipient
+        midnight_height: 501,        // different height
+        log_index: 0,                // SAME tx_hash + log_index
     };
     // Same tx_hash + log_index → same dedup key, regardless of other fields.
     assert_eq!(
@@ -208,9 +201,21 @@ fn epoch_key_lookup_returns_correct_key() {
         midnight_rpc_url: "ws://localhost:9944".into(),
         confirmations: 0,
         federation_keys: vec![
-            EpochKey { from_epoch: 0, to_epoch: Some(0), pubkey: key_epoch0 },
-            EpochKey { from_epoch: 1, to_epoch: Some(1), pubkey: key_epoch1 },
-            EpochKey { from_epoch: 2, to_epoch: None,    pubkey: key_current },
+            EpochKey {
+                from_epoch: 0,
+                to_epoch: Some(0),
+                pubkey: key_epoch0,
+            },
+            EpochKey {
+                from_epoch: 1,
+                to_epoch: Some(1),
+                pubkey: key_epoch1,
+            },
+            EpochKey {
+                from_epoch: 2,
+                to_epoch: None,
+                pubkey: key_current,
+            },
         ],
         min_amount: 1,
         max_amount: 1_000_000,
@@ -232,18 +237,32 @@ fn epoch_key_lookup_none_for_gap() {
         contract_address: [0x00; 32],
         midnight_rpc_url: "ws://localhost:9944".into(),
         confirmations: 0,
-        federation_keys: vec![
-            EpochKey { from_epoch: 5, to_epoch: Some(10), pubkey: [0xAA; 32] },
-        ],
+        federation_keys: vec![EpochKey {
+            from_epoch: 5,
+            to_epoch: Some(10),
+            pubkey: [0xAA; 32],
+        }],
         min_amount: 1,
         max_amount: 1_000_000,
     };
 
-    assert_eq!(config.key_for_epoch(0), None, "epoch 0 is before the key range");
-    assert_eq!(config.key_for_epoch(4), None, "epoch 4 is before the key range");
+    assert_eq!(
+        config.key_for_epoch(0),
+        None,
+        "epoch 0 is before the key range"
+    );
+    assert_eq!(
+        config.key_for_epoch(4),
+        None,
+        "epoch 4 is before the key range"
+    );
     assert!(config.key_for_epoch(5).is_some());
     assert!(config.key_for_epoch(10).is_some());
-    assert_eq!(config.key_for_epoch(11), None, "epoch 11 is after bounded range");
+    assert_eq!(
+        config.key_for_epoch(11),
+        None,
+        "epoch 11 is after bounded range"
+    );
 }
 
 // ============================================================================

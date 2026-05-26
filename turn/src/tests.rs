@@ -10875,7 +10875,9 @@ mod binding_proof_executor_tests {
     /// it cannot reconstruct.
     #[test]
     fn burn_binding_without_ledger_snapshot_rejects() {
-        use pyana_circuit::effect_action_air::{prove_effect_action, EffectActionWitness, SCHEMA_BURN};
+        use pyana_circuit::effect_action_air::{
+            EffectActionWitness, SCHEMA_BURN, prove_effect_action,
+        };
         use pyana_circuit::stark;
 
         let target = CellId::from_bytes([0xB7; 32]);
@@ -10912,7 +10914,9 @@ mod binding_proof_executor_tests {
     /// matching loop accepts.
     #[test]
     fn burn_binding_with_honest_ledger_snapshot_verifies() {
-        use pyana_circuit::effect_action_air::{prove_effect_action, EffectActionWitness, SCHEMA_BURN};
+        use pyana_circuit::effect_action_air::{
+            EffectActionWitness, SCHEMA_BURN, prove_effect_action,
+        };
         use pyana_circuit::stark;
 
         // Build a ledger where the target's balance is exactly the
@@ -10950,7 +10954,9 @@ mod binding_proof_executor_tests {
     /// MUST reject. This is the matching loop catching it.
     #[test]
     fn burn_binding_air_pi_lies_about_amount_is_rejected() {
-        use pyana_circuit::effect_action_air::{prove_effect_action, EffectActionWitness, SCHEMA_BURN};
+        use pyana_circuit::effect_action_air::{
+            EffectActionWitness, SCHEMA_BURN, prove_effect_action,
+        };
         use pyana_circuit::stark;
 
         let target_cell = permissive_cell_with_balance(0xB9, 1000);
@@ -10999,7 +11005,9 @@ mod binding_proof_executor_tests {
     /// "yes" they shouldn't.
     #[test]
     fn burn_binding_unknown_target_in_ledger_rejects() {
-        use pyana_circuit::effect_action_air::{prove_effect_action, EffectActionWitness, SCHEMA_BURN};
+        use pyana_circuit::effect_action_air::{
+            EffectActionWitness, SCHEMA_BURN, prove_effect_action,
+        };
         use pyana_circuit::stark;
 
         let target = CellId::from_bytes([0xBA; 32]);
@@ -11039,9 +11047,7 @@ mod binding_proof_executor_tests {
 #[cfg(test)]
 mod lifecycle_effects_adversarial {
     use super::*;
-    use pyana_cell::lifecycle::{
-        ArchivalAttestation, DeathCertificate, DeathReason,
-    };
+    use pyana_cell::lifecycle::{ArchivalAttestation, DeathCertificate, DeathReason};
 
     /// Build a CellDestroy effect targeting `cell` with a canonical
     /// DeathCertificate (voluntary retirement at height 0).
@@ -11324,9 +11330,7 @@ mod lifecycle_effects_adversarial {
         let (mut agent, _) = make_open_cell(1, 1000);
         let (target, _) = make_open_cell(2, 0);
         let target_id = target.id();
-        agent
-            .capabilities
-            .grant(target_id, AuthRequired::None);
+        agent.capabilities.grant(target_id, AuthRequired::None);
         let agent_id = agent.id();
         ledger.insert_cell(agent).unwrap();
         ledger.insert_cell(target).unwrap();
@@ -11352,14 +11356,13 @@ mod lifecycle_effects_adversarial {
         // Turn 2: try a generic Transfer FROM the destroyed cell.
         let mut builder = TurnBuilder::new(agent_id, 1);
         {
-            let action =
-                ActionBuilder::new_unchecked_for_tests(target_id, "transfer", agent_id)
-                    .effect(Effect::Transfer {
-                        from: target_id,
-                        to: agent_id,
-                        amount: 1,
-                    })
-                    .build();
+            let action = ActionBuilder::new_unchecked_for_tests(target_id, "transfer", agent_id)
+                .effect(Effect::Transfer {
+                    from: target_id,
+                    to: agent_id,
+                    amount: 1,
+                })
+                .build();
             builder.add_action(action);
         }
         let turn2 = builder.fee(0).build();
@@ -11487,7 +11490,11 @@ mod lifecycle_effects_adversarial {
         let turn = builder.fee(0).build();
 
         let result = executor.execute(&turn, &mut ledger);
-        assert!(result.is_committed(), "destroy turn must commit: {:?}", result);
+        assert!(
+            result.is_committed(),
+            "destroy turn must commit: {:?}",
+            result
+        );
         let (_, receipt, _) = result.unwrap_committed();
         // The receipt's effects_hash is a Merkle-fold over the
         // per-effect hashes; a different cert would yield a different
@@ -11498,18 +11505,16 @@ mod lifecycle_effects_adversarial {
         // `blake3(concat(effect_hashes))`. For a single-effect turn, it
         // equals `blake3(effect.hash())`. Verify both: matches our
         // parallel root for `effect_a` and differs from `effect_b`.
-        let root_a = blake3::Hasher::new()
-            .update(&ea_hash)
-            .finalize();
-        let root_b = blake3::Hasher::new()
-            .update(&eb_hash)
-            .finalize();
+        let root_a = blake3::Hasher::new().update(&ea_hash).finalize();
+        let root_b = blake3::Hasher::new().update(&eb_hash).finalize();
         assert_eq!(
-            exec_root_a, *root_a.as_bytes(),
+            exec_root_a,
+            *root_a.as_bytes(),
             "single-effect effects_hash must equal blake3(effect.hash())"
         );
         assert_ne!(
-            exec_root_a, *root_b.as_bytes(),
+            exec_root_a,
+            *root_b.as_bytes(),
             "swapping cert (different reason) must change effects_hash"
         );
     }

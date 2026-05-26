@@ -8,11 +8,10 @@
 
 mod common;
 
-use pyana_sdk::CellId;
 use pyana_cell::Ledger;
+use pyana_sdk::CellId;
 use pyana_turn::{
-    CallForest, EncryptedTurn, EncryptedTurnError, TurnExecutor, ComputronCosts,
-    Turn,
+    CallForest, ComputronCosts, EncryptedTurn, EncryptedTurnError, Turn, TurnExecutor,
 };
 
 // ---------------------------------------------------------------------------
@@ -54,9 +53,7 @@ fn encrypted_turn_roundtrip_sets_was_encrypted_flag() {
     // Use a deterministic "secret" for tests.
     unsealer_secret.copy_from_slice(blake3::hash(b"test-unsealer-secret").as_bytes());
     let unsealer_public = {
-        let pk = x25519_dalek::PublicKey::from(
-            &x25519_dalek::StaticSecret::from(unsealer_secret),
-        );
+        let pk = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(unsealer_secret));
         *pk.as_bytes()
     };
 
@@ -102,9 +99,7 @@ fn encrypted_turn_wrong_sealer_secret_is_rejected() {
     let mut real_secret = [0u8; 32];
     real_secret.copy_from_slice(blake3::hash(b"real-unsealer").as_bytes());
     let real_public = {
-        let pk = x25519_dalek::PublicKey::from(
-            &x25519_dalek::StaticSecret::from(real_secret),
-        );
+        let pk = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(real_secret));
         *pk.as_bytes()
     };
 
@@ -124,9 +119,7 @@ fn encrypted_turn_wrong_sealer_secret_is_rejected() {
 
     // Attempt decryption with the forged key.
     let forged_public = {
-        let pk = x25519_dalek::PublicKey::from(
-            &x25519_dalek::StaticSecret::from(forged_secret),
-        );
+        let pk = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(forged_secret));
         *pk.as_bytes()
     };
     let decrypt_result = encrypted.decrypt_for_executor(&forged_secret, &forged_public);

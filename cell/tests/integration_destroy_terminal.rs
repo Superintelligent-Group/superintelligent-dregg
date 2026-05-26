@@ -13,8 +13,7 @@
 use pyana_cell::{
     Cell, CellId, Ledger,
     lifecycle::{
-        ArchivalAttestation, CellLifecycle, DeathCertificate, DeathReason,
-        LifecycleTransitionError,
+        ArchivalAttestation, CellLifecycle, DeathCertificate, DeathReason, LifecycleTransitionError,
     },
 };
 
@@ -47,18 +46,28 @@ fn destroy_transitions_to_destroyed_and_rejects_effects() {
 
     let cert = valid_cert(&cell);
     let cert_hash = cert.certificate_hash();
-    cell.destroy(&cert).expect("destroy must succeed on a Live cell");
+    cell.destroy(&cert)
+        .expect("destroy must succeed on a Live cell");
 
     assert!(cell.lifecycle.is_destroyed(), "lifecycle must be Destroyed");
-    assert!(!cell.accepts_effects(), "Destroyed cell must not accept effects");
+    assert!(
+        !cell.accepts_effects(),
+        "Destroyed cell must not accept effects"
+    );
 
     match &cell.lifecycle {
-        CellLifecycle::Destroyed { death_certificate_hash, destroyed_at } => {
+        CellLifecycle::Destroyed {
+            death_certificate_hash,
+            destroyed_at,
+        } => {
             assert_eq!(
                 *death_certificate_hash, cert_hash,
                 "death_certificate_hash must equal cert.certificate_hash()"
             );
-            assert_eq!(*destroyed_at, 100, "destroyed_at must match the certificate height");
+            assert_eq!(
+                *destroyed_at, 100,
+                "destroyed_at must match the certificate height"
+            );
         }
         other => panic!("expected Destroyed, got {other:?}"),
     }
@@ -181,19 +190,35 @@ fn death_certificate_hash_binds_all_fields() {
 
     let mut variant = base.clone();
     variant.last_receipt_hash = [9u8; 32];
-    assert_ne!(variant.certificate_hash(), base_hash, "last_receipt_hash must bind");
+    assert_ne!(
+        variant.certificate_hash(),
+        base_hash,
+        "last_receipt_hash must bind"
+    );
 
     let mut variant = base.clone();
     variant.final_state_commitment = [9u8; 32];
-    assert_ne!(variant.certificate_hash(), base_hash, "final_state_commitment must bind");
+    assert_ne!(
+        variant.certificate_hash(),
+        base_hash,
+        "final_state_commitment must bind"
+    );
 
     let mut variant = base.clone();
     variant.destroyed_at_height = 43;
-    assert_ne!(variant.certificate_hash(), base_hash, "destroyed_at_height must bind");
+    assert_ne!(
+        variant.certificate_hash(),
+        base_hash,
+        "destroyed_at_height must bind"
+    );
 
     let mut variant = base.clone();
     variant.reason = DeathReason::Forced;
-    assert_ne!(variant.certificate_hash(), base_hash, "reason discriminant must bind");
+    assert_ne!(
+        variant.certificate_hash(),
+        base_hash,
+        "reason discriminant must bind"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +244,9 @@ fn destroy_reflected_in_ledger_after_update_with() {
         .expect("update_with must succeed");
 
     let cell = ledger.get(&cell_id).unwrap();
-    assert!(cell.lifecycle.is_destroyed(), "ledger must reflect Destroyed after update_with");
+    assert!(
+        cell.lifecycle.is_destroyed(),
+        "ledger must reflect Destroyed after update_with"
+    );
     assert!(!cell.accepts_effects());
 }

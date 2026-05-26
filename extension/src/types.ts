@@ -71,7 +71,7 @@ export interface Intent {
 // Token / Capability types
 // ---------------------------------------------------------------------------
 
-/** A capability token held in the wallet. */
+/** A capability token held in the cipherclerk. */
 export interface CapabilityToken {
   id: string;
   actions: string[];
@@ -510,7 +510,7 @@ export interface PyanaWasm {
    * Deterministic preview: hash-derives `(child_vk, param_hash)` from
    * `(factory_vk, owner_pubkey)` without minting a cell. Useful for
    * client-side display before submission. Does NOT produce a signed
-   * turn; use `wallet_create_from_factory` for that.
+   * turn; use `cipherclerk_create_from_factory` for that.
    */
   create_from_factory(factoryVkHex: string, ownerPubkeyHex: string, initialBalance: number): { childVk: string; paramHash: string; factoryVk: string };
   /**
@@ -521,7 +521,7 @@ export interface PyanaWasm {
    * caller can display the new cell's identity without waiting on the
    * node round-trip.
    */
-  wallet_create_from_factory(specJson: string): {
+  cipherclerk_create_from_factory(specJson: string): {
     turn_id: string;
     turn_bytes: Uint8Array;
     agent_cell_id: string;
@@ -579,7 +579,7 @@ export interface PyanaWasm {
    * bytes alongside the content-addressed intent id (hex) and the
    * (optional) expiry that was set.
    */
-  wallet_post_encrypted_intent(specJson: string): {
+  cipherclerk_post_encrypted_intent(specJson: string): {
     intent_id: string;
     encrypted_intent_bytes: Uint8Array;
     encrypted_intent_json: string;
@@ -592,7 +592,7 @@ export interface PyanaWasm {
    * commitment + stealth one-time-address recipient — and returns the
    * postcard-encoded `Turn` ready for `/turns/submit`.
    */
-  wallet_private_transfer(specJson: string): {
+  cipherclerk_private_transfer(specJson: string): {
     turn_id: string;
     turn_bytes: Uint8Array;
     agent_cell_id: string;
@@ -605,7 +605,7 @@ export interface PyanaWasm {
    * peer-to-peer exchange; the legacy `exchange_id` / `proof_commitment`
    * hex fields are retained for UI display parity.
    */
-  wallet_peer_exchange(specJson: string): {
+  cipherclerk_peer_exchange(specJson: string): {
     exchange_id: string;
     proof_commitment: string;
     sender_cell: string;
@@ -621,7 +621,7 @@ export interface PyanaWasm {
    * federation_id. The arbitrary action payload travels in the turn's
    * `memo` field as a JSON string.
    */
-  wallet_make_action_turn(specJson: string): {
+  cipherclerk_make_action_turn(specJson: string): {
     turn_id: string;
     turn_bytes: Uint8Array;
     agent_cell_id: string;

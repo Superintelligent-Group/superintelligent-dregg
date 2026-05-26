@@ -19,6 +19,14 @@ pyana-federation = { path = "../federation" }
 pyana-turn = { path = "../turn" }
 pyana-types = { path = "../types" }
 pyana-verifier = { path = "../verifier" }
+# Cross-app demo helper — drives the four anchor starbridge-apps through
+# `EmbeddedExecutor` to produce real `TurnReceipt`s per step.
+pyana-app-framework = { path = "../app-framework" }
+pyana-credentials = { path = "../credentials" }
+starbridge-identity = { path = "../starbridge-apps/identity" }
+starbridge-nameservice = { path = "../starbridge-apps/nameservice" }
+starbridge-governed-namespace = { path = "../starbridge-apps/governed-namespace" }
+starbridge-subscription = { path = "../starbridge-apps/subscription" }
 
 [[bin]]
 name = "pyana-demo"
@@ -27,6 +35,10 @@ path = "src/main.rs"
 [[bin]]
 name = "silver-helper"
 path = "two-ai-handoff/silver_helper.rs"
+
+[[bin]]
+name = "cross-app-helper"
+path = "cross-app-e2e/cross_app_helper.rs"
 
 [lints]
 workspace = true

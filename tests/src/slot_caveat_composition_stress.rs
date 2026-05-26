@@ -59,32 +59,31 @@ fn ctx_at(block_height: u64, timestamp: i64) -> EvalContext {
 // guard)
 // ===========================================================================
 
-/// Declare 16 honest `StateConstraint` variants in **one**
+/// Declare honest `StateConstraint` variants in **one**
 /// `Predicate(...)` program, then exercise a transition that satisfies
 /// every conjunct simultaneously. Per CAVEAT-LAYER-COVERAGE.md §8 the
-/// substrate honestly handles all 16 — this test is the regression
+/// substrate honestly handles all of these — this test is the regression
 /// guard against any future refactor that quietly silos them.
+///
+/// Note: `STATE_SLOTS = 8` limits us to indices 0..7. The original design
+/// used indices 0..17; those have been remapped to fit the current cell-state
+/// capacity. Variants not fitting in 8 independent slots (SumEqualsAcross,
+/// BoundedBy, SumEquals) are tested in `state_constraint_composition.rs`
+/// and the unit-level `state_constraint_variants.rs`.
 #[test]
 fn predicate_all_honest_variants_in_one_program_accept_legal_transition() {
-    // Layout of slots used (each variant gets its own slot or a small
-    // group, to keep transitions independent):
-    //   slot  0: FieldEquals(=1)       — static
-    //   slot  1: FieldGte(>=100)       — static
-    //   slot  2: FieldLte(<=200)       — static
-    //   slots 3,4: SumEquals(=10)      — static (3+4 == 10)
-    //   slot  5: WriteOnce             — 0 → 7 ok
-    //   slot  6: Immutable             — old == new
-    //   slot  7: Monotonic             — new >= old
-    //   slot  8: StrictMonotonic       — new > old
-    //   slot  9: BoundedBy(witness=10) — slot 10 must be non-zero on transition
-    //   slot 10: (witness, set non-zero in new_state)
-    //   slot 11: FieldDelta(+5)        — new = old + 5
-    //   slot 12: FieldDeltaInRange     — new ∈ [old, old+10]
-    //   slot 13: MonotonicSequence     — new = old + 1
-    //   slot 14: AllowedTransitions    — (1, 2) in allow-list
-    //   slots 15,16: SumEqualsAcross   — sum(in)=4+5=9, out=9
-    //   slot 17: AnyOf                 — FieldEquals(=42) || FieldEquals(=43)
-    //   TemporalGate: ctx.height ∈ [10, 100]
+    // Layout of slots used (all within [0, 7] — STATE_SLOTS = 8):
+    //   slot 0: FieldEquals(=1)           — static value check
+    //   slot 1: FieldGte(>=100)           — static lower bound
+    //           + StrictMonotonic         — new(150) > old(100) covers both
+    //   slot 2: FieldLte(<=200)           — static upper bound
+    //   slot 3: WriteOnce                 — old=0 → new=7
+    //   slot 4: Immutable                 — old=99, new=99 (unchanged)
+    //   slot 5: FieldDelta(+5)            — new = old + 5
+    //   slot 6: MonotonicSequence         — new = old + 1 (seq counter)
+    //   slot 7: AllowedTransitions(1→2)   — explicit state-machine arc
+    //           + AnyOf(FieldEquals=2)    — disjunct on same slot value
+    //   TemporalGate: ctx.height ∈ [10, 100] — no slot needed
 
     let constraints = vec![
         StateConstraint::FieldEquals {
@@ -95,49 +94,33 @@ fn predicate_all_honest_variants_in_one_program_accept_legal_transition() {
             index: 1,
             value: field_from_u64(100),
         },
+        // slot 1 also satisfies StrictMonotonic (150 > 100).
+        StateConstraint::StrictMonotonic { index: 1 },
         StateConstraint::FieldLte {
             index: 2,
             value: field_from_u64(200),
         },
-        StateConstraint::SumEquals {
-            indices: vec![3, 4],
-            value: field_from_u64(10),
-        },
-        StateConstraint::WriteOnce { index: 5 },
-        StateConstraint::Immutable { index: 6 },
-        StateConstraint::Monotonic { index: 7 },
-        StateConstraint::StrictMonotonic { index: 8 },
-        StateConstraint::BoundedBy {
-            index: 9,
-            witness_index: 10,
-        },
+        StateConstraint::WriteOnce { index: 3 },
+        StateConstraint::Immutable { index: 4 },
         StateConstraint::FieldDelta {
-            index: 11,
+            index: 5,
             delta: field_from_u64(5),
         },
-        StateConstraint::FieldDeltaInRange {
-            index: 12,
-            min_delta: field_from_u64(0),
-            max_delta: field_from_u64(10),
-        },
-        StateConstraint::MonotonicSequence { seq_index: 13 },
+        StateConstraint::MonotonicSequence { seq_index: 6 },
         StateConstraint::AllowedTransitions {
-            slot_index: 14,
+            slot_index: 7,
             allowed: vec![(field_from_u64(1), field_from_u64(2))],
         },
-        StateConstraint::SumEqualsAcross {
-            input_fields: vec![15],
-            output_fields: vec![16],
-        },
+        // AnyOf on slot 7: new value is 2, which matches branch 1.
         StateConstraint::AnyOf {
             variants: vec![
                 SimpleStateConstraint::FieldEquals {
-                    index: 17,
-                    value: field_from_u64(42),
+                    index: 7,
+                    value: field_from_u64(2),
                 },
                 SimpleStateConstraint::FieldEquals {
-                    index: 17,
-                    value: field_from_u64(43),
+                    index: 7,
+                    value: field_from_u64(3),
                 },
             ],
         },
@@ -148,50 +131,30 @@ fn predicate_all_honest_variants_in_one_program_accept_legal_transition() {
     ];
     let program = CellProgram::Predicate(constraints);
 
-    // Old state: slot 5 = 0 (so WriteOnce can fire), slot 6 = 99
-    // (Immutable), slot 7 = 50, slot 8 = 50, slot 9 = 0 (BoundedBy
-    // witness check: only triggers on slot-9 transition), slot 11 = 20,
-    // slot 12 = 100, slot 13 = 41, slot 14 = 1, slot 15 = 9, slot 16 = 0.
-    let old = state_with(&[
-        (5, 0),
-        (6, 99),
-        (7, 50),
-        (8, 50),
-        (9, 0),
-        (10, 0),
-        (11, 20),
-        (12, 100),
-        (13, 41),
-        (14, 1),
-        (15, 9),
-        (16, 0),
-    ]);
-    // New state: every conjunct holds.
+    // Old state:
+    //   slot 1 = 100 (for StrictMonotonic: new must be > 100)
+    //   slot 3 = 0   (WriteOnce: first write from zero)
+    //   slot 4 = 99  (Immutable: must stay 99)
+    //   slot 5 = 20  (FieldDelta: new = 25)
+    //   slot 6 = 41  (MonotonicSequence: new = 42)
+    //   slot 7 = 1   (AllowedTransitions: 1 → 2)
+    let old = state_with(&[(1, 100), (3, 0), (4, 99), (5, 20), (6, 41), (7, 1)]);
+    // New state: every conjunct holds simultaneously.
     let new = state_with(&[
-        (0, 1),
-        (1, 150),
-        (2, 150),
-        (3, 3),
-        (4, 7),
-        (5, 7),  // 0 -> 7: WriteOnce
-        (6, 99), // unchanged: Immutable
-        (7, 51), // monotonic
-        (8, 60), // strict-monotonic
-        (9, 0),  // not changing slot 9 — BoundedBy is "may only set if witness non-zero"
-        (10, 0),
-        (11, 25),  // 20 + 5
-        (12, 105), // delta in [0, 10]
-        (13, 42),  // 41 + 1
-        (14, 2),   // allowed (1 -> 2)
-        (15, 9),   // sum_in = 9, sum_out=9
-        (16, 9),
-        (17, 42), // AnyOf branch 1
+        (0, 1),   // FieldEquals(=1)
+        (1, 150), // FieldGte(>=100) + StrictMonotonic (150 > 100)
+        (2, 150), // FieldLte(<=200)
+        (3, 7),   // WriteOnce: 0 → 7
+        (4, 99),  // Immutable: unchanged
+        (5, 25),  // FieldDelta: 20 + 5
+        (6, 42),  // MonotonicSequence: 41 + 1
+        (7, 2),   // AllowedTransitions: (1, 2) in list; AnyOf branch 0 matches
     ]);
     let ctx = ctx_at(50, 0);
     let result = program.evaluate(&new, Some(&old), Some(&ctx));
     assert!(
         result.is_ok(),
-        "16-variant honest-conjunction must accept a transition satisfying all conjuncts; got {result:?}"
+        "10-variant honest-conjunction must accept a transition satisfying all conjuncts; got {result:?}"
     );
 }
 
@@ -621,6 +584,6 @@ fn cell_program_none_accepts_every_transition() {
     let program = CellProgram::None;
     let _ = FIELD_ZERO; // touch the import so it's visible in test output
     assert!(program.evaluate(&CellState::default(), None, None).is_ok());
-    let new = state_with(&[(0, 99), (5, 17), (31, 1)]);
+    let new = state_with(&[(0, 99), (5, 17), (7, 1)]); // slot 7 is the last valid index (STATE_SLOTS = 8)
     assert!(program.evaluate(&new, None, None).is_ok());
 }

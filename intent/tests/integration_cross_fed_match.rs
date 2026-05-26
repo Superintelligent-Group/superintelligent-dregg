@@ -8,9 +8,9 @@
 //! - `CrossFederationSolver::solve_cross_fed_only` filters correctly
 
 use pyana_federation::{FederationId, KnownFederations};
+use pyana_intent::CommitmentId;
 use pyana_intent::cross_fed::{CrossFedRingTrade, CrossFederationSolver, FederatedIntentNode};
 use pyana_intent::solver::{ExchangeSpec, IntentNode, RingSolver};
-use pyana_intent::CommitmentId;
 
 // ============================================================================
 // Helpers
@@ -183,7 +183,10 @@ fn cross_fed_solver_handles_expired_intents() {
     let known = make_known();
     let solver = CrossFederationSolver::new(RingSolver::new(5), &known);
     let rings = solver.solve(&pool, 100); // now = 100 > expiry of node_a
-    assert!(rings.is_empty(), "expired intent must not participate in any ring");
+    assert!(
+        rings.is_empty(),
+        "expired intent must not participate in any ring"
+    );
 }
 
 #[test]

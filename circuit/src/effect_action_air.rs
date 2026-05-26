@@ -2248,7 +2248,7 @@ mod tests {
         // Burn crossing the 2^32 limb boundary: exercises the borrow bit.
         let target = [0x33u8; 32];
         let old: u64 = (1u64 << 33) + 100; // hi limb = 2, lo limb = 100
-        let amt: u64 = 1u64 << 32;           // hi limb = 1, lo limb = 0
+        let amt: u64 = 1u64 << 32; // hi limb = 1, lo limb = 0
         let new = old - amt; // hi limb = 1, lo limb = 100; no borrow needed.
         let w = burn_witness(target, old, new, amt, 1);
         let proof = prove_effect_action(&w);
@@ -2261,8 +2261,8 @@ mod tests {
         // Burn requiring a borrow: lo of old < lo of amount.
         let target = [0x44u8; 32];
         let old: u64 = (1u64 << 33) + 100; // lo=100, hi=2
-        let amt: u64 = 200;                 // lo=200, hi=0; borrow needed.
-        let new = old - amt;                // lo wraps; hi decreases by 1.
+        let amt: u64 = 200; // lo=200, hi=0; borrow needed.
+        let new = old - amt; // lo wraps; hi decreases by 1.
         let w = burn_witness(target, old, new, amt, 1);
         let proof = prove_effect_action(&w);
         let r = verify_effect_action(SCHEMA_BURN, &[target], &[old, new, amt, 1], &proof);

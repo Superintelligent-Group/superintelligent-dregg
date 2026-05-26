@@ -978,15 +978,29 @@ impl NodeStateInner {
     ///
     /// One JSON file per federation, named by its hex id. Append-only by
     /// convention.
+    ///
+    /// Schema-reconciliation note (P0 #87): writes the **canonical genesis
+    /// descriptor schema** —
+    /// `{federation_id, committee_epoch, threshold, validators: [{public_key}]}`
+    /// — matching what `pyana-node register-federation` and `genesis.json`
+    /// produce. Prior to this fix, this writer emitted `{epoch, members}`
+    /// while the loader expected `{committee_epoch, validators[].public_key}`,
+    /// causing every cross-federation descriptor to be silently dropped
+    /// at startup.
     pub fn persist_known_federations(&self, data_dir: &std::path::Path) -> std::io::Result<()> {
         let dir = data_dir.join("known_federations");
         std::fs::create_dir_all(&dir)?;
         for (id, fed) in self.known_federations.iter() {
+            let validators: Vec<serde_json::Value> = fed
+                .members()
+                .iter()
+                .map(|pk| serde_json::json!({ "public_key": pk.hex() }))
+                .collect();
             let descriptor = serde_json::json!({
                 "federation_id": id.hex(),
-                "epoch": fed.epoch(),
+                "committee_epoch": fed.epoch(),
                 "threshold": fed.threshold(),
-                "members": fed.members().iter().map(|pk| pk.hex()).collect::<Vec<_>>(),
+                "validators": validators,
                 "is_local": fed.local_seat().is_some(),
             });
             let path = dir.join(format!("{}.json", id.hex()));
@@ -996,6 +1010,18 @@ impl NodeStateInner {
     }
 
     /// Load known federations from `$DATA_DIR/known_federations/`.
+    ///
+    /// Accepts two on-disk schemas (P0 #87):
+    ///   - Canonical (genesis / `register-federation`):
+    ///     `{committee_epoch, threshold, validators: [{public_key: <hex>}]}`
+    ///   - Legacy (pre-fix `persist_known_federations`):
+    ///     `{epoch, threshold, members: [<hex>]}`
+    ///
+    /// A descriptor in either shape that yields ≥1 valid pubkey is
+    /// registered. Descriptors with zero parseable pubkeys log a warning
+    /// and are skipped. Both schemas are accepted so that nodes that
+    /// previously wrote the legacy shape continue to load their on-disk
+    /// state after upgrade.
     pub fn load_known_federations(&mut self, data_dir: &std::path::Path) -> std::io::Result<usize> {
         let dir = data_dir.join("known_federations");
         if !dir.exists() {
@@ -1010,38 +1036,22 @@ impl NodeStateInner {
             }
             let text = std::fs::read_to_string(&path)?;
             let v: serde_json::Value = serde_json::from_str(&text)?;
-            let epoch = v["epoch"].as_u64().unwrap_or(0);
-            let threshold = v["threshold"].as_u64().unwrap_or(1) as u32;
-            let members_hex: Vec<String> = v["members"]
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let members: Vec<pyana_types::PublicKey> = members_hex
-                .iter()
-                .filter_map(|h| {
-                    if h.len() != 64 {
-                        return None;
-                    }
-                    let mut out = [0u8; 32];
-                    for (i, chunk) in h.as_bytes().chunks(2).enumerate() {
-                        let hi = (chunk[0] as char).to_digit(16)? as u8;
-                        let lo = (chunk[1] as char).to_digit(16)? as u8;
-                        out[i] = (hi << 4) | lo;
-                    }
-                    Some(pyana_types::PublicKey(out))
-                })
-                .collect();
-            if members.is_empty() {
-                tracing::warn!(path = %path.display(), "skipping malformed federation descriptor");
-                continue;
+            match parse_federation_descriptor(&v) {
+                Some((members, epoch, threshold)) => {
+                    let fed =
+                        pyana_federation::Federation::verifier_only(members, epoch, threshold);
+                    self.known_federations.register(std::sync::Arc::new(fed));
+                    loaded += 1;
+                }
+                None => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        has_validators = v["validators"].is_array(),
+                        has_members = v["members"].is_array(),
+                        "skipping malformed federation descriptor (no parseable validators/members)",
+                    );
+                }
             }
-            let fed = pyana_federation::Federation::verifier_only(members, epoch, threshold);
-            self.known_federations.register(std::sync::Arc::new(fed));
-            loaded += 1;
         }
         tracing::info!(count = loaded, "loaded known_federations from disk");
         Ok(loaded)
@@ -1143,5 +1153,190 @@ impl NodeStateInner {
 mod hex {
     pub fn encode(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
+
+/// Parse a federation descriptor JSON value into `(members, epoch, threshold)`.
+///
+/// Accepts both the canonical genesis schema
+/// (`{committee_epoch, threshold, validators: [{public_key}]}`) and the
+/// legacy `persist_known_federations` schema
+/// (`{epoch, threshold, members: [hex]}`). Returns `None` if the
+/// descriptor has zero parseable 32-byte pubkeys, mirroring the
+/// reject-on-empty-members guard the loader has always enforced.
+///
+/// Extracted as a standalone function so the schema-discrimination
+/// behavior (P0 #87) can be exercised by unit tests without constructing
+/// a full `NodeStateInner`. The loader (`load_known_federations`) is the
+/// only caller.
+pub(crate) fn parse_federation_descriptor(
+    v: &serde_json::Value,
+) -> Option<(Vec<pyana_types::PublicKey>, u64, u32)> {
+    let epoch = v["committee_epoch"]
+        .as_u64()
+        .or_else(|| v["epoch"].as_u64())
+        .unwrap_or(0);
+    let threshold = v["threshold"].as_u64().unwrap_or(1) as u32;
+    let members_hex: Vec<String> = if let Some(vals) = v["validators"].as_array() {
+        vals.iter()
+            .filter_map(|val| val["public_key"].as_str().map(str::to_string))
+            .collect()
+    } else if let Some(mems) = v["members"].as_array() {
+        mems.iter()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let members: Vec<pyana_types::PublicKey> = members_hex
+        .iter()
+        .filter_map(|h| {
+            if h.len() != 64 {
+                return None;
+            }
+            let mut out = [0u8; 32];
+            for (i, chunk) in h.as_bytes().chunks(2).enumerate() {
+                let hi = (chunk[0] as char).to_digit(16)? as u8;
+                let lo = (chunk[1] as char).to_digit(16)? as u8;
+                out[i] = (hi << 4) | lo;
+            }
+            Some(pyana_types::PublicKey(out))
+        })
+        .collect();
+    if members.is_empty() {
+        return None;
+    }
+    Some((members, epoch, threshold))
+}
+
+#[cfg(test)]
+mod federation_descriptor_tests {
+    //! Regression tests for the federation-descriptor schema-mismatch
+    //! bug (#87 / MULTI-NODE-DEVNET-RUN.md §5.2): the on-disk descriptor
+    //! schema used `{committee_epoch, validators[].public_key}` while
+    //! the loader expected `{epoch, members[]}`, silently dropping every
+    //! peer federation at startup. This test pins the fix.
+    use super::parse_federation_descriptor;
+    use serde_json::json;
+
+    fn pk_hex(byte: u8) -> String {
+        let bytes = [byte; 32];
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn canonical_genesis_schema_parses() {
+        // The exact shape `node register-federation` writes (and
+        // `genesis.json` emits) to `<data-dir>/known_federations/`.
+        let v = json!({
+            "federation_id": pk_hex(0xAA),
+            "committee_epoch": 7,
+            "threshold": 3,
+            "validators": [
+                { "public_key": pk_hex(0x01) },
+                { "public_key": pk_hex(0x02) },
+                { "public_key": pk_hex(0x03) },
+                { "public_key": pk_hex(0x04) },
+            ],
+        });
+        let parsed = parse_federation_descriptor(&v).expect("canonical schema must parse");
+        let (members, epoch, threshold) = parsed;
+        assert_eq!(
+            epoch, 7,
+            "committee_epoch must round-trip as the federation epoch"
+        );
+        assert_eq!(threshold, 3);
+        assert_eq!(members.len(), 4, "all 4 validators must register");
+        assert_eq!(members[0].0[0], 0x01);
+        assert_eq!(members[3].0[0], 0x04);
+    }
+
+    #[test]
+    fn legacy_members_schema_still_parses_for_backward_compat() {
+        // Older nodes wrote this shape via `persist_known_federations`
+        // before P0 #87 reconciled the writer to the genesis schema.
+        // The loader must still accept these descriptors so on-disk
+        // state from a pre-fix run survives the upgrade.
+        let v = json!({
+            "federation_id": pk_hex(0xBB),
+            "epoch": 2,
+            "threshold": 1,
+            "members": [pk_hex(0x10), pk_hex(0x20)],
+        });
+        let parsed = parse_federation_descriptor(&v).expect("legacy schema must still parse");
+        let (members, epoch, threshold) = parsed;
+        assert_eq!(epoch, 2);
+        assert_eq!(threshold, 1);
+        assert_eq!(members.len(), 2);
+        assert_eq!(members[0].0[0], 0x10);
+        assert_eq!(members[1].0[0], 0x20);
+    }
+
+    #[test]
+    fn empty_descriptor_is_rejected() {
+        // Defensive: a descriptor with neither field, or with both
+        // present-but-empty, yields None so the loader skips it
+        // rather than registering a zero-validator federation.
+        assert!(parse_federation_descriptor(&json!({})).is_none());
+        assert!(parse_federation_descriptor(&json!({ "validators": [] })).is_none());
+        assert!(parse_federation_descriptor(&json!({ "members": [] })).is_none());
+    }
+
+    #[test]
+    fn mixed_load_counts_descriptors_in_both_schemas() {
+        // End-to-end: write one descriptor in each schema to a temp
+        // dir, run the loader, and confirm count == 2. This is the
+        // "loaded known_federations from disk count=0" warning from
+        // MULTI-NODE-DEVNET-RUN.md becoming "count=2".
+        let tmp =
+            std::env::temp_dir().join(format!("pyana-fed-descriptor-test-{}", std::process::id()));
+        let dir = tmp.join("known_federations");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Canonical-schema descriptor.
+        let id_a = pk_hex(0xAA);
+        let canonical = json!({
+            "federation_id": id_a,
+            "committee_epoch": 1,
+            "threshold": 1,
+            "validators": [{ "public_key": pk_hex(0x01) }],
+        });
+        std::fs::write(
+            dir.join(format!("{id_a}.json")),
+            serde_json::to_string_pretty(&canonical).unwrap(),
+        )
+        .unwrap();
+
+        // Legacy-schema descriptor.
+        let id_b = pk_hex(0xBB);
+        let legacy = json!({
+            "federation_id": id_b,
+            "epoch": 2,
+            "threshold": 1,
+            "members": [pk_hex(0x02)],
+        });
+        std::fs::write(
+            dir.join(format!("{id_b}.json")),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        // Re-parse both files via the same function the loader uses.
+        let mut loaded = 0usize;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let entry = entry.unwrap();
+            let text = std::fs::read_to_string(entry.path()).unwrap();
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            if parse_federation_descriptor(&v).is_some() {
+                loaded += 1;
+            }
+        }
+        assert_eq!(
+            loaded, 2,
+            "both schemas must be loaded; was the #87 schema mismatch reintroduced?"
+        );
+
+        // Cleanup.
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

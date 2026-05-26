@@ -17,13 +17,10 @@
 //! computed consistently — they never call `submit_action` and therefore never
 //! exercise the executor's slot-caveat enforcement or signature validation.
 
-use pyana_app_framework::{
-    AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor,
-};
+use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
 use starbridge_nameservice::{
-    NAME_HASH_SLOT, build_register_action,
-    build_renew_action, build_revoke_action, build_transfer_action, expiry_field,
-    name_factory_descriptor, name_hash, revoked_tombstone,
+    NAME_HASH_SLOT, build_register_action, build_renew_action, build_revoke_action,
+    build_transfer_action, expiry_field, name_factory_descriptor, name_hash, revoked_tombstone,
 };
 
 // =============================================================================
@@ -118,7 +115,8 @@ fn executor_renew_extends_expiry_and_monotonic_blocks_rollback() {
     let name = "bob.pyana";
 
     // Step 1: register (creates the initial state with expiry = 500).
-    let reg_action = build_register_action(&cipherclerk, registry_cell, name, owner, initial_expiry);
+    let reg_action =
+        build_register_action(&cipherclerk, registry_cell, name, owner, initial_expiry);
     executor
         .submit_action(&cipherclerk, reg_action)
         .expect("registration must succeed");
@@ -172,7 +170,10 @@ fn executor_revoke_blocks_subsequent_name_slot_overwrite() {
     let revoke_receipt = executor
         .submit_action(&cipherclerk, revoke_action)
         .expect("first revocation must be accepted");
-    assert!(!revoke_receipt.emitted_events.is_empty(), "revoke must emit event");
+    assert!(
+        !revoke_receipt.emitted_events.is_empty(),
+        "revoke must emit event"
+    );
 
     // Verify the tombstone value is the canonical one.
     let expected_tombstone = revoked_tombstone(name);
@@ -216,7 +217,8 @@ fn executor_transfer_emits_name_transferred_event_with_correct_owner_hashes() {
         .expect("registration must succeed");
 
     // Transfer.
-    let transfer_action = build_transfer_action(&cipherclerk, registry_cell, name, old_owner, new_owner);
+    let transfer_action =
+        build_transfer_action(&cipherclerk, registry_cell, name, old_owner, new_owner);
     let transfer_receipt = executor
         .submit_action(&cipherclerk, transfer_action)
         .expect("transfer must succeed");
@@ -273,7 +275,8 @@ fn executor_enforces_factory_descriptor_state_constraints() {
         .expect("first registration must succeed");
 
     // Second register (WriteOnce violation) — must be rejected by executor.
-    let re_reg_action = build_register_action(&cipherclerk, registry_cell, "alice.pyana", owner, 4_000);
+    let re_reg_action =
+        build_register_action(&cipherclerk, registry_cell, "alice.pyana", owner, 4_000);
     let result = executor.submit_action(&cipherclerk, re_reg_action);
     assert!(
         result.is_err(),

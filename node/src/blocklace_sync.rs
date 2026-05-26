@@ -1300,7 +1300,7 @@ async fn execute_finalized_turn(
             // the "WitnessedReceipt chain IS the persistence layer" property
             // enforceable at signature-check time.
             let receipt_stream_root = Some(pyana_types::merkle_root_of_receipt_hashes(&[
-                receipt.receipt_hash(),
+                receipt.receipt_hash()
             ]));
 
             // Build the attested root struct, then sign its canonical message.

@@ -28,7 +28,10 @@ use pyana_circuit::{
 #[test]
 fn ivc_single_step_verifies() {
     let state = CellState::new(10_000, 0);
-    let effects = vec![Effect::Transfer { amount: 100, direction: 1 }];
+    let effects = vec![Effect::Transfer {
+        amount: 100,
+        direction: 1,
+    }];
     let (trace, pi) = generate_effect_vm_trace(&state, &effects);
     let air = EffectVmAir::new(trace.len());
     let proof = stark::prove(&air, &trace, &pi);
@@ -39,7 +42,11 @@ fn ivc_single_step_verifies() {
 
     let (ivc_proof, ivc_pi) = prove_ivc_stark(initial_root, &[commitment_1]);
     let result = verify_ivc_stark(&ivc_proof, &ivc_pi);
-    assert!(result.is_ok(), "single-step IVC must verify: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "single-step IVC must verify: {:?}",
+        result.err()
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,7 +57,10 @@ fn ivc_single_step_verifies() {
 fn ivc_two_step_chain_verifies() {
     // Turn 1.
     let state_0 = CellState::new(10_000, 0);
-    let effects_1 = vec![Effect::Transfer { amount: 300, direction: 1 }];
+    let effects_1 = vec![Effect::Transfer {
+        amount: 300,
+        direction: 1,
+    }];
     let (trace_1, pi_1) = generate_effect_vm_trace(&state_0, &effects_1);
     let air_1 = EffectVmAir::new(trace_1.len());
     assert!(stark::verify(&air_1, &stark::prove(&air_1, &trace_1, &pi_1), &pi_1).is_ok());
@@ -65,7 +75,10 @@ fn ivc_two_step_chain_verifies() {
     // Sanity: the refreshed commitment matches what the AIR produced.
     assert_eq!(state_1.state_commitment, commitment_1);
 
-    let effects_2 = vec![Effect::SetField { field_idx: 5, value: BabyBear::new(999) }];
+    let effects_2 = vec![Effect::SetField {
+        field_idx: 5,
+        value: BabyBear::new(999),
+    }];
     let (trace_2, pi_2) = generate_effect_vm_trace(&state_1, &effects_2);
     let air_2 = EffectVmAir::new(trace_2.len());
     assert!(stark::verify(&air_2, &stark::prove(&air_2, &trace_2, &pi_2), &pi_2).is_ok());
@@ -73,13 +86,21 @@ fn ivc_two_step_chain_verifies() {
     let commitment_2 = pi_2[pi::NEW_COMMIT];
 
     // Chain link.
-    assert_eq!(pi_2[pi::OLD_COMMIT], commitment_1, "turn 2 must start from turn 1's end");
+    assert_eq!(
+        pi_2[pi::OLD_COMMIT],
+        commitment_1,
+        "turn 2 must start from turn 1's end"
+    );
 
     // IVC compression.
     let initial_root = state_0.state_commitment;
     let (ivc_proof, ivc_pi) = prove_ivc_stark(initial_root, &[commitment_1, commitment_2]);
     let result = verify_ivc_stark(&ivc_proof, &ivc_pi);
-    assert!(result.is_ok(), "two-step IVC must verify: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "two-step IVC must verify: {:?}",
+        result.err()
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,9 +115,17 @@ fn ivc_three_step_chain_verifies() {
 
     // Apply three effects.
     let effect_sequence: &[Effect] = &[
-        Effect::Transfer { amount: 100, direction: 1 },
-        Effect::GrantCapability { cap_entry: BabyBear::new(0xCAFE) },
-        Effect::SetField { field_idx: 2, value: BabyBear::new(42) },
+        Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        },
+        Effect::GrantCapability {
+            cap_entry: BabyBear::new(0xCAFE),
+        },
+        Effect::SetField {
+            field_idx: 2,
+            value: BabyBear::new(42),
+        },
     ];
 
     for effect in effect_sequence {
@@ -134,7 +163,11 @@ fn ivc_three_step_chain_verifies() {
 
     let (ivc_proof, ivc_pi) = prove_ivc_stark(initial_root, &commitments);
     let result = verify_ivc_stark(&ivc_proof, &ivc_pi);
-    assert!(result.is_ok(), "three-step IVC must verify: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "three-step IVC must verify: {:?}",
+        result.err()
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,8 +181,14 @@ fn ivc_three_step_chain_verifies() {
 fn ivc_proof_rejected_against_wrong_commitments() {
     let state = CellState::new(10_000, 0);
 
-    let effects_a = vec![Effect::Transfer { amount: 100, direction: 1 }];
-    let effects_b = vec![Effect::Transfer { amount: 200, direction: 1 }];
+    let effects_a = vec![Effect::Transfer {
+        amount: 100,
+        direction: 1,
+    }];
+    let effects_b = vec![Effect::Transfer {
+        amount: 200,
+        direction: 1,
+    }];
 
     let (trace_a, pi_a) = generate_effect_vm_trace(&state, &effects_a);
     let (trace_b, pi_b) = generate_effect_vm_trace(&state, &effects_b);
@@ -163,7 +202,10 @@ fn ivc_proof_rejected_against_wrong_commitments() {
     let commit_b = pi_b[pi::NEW_COMMIT];
 
     // The two transfers produce different commitments.
-    assert_ne!(commit_a, commit_b, "different transfers must produce different commitments");
+    assert_ne!(
+        commit_a, commit_b,
+        "different transfers must produce different commitments"
+    );
 
     let (ivc_proof_a, ivc_pi_a) = prove_ivc_stark(initial_root, &[commit_a]);
     let (ivc_proof_b, ivc_pi_b) = prove_ivc_stark(initial_root, &[commit_b]);
@@ -202,10 +244,22 @@ fn sequential_commitments_all_distinct() {
     let mut state = initial.clone();
 
     let effects: &[Effect] = &[
-        Effect::Transfer { amount: 100, direction: 1 },
-        Effect::Transfer { amount: 200, direction: 0 },
-        Effect::SetField { field_idx: 0, value: BabyBear::new(1) },
-        Effect::SetField { field_idx: 1, value: BabyBear::new(2) },
+        Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        },
+        Effect::Transfer {
+            amount: 200,
+            direction: 0,
+        },
+        Effect::SetField {
+            field_idx: 0,
+            value: BabyBear::new(1),
+        },
+        Effect::SetField {
+            field_idx: 1,
+            value: BabyBear::new(2),
+        },
     ];
 
     let mut seen: Vec<BabyBear> = vec![initial.state_commitment];
@@ -221,7 +275,8 @@ fn sequential_commitments_all_distinct() {
         // states map to the same commitment — a collision).
         for (i, prev) in seen.iter().enumerate() {
             assert_ne!(
-                new_commit, *prev,
+                new_commit,
+                *prev,
                 "commitment after step {} collides with commitment at step {i}",
                 seen.len()
             );
@@ -249,5 +304,9 @@ fn sequential_commitments_all_distinct() {
         }
     }
 
-    assert_eq!(seen.len(), effects.len() + 1, "should have one commitment per step + initial");
+    assert_eq!(
+        seen.len(),
+        effects.len() + 1,
+        "should have one commitment per step + initial"
+    );
 }

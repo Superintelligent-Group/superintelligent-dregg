@@ -974,29 +974,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "axum-extra"
-version = "0.10.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9963ff19f40c6102c76756ef0a46004c0d58957d87259fc9208ff8441c12ab96"
-dependencies = [
- "axum 0.8.9",
- "axum-core 0.5.6",
- "bytes",
- "futures-util",
- "headers",
- "http",
- "http-body",
- "http-body-util",
- "mime",
- "pin-project-lite",
- "rustversion",
- "serde_core",
- "tower-layer",
- "tower-service",
- "tracing",
-]
-
-[[package]]
 name = "backtrace"
 version = "0.3.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1811,27 +1788,6 @@ dependencies = [
  "crossterm",
  "unicode-segmentation",
  "unicode-width",
-]
-
-[[package]]
-name = "compute-exchange"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.9",
- "blake3",
- "clap",
- "postcard",
- "pyana-app-framework",
- "pyana-circuit",
- "pyana-dsl-runtime",
- "pyana-intent",
- "pyana-turn",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.23",
 ]
 
 [[package]]
@@ -3349,24 +3305,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "governed-namespace"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.9",
- "blake3",
- "postcard",
- "pyana-app-framework",
- "pyana-captp",
- "pyana-cell",
- "pyana-dfa",
- "pyana-types",
- "serde",
- "serde_json",
- "tokio",
- "tower 0.5.3",
-]
-
-[[package]]
 name = "groestl"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3495,30 +3433,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "headers"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3314d5adb5d94bcdf56771f2e50dbbc80bb4bdf88967526706205ac9eff24eb"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "headers-core",
- "http",
- "httpdate",
- "mime",
- "sha1",
-]
-
-[[package]]
-name = "headers-core"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54b4a22553d4242c49fddb9ba998a99962b5cc6f22cb5a3482bec22522403ce4"
-dependencies = [
- "http",
-]
-
-[[package]]
 name = "heapless"
 version = "0.7.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3621,12 +3535,6 @@ dependencies = [
  "http-body",
  "pin-project-lite",
 ]
-
-[[package]]
-name = "http-range-header"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9171a2ea8a68358193d15dd5d70c1c10a2afc3e7e4c5bc92bc9f025cebd7359c"
 
 [[package]]
 name = "httparse"
@@ -6290,28 +6198,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-bounty-board"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.9",
- "axum-extra",
- "blake3",
- "clap",
- "postcard",
- "pyana-app-framework",
- "pyana-circuit",
- "pyana-sdk",
- "pyana-storage",
- "pyana-turn",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber 0.3.23",
-]
-
-[[package]]
 name = "pyana-bridge"
 version = "0.1.0"
 dependencies = [
@@ -6683,36 +6569,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pyana-gallery"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.9",
- "axum-extra",
- "blake3",
- "chacha20poly1305",
- "clap",
- "curve25519-dalek",
- "futures",
- "getrandom 0.3.4",
- "postcard",
- "pyana-app-framework",
- "pyana-cell",
- "pyana-circuit",
- "pyana-dsl-runtime",
- "pyana-federation",
- "pyana-turn",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tower 0.5.3",
- "tower-http",
- "tracing",
- "tracing-subscriber 0.3.23",
- "uuid",
-]
-
-[[package]]
 name = "pyana-hints"
 version = "0.0.5"
 dependencies = [
@@ -6734,23 +6590,6 @@ dependencies = [
  "serde_json",
  "serde_with",
  "zeroize",
-]
-
-[[package]]
-name = "pyana-identity"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.9",
- "blake3",
- "pyana-app-framework",
- "pyana-circuit",
- "pyana-dsl-runtime",
- "pyana-dsl-tests",
- "pyana-storage",
- "serde",
- "serde_json",
- "tokio",
- "tower 0.5.3",
 ]
 
 [[package]]
@@ -6790,23 +6629,6 @@ dependencies = [
  "subtle",
  "thiserror 2.0.18",
  "zeroize",
-]
-
-[[package]]
-name = "pyana-nameservice"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.9",
- "blake3",
- "pyana-app-framework",
- "pyana-captp",
- "pyana-cell",
- "pyana-turn",
- "pyana-types",
- "serde",
- "serde_json",
- "tokio",
- "tower 0.5.3",
 ]
 
 [[package]]
@@ -6914,58 +6736,6 @@ dependencies = [
  "serde",
  "subtle",
  "tempfile",
-]
-
-[[package]]
-name = "pyana-preflight"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "curve25519-dalek",
- "ed25519-dalek",
- "getrandom 0.3.4",
- "postcard",
- "pyana-blocklace",
- "pyana-bridge",
- "pyana-captp",
- "pyana-cell",
- "pyana-circuit",
- "pyana-commit",
- "pyana-federation",
- "pyana-gallery",
- "pyana-identity",
- "pyana-intent",
- "pyana-sdk",
- "pyana-storage",
- "pyana-token",
- "pyana-turn",
- "pyana-types",
- "pyana-wire",
- "serde_json",
- "tokio",
- "toml",
-]
-
-[[package]]
-name = "pyana-privacy-voting"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.9",
- "blake3",
- "ed25519-dalek",
- "http-body-util",
- "pyana-app-framework",
- "pyana-cell",
- "pyana-sdk",
- "pyana-storage",
- "pyana-token",
- "pyana-turn",
- "pyana-types",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tower 0.5.3",
 ]
 
 [[package]]
@@ -7092,28 +6862,6 @@ dependencies = [
  "pyana-types",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "pyana-subscription"
-version = "0.1.0"
-dependencies = [
- "axum 0.8.9",
- "blake3",
- "chacha20poly1305",
- "ed25519-dalek",
- "getrandom 0.3.4",
- "pyana-app-framework",
- "pyana-sdk",
- "pyana-storage",
- "pyana-token",
- "pyana-types",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "x25519-dalek",
- "zeroize",
 ]
 
 [[package]]
@@ -10657,19 +10405,10 @@ checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
 dependencies = [
  "bitflags",
  "bytes",
- "futures-core",
  "futures-util",
  "http",
  "http-body",
- "http-body-util",
- "http-range-header",
- "httpdate",
- "mime",
- "mime_guess",
- "percent-encoding",
  "pin-project-lite",
- "tokio",
- "tokio-util",
  "tower 0.5.3",
  "tower-layer",
  "tower-service",

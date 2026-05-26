@@ -1655,7 +1655,7 @@ async function proposeRoutes(routes: unknown[]): Promise<{ proposalId?: string; 
   requireWasm("proposeRoutes");
   const w = wasm!;
   try {
-    const built = w.wallet_make_action_turn(JSON.stringify({
+    const built = w.cipherclerk_make_action_turn(JSON.stringify({
       sender_privkey: cc.secretKey,
       method: "propose_routes",
       memo_json: JSON.stringify({ routes }),
@@ -1672,7 +1672,7 @@ async function proposeRoutes(routes: unknown[]): Promise<{ proposalId?: string; 
     return { proposalId: resp.data?.proposal_id || built.turn_id, submitted: true };
   } catch (e: unknown) {
     const err = e as Error;
-    return { error: err.message || "wallet_make_action_turn failed" };
+    return { error: err.message || "cipherclerk_make_action_turn failed" };
   }
 }
 
@@ -1686,7 +1686,7 @@ async function voteOnProposal(proposalId: string, approve: boolean): Promise<{ a
   requireWasm("voteOnProposal");
   const w = wasm!;
   try {
-    const built = w.wallet_make_action_turn(JSON.stringify({
+    const built = w.cipherclerk_make_action_turn(JSON.stringify({
       sender_privkey: cc.secretKey,
       method: "vote_on_proposal",
       memo_json: JSON.stringify({ proposal_id: proposalId, vote: !!approve }),
@@ -1703,7 +1703,7 @@ async function voteOnProposal(proposalId: string, approve: boolean): Promise<{ a
     return { accepted: resp.data?.accepted !== false, proposalId };
   } catch (e: unknown) {
     const err = e as Error;
-    return { error: err.message || "wallet_make_action_turn failed" };
+    return { error: err.message || "cipherclerk_make_action_turn failed" };
   }
 }
 
@@ -2263,7 +2263,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
 
     // Factory: canonical constructor-transparency mint.
     //
-    // Routes through `wallet_create_from_factory` (AgentCipherclerk::create_from_factory)
+    // Routes through `cipherclerk_create_from_factory` (AgentCipherclerk::create_from_factory)
     // — the canonical SDK path — to build a real signed
     // `Effect::CreateCellFromFactory` turn, submit it via /turns/submit,
     // and return the new cell's `(child_vk, param_hash, factory_vk)`
@@ -2310,7 +2310,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
         factory_vk: string;
       };
       try {
-        turnData = w.wallet_create_from_factory(specJson);
+        turnData = w.cipherclerk_create_from_factory(specJson);
       } catch (e: unknown) {
         const err = e as Error;
         return { id: message.id, error: `Failed to build factory turn: ${err.message || String(err)}` };
@@ -2398,7 +2398,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       // Ed25519 key. The previous binding (`peer_exchange_with_proof`)
       // used canonical types but bypassed signing entirely.
       try {
-        const result = w.wallet_peer_exchange(JSON.stringify({
+        const result = w.cipherclerk_peer_exchange(JSON.stringify({
           sender_privkey: cc.secretKey,
           receiver_cell_hex: message.receiverCellHex as string,
           amount: message.amount as number,
@@ -2487,7 +2487,7 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       };
       const expiry = options.expiry ?? null;
       try {
-        const result = w.wallet_post_encrypted_intent(JSON.stringify({
+        const result = w.cipherclerk_post_encrypted_intent(JSON.stringify({
           sender_privkey: cc.secretKey,
           match_spec: canonicalMatchSpec,
           kind: kind === "offer" ? "Offer" : kind === "query" ? "Query" : "Need",
@@ -2528,13 +2528,13 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       }
       // Coerce the page-side `assetType` (commonly a symbolic string like
       // "credit") to the canonical u64 the SDK expects. The wasm
-      // `wallet_private_transfer` binding treats this as the asset_type
+      // `cipherclerk_private_transfer` binding treats this as the asset_type
       // tag carried on every committed note.
       const assetTypeU64 = typeof assetType === "number"
         ? assetType
         : (typeof assetType === "string" && /^[0-9]+$/.test(assetType) ? parseInt(assetType, 10) : 0);
       try {
-        const result = w.wallet_private_transfer(JSON.stringify({
+        const result = w.cipherclerk_private_transfer(JSON.stringify({
           sender_privkey: cc.secretKey,
           amount,
           asset_type: assetTypeU64,

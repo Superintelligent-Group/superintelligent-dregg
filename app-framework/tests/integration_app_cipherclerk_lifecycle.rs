@@ -16,9 +16,7 @@
 //! 8. Federation-id binding: two cipherclerks with different federation_ids must
 //!    produce different signatures for the same (target, method, effects) triple.
 
-use pyana_app_framework::{
-    AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor, symbol,
-};
+use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor, symbol};
 use pyana_turn::action::Authorization;
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -48,11 +46,7 @@ fn construct_sign_submit_receipt() {
         .expect("submit must succeed");
 
     // Receipt must have a non-zero turn_hash.
-    assert_ne!(
-        receipt.turn_hash,
-        [0u8; 32],
-        "turn_hash must be non-zero"
-    );
+    assert_ne!(receipt.turn_hash, [0u8; 32], "turn_hash must be non-zero");
     // Agent must match the cclerk's cell_id.
     assert_eq!(
         receipt.agent,
@@ -60,7 +54,10 @@ fn construct_sign_submit_receipt() {
         "receipt agent must match cclerk cell_id"
     );
     // One action in the forest.
-    assert_eq!(receipt.action_count, 1, "single-action turn must have action_count == 1");
+    assert_eq!(
+        receipt.action_count, 1,
+        "single-action turn must have action_count == 1"
+    );
 }
 
 #[test]
@@ -93,8 +90,7 @@ fn consecutive_turns_receipt_chain_advances() {
 
     // Turn hashes are distinct (different nonces / actions).
     assert_ne!(
-        r1.turn_hash,
-        r2.turn_hash,
+        r1.turn_hash, r2.turn_hash,
         "consecutive turns must produce distinct turn_hashes"
     );
 }
@@ -130,7 +126,9 @@ fn restarted_executor_can_submit_after_original_turns() {
     let exec1 = make_executor(&cclerk);
 
     let a1 = cclerk.make_action(target_cell(), "first", vec![]);
-    exec1.submit_action(&cclerk, a1).expect("first submit must succeed");
+    exec1
+        .submit_action(&cclerk, a1)
+        .expect("first submit must succeed");
 
     // Second executor sharing same cclerk.
     let exec2 = EmbeddedExecutor::new(&cclerk, "default");
@@ -157,12 +155,13 @@ fn multi_action_atomic_turn_both_roots_in_receipt() {
     let a2 = cclerk.make_action(t2, "second-action", vec![]);
 
     let turn = cclerk.make_turn_with_actions(vec![a1, a2]);
-    let receipt = executor.submit_turn(&turn).expect("multi-action turn must succeed");
+    let receipt = executor
+        .submit_turn(&turn)
+        .expect("multi-action turn must succeed");
 
     // Both actions are in the same turn forest → action_count == 2.
     assert_eq!(
-        receipt.action_count,
-        2,
+        receipt.action_count, 2,
         "multi-action turn must report action_count == 2"
     );
     assert_ne!(receipt.turn_hash, [0u8; 32], "turn_hash must be non-zero");
@@ -194,8 +193,7 @@ fn different_federation_ids_produce_different_signatures() {
 
     // Signatures must differ (different federation_id → different signing message).
     assert_ne!(
-        sig_a,
-        sig_b,
+        sig_a, sig_b,
         "different federation_ids must produce different signatures"
     );
 }
@@ -213,7 +211,10 @@ fn make_self_action_targets_cclerk_own_cell() {
     // Must carry a real signature.
     match action.authorization {
         Authorization::Signature(a, b) => {
-            assert!(a != [0u8; 32] || b != [0u8; 32], "signature must be non-zero");
+            assert!(
+                a != [0u8; 32] || b != [0u8; 32],
+                "signature must be non-zero"
+            );
         }
         other => panic!("expected Signature, got {other:?}"),
     }

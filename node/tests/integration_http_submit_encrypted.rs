@@ -68,9 +68,7 @@ fn encrypted_turn_with_node_derived_sealer_commits() {
     // The node derives the X25519 secret from its own cipherclerk.
     let sealer_secret = executor_cclerk.derive_symmetric_key(TURN_UNSEALER_DOMAIN);
     let sealer_public = {
-        let pk = x25519_dalek::PublicKey::from(
-            &x25519_dalek::StaticSecret::from(sealer_secret),
-        );
+        let pk = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(sealer_secret));
         *pk.as_bytes()
     };
 
@@ -96,7 +94,10 @@ fn encrypted_turn_with_node_derived_sealer_commits() {
         receipt.was_encrypted,
         "receipt.was_encrypted must be true on the encrypted path"
     );
-    assert_eq!(receipt.agent, agent, "receipt agent must match the turn agent");
+    assert_eq!(
+        receipt.agent, agent,
+        "receipt agent must match the turn agent"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -112,9 +113,7 @@ fn encrypted_turn_with_forged_sealer_is_rejected() {
     let mut attacker_secret = [0u8; 32];
     attacker_secret.copy_from_slice(blake3::hash(b"attacker-x25519-secret").as_bytes());
     let attacker_public = {
-        let pk = x25519_dalek::PublicKey::from(
-            &x25519_dalek::StaticSecret::from(attacker_secret),
-        );
+        let pk = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(attacker_secret));
         *pk.as_bytes()
     };
 
@@ -177,9 +176,7 @@ fn was_encrypted_flag_is_bound_into_receipt_hash() {
     let executor_cclerk = make_cclerk("hash-binding-executor");
     let sealer_secret = executor_cclerk.derive_symmetric_key(TURN_UNSEALER_DOMAIN);
     let sealer_public = {
-        let pk = x25519_dalek::PublicKey::from(
-            &x25519_dalek::StaticSecret::from(sealer_secret),
-        );
+        let pk = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(sealer_secret));
         *pk.as_bytes()
     };
 

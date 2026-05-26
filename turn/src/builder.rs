@@ -427,7 +427,6 @@ impl TurnBuilder {
         }
         total
     }
-
 }
 
 // ─── ActionBuilder<S> — typestate-bearing builder ─────────────────────────────

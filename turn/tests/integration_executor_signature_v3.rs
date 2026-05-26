@@ -68,7 +68,10 @@ fn signature_rejects_tampered_was_encrypted() {
     r.was_encrypted = !r.was_encrypted;
 
     let err = verify_receipt_chain_with_keys(&[r], &[pubkey]);
-    assert!(err.is_err(), "tampered was_encrypted must invalidate v3 sig");
+    assert!(
+        err.is_err(),
+        "tampered was_encrypted must invalidate v3 sig"
+    );
 }
 
 #[test]
@@ -104,7 +107,10 @@ fn signature_rejects_tampered_computrons() {
     r.computrons_used = r.computrons_used.wrapping_add(1);
 
     let err = verify_receipt_chain_with_keys(&[r], &[pubkey]);
-    assert!(err.is_err(), "tampered computrons_used must invalidate v3 sig");
+    assert!(
+        err.is_err(),
+        "tampered computrons_used must invalidate v3 sig"
+    );
 }
 
 #[test]

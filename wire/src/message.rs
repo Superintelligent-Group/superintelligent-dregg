@@ -1063,9 +1063,8 @@ mod tests {
         let present = ReceiptBody::Present {
             receipt_bytes: vec![1, 2, 3],
         };
-        let unavailable = ReceiptBody::Unavailable(ReceiptUnavailable::NeverExisted {
-            current_tip: None,
-        });
+        let unavailable =
+            ReceiptBody::Unavailable(ReceiptUnavailable::NeverExisted { current_tip: None });
 
         // Tag bytes differ — the postcard discriminant is the first byte.
         let p_bytes = postcard::to_stdvec(&present).unwrap();

@@ -181,10 +181,7 @@ fn relay_crash_with_pending_drain_recoverable_if_checkpointed() {
 
     // Queue is now empty.
     assert_eq!(operator.total_pending(), 0);
-    assert_eq!(
-        operator.inbox_root(&owner).unwrap(),
-        empty_queue_root()
-    );
+    assert_eq!(operator.inbox_root(&owner).unwrap(), empty_queue_root());
 }
 
 // =============================================================================
@@ -302,10 +299,7 @@ fn partition_relay_owner_messages_accumulate_then_drain() {
 
     // Queue empty, root back to empty.
     assert_eq!(operator.total_pending(), 0);
-    assert_eq!(
-        operator.inbox_root(&owner).unwrap(),
-        empty_queue_root()
-    );
+    assert_eq!(operator.inbox_root(&owner).unwrap(), empty_queue_root());
 }
 
 // =============================================================================

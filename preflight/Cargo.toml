@@ -40,7 +40,7 @@ toml = "0.8"
 pyana-gallery = { path = "../apps/gallery", optional = true }
 
 # These app crates do NOT depend on pyana-sdk and compile fine.
-pyana-identity = { path = "../apps/identity" }
+#pyana-identity = { path = "../apps/identity" }
 
 blake3 = "1"
 curve25519-dalek = { version = "4", features = ["alloc"] }

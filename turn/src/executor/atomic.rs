@@ -1060,8 +1060,7 @@ impl TurnExecutor {
         // Emit one TurnReceipt per cell touched: sovereign entries first
         // (in declared order), then hosted actions (in declared order).
         let turn_hash = Self::mixed_atomic_turn_hash(mixed_turn);
-        let mut receipts =
-            Vec::with_capacity(new_commitments.len() + hosted_receipt_inputs.len());
+        let mut receipts = Vec::with_capacity(new_commitments.len() + hosted_receipt_inputs.len());
         for (idx, (cell_id, new_commitment)) in new_commitments.iter().enumerate() {
             let (old_commitment, vk_hash) = sovereign_receipt_inputs[idx];
             let receipt = self.build_atomic_per_cell_receipt(
@@ -2140,7 +2139,7 @@ mod hardening_tests {
             &cell_b_id,
             &res.receipts[0].pre_state_hash,
             &res.receipts[0].post_state_hash,
-            None, // permissive cells have no vk_hash
+            None,                     // permissive cells have no vk_hash
             res.hosted_deltas[0] + 1, // tamper: shift cell_b's delta by 1
         );
         assert_ne!(
@@ -2287,10 +2286,9 @@ mod hardening_tests {
         };
         let res = executor.execute_mixed_atomic(&mixed, &mut ledger).unwrap();
         for (i, r) in res.receipts.iter().enumerate() {
-            let sig = r
-                .executor_signature
-                .as_ref()
-                .expect(&format!("receipt[{i}] must be signed when key is configured"));
+            let sig = r.executor_signature.as_ref().expect(&format!(
+                "receipt[{i}] must be signed when key is configured"
+            ));
             assert_eq!(sig.len(), 64);
         }
     }

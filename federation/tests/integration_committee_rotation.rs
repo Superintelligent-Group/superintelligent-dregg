@@ -73,7 +73,10 @@ fn epoch_rotation_produces_new_federation_id() {
     fed.apply_epoch_transition(new_members, 1, 3);
 
     let id_after = fed.id();
-    assert_ne!(id_before, id_after, "rotation must produce a new federation_id");
+    assert_ne!(
+        id_before, id_after,
+        "rotation must produce a new federation_id"
+    );
     assert_eq!(fed.epoch(), 1);
     assert_eq!(fed.num_members(), 4);
 }
@@ -132,11 +135,7 @@ fn member_order_independent_federation_id() {
     let f1 = Federation::verifier_only(pks, 0, 3);
     let f2 = Federation::verifier_only(shuffled, 0, 3);
 
-    assert_eq!(
-        f1.id(),
-        f2.id(),
-        "federation_id must be order-independent"
-    );
+    assert_eq!(f1.id(), f2.id(), "federation_id must be order-independent");
 }
 
 // =============================================================================

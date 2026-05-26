@@ -117,7 +117,7 @@ run_step "bob.py consume" "08.bob.consume" "$PY" "$HERE/bob.py" consume --state-
 step 9 "carol settles after dispute window (Fulfilled → Settled publish)"
 run_step "carol.py settle" "09.carol.settle" "$PY" "$HERE/carol.py" settle --state-dir "$STATE_DIR" || exit 1
 
-# ── Step 10: verify ───────────────────────────────────────────────────
+# ── Step 10: verify (structural — original verify.py) ──────────────────
 step 10 "verify all must_pass + must_not_pass entries in expected.json"
 VERDICT="$STATE_DIR/verdict.json"
 if "$PY" "$HERE/verify.py" \
@@ -132,10 +132,76 @@ else
     VERIFY_OK=0
 fi
 
+# ── Step 11: executor-invoking helper (real receipts) ─────────────────
+# This step is **optional** — it runs only when the cross-app-helper
+# binary is available. Build it out-of-band with
+#   cargo build -p pyana-demo --bin cross-app-helper
+# (the demo intentionally does not run cargo from the harness; the
+# parent BOUNDARIES.md no-cargo-from-demos rule).
+step 11 "executor-invoking cross-app-helper + verify_real.py (real TurnReceipts)"
+HELPER_BIN="${CROSS_APP_HELPER_BIN:-$HERE/../../target/debug/cross-app-helper}"
+VERIFIER_BIN="${PYANA_VERIFIER_BIN:-$HERE/../../target/debug/pyana-verifier}"
+REAL_VERDICT="$STATE_DIR/verdict.real.json"
+if [ -x "$HELPER_BIN" ]; then
+    if "$HELPER_BIN" --state-dir "$STATE_DIR" \
+            >"$LOG_DIR/11a.cross-app-helper.stdout" \
+            2>"$LOG_DIR/11a.cross-app-helper.stderr"; then
+        ok "cross-app-helper produced 9 receipt artifacts"
+        VERIFIER_FLAG=""
+        if [ -x "$VERIFIER_BIN" ]; then
+            VERIFIER_FLAG="--verifier-bin $VERIFIER_BIN"
+            ok "pyana-verifier available; replay-chain will be invoked"
+        else
+            warn "pyana-verifier not found at $VERIFIER_BIN; skipping replay-chain step of verify_real.py"
+        fi
+        if "$PY" "$HERE/verify_real.py" \
+                --state-dir "$STATE_DIR" \
+                --out "$REAL_VERDICT" \
+                $VERIFIER_FLAG \
+                >"$LOG_DIR/11b.verify_real.stdout" \
+                2>"$LOG_DIR/11b.verify_real.stderr"; then
+            ok "verify_real.py: every must_pass assertion passed"
+            REAL_VERIFY_OK=1
+        else
+            fail "verify_real.py rejected (verdict at $REAL_VERDICT)"
+            REAL_VERIFY_OK=0
+        fi
+    else
+        fail "cross-app-helper crashed (see $LOG_DIR/11a.cross-app-helper.stderr)"
+        REAL_VERIFY_OK=0
+    fi
+else
+    warn "cross-app-helper not built at $HELPER_BIN; skipping step 11"
+    warn "build with: cargo build -p pyana-demo --bin cross-app-helper"
+    REAL_VERIFY_OK=-1  # neither pass nor fail; the lane is informational
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────
 echo
 echo "[demo] ─── summary ──────────────────────────────────────────────"
+SUMMARY_FAIL=0
 if [ "$VERIFY_OK" = "1" ]; then
+    printf '%s — structural cross-app verify.py PASS\n' "$(color_green '[demo]')"
+else
+    printf '%s — structural cross-app verify.py FAIL (verdict $VERDICT)\n' "$(color_red '[demo]')"
+    SUMMARY_FAIL=1
+fi
+case "$REAL_VERIFY_OK" in
+    1)
+        printf '%s — executor-invoking verify_real.py PASS (real receipts + receipt-chain + cross-app links)\n' \
+            "$(color_green '[demo]')"
+        ;;
+    0)
+        printf '%s — executor-invoking verify_real.py FAIL (verdict $REAL_VERDICT)\n' \
+            "$(color_red '[demo]')"
+        SUMMARY_FAIL=1
+        ;;
+    -1)
+        printf '%s — executor-invoking verify_real.py SKIPPED (cross-app-helper not built)\n' \
+            "$(color_dim '[demo]')"
+        ;;
+esac
+if [ $SUMMARY_FAIL -eq 0 ]; then
     printf '%s — cross-app composition story verified end-to-end\n' "$(color_green '[demo] PASS')"
     exit 0
 else
@@ -145,8 +211,16 @@ else
         "$PY" -c "
 import json
 v = json.load(open('$VERDICT'))
-print('must_pass_failures:', v.get('must_pass_failures', []))
-print('must_not_pass_failures:', v.get('must_not_pass_failures', []))
+print('verify.py must_pass_failures:', v.get('must_pass_failures', []))
+print('verify.py must_not_pass_failures:', v.get('must_not_pass_failures', []))
+"
+    fi
+    if [ -f "$REAL_VERDICT" ]; then
+        echo
+        "$PY" -c "
+import json
+v = json.load(open('$REAL_VERDICT'))
+print('verify_real.py must_pass_failures:', v.get('must_pass_failures', []))
 "
     fi
     exit 1

@@ -43,7 +43,13 @@ fn make_intent(seed: u8) -> Intent {
         predicate_requirements: vec![],
         strict_resource_matching: false,
     };
-    Intent::new(IntentKind::Offer, spec, CommitmentId([seed; 32]), 99999, None)
+    Intent::new(
+        IntentKind::Offer,
+        spec,
+        CommitmentId([seed; 32]),
+        99999,
+        None,
+    )
 }
 
 fn encrypt(intent: &Intent, key: &ThresholdEncryptionKey) -> EncryptedIntent {
@@ -97,7 +103,11 @@ fn plain_submission(solver_byte: u8, intents: &[Intent], score: f64) -> SolverSu
         .collect();
     SolverSubmission {
         solver_id: [solver_byte; 32],
-        solution: vec![RingTrade { participants, settlements, score }],
+        solution: vec![RingTrade {
+            participants,
+            settlements,
+            score,
+        }],
         total_score: score,
         // Non-empty proof — passes the empty-guard; permissive stub does the rest.
         validity_proof: vec![0x01, 0x02],
@@ -183,7 +193,9 @@ fn bond_conservation_winner_released_loser_slashed() {
     engine.advance_height(3); // within challenge window
     let sub_b = plain_submission(0xBB, &intents, 9.0);
     sub_b.clone(); // just to confirm Clone works
-    engine.challenge(plain_submission(0xBB, &intents, 9.0)).unwrap();
+    engine
+        .challenge(plain_submission(0xBB, &intents, 9.0))
+        .unwrap();
     assert_eq!(engine.winning_score(), Some(9.0));
 
     // After challenge, solver A's bond should be slashed (no longer held).
@@ -266,11 +278,8 @@ fn after_settlement_fresh_batch_starts() {
 fn strict_mode_rejects_plain_submission() {
     let reg = WitnessedPredicateRegistry::with_stubs();
     let (key, shares) = make_keys(2, 3);
-    let mut engine = TrustlessIntentEngine::with_verifier(
-        2,
-        3,
-        Box::new(WitnessedProofVerifier::strict(reg)),
-    );
+    let mut engine =
+        TrustlessIntentEngine::with_verifier(2, 3, Box::new(WitnessedProofVerifier::strict(reg)));
     let intents = vec![make_intent(50), make_intent(51)];
     drive_to_solving(&mut engine, &key, &shares, &intents);
 

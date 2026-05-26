@@ -97,8 +97,14 @@ impl std::fmt::Display for VerificationKeyIntegrityError {
             f,
             "VerificationKey hash mismatch: declared {:02x}{:02x}{:02x}{:02x}.. \
              but blake3(data) is {:02x}{:02x}{:02x}{:02x}..",
-            self.got[0], self.got[1], self.got[2], self.got[3],
-            self.expected[0], self.expected[1], self.expected[2], self.expected[3],
+            self.got[0],
+            self.got[1],
+            self.got[2],
+            self.got[3],
+            self.expected[0],
+            self.expected[1],
+            self.expected[2],
+            self.expected[3],
         )
     }
 }

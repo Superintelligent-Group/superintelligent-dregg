@@ -295,8 +295,7 @@ impl TurnExecutor {
                                 reason: format!(
                                     "SetVerificationKey: VerificationKey integrity invariant violated \
                                      (declared hash {:02x}{:02x}.. but blake3(data) is {:02x}{:02x}..)",
-                                    vk.hash[0], vk.hash[1],
-                                    expected[0], expected[1],
+                                    vk.hash[0], vk.hash[1], expected[0], expected[1],
                                 ),
                             },
                             path.to_vec(),
@@ -2943,7 +2942,11 @@ impl TurnExecutor {
                 Ok(())
             }
 
-            Effect::ValidateHandoff { cert_hash } => {
+            Effect::ValidateHandoff {
+                cert_hash,
+                recipient_pk,
+                introducer_pk,
+            } => {
                 // Consume-on-use: a successful ValidateHandoff removes
                 // `cert_hash` from the federation's approved-handoffs
                 // mirror so a second presentation of the same cert
@@ -2962,6 +2965,20 @@ impl TurnExecutor {
                     ));
                 }
                 let _ = cert_hash;
+                let _ = recipient_pk;
+                let _ = introducer_pk;
+                // NOTE: the action's `Authorization::CapTpDelivered`
+                // carries the same `handoff_cert` (which pins
+                // `recipient_pk`) and `introducer_pk`; the executor's
+                // authorization path verifies cert signatures against
+                // those keys. The effect's per-effect binding is what
+                // the AIR projection consumes; a mismatch between the
+                // effect's `(recipient_pk, introducer_pk)` and the
+                // action's carried cert would surface at the
+                // authorization gate, not here. This apply site is the
+                // state-mutation half; soundness binding lives in the
+                // AIR PI projection (effect_vm_bridge) + the
+                // authorization verifier.
                 Ok(())
             }
 

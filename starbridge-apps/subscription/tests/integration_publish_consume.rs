@@ -16,9 +16,9 @@
 use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
 use pyana_cell::state::FieldElement;
 use starbridge_subscription::{
-    BountyState, build_bounty_state_publish_action, build_consume_action,
-    build_grant_consumer_action, build_grant_publisher_action, build_publish_action,
-    bounty_state_payload_hash,
+    BountyState, bounty_state_payload_hash, build_bounty_state_publish_action,
+    build_consume_action, build_grant_consumer_action, build_grant_publisher_action,
+    build_publish_action,
 };
 
 // =============================================================================
@@ -84,13 +84,8 @@ fn executor_grant_publisher_then_publish_emits_subscription_published_event() {
     let new_head = u64_field(1);
     let new_msg_root = blake3_field(b"message-root-v1");
 
-    let publish_action = build_publish_action(
-        &cipherclerk,
-        sub_cell,
-        new_head,
-        new_msg_root,
-        payload_hash,
-    );
+    let publish_action =
+        build_publish_action(&cipherclerk, sub_cell, new_head, new_msg_root, payload_hash);
     let publish_receipt = executor
         .submit_action(&cipherclerk, publish_action)
         .expect("publish must be accepted by executor");
@@ -98,9 +93,15 @@ fn executor_grant_publisher_then_publish_emits_subscription_published_event() {
     assert_eq!(publish_receipt.action_count, 1);
     assert!(!publish_receipt.emitted_events.is_empty());
     let ev = &publish_receipt.emitted_events[0];
-    assert_eq!(ev.data[0], new_head,     "event data[0] must be new_head");
-    assert_eq!(ev.data[1], new_msg_root, "event data[1] must be new_message_root");
-    assert_eq!(ev.data[2], payload_hash, "event data[2] must be payload_hash");
+    assert_eq!(ev.data[0], new_head, "event data[0] must be new_head");
+    assert_eq!(
+        ev.data[1], new_msg_root,
+        "event data[1] must be new_message_root"
+    );
+    assert_eq!(
+        ev.data[2], payload_hash,
+        "event data[2] must be payload_hash"
+    );
 }
 
 // =============================================================================
@@ -119,9 +120,8 @@ fn executor_publish_grant_consumer_consume_emits_subscription_consumed_event() {
     let payload_hash = blake3_field(b"message-body");
     let new_head = u64_field(1);
     let new_msg_root = blake3_field(b"msg-root-v1");
-    let publish_action = build_publish_action(
-        &cipherclerk, sub_cell, new_head, new_msg_root, payload_hash,
-    );
+    let publish_action =
+        build_publish_action(&cipherclerk, sub_cell, new_head, new_msg_root, payload_hash);
     executor
         .submit_action(&cipherclerk, publish_action)
         .expect("publish must succeed");
@@ -129,7 +129,8 @@ fn executor_publish_grant_consumer_consume_emits_subscription_consumed_event() {
     // Grant a consumer.
     let new_con_root = blake3_field(b"consumers-root-v1");
     let consumer_pk = [0x22u8; 32];
-    let grant_action = build_grant_consumer_action(&cipherclerk, sub_cell, new_con_root, consumer_pk);
+    let grant_action =
+        build_grant_consumer_action(&cipherclerk, sub_cell, new_con_root, consumer_pk);
     executor
         .submit_action(&cipherclerk, grant_action)
         .expect("grant_consumer must succeed");
@@ -145,8 +146,14 @@ fn executor_publish_grant_consumer_consume_emits_subscription_consumed_event() {
     assert!(!consume_receipt.emitted_events.is_empty());
     let ev = &consume_receipt.emitted_events[0];
     // event data[0] = new_tail, data[1] = consumed payload hash.
-    assert_eq!(ev.data[0], new_tail,     "consume event data[0] must be new_tail");
-    assert_eq!(ev.data[1], payload_hash, "consume event data[1] must be consumed payload_hash");
+    assert_eq!(
+        ev.data[0], new_tail,
+        "consume event data[0] must be new_tail"
+    );
+    assert_eq!(
+        ev.data[1], payload_hash,
+        "consume event data[1] must be consumed payload_hash"
+    );
 }
 
 // =============================================================================
@@ -163,16 +170,20 @@ fn executor_head_rewind_after_publish_rejected() {
 
     // First publish: head → 1.
     let p1 = build_publish_action(
-        &cipherclerk, sub_cell,
+        &cipherclerk,
+        sub_cell,
         u64_field(1),
         blake3_field(b"root-v1"),
         blake3_field(b"payload-1"),
     );
-    executor.submit_action(&cipherclerk, p1).expect("first publish must succeed");
+    executor
+        .submit_action(&cipherclerk, p1)
+        .expect("first publish must succeed");
 
     // Adversarial: head → 0 (rewind).
     let p_rewind = build_publish_action(
-        &cipherclerk, sub_cell,
+        &cipherclerk,
+        sub_cell,
         u64_field(0), // ← rewind
         blake3_field(b"root-v2"),
         blake3_field(b"payload-2"),
@@ -198,7 +209,10 @@ fn executor_consume_before_publish_rejected() {
 
     // No publish yet — head = 0. Attempt to advance tail → 1.
     let consume_action = build_consume_action(
-        &cipherclerk, sub_cell, u64_field(1), blake3_field(b"phantom-payload"),
+        &cipherclerk,
+        sub_cell,
+        u64_field(1),
+        blake3_field(b"phantom-payload"),
     );
     let result = executor.submit_action(&cipherclerk, consume_action);
     assert!(
@@ -226,13 +240,22 @@ fn executor_bounty_lifecycle_post_claim_fulfill_settle() {
 
     // Compute the expected payload hashes.
     let hash_post_to_claimed = bounty_state_payload_hash(
-        &bounty_id, BountyState::Posted, BountyState::Claimed, &actor_pk_hash,
+        &bounty_id,
+        BountyState::Posted,
+        BountyState::Claimed,
+        &actor_pk_hash,
     );
     let hash_claimed_to_fulfilled = bounty_state_payload_hash(
-        &bounty_id, BountyState::Claimed, BountyState::Fulfilled, &actor_pk_hash,
+        &bounty_id,
+        BountyState::Claimed,
+        BountyState::Fulfilled,
+        &actor_pk_hash,
     );
     let hash_fulfilled_to_settled = bounty_state_payload_hash(
-        &bounty_id, BountyState::Fulfilled, BountyState::Settled, &actor_pk_hash,
+        &bounty_id,
+        BountyState::Fulfilled,
+        BountyState::Settled,
+        &actor_pk_hash,
     );
 
     // Payload hashes must be distinct (replay-safety across state transitions).
@@ -241,7 +264,8 @@ fn executor_bounty_lifecycle_post_claim_fulfill_settle() {
 
     // Step 1: Claim (transition Posted → Claimed; head 0 → 1).
     let claim_action = build_bounty_state_publish_action(
-        &cipherclerk, sub_cell,
+        &cipherclerk,
+        sub_cell,
         u64_field(1),
         blake3_field(b"msg-root-v1"),
         &bounty_id,
@@ -260,7 +284,8 @@ fn executor_bounty_lifecycle_post_claim_fulfill_settle() {
 
     // Step 2: Fulfill (transition Claimed → Fulfilled; head 1 → 2).
     let fulfill_action = build_bounty_state_publish_action(
-        &cipherclerk, sub_cell,
+        &cipherclerk,
+        sub_cell,
         u64_field(2),
         blake3_field(b"msg-root-v2"),
         &bounty_id,
@@ -278,7 +303,8 @@ fn executor_bounty_lifecycle_post_claim_fulfill_settle() {
 
     // Step 3: Settle (transition Fulfilled → Settled; head 2 → 3).
     let settle_action = build_bounty_state_publish_action(
-        &cipherclerk, sub_cell,
+        &cipherclerk,
+        sub_cell,
         u64_field(3),
         blake3_field(b"msg-root-v3"),
         &bounty_id,
@@ -312,13 +338,23 @@ fn executor_message_root_rewind_rejected() {
     // First publish: message_root → non-zero.
     let good_root = blake3_field(b"root-v1");
     let p1 = build_publish_action(
-        &cipherclerk, sub_cell, u64_field(1), good_root, blake3_field(b"p1"),
+        &cipherclerk,
+        sub_cell,
+        u64_field(1),
+        good_root,
+        blake3_field(b"p1"),
     );
-    executor.submit_action(&cipherclerk, p1).expect("first publish must succeed");
+    executor
+        .submit_action(&cipherclerk, p1)
+        .expect("first publish must succeed");
 
     // Adversarial: rewind message_root to zero.
     let p_rewind = build_publish_action(
-        &cipherclerk, sub_cell, u64_field(2), [0u8; 32], blake3_field(b"p2"),
+        &cipherclerk,
+        sub_cell,
+        u64_field(2),
+        [0u8; 32],
+        blake3_field(b"p2"),
     );
     let result = executor.submit_action(&cipherclerk, p_rewind);
     assert!(

@@ -3488,14 +3488,20 @@ fn test_vk_hash_widening_distinguishes_upper_half_collisions() {
         BabyBear::new(0x4444),
     ];
     let vk_a: [BabyBear; 8] = [
-        low[0], low[1], low[2], low[3],
+        low[0],
+        low[1],
+        low[2],
+        low[3],
         BabyBear::new(0xAAAA_0001),
         BabyBear::new(0xAAAA_0002),
         BabyBear::new(0xAAAA_0003),
         BabyBear::new(0xAAAA_0004),
     ];
     let vk_b: [BabyBear; 8] = [
-        low[0], low[1], low[2], low[3],
+        low[0],
+        low[1],
+        low[2],
+        low[3],
         BabyBear::new(0xBBBB_0001),
         BabyBear::new(0xBBBB_0002),
         BabyBear::new(0xBBBB_0003),
@@ -3528,7 +3534,10 @@ fn test_vk_hash_widening_distinct_pi_projections() {
     ];
     let vk_b: [BabyBear; 8] = [
         // Same lower half as vk_a — pre-v2 would have collided here.
-        vk_a[0], vk_a[1], vk_a[2], vk_a[3],
+        vk_a[0],
+        vk_a[1],
+        vk_a[2],
+        vk_a[3],
         // Upper half differs.
         BabyBear::new(0xB000_0001),
         BabyBear::new(0xB000_0002),
@@ -3551,11 +3560,17 @@ fn test_vk_hash_widening_distinct_pi_projections() {
     );
     // Pre-v2: PI[CUSTOM_PROOFS_BASE..+4] would match → same dispatch.
     let base = pi::CUSTOM_PROOFS_BASE;
-    assert_eq!(&pi_a[base..base + 4], &pi_b[base..base + 4],
-        "lower-half collision is preserved (precondition)");
+    assert_eq!(
+        &pi_a[base..base + 4],
+        &pi_b[base..base + 4],
+        "lower-half collision is preserved (precondition)"
+    );
     // Post-v2: upper-half slots differ, so dispatch keys disagree.
-    assert_ne!(&pi_a[base + 4..base + 8], &pi_b[base + 4..base + 8],
-        "PI v2 must expose the upper 4 vk_hash felts so dispatch is distinct");
+    assert_ne!(
+        &pi_a[base + 4..base + 8],
+        &pi_b[base + 4..base + 8],
+        "PI v2 must expose the upper 4 vk_hash felts so dispatch is distinct"
+    );
     // The full 8-felt projections must differ overall.
     assert_ne!(&pi_a[base..base + 8], &pi_b[base..base + 8]);
     // Effects-hash binding (helpers absorbs all 8 felts) also differs.
@@ -3588,7 +3603,10 @@ fn test_vk_hash_pi_dispatch_key_full_32_bytes() {
         BabyBear::new(0xAAAA_0004),
     ];
     let vk_b: [BabyBear; 8] = [
-        vk_a[0], vk_a[1], vk_a[2], vk_a[3],
+        vk_a[0],
+        vk_a[1],
+        vk_a[2],
+        vk_a[3],
         BabyBear::new(0xBBBB_0001),
         BabyBear::new(0xBBBB_0002),
         BabyBear::new(0xBBBB_0003),
@@ -3600,13 +3618,17 @@ fn test_vk_hash_pi_dispatch_key_full_32_bytes() {
     assert_eq!(&key_a[..16], &key_b[..16]);
     // Upper 16 bytes differ — distinct registry dispatch.
     assert_ne!(&key_a[16..], &key_b[16..]);
-    assert_ne!(key_a, key_b,
-        "PI v2 32-byte dispatch keys must differ when upper half differs");
+    assert_ne!(
+        key_a, key_b,
+        "PI v2 32-byte dispatch keys must differ when upper half differs"
+    );
     // Pre-v2 simulated: zero-pad the upper half from a 16-byte truncation.
     let mut key_a_v1 = [0u8; 32];
     key_a_v1[..16].copy_from_slice(&key_a[..16]);
     let mut key_b_v1 = [0u8; 32];
     key_b_v1[..16].copy_from_slice(&key_b[..16]);
-    assert_eq!(key_a_v1, key_b_v1,
-        "pre-v2 zero-pad would collide — this is exactly the gap #70 closes");
+    assert_eq!(
+        key_a_v1, key_b_v1,
+        "pre-v2 zero-pad would collide — this is exactly the gap #70 closes"
+    );
 }

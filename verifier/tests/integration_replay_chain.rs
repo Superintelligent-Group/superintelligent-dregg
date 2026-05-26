@@ -19,8 +19,7 @@ use pyana_circuit::{
 use pyana_commit::typed::canonical_32_to_felts_4;
 use pyana_types::CellId;
 use pyana_verifier::{
-    ReplayEntry, ReplayVerdict, ReplayWitnessAvailability, ReplayWitnessBundle,
-    replay_chain,
+    ReplayEntry, ReplayVerdict, ReplayWitnessAvailability, ReplayWitnessBundle, replay_chain,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,11 +69,9 @@ fn build_valid_entry(
     let mut pi_u32: Vec<u32> = pi_bb.iter().map(|b| b.as_u32()).collect();
 
     // Ensure the PI is long enough to hold all turn-identity slots.
-    let needed = (pi::IS_AGENT_CELL + 1).max(
-        pi::TURN_HASH_BASE + pi::TURN_HASH_LEN
-    ).max(
-        pi::PREVIOUS_RECEIPT_HASH_BASE + pi::PREVIOUS_RECEIPT_HASH_LEN
-    );
+    let needed = (pi::IS_AGENT_CELL + 1)
+        .max(pi::TURN_HASH_BASE + pi::TURN_HASH_LEN)
+        .max(pi::PREVIOUS_RECEIPT_HASH_BASE + pi::PREVIOUS_RECEIPT_HASH_LEN);
     if pi_u32.len() < needed {
         pi_u32.resize(needed, 0);
     }
@@ -131,12 +128,19 @@ fn single_entry_real_proof_verifies() {
 
     let entry = build_valid_entry(
         5_000,
-        &[Effect::Transfer { amount: 100, direction: 1 }],
+        &[Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }],
         receipt,
     );
 
     let out = replay_chain(&[entry]);
-    assert!(out.overall_verified, "single real entry must verify; first failure: {:?}", out.first_failure);
+    assert!(
+        out.overall_verified,
+        "single real entry must verify; first failure: {:?}",
+        out.first_failure
+    );
     assert_eq!(out.verified, 1);
     assert_eq!(out.per_entry[0], ReplayVerdict::Verified);
 }
@@ -152,7 +156,10 @@ fn two_entry_chain_with_correct_link_verifies() {
 
     let entry_0 = build_valid_entry(
         10_000,
-        &[Effect::Transfer { amount: 50, direction: 1 }],
+        &[Effect::Transfer {
+            amount: 50,
+            direction: 1,
+        }],
         receipt_0.clone(),
     );
 
@@ -166,7 +173,10 @@ fn two_entry_chain_with_correct_link_verifies() {
     // chain state, only the receipt-PI binding matters for the replay verifier).
     let entry_1 = build_valid_entry(
         9_950,
-        &[Effect::SetField { field_idx: 0, value: BabyBear::new(7) }],
+        &[Effect::SetField {
+            field_idx: 0,
+            value: BabyBear::new(7),
+        }],
         receipt_1,
     );
 
@@ -189,7 +199,10 @@ fn chain_walk_break_rejects_second_entry() {
     receipt_0.turn_hash = [0x10u8; 32];
     let entry_0 = build_valid_entry(
         10_000,
-        &[Effect::Transfer { amount: 50, direction: 1 }],
+        &[Effect::Transfer {
+            amount: 50,
+            direction: 1,
+        }],
         receipt_0.clone(),
     );
 
@@ -198,11 +211,7 @@ fn chain_walk_break_rejects_second_entry() {
     receipt_1.turn_hash = [0x20u8; 32];
     receipt_1.previous_receipt_hash = Some([0xFFu8; 32]); // wrong
 
-    let entry_1 = build_valid_entry(
-        9_950,
-        &[Effect::NoOp],
-        receipt_1,
-    );
+    let entry_1 = build_valid_entry(9_950, &[Effect::NoOp], receipt_1);
 
     let out = replay_chain(&[entry_0, entry_1]);
     assert!(
@@ -210,7 +219,11 @@ fn chain_walk_break_rejects_second_entry() {
         "chain-walk break must be detected; verdicts={:?}",
         out.per_entry
     );
-    assert_eq!(out.first_failure, Some(1), "failure must be at entry index 1");
+    assert_eq!(
+        out.first_failure,
+        Some(1),
+        "failure must be at entry index 1"
+    );
     matches!(out.per_entry[1], ReplayVerdict::Rejected { .. });
 }
 
@@ -225,7 +238,10 @@ fn witness_hash_tamper_rejected() {
 
     let mut entry = build_valid_entry(
         3_000,
-        &[Effect::Transfer { amount: 30, direction: 0 }],
+        &[Effect::Transfer {
+            amount: 30,
+            direction: 0,
+        }],
         receipt,
     );
 
@@ -233,7 +249,10 @@ fn witness_hash_tamper_rejected() {
     entry.witness_hash = [0xFFu8; 32];
 
     let out = replay_chain(&[entry]);
-    assert!(!out.overall_verified, "tampered witness_hash must be rejected");
+    assert!(
+        !out.overall_verified,
+        "tampered witness_hash must be rejected"
+    );
     assert_eq!(out.first_failure, Some(0));
     matches!(out.per_entry[0], ReplayVerdict::Rejected { .. });
 }
@@ -249,7 +268,10 @@ fn pi_turn_hash_mismatch_rejected() {
 
     let mut entry = build_valid_entry(
         5_000,
-        &[Effect::Transfer { amount: 100, direction: 1 }],
+        &[Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }],
         receipt,
     );
 
@@ -262,7 +284,10 @@ fn pi_turn_hash_mismatch_rejected() {
     entry.public_inputs[pi::TURN_HASH_BASE] ^= 0xDEAD_BEEF;
 
     let out = replay_chain(&[entry]);
-    assert!(!out.overall_verified, "T11: PI TURN_HASH mismatch must be rejected");
+    assert!(
+        !out.overall_verified,
+        "T11: PI TURN_HASH mismatch must be rejected"
+    );
     assert_eq!(out.first_failure, Some(0));
     matches!(out.per_entry[0], ReplayVerdict::Rejected { .. });
 }
@@ -289,8 +314,14 @@ fn scope2_tampered_trace_row_rejected_by_constraint_walk() {
     let mut entry = build_valid_entry(
         10_000,
         &[
-            Effect::Transfer { amount: 100, direction: 1 },
-            Effect::Transfer { amount: 50, direction: 0 },
+            Effect::Transfer {
+                amount: 100,
+                direction: 1,
+            },
+            Effect::Transfer {
+                amount: 50,
+                direction: 0,
+            },
         ],
         receipt,
     );

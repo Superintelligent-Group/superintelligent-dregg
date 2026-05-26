@@ -58,9 +58,7 @@ pub enum ChainAppendError {
     /// a fork condition. The caller must explicitly reconcile (request the
     /// federation's view, reset the cipherclerk, branch, etc.); the
     /// cipherclerk will not silently rewrite the link.
-    #[error(
-        "receipt chain mismatch: cipherclerk head = {expected:?}, receipt's prev = {got:?}"
-    )]
+    #[error("receipt chain mismatch: cipherclerk head = {expected:?}, receipt's prev = {got:?}")]
     ReceiptChainMismatch {
         /// What the cipherclerk thinks the prior receipt hash is (i.e., the
         /// hash of its current chain head, or `None` for an empty chain).
@@ -6077,7 +6075,9 @@ mod tests {
         let mut r2 = mock_receipt(cell_id, [2u8; 32], [3u8; 32]);
         r2.previous_receipt_hash = Some([0xDE; 32]);
 
-        let err = cclerk.append_receipt(r2).expect_err("stale prev_hash must reject");
+        let err = cclerk
+            .append_receipt(r2)
+            .expect_err("stale prev_hash must reject");
         match err {
             ChainAppendError::ReceiptChainMismatch { expected, got } => {
                 assert_eq!(expected, Some(head));

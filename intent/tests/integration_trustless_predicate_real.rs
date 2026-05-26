@@ -29,9 +29,8 @@
 use std::sync::Arc;
 
 use pyana_cell::predicate::{
-    InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError,
-    WitnessedPredicateKind, WitnessedPredicateRegistry,
-    WitnessedPredicateVerifier as WpVerifier,
+    InputRef, PredicateInput, WitnessedPredicate, WitnessedPredicateError, WitnessedPredicateKind,
+    WitnessedPredicateRegistry, WitnessedPredicateVerifier as WpVerifier,
 };
 use pyana_federation::threshold_decrypt::{
     KeyShare, ThresholdEncryptionKey, generate_epoch_key, produce_decryption_share,
@@ -144,10 +143,7 @@ fn make_structural_submission(
     }
 }
 
-fn witnessed_predicate_for(
-    intents: &[Intent],
-    kind: WitnessedPredicateKind,
-) -> WitnessedPredicate {
+fn witnessed_predicate_for(intents: &[Intent], kind: WitnessedPredicateKind) -> WitnessedPredicate {
     let commitment = WitnessedProofVerifier::compute_batch_binding(intents);
     WitnessedPredicate {
         kind,
@@ -195,11 +191,8 @@ fn strict_verifier_rejects_submission_without_predicate() {
 
     let reg = WitnessedPredicateRegistry::with_stubs();
     let (key, shares) = make_keys(2, 3);
-    let mut engine = TrustlessIntentEngine::with_verifier(
-        2,
-        3,
-        Box::new(WitnessedProofVerifier::strict(reg)),
-    );
+    let mut engine =
+        TrustlessIntentEngine::with_verifier(2, 3, Box::new(WitnessedProofVerifier::strict(reg)));
     let intents = vec![make_intent(1), make_intent(2)];
     drive_to_solving(&mut engine, &key, &shares, &intents);
 
@@ -225,7 +218,9 @@ impl WpVerifier for AcceptAll {
         "test-accept-all-garbage"
     }
     fn kind(&self) -> WitnessedPredicateKind {
-        WitnessedPredicateKind::Custom { vk_hash: [0xAC; 32] }
+        WitnessedPredicateKind::Custom {
+            vk_hash: [0xAC; 32],
+        }
     }
     fn verify(
         &self,
@@ -243,16 +238,18 @@ fn accept_all_verifier_accepts_garbage_with_correct_binding() {
     reg.register_custom([0xAC; 32], Arc::new(AcceptAll));
 
     let (key, shares) = make_keys(2, 3);
-    let mut engine = TrustlessIntentEngine::with_verifier(
-        2,
-        3,
-        Box::new(WitnessedProofVerifier::new(reg)),
-    );
+    let mut engine =
+        TrustlessIntentEngine::with_verifier(2, 3, Box::new(WitnessedProofVerifier::new(reg)));
     let intents = vec![make_intent(3), make_intent(4)];
     drive_to_solving(&mut engine, &key, &shares, &intents);
 
     let garbage: Vec<u8> = (0..32u8).rev().collect();
-    let wp = witnessed_predicate_for(&intents, WitnessedPredicateKind::Custom { vk_hash: [0xAC; 32] });
+    let wp = witnessed_predicate_for(
+        &intents,
+        WitnessedPredicateKind::Custom {
+            vk_hash: [0xAC; 32],
+        },
+    );
     let sub = make_structural_submission(0xBB, &intents, 3.0, garbage, Some(wp));
 
     engine
@@ -267,18 +264,17 @@ fn accept_all_verifier_rejects_tampered_batch_binding() {
     reg.register_custom([0xAC; 32], Arc::new(AcceptAll));
 
     let (key, shares) = make_keys(2, 3);
-    let mut engine = TrustlessIntentEngine::with_verifier(
-        2,
-        3,
-        Box::new(WitnessedProofVerifier::new(reg)),
-    );
+    let mut engine =
+        TrustlessIntentEngine::with_verifier(2, 3, Box::new(WitnessedProofVerifier::new(reg)));
     let intents = vec![make_intent(5), make_intent(6)];
     drive_to_solving(&mut engine, &key, &shares, &intents);
 
     let garbage: Vec<u8> = vec![0xDE, 0xAD];
     let mut wp = witnessed_predicate_for(
         &intents,
-        WitnessedPredicateKind::Custom { vk_hash: [0xAC; 32] },
+        WitnessedPredicateKind::Custom {
+            vk_hash: [0xAC; 32],
+        },
     );
     // Tamper: overwrite the commitment so it no longer matches the batch.
     wp.commitment = [0xFF; 32];
@@ -301,7 +297,9 @@ impl WpVerifier for RejectAll {
         "test-reject-all"
     }
     fn kind(&self) -> WitnessedPredicateKind {
-        WitnessedPredicateKind::Custom { vk_hash: [0xDE; 32] }
+        WitnessedPredicateKind::Custom {
+            vk_hash: [0xDE; 32],
+        }
     }
     fn verify(
         &self,
@@ -325,18 +323,17 @@ fn reject_all_verifier_is_actually_called() {
     reg.register_custom([0xDE; 32], Arc::new(RejectAll));
 
     let (key, shares) = make_keys(2, 3);
-    let mut engine = TrustlessIntentEngine::with_verifier(
-        2,
-        3,
-        Box::new(WitnessedProofVerifier::new(reg)),
-    );
+    let mut engine =
+        TrustlessIntentEngine::with_verifier(2, 3, Box::new(WitnessedProofVerifier::new(reg)));
     let intents = vec![make_intent(7), make_intent(8)];
     drive_to_solving(&mut engine, &key, &shares, &intents);
 
     let proof_bytes = vec![0xAB, 0xCD, 0xEF];
     let wp = witnessed_predicate_for(
         &intents,
-        WitnessedPredicateKind::Custom { vk_hash: [0xDE; 32] },
+        WitnessedPredicateKind::Custom {
+            vk_hash: [0xDE; 32],
+        },
     );
     let sub = make_structural_submission(0xDD, &intents, 6.0, proof_bytes, Some(wp));
 

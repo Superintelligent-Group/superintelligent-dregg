@@ -155,4 +155,3 @@ fn two_caps_produce_distinct_uris() {
     let e2 = table.enliven(&u2.swiss, 1).unwrap();
     assert_eq!(e2.cell_id, cell(0x02));
 }
-

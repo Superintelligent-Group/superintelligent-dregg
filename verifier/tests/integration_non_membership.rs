@@ -12,9 +12,7 @@
 
 use pyana_circuit::{
     field::BabyBear,
-    non_membership::{
-        NonMembershipProver, SetIdentifier, verify_non_membership_proof,
-    },
+    non_membership::{NonMembershipProver, SetIdentifier, verify_non_membership_proof},
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,7 +38,11 @@ fn non_membership_honest_element_verifies() {
         .expect("prove_non_membership must succeed for a non-member");
 
     let result = prover.verify_non_membership(&proof);
-    assert!(result.is_ok(), "honest non-membership proof must verify: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "honest non-membership proof must verify: {:?}",
+        result.err()
+    );
 }
 
 /// Stateless verification (separate from the prover) also accepts the proof.
@@ -55,7 +57,11 @@ fn non_membership_stateless_verify_accepts_honest_proof() {
         .expect("prove_non_membership must succeed");
 
     let result = verify_non_membership_proof(&proof);
-    assert!(result.is_ok(), "stateless verify must accept honest proof: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "stateless verify must accept honest proof: {:?}",
+        result.err()
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,7 +130,10 @@ fn non_membership_tampered_accumulator_rejected() {
     // a verifier-level PI mismatch.
     let original_acc = proof.accumulator;
     proof.accumulator.0[0] = proof.accumulator.0[0] + BabyBear::ONE;
-    assert_ne!(proof.accumulator.0[0], original_acc.0[0], "tamper must change the value");
+    assert_ne!(
+        proof.accumulator.0[0], original_acc.0[0],
+        "tamper must change the value"
+    );
 
     let result = verify_non_membership_proof(&proof);
     assert!(
@@ -174,7 +183,11 @@ fn non_membership_multi_element_verifies() {
         .expect("multi-element prove must succeed");
 
     let result = prover.verify_non_membership(&proof);
-    assert!(result.is_ok(), "multi-element non-membership proof must verify: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "multi-element non-membership proof must verify: {:?}",
+        result.err()
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

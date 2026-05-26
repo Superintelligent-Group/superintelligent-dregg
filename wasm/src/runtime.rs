@@ -215,6 +215,11 @@ pub struct PyanaRuntime {
     pub current_height: u64,
     pub current_timestamp: i64,
     pub receipts: Vec<TurnReceipt>,
+    /// Committed turns stored in parallel with `receipts` (index i in
+    /// `turns` corresponds to index i in `receipts`). Stored so
+    /// `get_receipt_chain` can surface per-action authorization details
+    /// (Refactor 3 / Studio bindings enrichment).
+    pub turns: Vec<Turn>,
     /// `pyana_federation::Federation` instances (attestation contexts), addressed
     /// by index. Each `SimFederation` pairs the canonical committee context with
     /// a lightweight local consensus stub — see `SimFederation` for details.
@@ -258,6 +263,7 @@ impl PyanaRuntime {
             current_height: 0,
             current_timestamp: 1000,
             receipts: Vec::new(),
+            turns: Vec::new(),
             federations: Vec::new(),
             default_factory_vk,
         }
@@ -774,6 +780,7 @@ impl PyanaRuntime {
 
         if let TurnResult::Committed { ref receipt, .. } = result {
             self.receipts.push(receipt.clone());
+            self.turns.push(turn.clone());
         }
 
         result

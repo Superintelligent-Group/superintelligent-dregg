@@ -13,13 +13,12 @@ mod common;
 use pyana_circuit::{
     BabyBear, CellState, Effect, EffectVmAir,
     effect_vm::{
-        generate_effect_vm_trace, generate_effect_vm_trace_ext,
-        extract_net_delta, EffectVmContext,
-        pi,
-        columns::{STATE_AFTER_BASE, STATE_BEFORE_BASE, AUX_BASE, state},
+        EffectVmContext,
+        columns::{AUX_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE, state},
+        extract_net_delta, generate_effect_vm_trace, generate_effect_vm_trace_ext, pi,
     },
     poseidon2::hash_2_to_1,
-    stark::{self, proof_to_bytes, proof_from_bytes},
+    stark::{self, proof_from_bytes, proof_to_bytes},
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,54 +38,155 @@ fn all_schema_variants_prove_and_verify() {
 
     let cases: &[(&str, Effect)] = &[
         ("NoOp", Effect::NoOp),
-        ("Transfer out", Effect::Transfer { amount: 50, direction: 1 }),
-        ("Transfer in", Effect::Transfer { amount: 50, direction: 0 }),
-        ("SetField", Effect::SetField { field_idx: 2, value: BabyBear::new(0x42) }),
-        ("GrantCapability", Effect::GrantCapability { cap_entry: BabyBear::new(0xCAFE) }),
-        ("RevokeCapability", Effect::RevokeCapability { slot_hash: BabyBear::new(0xDEAD) }),
-        ("EmitEvent", Effect::EmitEvent { event_hash: BabyBear::new(0xEEEE) }),
-        ("SetPermissions", Effect::SetPermissions { permissions_hash: BabyBear::new(0xAAAA) }),
-        ("SetVerificationKey", Effect::SetVerificationKey { vk_hash: BabyBear::new(0xBBBB) }),
-        ("CreateSealPair", Effect::CreateSealPair { pair_hash: BabyBear::new(0xCCCC) }),
+        (
+            "Transfer out",
+            Effect::Transfer {
+                amount: 50,
+                direction: 1,
+            },
+        ),
+        (
+            "Transfer in",
+            Effect::Transfer {
+                amount: 50,
+                direction: 0,
+            },
+        ),
+        (
+            "SetField",
+            Effect::SetField {
+                field_idx: 2,
+                value: BabyBear::new(0x42),
+            },
+        ),
+        (
+            "GrantCapability",
+            Effect::GrantCapability {
+                cap_entry: BabyBear::new(0xCAFE),
+            },
+        ),
+        (
+            "RevokeCapability",
+            Effect::RevokeCapability {
+                slot_hash: BabyBear::new(0xDEAD),
+            },
+        ),
+        (
+            "EmitEvent",
+            Effect::EmitEvent {
+                event_hash: BabyBear::new(0xEEEE),
+            },
+        ),
+        (
+            "SetPermissions",
+            Effect::SetPermissions {
+                permissions_hash: BabyBear::new(0xAAAA),
+            },
+        ),
+        (
+            "SetVerificationKey",
+            Effect::SetVerificationKey {
+                vk_hash: BabyBear::new(0xBBBB),
+            },
+        ),
+        (
+            "CreateSealPair",
+            Effect::CreateSealPair {
+                pair_hash: BabyBear::new(0xCCCC),
+            },
+        ),
         ("RefreshDelegation", Effect::RefreshDelegation),
-        ("RevokeDelegation", Effect::RevokeDelegation { child_hash: BabyBear::new(0xDDDD) }),
-        ("CreateCell", Effect::CreateCell { create_hash: BabyBear::new(0x1111) }),
-        ("SpawnWithDelegation", Effect::SpawnWithDelegation { spawn_hash: BabyBear::new(0x2222) }),
-        ("BridgeCancel", Effect::BridgeCancel { nullifier_hash: BabyBear::new(0x3333) }),
-        ("ExerciseViaCapability", Effect::ExerciseViaCapability { exercise_hash: BabyBear::new(0x4444) }),
-        ("Introduce", Effect::Introduce { intro_hash: BabyBear::new(0x5555) }),
-        ("PipelinedSend", Effect::PipelinedSend { send_hash: BabyBear::new(0x6666) }),
+        (
+            "RevokeDelegation",
+            Effect::RevokeDelegation {
+                child_hash: BabyBear::new(0xDDDD),
+            },
+        ),
+        (
+            "CreateCell",
+            Effect::CreateCell {
+                create_hash: BabyBear::new(0x1111),
+            },
+        ),
+        (
+            "SpawnWithDelegation",
+            Effect::SpawnWithDelegation {
+                spawn_hash: BabyBear::new(0x2222),
+            },
+        ),
+        (
+            "BridgeCancel",
+            Effect::BridgeCancel {
+                nullifier_hash: BabyBear::new(0x3333),
+            },
+        ),
+        (
+            "ExerciseViaCapability",
+            Effect::ExerciseViaCapability {
+                exercise_hash: BabyBear::new(0x4444),
+            },
+        ),
+        (
+            "Introduce",
+            Effect::Introduce {
+                intro_hash: BabyBear::new(0x5555),
+            },
+        ),
+        (
+            "PipelinedSend",
+            Effect::PipelinedSend {
+                send_hash: BabyBear::new(0x6666),
+            },
+        ),
         (
             "BridgeFinalize",
-            Effect::BridgeFinalize { finalize_hash: BabyBear::new(0x7777) },
+            Effect::BridgeFinalize {
+                finalize_hash: BabyBear::new(0x7777),
+            },
         ),
         (
             "ReleaseEscrow",
-            Effect::ReleaseEscrow { escrow_id_hash: BabyBear::new(0x8888) },
+            Effect::ReleaseEscrow {
+                escrow_id_hash: BabyBear::new(0x8888),
+            },
         ),
         (
             "RefundEscrow",
-            Effect::RefundEscrow { escrow_id_hash: BabyBear::new(0x9999) },
+            Effect::RefundEscrow {
+                escrow_id_hash: BabyBear::new(0x9999),
+            },
         ),
         (
             "CreateCommittedEscrow",
-            Effect::CreateCommittedEscrow { commit_hash: BabyBear::new(0xAAAA_BBBBu32) },
+            Effect::CreateCommittedEscrow {
+                commit_hash: BabyBear::new(0xAAAA_BBBBu32),
+            },
         ),
         (
             "ReleaseCommittedEscrow",
-            Effect::ReleaseCommittedEscrow { commit_hash: BabyBear::new(0xBBBB_CCCCu32) },
+            Effect::ReleaseCommittedEscrow {
+                commit_hash: BabyBear::new(0xBBBB_CCCCu32),
+            },
         ),
         (
             "RefundCommittedEscrow",
-            Effect::RefundCommittedEscrow { commit_hash: BabyBear::new(0xCCCC_DDDDu32) },
+            Effect::RefundCommittedEscrow {
+                commit_hash: BabyBear::new(0xCCCC_DDDDu32),
+            },
         ),
         (
             "NoteSpend",
-            Effect::NoteSpend { nullifier: BabyBear::new(0x1234), value: 100 },
+            Effect::NoteSpend {
+                nullifier: BabyBear::new(0x1234),
+                value: 100,
+            },
         ),
         (
             "NoteCreate",
-            Effect::NoteCreate { commitment: BabyBear::new(0x5678), value: 50 },
+            Effect::NoteCreate {
+                commitment: BabyBear::new(0x5678),
+                value: 50,
+            },
         ),
         (
             "CreateObligation",
@@ -150,7 +250,11 @@ fn all_schema_variants_prove_and_verify() {
         // Full STARK prove + verify.
         let proof = stark::prove(&air, &trace, &pi);
         let result = stark::verify(&air, &proof, &pi);
-        assert!(result.is_ok(), "{label}: proof must verify, got {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "{label}: proof must verify, got {:?}",
+            result.err()
+        );
 
         // Also verify the proof survives serialisation.
         let proof_bytes = proof_to_bytes(&proof);
@@ -181,9 +285,17 @@ fn commitment_chain_three_turns_verifies_and_swap_detected() {
     let initial = CellState::new(50_000, 0);
 
     let turns: &[&[Effect]] = &[
-        &[Effect::Transfer { amount: 100, direction: 1 }],
-        &[Effect::SetField { field_idx: 0, value: BabyBear::new(77) }],
-        &[Effect::GrantCapability { cap_entry: BabyBear::new(0xFACE) }],
+        &[Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }],
+        &[Effect::SetField {
+            field_idx: 0,
+            value: BabyBear::new(77),
+        }],
+        &[Effect::GrantCapability {
+            cap_entry: BabyBear::new(0xFACE),
+        }],
     ];
 
     let mut current = initial.clone();
@@ -235,25 +347,36 @@ fn commitment_chain_three_turns_verifies_and_swap_detected() {
             _ => {}
         }
 
-        all_proofs.push((proof_to_bytes(&proof), pi.iter().map(|b| b.as_u32()).collect()));
+        all_proofs.push((
+            proof_to_bytes(&proof),
+            pi.iter().map(|b| b.as_u32()).collect(),
+        ));
     }
 
     // Sanity: all three turns produced distinct NEW_COMMIT values.
-    let commits: Vec<u32> = all_proofs.iter().map(|(_, pi)| pi[pi::NEW_COMMIT]).collect();
+    let commits: Vec<u32> = all_proofs
+        .iter()
+        .map(|(_, pi)| pi[pi::NEW_COMMIT])
+        .collect();
     assert_eq!(commits.len(), 3);
     // All distinct.
     for i in 0..commits.len() {
         for j in (i + 1)..commits.len() {
-            assert_ne!(commits[i], commits[j], "Turn {i} and {j} must have different NEW_COMMIT");
+            assert_ne!(
+                commits[i], commits[j],
+                "Turn {i} and {j} must have different NEW_COMMIT"
+            );
         }
     }
 
     // Swap detection: use turn 2's proof bytes with turn 1's PI.
     // The serialised verifier must reject this (PI won't match the proof's trace).
     let (proof_bytes_2, _) = &all_proofs[2]; // turn 3's proof
-    let (_, pi_u32_1) = &all_proofs[1];     // turn 2's PI
-    let pi_bb: Vec<BabyBear> =
-        pi_u32_1.iter().map(|&v| BabyBear::new_canonical(v)).collect();
+    let (_, pi_u32_1) = &all_proofs[1]; // turn 2's PI
+    let pi_bb: Vec<BabyBear> = pi_u32_1
+        .iter()
+        .map(|&v| BabyBear::new_canonical(v))
+        .collect();
     let proof_2 = proof_from_bytes(proof_bytes_2).expect("proof_from_bytes failed");
     let air = EffectVmAir::new(proof_2.trace_len);
     let swapped = stark::verify(&air, &proof_2, &pi_bb);
@@ -272,7 +395,10 @@ fn commitment_chain_three_turns_verifies_and_swap_detected() {
 #[test]
 fn net_delta_pi_forgery_rejected_end_to_end() {
     let state = CellState::new(10_000, 0);
-    let effects = vec![Effect::Transfer { amount: 500, direction: 1 }];
+    let effects = vec![Effect::Transfer {
+        amount: 500,
+        direction: 1,
+    }];
 
     let (trace, pi_orig) = generate_effect_vm_trace(&state, &effects);
     let air = EffectVmAir::new(trace.len());
@@ -342,7 +468,10 @@ fn captp_full_schema_round_trip() {
             holder_federation: BabyBear::new(0xFED2),
             current_refcount: 3,
         },
-        Effect::Transfer { amount: 200, direction: 1 },
+        Effect::Transfer {
+            amount: 200,
+            direction: 1,
+        },
     ];
 
     let (trace, pi) = generate_effect_vm_trace(&state, &effects);
@@ -364,7 +493,10 @@ fn captp_full_schema_round_trip() {
     }
 
     let proof = stark::prove(&air, &trace, &pi);
-    assert!(stark::verify(&air, &proof, &pi).is_ok(), "CapTP multi-effect round trip failed");
+    assert!(
+        stark::verify(&air, &proof, &pi).is_ok(),
+        "CapTP multi-effect round trip failed"
+    );
 
     // Only the Transfer contributes to the net delta.
     let delta = extract_net_delta(&pi).unwrap();
@@ -399,7 +531,11 @@ fn storage_queue_lifecycle_prove_and_verify() {
     let msg2 = BabyBear::new(0xBEEF);
 
     let effects = vec![
-        Effect::AllocateQueue { capacity: 8, owner_quota_id: BabyBear::new(0x01), cost_per_slot: 10 },
+        Effect::AllocateQueue {
+            capacity: 8,
+            owner_quota_id: BabyBear::new(0x01),
+            cost_per_slot: 10,
+        },
         Effect::EnqueueMessage {
             message_hash: msg1,
             deposit_amount: 100,
@@ -414,13 +550,19 @@ fn storage_queue_lifecycle_prove_and_verify() {
             queue_len: 1,
             program_vk: BabyBear::ZERO,
         },
-        Effect::DequeueMessage { expected_message_hash: msg1, deposit_refund: 80 },
+        Effect::DequeueMessage {
+            expected_message_hash: msg1,
+            deposit_refund: 80,
+        },
     ];
 
     let (trace, pi) = generate_effect_vm_trace(&state, &effects);
     let air = EffectVmAir::new(trace.len());
     let proof = stark::prove(&air, &trace, &pi);
-    assert!(stark::verify(&air, &proof, &pi).is_ok(), "queue lifecycle proof failed");
+    assert!(
+        stark::verify(&air, &proof, &pi).is_ok(),
+        "queue lifecycle proof failed"
+    );
 
     // Net delta: -8*10 (alloc) -100 -100 (enqueue) +80 (dequeue) = -200.
     let delta = extract_net_delta(&pi).unwrap();
@@ -470,12 +612,24 @@ fn effects_hash_reordering_produces_different_pi_rejected_cross_verify() {
     let state = CellState::new(10_000, 0);
 
     let effects_a = vec![
-        Effect::Transfer { amount: 100, direction: 1 },
-        Effect::SetField { field_idx: 0, value: BabyBear::new(1) },
+        Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        },
+        Effect::SetField {
+            field_idx: 0,
+            value: BabyBear::new(1),
+        },
     ];
     let effects_b = vec![
-        Effect::SetField { field_idx: 0, value: BabyBear::new(1) },
-        Effect::Transfer { amount: 100, direction: 1 },
+        Effect::SetField {
+            field_idx: 0,
+            value: BabyBear::new(1),
+        },
+        Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        },
     ];
 
     let (trace_a, pi_a) = generate_effect_vm_trace(&state, &effects_a);

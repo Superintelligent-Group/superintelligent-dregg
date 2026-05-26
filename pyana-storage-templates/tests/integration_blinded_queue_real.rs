@@ -12,15 +12,15 @@
 //! 7. Attempt to consume more times than items were added (nullifier_count > commitment_count
 //!    check lives in `consume_without_witness`, so we exercise the slot-caveat shape here).
 
+use pyana_app_framework::symbol;
 use pyana_cell::StateConstraint;
 use pyana_cell::program::{CellProgram, ProgramError, TransitionMeta};
 use pyana_cell::state::{CellState, FieldElement};
-use pyana_app_framework::symbol;
 
 use pyana_storage_templates::blinded_queue::{
-    CAPACITY_SLOT, COMMITMENT_COUNT_SLOT, COMMITMENTS_ROOT_SLOT, CONSUMER_PK_HASH_SLOT,
-    NULLIFIER_COUNT_SLOT, NULLIFIER_ROOT_SLOT, QUEUE_ID_HASH_SLOT,
-    SPEND_AIR_VK_COMMITMENT_SLOT, BLINDED_QUEUE_SPEND_AIR_VK, blinded_queue_program,
+    BLINDED_QUEUE_SPEND_AIR_VK, CAPACITY_SLOT, COMMITMENT_COUNT_SLOT, COMMITMENTS_ROOT_SLOT,
+    CONSUMER_PK_HASH_SLOT, NULLIFIER_COUNT_SLOT, NULLIFIER_ROOT_SLOT, QUEUE_ID_HASH_SLOT,
+    SPEND_AIR_VK_COMMITMENT_SLOT, blinded_queue_program,
 };
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -262,8 +262,7 @@ fn immutable_slots_survive_add_and_consume_sequences() {
 
         // Immutable slots must still match the base state.
         assert_eq!(
-            state.fields[CAPACITY_SLOT as usize],
-            start.fields[CAPACITY_SLOT as usize],
+            state.fields[CAPACITY_SLOT as usize], start.fields[CAPACITY_SLOT as usize],
             "{label}: capacity changed"
         );
         assert_eq!(
@@ -277,8 +276,7 @@ fn immutable_slots_survive_add_and_consume_sequences() {
             "{label}: spend_air_vk changed"
         );
         assert_eq!(
-            state.fields[QUEUE_ID_HASH_SLOT as usize],
-            start.fields[QUEUE_ID_HASH_SLOT as usize],
+            state.fields[QUEUE_ID_HASH_SLOT as usize], start.fields[QUEUE_ID_HASH_SLOT as usize],
             "{label}: queue_id_hash changed"
         );
     }

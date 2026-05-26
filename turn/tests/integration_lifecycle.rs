@@ -133,15 +133,28 @@ fn lifecycle_seal_transitions_to_sealed() {
 
     let executor = zero_executor();
     let reason = [0xAA; 32];
-    let turn = bare_turn(cell_id, 0, vec![Effect::CellSeal { target: cell_id, reason }]);
+    let turn = bare_turn(
+        cell_id,
+        0,
+        vec![Effect::CellSeal {
+            target: cell_id,
+            reason,
+        }],
+    );
     let result = executor.execute(&turn, &mut ledger);
 
     assert!(result.is_committed(), "seal should commit; got {result:?}");
     let cell = ledger.get(&cell_id).unwrap();
-    assert!(cell.lifecycle.is_sealed(), "cell must be Sealed after Effect::CellSeal");
+    assert!(
+        cell.lifecycle.is_sealed(),
+        "cell must be Sealed after Effect::CellSeal"
+    );
     match &cell.lifecycle {
         CellLifecycle::Sealed { reason_hash, .. } => {
-            assert_eq!(*reason_hash, [0xAA; 32], "reason_hash must be bound into lifecycle");
+            assert_eq!(
+                *reason_hash, [0xAA; 32],
+                "reason_hash must be bound into lifecycle"
+            );
         }
         other => panic!("expected Sealed, got {other:?}"),
     }
@@ -161,11 +174,26 @@ fn lifecycle_post_seal_effect_rejected() {
     let executor = zero_executor();
 
     // Seal first.
-    let seal_turn = bare_turn(cell_id, 0, vec![Effect::CellSeal { target: cell_id, reason: [0xBB; 32] }]);
+    let seal_turn = bare_turn(
+        cell_id,
+        0,
+        vec![Effect::CellSeal {
+            target: cell_id,
+            reason: [0xBB; 32],
+        }],
+    );
     assert!(executor.execute(&seal_turn, &mut ledger).is_committed());
 
     // Now try to set a field on the sealed cell.
-    let set_turn = bare_turn(cell_id, 1, vec![Effect::SetField { cell: cell_id, index: 0, value: [0xFF; 32] }]);
+    let set_turn = bare_turn(
+        cell_id,
+        1,
+        vec![Effect::SetField {
+            cell: cell_id,
+            index: 0,
+            value: [0xFF; 32],
+        }],
+    );
     let result = executor.execute(&set_turn, &mut ledger);
 
     assert!(
@@ -174,7 +202,10 @@ fn lifecycle_post_seal_effect_rejected() {
     );
     // Field must be unchanged.
     let cell = ledger.get(&cell_id).unwrap();
-    assert_eq!(cell.state.fields[0], [0u8; 32], "field must be unchanged after rejection");
+    assert_eq!(
+        cell.state.fields[0], [0u8; 32],
+        "field must be unchanged after rejection"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +222,14 @@ fn lifecycle_seal_then_unseal_restores_live() {
     let executor = zero_executor();
 
     // Seal.
-    let seal_turn = bare_turn(cell_id, 0, vec![Effect::CellSeal { target: cell_id, reason: [0x01; 32] }]);
+    let seal_turn = bare_turn(
+        cell_id,
+        0,
+        vec![Effect::CellSeal {
+            target: cell_id,
+            reason: [0x01; 32],
+        }],
+    );
     assert!(executor.execute(&seal_turn, &mut ledger).is_committed());
     assert!(ledger.get(&cell_id).unwrap().lifecycle.is_sealed());
 
@@ -201,12 +239,27 @@ fn lifecycle_seal_then_unseal_restores_live() {
     assert!(result.is_committed(), "unseal must commit; got {result:?}");
 
     let cell = ledger.get(&cell_id).unwrap();
-    assert_eq!(cell.lifecycle, CellLifecycle::Live, "lifecycle must be Live after unseal");
+    assert_eq!(
+        cell.lifecycle,
+        CellLifecycle::Live,
+        "lifecycle must be Live after unseal"
+    );
 
     // Effects accepted again after unseal.
-    let set_turn = bare_turn(cell_id, 2, vec![Effect::SetField { cell: cell_id, index: 0, value: [0x42; 32] }]);
+    let set_turn = bare_turn(
+        cell_id,
+        2,
+        vec![Effect::SetField {
+            cell: cell_id,
+            index: 0,
+            value: [0x42; 32],
+        }],
+    );
     let result = executor.execute(&set_turn, &mut ledger);
-    assert!(result.is_committed(), "SetField must succeed after unseal; got {result:?}");
+    assert!(
+        result.is_committed(),
+        "SetField must succeed after unseal; got {result:?}"
+    );
     assert_eq!(ledger.get(&cell_id).unwrap().state.fields[0], [0x42; 32]);
 }
 
@@ -260,24 +313,44 @@ fn lifecycle_destroy_with_certificate_then_terminal() {
     let destroy_turn = bare_turn(
         cell_id,
         0,
-        vec![Effect::CellDestroy { target: cell_id, certificate: cert }],
+        vec![Effect::CellDestroy {
+            target: cell_id,
+            certificate: cert,
+        }],
     );
     let result = executor.execute(&destroy_turn, &mut ledger);
-    assert!(result.is_committed(), "CellDestroy must commit; got {result:?}");
+    assert!(
+        result.is_committed(),
+        "CellDestroy must commit; got {result:?}"
+    );
 
     // Lifecycle is Destroyed and carries the certificate hash.
     let cell = ledger.get(&cell_id).unwrap();
     assert!(cell.lifecycle.is_destroyed(), "cell must be Destroyed");
     match &cell.lifecycle {
-        CellLifecycle::Destroyed { death_certificate_hash, destroyed_at } => {
-            assert_eq!(*death_certificate_hash, cert_hash, "cert hash must be bound");
+        CellLifecycle::Destroyed {
+            death_certificate_hash,
+            destroyed_at,
+        } => {
+            assert_eq!(
+                *death_certificate_hash, cert_hash,
+                "cert hash must be bound"
+            );
             assert_eq!(*destroyed_at, 42, "destroyed_at must match the certificate");
         }
         other => panic!("expected Destroyed, got {other:?}"),
     }
 
     // Any subsequent effect is rejected (terminal).
-    let set_turn = bare_turn(cell_id, 1, vec![Effect::SetField { cell: cell_id, index: 0, value: [0xFF; 32] }]);
+    let set_turn = bare_turn(
+        cell_id,
+        1,
+        vec![Effect::SetField {
+            cell: cell_id,
+            index: 0,
+            value: [0xFF; 32],
+        }],
+    );
     let result = executor.execute(&set_turn, &mut ledger);
     assert!(
         result.is_rejected(),
@@ -300,7 +373,7 @@ fn lifecycle_destroy_certificate_mismatch_rejected() {
 
     // Wrong cell_id in the certificate.
     let cert = DeathCertificate {
-        cell_id: CellId::from_bytes([0xDE; 32]),  // wrong id
+        cell_id: CellId::from_bytes([0xDE; 32]), // wrong id
         last_receipt_hash: [0u8; 32],
         final_state_commitment: [0u8; 32],
         destroyed_at_height: 1,
@@ -310,7 +383,10 @@ fn lifecycle_destroy_certificate_mismatch_rejected() {
     let turn = bare_turn(
         cell_id,
         0,
-        vec![Effect::CellDestroy { target: cell_id, certificate: cert }],
+        vec![Effect::CellDestroy {
+            target: cell_id,
+            certificate: cert,
+        }],
     );
     let result = executor.execute(&turn, &mut ledger);
     assert!(
@@ -337,18 +413,38 @@ fn lifecycle_double_seal_rejected() {
     let second_reason = [0x22; 32];
 
     // First seal.
-    let t1 = bare_turn(cell_id, 0, vec![Effect::CellSeal { target: cell_id, reason: first_reason }]);
+    let t1 = bare_turn(
+        cell_id,
+        0,
+        vec![Effect::CellSeal {
+            target: cell_id,
+            reason: first_reason,
+        }],
+    );
     assert!(executor.execute(&t1, &mut ledger).is_committed());
 
     // Second seal must be rejected.
-    let t2 = bare_turn(cell_id, 1, vec![Effect::CellSeal { target: cell_id, reason: second_reason }]);
+    let t2 = bare_turn(
+        cell_id,
+        1,
+        vec![Effect::CellSeal {
+            target: cell_id,
+            reason: second_reason,
+        }],
+    );
     let result = executor.execute(&t2, &mut ledger);
-    assert!(result.is_rejected(), "double-seal must be rejected; got {result:?}");
+    assert!(
+        result.is_rejected(),
+        "double-seal must be rejected; got {result:?}"
+    );
 
     // Original reason_hash is preserved.
     match &ledger.get(&cell_id).unwrap().lifecycle {
         CellLifecycle::Sealed { reason_hash, .. } => {
-            assert_eq!(*reason_hash, first_reason, "original reason_hash must be preserved");
+            assert_eq!(
+                *reason_hash, first_reason,
+                "original reason_hash must be preserved"
+            );
         }
         other => panic!("expected Sealed, got {other:?}"),
     }
@@ -375,7 +471,14 @@ fn lifecycle_destroy_of_destroyed_cell_rejected() {
         destroyed_at_height: 10,
         reason: DeathReason::Voluntary,
     };
-    let t1 = bare_turn(cell_id, 0, vec![Effect::CellDestroy { target: cell_id, certificate: cert1 }]);
+    let t1 = bare_turn(
+        cell_id,
+        0,
+        vec![Effect::CellDestroy {
+            target: cell_id,
+            certificate: cert1,
+        }],
+    );
     assert!(executor.execute(&t1, &mut ledger).is_committed());
     assert!(ledger.get(&cell_id).unwrap().lifecycle.is_destroyed());
 
@@ -387,7 +490,17 @@ fn lifecycle_destroy_of_destroyed_cell_rejected() {
         destroyed_at_height: 20,
         reason: DeathReason::Forced,
     };
-    let t2 = bare_turn(cell_id, 1, vec![Effect::CellDestroy { target: cell_id, certificate: cert2 }]);
+    let t2 = bare_turn(
+        cell_id,
+        1,
+        vec![Effect::CellDestroy {
+            target: cell_id,
+            certificate: cert2,
+        }],
+    );
     let result = executor.execute(&t2, &mut ledger);
-    assert!(result.is_rejected(), "second CellDestroy must be rejected; got {result:?}");
+    assert!(
+        result.is_rejected(),
+        "second CellDestroy must be rejected; got {result:?}"
+    );
 }

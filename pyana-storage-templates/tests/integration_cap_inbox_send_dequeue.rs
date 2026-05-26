@@ -11,10 +11,10 @@
 //! 5. `grant_sender` must not advance head/tail/deposits.
 //! 6. Unknown method is default-denied.
 
+use pyana_app_framework::symbol;
 use pyana_cell::StateConstraint;
 use pyana_cell::program::{CellProgram, ProgramError, TransitionMeta};
 use pyana_cell::state::{CellState, FieldElement};
-use pyana_app_framework::symbol;
 
 use pyana_storage_templates::cap_inbox::{
     CAPACITY_SLOT, HEAD_SEQ_SLOT, MESSAGE_ROOT_SLOT, MIN_DEPOSIT_SLOT, OWNER_PK_HASH_SLOT,
@@ -224,9 +224,18 @@ fn grant_sender_does_not_advance_head_or_tail_or_deposits() {
     let r = p.evaluate_with_meta(&new, Some(&old), None, &method_meta("grant_sender"));
     assert!(r.is_ok(), "legal grant_sender must pass: {r:?}");
 
-    assert_eq!(new.fields[HEAD_SEQ_SLOT as usize], old.fields[HEAD_SEQ_SLOT as usize]);
-    assert_eq!(new.fields[TAIL_SEQ_SLOT as usize], old.fields[TAIL_SEQ_SLOT as usize]);
-    assert_eq!(new.fields[TOTAL_DEPOSITS_SLOT as usize], old.fields[TOTAL_DEPOSITS_SLOT as usize]);
+    assert_eq!(
+        new.fields[HEAD_SEQ_SLOT as usize],
+        old.fields[HEAD_SEQ_SLOT as usize]
+    );
+    assert_eq!(
+        new.fields[TAIL_SEQ_SLOT as usize],
+        old.fields[TAIL_SEQ_SLOT as usize]
+    );
+    assert_eq!(
+        new.fields[TOTAL_DEPOSITS_SLOT as usize],
+        old.fields[TOTAL_DEPOSITS_SLOT as usize]
+    );
 }
 
 #[test]
@@ -281,18 +290,15 @@ fn immutable_slots_never_change_across_full_lifecycle() {
         assert!(r.is_ok(), "{label} must pass: {r:?}");
 
         assert_eq!(
-            state.fields[CAPACITY_SLOT as usize],
-            start.fields[CAPACITY_SLOT as usize],
+            state.fields[CAPACITY_SLOT as usize], start.fields[CAPACITY_SLOT as usize],
             "{label}: capacity must be immutable"
         );
         assert_eq!(
-            state.fields[MIN_DEPOSIT_SLOT as usize],
-            start.fields[MIN_DEPOSIT_SLOT as usize],
+            state.fields[MIN_DEPOSIT_SLOT as usize], start.fields[MIN_DEPOSIT_SLOT as usize],
             "{label}: min_deposit must be immutable"
         );
         assert_eq!(
-            state.fields[OWNER_PK_HASH_SLOT as usize],
-            start.fields[OWNER_PK_HASH_SLOT as usize],
+            state.fields[OWNER_PK_HASH_SLOT as usize], start.fields[OWNER_PK_HASH_SLOT as usize],
             "{label}: owner_pk_hash must be immutable"
         );
     }

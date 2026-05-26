@@ -31,14 +31,11 @@
 //! only encodes canonical commitment values; it never submits a turn or
 //! verifies that the executor enforces the credential gate.
 
-use pyana_app_framework::{
-    AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor,
-};
+use pyana_app_framework::{AgentCipherclerk, AppCipherclerk, CellId, EmbeddedExecutor};
 use pyana_cell::program::AuthorizedSet;
 use starbridge_nameservice::{
     build_register_action, build_register_with_credential_action,
-    identity_attested_tier_constraint, identity_attested_witness_predicate,
-    name_hash,
+    identity_attested_tier_constraint, identity_attested_witness_predicate, name_hash,
 };
 
 // =============================================================================
@@ -86,11 +83,11 @@ fn attested_registration_without_credential_rejected_by_executor() {
         &cipherclerk,
         registry_cell,
         "frank.pyana",
-        [0xAAu8; 32],       // owner
-        10_000,             // expiry
+        [0xAAu8; 32], // owner
+        10_000,       // expiry
         issuer_cell(),
         schema_commitment(),
-        Vec::new(),         // ← no proof bytes
+        Vec::new(), // ← no proof bytes
     );
 
     // The executor must reject: the credential-set predicate is
@@ -126,17 +123,17 @@ fn attested_tier_constraint_commitment_matches_authorized_set() {
     let schema = schema_commitment();
 
     let constraint = identity_attested_tier_constraint(issuer, schema);
-    let expected_commitment =
-        AuthorizedSet::credential_set_commitment(issuer.as_bytes(), &schema);
+    let expected_commitment = AuthorizedSet::credential_set_commitment(issuer.as_bytes(), &schema);
 
     // The constraint must embed the same commitment the executor's
     // AuthorizedSet evaluator derives.
     match constraint {
         StateConstraint::SenderAuthorized {
-            set: AuthorizedSet::CredentialSet {
-                issuer_cell: ic,
-                credential_schema_id: csi,
-            },
+            set:
+                AuthorizedSet::CredentialSet {
+                    issuer_cell: ic,
+                    credential_schema_id: csi,
+                },
         } => {
             assert_eq!(&ic, issuer.as_bytes());
             assert_eq!(csi, schema);
@@ -144,10 +141,7 @@ fn attested_tier_constraint_commitment_matches_authorized_set() {
             let derived = AuthorizedSet::credential_set_commitment(&ic, &csi);
             assert_eq!(derived, expected_commitment);
         }
-        other => panic!(
-            "expected SenderAuthorized::CredentialSet, got {:?}",
-            other
-        ),
+        other => panic!("expected SenderAuthorized::CredentialSet, got {:?}", other),
     }
 }
 
@@ -177,10 +171,11 @@ fn witness_predicate_commitment_matches_tier_constraint_commitment() {
 
     let constraint_commitment = match constraint {
         StateConstraint::SenderAuthorized {
-            set: AuthorizedSet::CredentialSet {
-                issuer_cell: ic,
-                credential_schema_id: csi,
-            },
+            set:
+                AuthorizedSet::CredentialSet {
+                    issuer_cell: ic,
+                    credential_schema_id: csi,
+                },
         } => AuthorizedSet::credential_set_commitment(&ic, &csi),
         other => panic!("expected SenderAuthorized::CredentialSet, got {:?}", other),
     };
@@ -218,12 +213,16 @@ fn register_action_and_attested_action_carry_distinct_method_symbols() {
     let cipherclerk = make_cipherclerk(0xB0);
     let cell = CellId::from_bytes([0x01u8; 32]);
 
-    let reg_action = build_register_action(
-        &cipherclerk, cell, "alice.pyana", [0xAAu8; 32], 1_000,
-    );
+    let reg_action = build_register_action(&cipherclerk, cell, "alice.pyana", [0xAAu8; 32], 1_000);
     let att_action = build_register_with_credential_action(
-        &cipherclerk, cell, "alice.pyana", [0xAAu8; 32], 1_000,
-        issuer_cell(), schema_commitment(), Vec::new(),
+        &cipherclerk,
+        cell,
+        "alice.pyana",
+        [0xAAu8; 32],
+        1_000,
+        issuer_cell(),
+        schema_commitment(),
+        Vec::new(),
     );
 
     // The method byte tag must differ so the cell program's MethodIs
@@ -261,12 +260,16 @@ fn attested_action_carries_witness_blob_unattested_does_not() {
     let cipherclerk = make_cipherclerk(0xC0);
     let cell = CellId::from_bytes([0x01u8; 32]);
 
-    let reg_action = build_register_action(
-        &cipherclerk, cell, "alice.pyana", [0xAAu8; 32], 1_000,
-    );
+    let reg_action = build_register_action(&cipherclerk, cell, "alice.pyana", [0xAAu8; 32], 1_000);
     let att_action = build_register_with_credential_action(
-        &cipherclerk, cell, "alice.pyana", [0xAAu8; 32], 1_000,
-        issuer_cell(), schema_commitment(), b"proof-bytes-placeholder".to_vec(),
+        &cipherclerk,
+        cell,
+        "alice.pyana",
+        [0xAAu8; 32],
+        1_000,
+        issuer_cell(),
+        schema_commitment(),
+        b"proof-bytes-placeholder".to_vec(),
     );
 
     assert!(
@@ -279,8 +282,7 @@ fn attested_action_carries_witness_blob_unattested_does_not() {
         "attested register_name_attested must carry exactly one witness blob"
     );
     assert_eq!(
-        att_action.witness_blobs[0].bytes,
-        b"proof-bytes-placeholder",
+        att_action.witness_blobs[0].bytes, b"proof-bytes-placeholder",
         "witness blob must carry the supplied proof bytes verbatim"
     );
 }

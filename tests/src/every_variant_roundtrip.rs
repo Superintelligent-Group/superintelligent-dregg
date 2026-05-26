@@ -490,6 +490,8 @@ fn all_effect_variants() -> Vec<Variant> {
             label: "ValidateHandoff",
             effect: Effect::ValidateHandoff {
                 cert_hash: [0xCDu8; 32],
+                recipient_pk: [0xAAu8; 32],
+                introducer_pk: [0xBBu8; 32],
             },
         },
         // -- Refusal (evidence-of-absence) ----------------------------------------

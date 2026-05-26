@@ -474,6 +474,102 @@ pub enum DelegationMode {
     SnapshotRefresh,
 }
 
+/// Linearity discipline of an [`Effect`] family.
+///
+/// Per `HOUYHNHNM-COMPARISON.md` §4.3, §8.2: pyana already enforces
+/// conservation per effect family — `Transfer` conserves balances,
+/// `Mint`/`Burn` is the asymmetric pair, capability grant/revoke is the
+/// cap pair, the bilateral schedule (γ.2) is almost a linear-logic
+/// move. Houyhnhnm's framing makes the conservation discipline a *typed
+/// answer*: each effect declares its `LinearityClass`, and any new
+/// `Effect` variant added to the system MUST answer the conservation
+/// question via the exhaustive `match` in [`Effect::linearity`].
+///
+/// The discriminants are deliberately *narrow* and *exhaustive at
+/// compile time*: no `_ =>` default arm exists in [`Effect::linearity`],
+/// so a contributor who adds a new effect cannot silently leave its
+/// conservation status implicit.
+///
+/// # Variants
+///
+/// - [`LinearityClass::Conservative`] — paired effect; the sum of
+///   resource deltas across the turn is zero (Transfer, the inner
+///   balance moves of escrow create/release, the bilateral message
+///   accumulator on γ.2).
+/// - [`LinearityClass::Monotonic`] — strictly nondecreasing scalar
+///   (nonces, height counters, attestation counters, refcount
+///   *increments*).
+/// - [`LinearityClass::Terminal`] — one-way, no inverse (revoke,
+///   destroy, drop). These categorically cannot be "undone" by a
+///   future effect; rollback requires a fresh creation.
+/// - [`LinearityClass::Generative`] — creates a resource without a
+///   paired consumer (Mint without Burn pair, CreateCell, CreateNote
+///   without paired SpendNote). Must be operator-permissioned;
+///   appears in receipts as a disclosed non-conservation.
+/// - [`LinearityClass::Annihilative`] — destroys a resource without
+///   a paired producer (Burn without Mint pair). Operator-disclosed
+///   non-conservation; the receipt's `was_burn` flag is bound into
+///   `receipt_hash` so the executor cannot strip the disclosure.
+/// - [`LinearityClass::Neutral`] — no resource delta (state-field
+///   mutations on cell-local accounting, event emission, refresh).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LinearityClass {
+    /// Sum of resource deltas across the turn is zero. The
+    /// conservation checker MAY require a paired sibling effect in the
+    /// same turn (the dual of this effect's primary delta).
+    Conservative,
+    /// The effect monotonically grows a scalar (e.g. nonce, height,
+    /// attestation counter, refcount-up). The executor's invariant
+    /// checker rejects any operation that would decrement.
+    Monotonic,
+    /// One-way structural transition with no inverse (revoke, destroy,
+    /// drop, archive). The cell-lifecycle state machine
+    /// (`pyana_cell::lifecycle::CellLifecycle::is_terminal`) is the
+    /// canonical example.
+    Terminal,
+    /// Creates a resource ex nihilo (Mint without a paired Burn,
+    /// CreateCell, CreateNote without paired Spend). MUST be
+    /// operator-permissioned; appears on-chain as a disclosed
+    /// non-conservation.
+    Generative,
+    /// Destroys a resource without a paired creator (Burn,
+    /// non-bridge-bound NoteCreate consumption paths). The disclosure
+    /// is bound into the receipt; the executor cannot silently strip
+    /// it.
+    Annihilative,
+    /// No resource delta — pure book-keeping (event emission, cell-
+    /// local field mutations whose conservation lives elsewhere,
+    /// refresh-from-parent).
+    Neutral,
+}
+
+impl LinearityClass {
+    /// Should the conservation checker require a paired sibling
+    /// (the dual of this effect's delta in the same turn)?
+    ///
+    /// Returns `true` only for [`LinearityClass::Conservative`]; the
+    /// other variants explicitly accept that no paired sibling is
+    /// required (Mint/Burn ex nihilo, monotonic increments,
+    /// one-way terminations, no-delta neutrals).
+    pub fn requires_paired_sibling(self) -> bool {
+        matches!(self, LinearityClass::Conservative)
+    }
+
+    /// Is this an *operator-disclosed non-conservation* — a deliberate
+    /// break with the conservation invariant that the operator must
+    /// disclose on-chain?
+    ///
+    /// This is the predicate the executor's adversarial path uses to
+    /// decide whether to require a `was_burn`/`was_mint` disclosure
+    /// flag in the receipt.
+    pub fn is_disclosed_non_conservation(self) -> bool {
+        matches!(
+            self,
+            LinearityClass::Generative | LinearityClass::Annihilative
+        )
+    }
+}
+
 /// An effect produced by an action — what changes in the ledger.
 ///
 /// Analogous to Mina's balance_change + state updates, but generalized for
@@ -995,10 +1091,26 @@ pub enum Effect {
     /// federation maintains `approved_handoffs_root`); the executor proves
     /// Merkle membership of `cert_hash` in the root and consumes the leaf
     /// (single-use guarantee per `DESIGN-captp-integration.md` §9.4).
+    ///
+    /// Block1-bind closure (BLOCK1-BIND-CLOSURE-NOTES.md
+    /// `ValidateHandoff-runtime-variant-extend`): `recipient_pk` and
+    /// `introducer_pk` are now carried explicitly. The AIR's
+    /// `HANDOFF_RECIPIENT_PK` / `HANDOFF_INTRODUCER_PK` PARAMs project from
+    /// these fields, eliminating the prior synthetic derivation in the
+    /// bridge. The apply site validates that the carried keys match the
+    /// authorization's certificate (when the action carries a CapTP cert),
+    /// closing the soundness gap where a prover could supply forged keys.
     ValidateHandoff {
         /// The Poseidon2 hash of the handoff certificate (matches the leaf
         /// the federation inserted when accepting the cert).
         cert_hash: [u8; 32],
+        /// Recipient's Ed25519 public key (matches the cert's
+        /// `recipient_pk`). Bound into AIR PI via `HANDOFF_RECIPIENT_PK`.
+        recipient_pk: [u8; 32],
+        /// Introducer's Ed25519 public key. Bound into AIR PI via
+        /// `HANDOFF_INTRODUCER_PK`. The leaf bound into PI is
+        /// `hash(cert_hash, hash(recipient_pk, introducer_pk))`.
+        introducer_pk: [u8; 32],
     },
 
     // ─── Cell lifecycle effects (Silver-Vision lifecycle subset) ─────────────
@@ -1290,6 +1402,137 @@ impl Action {
 }
 
 impl Effect {
+    /// Declare this effect's [`LinearityClass`].
+    ///
+    /// **This match is exhaustive on purpose.** No `_ =>` default arm
+    /// exists; every new [`Effect`] variant added in the future is
+    /// forced — by `rustc` — to *answer the conservation question* per
+    /// `HOUYHNHNM-COMPARISON.md` §4.3, §8.2. The compiler is the
+    /// enforcer of "the designer had to think about this."
+    ///
+    /// The conservation checker in the executor uses this to know
+    /// whether to require a paired sibling effect
+    /// ([`LinearityClass::Conservative`]) or to accept a disclosed
+    /// non-conservation ([`LinearityClass::Generative`] /
+    /// [`LinearityClass::Annihilative`]).
+    pub fn linearity(&self) -> LinearityClass {
+        match self {
+            // -- Conservative: paired-delta resource moves. --
+            Effect::Transfer { .. } => LinearityClass::Conservative,
+            Effect::CreateEscrow { .. } => LinearityClass::Conservative,
+            Effect::ReleaseEscrow { .. } => LinearityClass::Conservative,
+            Effect::RefundEscrow { .. } => LinearityClass::Conservative,
+            Effect::CreateCommittedEscrow { .. } => LinearityClass::Conservative,
+            Effect::ReleaseCommittedEscrow { .. } => LinearityClass::Conservative,
+            Effect::RefundCommittedEscrow { .. } => LinearityClass::Conservative,
+            // Notes spent-and-created together must conserve value; the
+            // executor's conservation checker enforces this across
+            // sibling spend/create pairs in the same turn.
+            Effect::NoteSpend { .. } => LinearityClass::Conservative,
+            Effect::NoteCreate { .. } => LinearityClass::Conservative,
+            // Obligation creation locks stake; fulfillment returns it;
+            // slash transfers it. Each is a conservative move.
+            Effect::CreateObligation { .. } => LinearityClass::Conservative,
+            Effect::FulfillObligation { .. } => LinearityClass::Conservative,
+            Effect::SlashObligation { .. } => LinearityClass::Conservative,
+            // Queue enqueue/dequeue pair: the message moves; the
+            // deposit moves with it (paid on enqueue, refunded on
+            // dequeue).
+            Effect::QueueEnqueue { .. } => LinearityClass::Conservative,
+            Effect::QueueDequeue { .. } => LinearityClass::Conservative,
+            // Atomic queue transactions and pipeline steps batch
+            // conservative moves; the executor enforces all-or-nothing.
+            Effect::QueueAtomicTx { .. } => LinearityClass::Conservative,
+            Effect::QueuePipelineStep { .. } => LinearityClass::Conservative,
+            // Bridge phases form a cross-federation conservative
+            // schedule: lock+finalize is the dual of mint on the other
+            // side; cancel is a roll-back; lock-without-finalize is
+            // value-locking, not value-creation.
+            Effect::BridgeLock { .. } => LinearityClass::Conservative,
+            Effect::BridgeFinalize { .. } => LinearityClass::Conservative,
+            Effect::BridgeCancel { .. } => LinearityClass::Conservative,
+
+            // -- Monotonic: scalar counters / refcounts going up. --
+            Effect::IncrementNonce { .. } => LinearityClass::Monotonic,
+            // ExportSturdyRef bumps the cell's export counter
+            // (state.fields[7]); EnlivenRef bumps the entry's use-count
+            // (state.fields[6]).
+            Effect::ExportSturdyRef { .. } => LinearityClass::Monotonic,
+            Effect::EnlivenRef { .. } => LinearityClass::Monotonic,
+            // ValidateHandoff consumes a one-shot leaf — monotonic
+            // because the leaf-consumed counter only grows.
+            Effect::ValidateHandoff { .. } => LinearityClass::Monotonic,
+            // Refusals bump the cell's nonce and append to the
+            // refusal-log slot; both monotonic.
+            Effect::Refusal { .. } => LinearityClass::Monotonic,
+
+            // -- Terminal: one-way state transitions, no inverse. --
+            Effect::RevokeCapability { .. } => LinearityClass::Terminal,
+            Effect::RevokeDelegation { .. } => LinearityClass::Terminal,
+            // DropRef decrements a refcount; once dropped, the bearer
+            // cannot "un-drop" (a new export creates a fresh ref).
+            Effect::DropRef { .. } => LinearityClass::Terminal,
+            // Cell destroy is the canonical terminal — once Destroyed
+            // the cell cannot transition to any other state
+            // (CellLifecycle::is_terminal).
+            Effect::CellDestroy { .. } => LinearityClass::Terminal,
+            // MakeSovereign drops local state in favor of a sovereign
+            // commitment — that's a one-way move from the federation's
+            // perspective.
+            Effect::MakeSovereign { .. } => LinearityClass::Terminal,
+            // ReceiptArchive sets the cell into Archived lifecycle;
+            // the chain prefix is no longer locally addressable as
+            // individual receipts (the attestation summarises it).
+            Effect::ReceiptArchive { .. } => LinearityClass::Terminal,
+            // AttenuateCapability only narrows — widening is rejected.
+            // Once narrowed, you cannot widen back.
+            Effect::AttenuateCapability { .. } => LinearityClass::Terminal,
+            // Cell seal/unseal is *reversible* but the seal-while-
+            // sealed transition is terminal in the sense that no
+            // effects (other than CellUnseal) can target the cell.
+            // Classify CellSeal as Terminal — its inverse is CellUnseal,
+            // which is itself Terminal in the reverse direction; the
+            // pair is *not* a balanced linear pair the way
+            // Transfer/Mint+Burn is, because no resource is conserved.
+            Effect::CellSeal { .. } => LinearityClass::Terminal,
+            Effect::CellUnseal { .. } => LinearityClass::Terminal,
+
+            // -- Generative: creates a resource ex nihilo. --
+            // BridgeMint mints local notes from a remote spend proof —
+            // generative from the local ledger's POV (the conservation
+            // lives in the bridge protocol, not in this federation).
+            Effect::BridgeMint { .. } => LinearityClass::Generative,
+            Effect::CreateCell { .. } => LinearityClass::Generative,
+            Effect::CreateCellFromFactory { .. } => LinearityClass::Generative,
+            Effect::SpawnWithDelegation { .. } => LinearityClass::Generative,
+            Effect::QueueAllocate { .. } => LinearityClass::Generative,
+            Effect::QueueResize { .. } => LinearityClass::Generative,
+            // CreateSealPair and Seal generate fresh sealer/unsealer
+            // capability handles; the unsealing path is the dual but
+            // the creation is generative.
+            Effect::CreateSealPair { .. } => LinearityClass::Generative,
+            Effect::Seal { .. } => LinearityClass::Generative,
+            Effect::Unseal { .. } => LinearityClass::Generative,
+            // Grant and Introduce mint new capability slots in the
+            // recipient's c-list; from the receiving cell's POV
+            // these are generative.
+            Effect::GrantCapability { .. } => LinearityClass::Generative,
+            Effect::Introduce { .. } => LinearityClass::Generative,
+
+            // -- Annihilative: destroys a resource, operator-disclosed. --
+            Effect::Burn { .. } => LinearityClass::Annihilative,
+
+            // -- Neutral: no resource delta; state-local accounting. --
+            Effect::SetField { .. } => LinearityClass::Neutral,
+            Effect::EmitEvent { .. } => LinearityClass::Neutral,
+            Effect::SetPermissions { .. } => LinearityClass::Neutral,
+            Effect::SetVerificationKey { .. } => LinearityClass::Neutral,
+            Effect::RefreshDelegation => LinearityClass::Neutral,
+            Effect::PipelinedSend { .. } => LinearityClass::Neutral,
+            Effect::ExerciseViaCapability { .. } => LinearityClass::Neutral,
+        }
+    }
+
     /// Compute the BLAKE3 hash of this effect.
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
@@ -1882,9 +2125,15 @@ impl Effect {
                 hasher.update(&[45u8]);
                 hasher.update(ref_id);
             }
-            Effect::ValidateHandoff { cert_hash } => {
+            Effect::ValidateHandoff {
+                cert_hash,
+                recipient_pk,
+                introducer_pk,
+            } => {
                 hasher.update(&[46u8]);
                 hasher.update(cert_hash);
+                hasher.update(recipient_pk);
+                hasher.update(introducer_pk);
             }
             Effect::CellSeal { target, reason } => {
                 hasher.update(&[48u8]);
@@ -2119,7 +2368,7 @@ impl Effect {
             Effect::ExportSturdyRef { .. } => 32 + 32, // swiss + target
             Effect::EnlivenRef { .. } => 32 + 32,      // swiss + bearer
             Effect::DropRef { .. } => 32,              // ref_id
-            Effect::ValidateHandoff { .. } => 32,      // cert_hash
+            Effect::ValidateHandoff { .. } => 32 + 32 + 32, // cert_hash + recipient_pk + introducer_pk
             // Refusal: cell + commitment + reason-discriminant (+ opt 32-byte
             // custom reason hash) + u32 witness index.
             Effect::Refusal { refusal_reason, .. } => {

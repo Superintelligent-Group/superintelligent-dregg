@@ -13,8 +13,7 @@
 use pyana_cell::{
     Cell, CellId, Ledger,
     lifecycle::{
-        ArchivalAttestation, CellLifecycle, DeathCertificate, DeathReason,
-        LifecycleTransitionError,
+        ArchivalAttestation, CellLifecycle, DeathCertificate, DeathReason, LifecycleTransitionError,
     },
 };
 
@@ -47,19 +46,29 @@ fn archive_transitions_to_archived_and_cell_remains_live() {
     let attest = valid_attestation(cell_id, 0, 100);
     let expected_checkpoint_hash = attest.checkpoint_hash();
 
-    cell.archive(&attest).expect("archive must succeed on a Live cell");
+    cell.archive(&attest)
+        .expect("archive must succeed on a Live cell");
 
     assert!(!cell.lifecycle.is_terminal(), "Archived is not terminal");
     assert!(!cell.lifecycle.is_sealed(), "Archived is not sealed");
-    assert!(cell.accepts_effects(), "Archived cell must still accept effects");
+    assert!(
+        cell.accepts_effects(),
+        "Archived cell must still accept effects"
+    );
 
     match &cell.lifecycle {
-        CellLifecycle::Archived { checkpoint_hash, archived_through } => {
+        CellLifecycle::Archived {
+            checkpoint_hash,
+            archived_through,
+        } => {
             assert_eq!(
                 *checkpoint_hash, expected_checkpoint_hash,
                 "checkpoint_hash must equal attestation.checkpoint_hash()"
             );
-            assert_eq!(*archived_through, 100, "archived_through must equal archive_end_height");
+            assert_eq!(
+                *archived_through, 100,
+                "archived_through must equal archive_end_height"
+            );
         }
         other => panic!("expected Archived, got {other:?}"),
     }
@@ -78,23 +87,43 @@ fn archival_checkpoint_hash_binds_all_fields() {
 
     let mut v = base.clone();
     v.archive_start_height = 1;
-    assert_ne!(v.checkpoint_hash(), base_hash, "archive_start_height must bind");
+    assert_ne!(
+        v.checkpoint_hash(),
+        base_hash,
+        "archive_start_height must bind"
+    );
 
     let mut v = base.clone();
     v.archive_end_height = 51;
-    assert_ne!(v.checkpoint_hash(), base_hash, "archive_end_height must bind");
+    assert_ne!(
+        v.checkpoint_hash(),
+        base_hash,
+        "archive_end_height must bind"
+    );
 
     let mut v = base.clone();
     v.archive_blob_hash = [0xFFu8; 32];
-    assert_ne!(v.checkpoint_hash(), base_hash, "archive_blob_hash must bind");
+    assert_ne!(
+        v.checkpoint_hash(),
+        base_hash,
+        "archive_blob_hash must bind"
+    );
 
     let mut v = base.clone();
     v.archive_terminal_commitment = [0xFFu8; 32];
-    assert_ne!(v.checkpoint_hash(), base_hash, "archive_terminal_commitment must bind");
+    assert_ne!(
+        v.checkpoint_hash(),
+        base_hash,
+        "archive_terminal_commitment must bind"
+    );
 
     let mut v = base.clone();
     v.archive_terminal_receipt_hash = [0xFFu8; 32];
-    assert_ne!(v.checkpoint_hash(), base_hash, "archive_terminal_receipt_hash must bind");
+    assert_ne!(
+        v.checkpoint_hash(),
+        base_hash,
+        "archive_terminal_receipt_hash must bind"
+    );
 
     let mut v = base.clone();
     v.cell_id = CellId::derive_raw(&[0xFFu8; 32], &[0u8; 32]);
@@ -197,7 +226,9 @@ fn archive_non_monotone_cutover_rejected() {
 
     // archived_through is still 100.
     match &cell.lifecycle {
-        CellLifecycle::Archived { archived_through, .. } => {
+        CellLifecycle::Archived {
+            archived_through, ..
+        } => {
             assert_eq!(*archived_through, 100, "archived_through must not regress");
         }
         other => panic!("expected Archived, got {other:?}"),
@@ -255,12 +286,20 @@ fn archived_cell_accepts_effects_and_supports_extended_archive() {
     cell.archive(&second).unwrap();
 
     match &cell.lifecycle {
-        CellLifecycle::Archived { archived_through, .. } => {
-            assert_eq!(*archived_through, 200, "archived_through must advance to 200");
+        CellLifecycle::Archived {
+            archived_through, ..
+        } => {
+            assert_eq!(
+                *archived_through, 200,
+                "archived_through must advance to 200"
+            );
         }
         other => panic!("expected Archived, got {other:?}"),
     }
-    assert!(cell.accepts_effects(), "extended-archived cell must still accept effects");
+    assert!(
+        cell.accepts_effects(),
+        "extended-archived cell must still accept effects"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +324,10 @@ fn archive_reflected_in_ledger_after_update_with() {
 
     let cell = ledger.get(&cell_id).unwrap();
     match &cell.lifecycle {
-        CellLifecycle::Archived { checkpoint_hash, archived_through } => {
+        CellLifecycle::Archived {
+            checkpoint_hash,
+            archived_through,
+        } => {
             assert_eq!(*checkpoint_hash, expected_checkpoint);
             assert_eq!(*archived_through, 75);
         }

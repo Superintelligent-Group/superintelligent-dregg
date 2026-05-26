@@ -6,8 +6,8 @@
 
 use pyana_circuit::{
     BabyBear, CellState, Effect, EffectVmAir,
-    effect_vm::{generate_effect_vm_trace, generate_effect_vm_trace_ext, EffectVmContext},
-    stark::{self, StarkAir, proof_to_bytes, proof_from_bytes},
+    effect_vm::{EffectVmContext, generate_effect_vm_trace, generate_effect_vm_trace_ext},
+    stark::{self, StarkAir, proof_from_bytes, proof_to_bytes},
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,7 +63,11 @@ pub fn assert_roundtrip(
     let air = EffectVmAir::new(trace.len());
     let proof = stark::prove(&air, &trace, &pi);
     let result = stark::verify(&air, &proof, &pi);
-    assert!(result.is_ok(), "{label}: proof must verify, got {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "{label}: proof must verify, got {:?}",
+        result.err()
+    );
     (trace, pi)
 }
 
@@ -76,7 +80,11 @@ pub fn assert_bytes_roundtrip(state: &CellState, effects: &[Effect], label: &str
     let trace_len = proof.trace_len;
     let air = EffectVmAir::new(trace_len);
     let result = stark::verify(&air, &proof, &pi_bb);
-    assert!(result.is_ok(), "{label}: deserialized proof must verify, got {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "{label}: deserialized proof must verify, got {:?}",
+        result.err()
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,6 +99,10 @@ pub fn tamper_proof_byte(proof_bytes: &mut Vec<u8>, offset: usize) {
 
 /// XOR `mask` into `pi[slot]`.
 pub fn tamper_pi(pi: &mut Vec<u32>, slot: usize, mask: u32) {
-    assert!(slot < pi.len(), "tamper_pi: slot {slot} out of range (len={})", pi.len());
+    assert!(
+        slot < pi.len(),
+        "tamper_pi: slot {slot} out of range (len={})",
+        pi.len()
+    );
     pi[slot] ^= mask;
 }

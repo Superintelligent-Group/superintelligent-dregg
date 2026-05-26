@@ -71,8 +71,8 @@ fn selective_disclosure_one_attribute() {
     let attrs = fixture_attrs();
     let h = holder();
 
-    let cred = issue(&issuer, &schema, h, attrs, 1_700_000_000, None)
-        .expect("issuance must succeed");
+    let cred =
+        issue(&issuer, &schema, h, attrs, 1_700_000_000, None).expect("issuance must succeed");
 
     // Present disclosing only `department`.
     let opts = PresentationOptions::new().disclose("department");
@@ -204,8 +204,8 @@ fn predicate_age_gte_18_without_cleartext_disclosure() {
     let cred = issue(&issuer, &schema, h, attrs, 1_700_000_000, None).unwrap();
 
     // No cleartext disclosure; only a predicate proof for age >= 18.
-    let opts = PresentationOptions::new()
-        .predicate(PredicateRequest::new("age", Predicate::Gte(18)));
+    let opts =
+        PresentationOptions::new().predicate(PredicateRequest::new("age", Predicate::Gte(18)));
     let presentation = present(&cred, &fixture_request(), &opts).unwrap();
 
     assert_eq!(
@@ -260,7 +260,10 @@ fn anonymous_presentation_accepted_by_verify_anonymous() {
     let presentation = present_anonymous(&cred, &fixture_request(), &opts)
         .expect("anonymous presentation must succeed");
 
-    assert!(presentation.anonymous, "presentation must be marked anonymous");
+    assert!(
+        presentation.anonymous,
+        "presentation must be marked anonymous"
+    );
 
     let verify_opts = VerificationOptions {
         expected_disclosure: vec!["active".into()],
@@ -332,10 +335,7 @@ fn revoked_credential_presentation_rejected() {
         ..Default::default()
     };
     let result = verify(&pre_presentation, &post_verify);
-    assert!(
-        result.is_err(),
-        "post-revocation verification must fail"
-    );
+    assert!(result.is_err(), "post-revocation verification must fail");
     match result.unwrap_err() {
         pyana_credentials::VerificationError::Revoked => {}
         other => panic!("expected Revoked, got {other:?}"),
@@ -352,7 +352,11 @@ fn credential_id_is_stable_and_unique_per_issuance() {
     let cred2 = issue(&issuer, &schema, h, fixture_attrs(), 1_700_000_001, None).unwrap();
 
     // IDs must be stable (same credential re-computed → same ID).
-    assert_eq!(cred1.id(), cred1.id(), "credential ID must be deterministic");
+    assert_eq!(
+        cred1.id(),
+        cred1.id(),
+        "credential ID must be deterministic"
+    );
     // Two credentials issued at different times must have different IDs.
     assert_ne!(
         cred1.id(),

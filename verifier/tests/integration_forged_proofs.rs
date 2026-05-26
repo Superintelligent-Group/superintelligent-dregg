@@ -63,7 +63,10 @@ fn assert_accepted(proof_bytes: &[u8], pi: &[u32], vk: &str, label: &str) {
 fn honest_proof_accepted_auto_and_canonical_vk() {
     let (proof_bytes, pi) = make_proof_and_pi(
         1_000,
-        &[Effect::Transfer { amount: 100, direction: 1 }],
+        &[Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }],
     );
     assert_accepted(&proof_bytes, &pi, AUTO_DETECT_VK_HASH, "auto VK");
     assert_accepted(&proof_bytes, &pi, EFFECT_VM_VK_HASH_HEX, "canonical VK hex");
@@ -77,24 +80,34 @@ fn honest_proof_accepted_auto_and_canonical_vk() {
 fn corrupted_fri_bytes_rejected() {
     let (mut proof_bytes, pi) = make_proof_and_pi(
         2_000,
-        &[Effect::Transfer { amount: 200, direction: 0 }],
+        &[Effect::Transfer {
+            amount: 200,
+            direction: 0,
+        }],
     );
     // Flip a byte in the middle of the proof (past any header / length prefix).
     let offset = (proof_bytes.len() / 2).max(10).min(proof_bytes.len() - 1);
     proof_bytes[offset] ^= 0xFF;
-    assert_rejected(&proof_bytes, &pi, AUTO_DETECT_VK_HASH, "corrupted FRI bytes");
+    assert_rejected(
+        &proof_bytes,
+        &pi,
+        AUTO_DETECT_VK_HASH,
+        "corrupted FRI bytes",
+    );
 }
 
 /// Flip a single bit near the end (Merkle cap or query region).
 #[test]
 fn corrupted_last_bytes_rejected() {
-    let (mut proof_bytes, pi) = make_proof_and_pi(
-        500,
-        &[Effect::NoOp],
-    );
+    let (mut proof_bytes, pi) = make_proof_and_pi(500, &[Effect::NoOp]);
     let last = proof_bytes.len() - 1;
     proof_bytes[last] ^= 0x01;
-    assert_rejected(&proof_bytes, &pi, AUTO_DETECT_VK_HASH, "corrupted last byte");
+    assert_rejected(
+        &proof_bytes,
+        &pi,
+        AUTO_DETECT_VK_HASH,
+        "corrupted last byte",
+    );
 }
 
 /// Completely zero out a block of bytes in the commitment region.
@@ -102,7 +115,10 @@ fn corrupted_last_bytes_rejected() {
 fn zeroed_proof_block_rejected() {
     let (mut proof_bytes, pi) = make_proof_and_pi(
         1_500,
-        &[Effect::SetField { field_idx: 1, value: BabyBear::new(42) }],
+        &[Effect::SetField {
+            field_idx: 1,
+            value: BabyBear::new(42),
+        }],
     );
     let start = (proof_bytes.len() / 3).max(8);
     let end = (start + 64).min(proof_bytes.len());
@@ -150,7 +166,10 @@ fn truncated_proof_bytes_returns_error() {
 fn wrong_old_commit_rejected() {
     let (proof_bytes, mut pi) = make_proof_and_pi(
         4_000,
-        &[Effect::Transfer { amount: 400, direction: 1 }],
+        &[Effect::Transfer {
+            amount: 400,
+            direction: 1,
+        }],
     );
     pi[pi::OLD_COMMIT] ^= 0xDEAD_BEEF;
     assert_rejected(&proof_bytes, &pi, AUTO_DETECT_VK_HASH, "wrong OLD_COMMIT");
@@ -161,7 +180,10 @@ fn wrong_old_commit_rejected() {
 fn wrong_new_commit_rejected() {
     let (proof_bytes, mut pi) = make_proof_and_pi(
         4_000,
-        &[Effect::Transfer { amount: 400, direction: 1 }],
+        &[Effect::Transfer {
+            amount: 400,
+            direction: 1,
+        }],
     );
     pi[pi::NEW_COMMIT] ^= 0xBEEF_CAFE;
     assert_rejected(&proof_bytes, &pi, AUTO_DETECT_VK_HASH, "wrong NEW_COMMIT");
@@ -172,10 +194,18 @@ fn wrong_new_commit_rejected() {
 fn wrong_net_delta_mag_rejected() {
     let (proof_bytes, mut pi) = make_proof_and_pi(
         5_000,
-        &[Effect::Transfer { amount: 500, direction: 1 }],
+        &[Effect::Transfer {
+            amount: 500,
+            direction: 1,
+        }],
     );
     pi[pi::NET_DELTA_MAG] ^= 0x1234;
-    assert_rejected(&proof_bytes, &pi, AUTO_DETECT_VK_HASH, "wrong NET_DELTA_MAG");
+    assert_rejected(
+        &proof_bytes,
+        &pi,
+        AUTO_DETECT_VK_HASH,
+        "wrong NET_DELTA_MAG",
+    );
 }
 
 /// Tamper EFFECTS_HASH_LO (claim a different effects hash).
@@ -183,10 +213,17 @@ fn wrong_net_delta_mag_rejected() {
 fn wrong_effects_hash_rejected() {
     let (proof_bytes, mut pi) = make_proof_and_pi(
         3_000,
-        &[Effect::GrantCapability { cap_entry: BabyBear::new(0xCAFE) }],
+        &[Effect::GrantCapability {
+            cap_entry: BabyBear::new(0xCAFE),
+        }],
     );
     pi[pi::EFFECTS_HASH_LO] ^= 0xFFFF_FFFF;
-    assert_rejected(&proof_bytes, &pi, AUTO_DETECT_VK_HASH, "wrong EFFECTS_HASH_LO");
+    assert_rejected(
+        &proof_bytes,
+        &pi,
+        AUTO_DETECT_VK_HASH,
+        "wrong EFFECTS_HASH_LO",
+    );
 }
 
 /// Tamper INIT_BAL_LO (claim wrong initial balance).
@@ -194,7 +231,10 @@ fn wrong_effects_hash_rejected() {
 fn wrong_init_bal_lo_rejected() {
     let (proof_bytes, mut pi) = make_proof_and_pi(
         8_000,
-        &[Effect::Transfer { amount: 100, direction: 0 }],
+        &[Effect::Transfer {
+            amount: 100,
+            direction: 0,
+        }],
     );
     pi[pi::INIT_BAL_LO] ^= 0x1;
     assert_rejected(&proof_bytes, &pi, AUTO_DETECT_VK_HASH, "wrong INIT_BAL_LO");
@@ -204,7 +244,12 @@ fn wrong_init_bal_lo_rejected() {
 #[test]
 fn empty_public_inputs_rejected() {
     let (proof_bytes, _) = make_proof_and_pi(100, &[Effect::NoOp]);
-    assert_rejected(&proof_bytes, &[], AUTO_DETECT_VK_HASH, "empty public inputs");
+    assert_rejected(
+        &proof_bytes,
+        &[],
+        AUTO_DETECT_VK_HASH,
+        "empty public inputs",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,12 +287,18 @@ fn proof_from_different_turn_rejected_cross_pi() {
     // Proof for a 100-unit outbound transfer.
     let (proof_bytes_100, _) = make_proof_and_pi(
         2_000,
-        &[Effect::Transfer { amount: 100, direction: 1 }],
+        &[Effect::Transfer {
+            amount: 100,
+            direction: 1,
+        }],
     );
     // PI from a different turn (200-unit outbound transfer, same initial balance).
     let (_, pi_200) = make_proof_and_pi(
         2_000,
-        &[Effect::Transfer { amount: 200, direction: 1 }],
+        &[Effect::Transfer {
+            amount: 200,
+            direction: 1,
+        }],
     );
 
     // The 100-unit proof against the 200-unit PI must be rejected.
@@ -270,9 +321,17 @@ fn multi_effect_pi_tamper_battery() {
     let (proof_bytes, pi_orig) = make_proof_and_pi(
         20_000,
         &[
-            Effect::Transfer { amount: 500, direction: 1 },
-            Effect::SetField { field_idx: 3, value: BabyBear::new(99) },
-            Effect::GrantCapability { cap_entry: BabyBear::new(0xABCD) },
+            Effect::Transfer {
+                amount: 500,
+                direction: 1,
+            },
+            Effect::SetField {
+                field_idx: 3,
+                value: BabyBear::new(99),
+            },
+            Effect::GrantCapability {
+                cap_entry: BabyBear::new(0xABCD),
+            },
         ],
     );
 

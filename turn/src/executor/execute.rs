@@ -256,10 +256,8 @@ impl TurnExecutor {
                     // `computrons_used` is at least monotone in the size of
                     // the attested turn body. The proof itself bears the
                     // soundness; this field exists for metering / observability.
-                    let computrons_used = self
-                        .costs
-                        .effect_base
-                        .saturating_mul(action_count as u64);
+                    let computrons_used =
+                        self.costs.effect_base.saturating_mul(action_count as u64);
 
                     let mut receipt = TurnReceipt {
                         turn_hash,

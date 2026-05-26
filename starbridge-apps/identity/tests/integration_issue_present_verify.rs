@@ -40,7 +40,12 @@ fn fixture_executor(cipherclerk: &AppCipherclerk) -> (EmbeddedExecutor, CellId) 
 }
 
 fn fixture_issuer() -> IssuerKeys {
-    IssuerKeys::new([100u8; 32], [50u8; 32], b"integration-test", "starbridge-identity")
+    IssuerKeys::new(
+        [100u8; 32],
+        [50u8; 32],
+        b"integration-test",
+        "starbridge-identity",
+    )
 }
 
 fn fixture_attributes() -> CredentialAttributes {
@@ -124,8 +129,7 @@ fn executor_full_issue_present_verify_pipeline_accept_flag_is_one() {
     .unwrap();
 
     // Step 1: Issue.
-    let issue_action =
-        build_issue_credential_action(&cipherclerk, cell, &credential, 1, [0u8; 32]);
+    let issue_action = build_issue_credential_action(&cipherclerk, cell, &credential, 1, [0u8; 32]);
     executor
         .submit_action(&cipherclerk, issue_action)
         .expect("issue must succeed");
@@ -133,7 +137,10 @@ fn executor_full_issue_present_verify_pipeline_accept_flag_is_one() {
     // Step 2: Present.
     let options = PresentationOptions::new()
         .disclose("verification_level")
-        .predicate(PredicateRequest::new("verification_level", Predicate::Gte(1)));
+        .predicate(PredicateRequest::new(
+            "verification_level",
+            Predicate::Gte(1),
+        ));
     let presentation = present(
         &credential,
         &pyana_token::AuthRequest {
@@ -162,7 +169,8 @@ fn executor_full_issue_present_verify_pipeline_accept_flag_is_one() {
         )],
         ..Default::default()
     };
-    let verify_action = build_verify_presentation_action(&cipherclerk, cell, &presentation, &verify_opts);
+    let verify_action =
+        build_verify_presentation_action(&cipherclerk, cell, &presentation, &verify_opts);
     let verify_receipt = executor
         .submit_action(&cipherclerk, verify_action)
         .expect("verify_presentation action must be accepted by the executor");
@@ -211,15 +219,14 @@ fn executor_revoke_emits_credential_revoked_event_and_monotonic_blocks_root_roll
     // Revoke the credential.
     let registry = RevocationRegistry::new();
     let revocation_proof = revoke(&registry, &credential);
-    assert!(revocation_proof.revoked, "registry must mark credential as revoked");
+    assert!(
+        revocation_proof.revoked,
+        "registry must mark credential as revoked"
+    );
 
     let new_root = registry.root();
-    let rev_action = build_revoke_credential_action(
-        &cipherclerk,
-        issuer_cell,
-        credential.id(),
-        new_root,
-    );
+    let rev_action =
+        build_revoke_credential_action(&cipherclerk, issuer_cell, credential.id(), new_root);
     let rev_receipt = executor
         .submit_action(&cipherclerk, rev_action)
         .expect("revoke_credential action must succeed");
@@ -286,12 +293,8 @@ fn executor_verify_revoked_presentation_emits_reject_event() {
     // Revoke.
     let registry = RevocationRegistry::new();
     let revocation_proof = revoke(&registry, &credential);
-    let rev_action = build_revoke_credential_action(
-        &cipherclerk,
-        issuer_cell,
-        credential.id(),
-        registry.root(),
-    );
+    let rev_action =
+        build_revoke_credential_action(&cipherclerk, issuer_cell, credential.id(), registry.root());
     executor
         .submit_action(&cipherclerk, rev_action)
         .expect("revocation must succeed");
@@ -314,9 +317,9 @@ fn executor_verify_revoked_presentation_emits_reject_event() {
     };
     let verify_action =
         build_verify_presentation_action(&cipherclerk, issuer_cell, &presentation, &verify_opts);
-    let verify_receipt = executor
-        .submit_action(&cipherclerk, verify_action)
-        .expect("verify_presentation action must be accepted as a valid action (rejection is in the event)");
+    let verify_receipt = executor.submit_action(&cipherclerk, verify_action).expect(
+        "verify_presentation action must be accepted as a valid action (rejection is in the event)",
+    );
 
     assert!(!verify_receipt.emitted_events.is_empty());
     let ev = &verify_receipt.emitted_events[0];
@@ -361,7 +364,10 @@ fn executor_anonymous_presentation_action_emits_zero_holder_commitment() {
     )
     .expect("anonymous presentation must succeed");
 
-    assert!(presentation.anonymous, "presentation must be marked anonymous");
+    assert!(
+        presentation.anonymous,
+        "presentation must be marked anonymous"
+    );
 
     let present_action = build_present_credential_action(&cipherclerk, cell, &presentation);
     let receipt = executor
@@ -372,8 +378,7 @@ fn executor_anonymous_presentation_action_emits_zero_holder_commitment() {
     let ev = &receipt.emitted_events[0];
     // For anonymous presentations the holder_commitment is the zero field.
     assert_eq!(
-        ev.data[1],
-        [0u8; 32],
+        ev.data[1], [0u8; 32],
         "anonymous presentation must emit zero holder_commitment (no PII)"
     );
     // The anonymous_flag field (data[2][31]) must be 1.

@@ -10,7 +10,7 @@
 use pyana_cell::{AuthRequired, Cell, CellId, Ledger, Permissions};
 use pyana_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
-    turn::{Turn, TurnResult, TurnReceipt},
+    turn::{Turn, TurnReceipt, TurnResult},
 };
 
 fn open_permissions() -> Permissions {
@@ -99,7 +99,11 @@ fn burn_reduces_balance_and_sets_was_burn_flag() {
         cell_id,
         cell_id,
         0,
-        Effect::Burn { target: cell_id, slot: 0, amount: burn_amount },
+        Effect::Burn {
+            target: cell_id,
+            slot: 0,
+            amount: burn_amount,
+        },
     );
     let receipt = unwrap_receipt(executor.execute(&turn, &mut ledger));
 
@@ -111,7 +115,10 @@ fn burn_reduces_balance_and_sets_was_burn_flag() {
     );
 
     // was_burn must be set.
-    assert!(receipt.was_burn, "receipt.was_burn must be true when Effect::Burn was applied");
+    assert!(
+        receipt.was_burn,
+        "receipt.was_burn must be true when Effect::Burn was applied"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -152,11 +159,18 @@ fn burn_exceeding_balance_rejected_balance_preserved() {
         cell_id,
         cell_id,
         0,
-        Effect::Burn { target: cell_id, slot: 0, amount: balance + 1 },
+        Effect::Burn {
+            target: cell_id,
+            slot: 0,
+            amount: balance + 1,
+        },
     );
     let result = executor.execute(&turn, &mut ledger);
 
-    assert!(result.is_rejected(), "burn > balance must be rejected; got {result:?}");
+    assert!(
+        result.is_rejected(),
+        "burn > balance must be rejected; got {result:?}"
+    );
     // Balance unchanged.
     assert_eq!(
         ledger.get(&cell_id).unwrap().state.balance(),
@@ -182,11 +196,18 @@ fn burn_non_zero_slot_rejected() {
         cell_id,
         cell_id,
         0,
-        Effect::Burn { target: cell_id, slot: 1, amount: 50 },
+        Effect::Burn {
+            target: cell_id,
+            slot: 1,
+            amount: 50,
+        },
     );
     let result = executor.execute(&turn, &mut ledger);
 
-    assert!(result.is_rejected(), "Burn with slot != 0 must be rejected; got {result:?}");
+    assert!(
+        result.is_rejected(),
+        "Burn with slot != 0 must be rejected; got {result:?}"
+    );
     // Balance unchanged.
     assert_eq!(ledger.get(&cell_id).unwrap().state.balance(), 500);
 }
@@ -215,11 +236,18 @@ fn plain_transfer_does_not_set_was_burn() {
         sender_id,
         sender_id,
         0,
-        Effect::Transfer { from: sender_id, to: receiver_id, amount: 100 },
+        Effect::Transfer {
+            from: sender_id,
+            to: receiver_id,
+            amount: 100,
+        },
     );
     let receipt = unwrap_receipt(executor.execute(&turn, &mut ledger));
 
-    assert!(!receipt.was_burn, "was_burn must be false for a plain Transfer");
+    assert!(
+        !receipt.was_burn,
+        "was_burn must be false for a plain Transfer"
+    );
     assert_eq!(ledger.get(&sender_id).unwrap().state.balance(), 900);
     assert_eq!(ledger.get(&receiver_id).unwrap().state.balance(), 100);
 }
@@ -241,10 +269,18 @@ fn burn_entire_balance_leaves_zero() {
         cell_id,
         cell_id,
         0,
-        Effect::Burn { target: cell_id, slot: 0, amount: balance },
+        Effect::Burn {
+            target: cell_id,
+            slot: 0,
+            amount: balance,
+        },
     );
     let receipt = unwrap_receipt(executor.execute(&turn, &mut ledger));
 
-    assert_eq!(ledger.get(&cell_id).unwrap().state.balance(), 0, "balance must be zero after full burn");
+    assert_eq!(
+        ledger.get(&cell_id).unwrap().state.balance(),
+        0,
+        "balance must be zero after full burn"
+    );
     assert!(receipt.was_burn);
 }

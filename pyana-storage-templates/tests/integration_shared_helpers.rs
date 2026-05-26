@@ -15,11 +15,11 @@
 //! deliverable.
 
 use pyana_app_framework::canonical_program_vk;
-use pyana_cell::program::{CellProgram, TransitionGuard};
 use pyana_cell::StateConstraint;
+use pyana_cell::program::{CellProgram, TransitionGuard};
 use pyana_storage_templates::{
-    blinded_queue, cap_inbox, programmable_queue, pubsub_topic, relay_operator,
-    all_storage_template_descriptors,
+    all_storage_template_descriptors, blinded_queue, cap_inbox, programmable_queue, pubsub_topic,
+    relay_operator,
 };
 
 // ── shared assertion helper (the dedup target) ───────────────────────────────
@@ -43,7 +43,10 @@ fn assert_descriptor_contract(
     // 1. Hash is deterministic.
     let h1 = descriptor.hash();
     let h2 = descriptor.hash();
-    assert_eq!(h1, h2, "{template_name}: descriptor.hash() must be deterministic");
+    assert_eq!(
+        h1, h2,
+        "{template_name}: descriptor.hash() must be deterministic"
+    );
 
     // 2. child_program_vk matches the canonical VK derived from the program.
     let canonical = canonical_program_vk(program);
@@ -98,8 +101,7 @@ fn assert_descriptor_contract(
 
     // 8. factory_vk is non-zero.
     assert_ne!(
-        descriptor.factory_vk,
-        [0u8; 32],
+        descriptor.factory_vk, [0u8; 32],
         "{template_name}: factory_vk must be non-zero"
     );
 }
@@ -156,8 +158,7 @@ fn all_five_factory_vks_are_distinct() {
         for (j, vj) in vks.iter().enumerate() {
             if i != j {
                 assert_ne!(
-                    vi,
-                    vj,
+                    vi, vj,
                     "templates #{i} and #{j} must have distinct factory_vks"
                 );
             }
@@ -168,10 +169,7 @@ fn all_five_factory_vks_are_distinct() {
 #[test]
 fn all_five_child_program_vks_are_distinct() {
     let all = all_storage_template_descriptors();
-    let child_vks: Vec<[u8; 32]> = all
-        .iter()
-        .filter_map(|d| d.child_program_vk)
-        .collect();
+    let child_vks: Vec<[u8; 32]> = all.iter().filter_map(|d| d.child_program_vk).collect();
     assert_eq!(
         child_vks.len(),
         5,
@@ -181,8 +179,7 @@ fn all_five_child_program_vks_are_distinct() {
         for (j, vj) in child_vks.iter().enumerate() {
             if i != j {
                 assert_ne!(
-                    vi,
-                    vj,
+                    vi, vj,
                     "templates #{i} and #{j} must have distinct child_program_vks"
                 );
             }
@@ -197,7 +194,10 @@ fn every_template_has_immutable_identity_slot() {
     // "owner/consumer_pk cannot be overwritten" property.
     let programs = vec![
         ("CapInbox", cap_inbox::cap_inbox_program()),
-        ("ProgrammableQueue", programmable_queue::programmable_queue_program()),
+        (
+            "ProgrammableQueue",
+            programmable_queue::programmable_queue_program(),
+        ),
         ("PubSubTopic", pubsub_topic::pubsub_topic_program()),
         ("BlindedQueue", blinded_queue::blinded_queue_program()),
         ("RelayOperator", relay_operator::relay_operator_program()),

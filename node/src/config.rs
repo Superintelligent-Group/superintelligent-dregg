@@ -191,9 +191,7 @@ mod tests {
         for policy in [
             RetentionPolicy::Forever,
             RetentionPolicy::RollingWindow { blocks: 7 },
-            RetentionPolicy::UntilArchive {
-                archive_height: 42,
-            },
+            RetentionPolicy::UntilArchive { archive_height: 42 },
         ] {
             let bytes = postcard::to_stdvec(&policy).unwrap();
             let back: RetentionPolicy = postcard::from_bytes(&bytes).unwrap();

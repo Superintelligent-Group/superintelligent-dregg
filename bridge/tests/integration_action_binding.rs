@@ -159,10 +159,7 @@ fn corrupted_proof_bytes_rejected() {
     }
 
     let result = verify_action_binding(&binding, &n, &r, &d, amount);
-    assert!(
-        result.is_err(),
-        "corrupted proof bytes must be rejected"
-    );
+    assert!(result.is_err(), "corrupted proof bytes must be rejected");
 }
 
 // ============================================================================

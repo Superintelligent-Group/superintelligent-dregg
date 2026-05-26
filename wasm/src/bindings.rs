@@ -6,8 +6,13 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
+use pyana_cell::predicate::{InputRef, WitnessedPredicateKind};
+use pyana_cell::program::{
+    AuthorizedSet, CellProgram, HashKind, StateConstraint, TransitionCase, TransitionGuard,
+};
 use pyana_cell::{AuthRequired, CellId};
 use pyana_intent::{ActionPattern, Constraint, IntentKind};
+use pyana_turn::action::Authorization;
 use pyana_turn::conditional::ProofCondition;
 use pyana_turn::{Effect, TurnResult};
 
@@ -116,6 +121,10 @@ pub fn create_cell(
 }
 
 /// Get the state of a cell.
+///
+/// Refactor 6: adds `program: CellProgramView` surfacing the full slot-caveat
+/// tree so JS inspectors can render a complete picture of the cell's program
+/// semantics. Existing fields are byte-equivalent to the prior shape.
 #[wasm_bindgen]
 pub fn get_cell_state(handle: usize, cell_id_hex: &str) -> Result<JsValue, JsError> {
     with_runtime_ref(handle, |rt| {
@@ -140,6 +149,9 @@ pub fn get_cell_state(handle: usize, cell_id_hex: &str) -> Result<JsValue, JsErr
             /// signs over. Exposed so the JS layer can drive the peer-exchange
             /// flow without recomputing.
             state_commitment: String,
+            /// Refactor 6: full cell program structure for `<pyana-cell-program>`
+            /// inspector rendering.
+            program: CellProgramView,
         }
 
         #[derive(Serialize)]
@@ -170,6 +182,7 @@ pub fn get_cell_state(handle: usize, cell_id_hex: &str) -> Result<JsValue, JsErr
             proved_state: cell.state.proved_state(),
             delegation_epoch: cell.state.delegation_epoch(),
             state_commitment: hex_encode(&cell.state_commitment()),
+            program: cell_program_to_view(&cell.program),
         };
         serde_wasm_bindgen::to_value(&result).map_err(|e| e.to_string())
     })
@@ -1480,33 +1493,184 @@ pub fn get_merkle_tree_viz(handle: usize) -> Result<JsValue, JsError> {
 }
 
 /// Get the receipt chain for the runtime.
+///
+/// Refactor 3: adds `actions: Vec<ActionView>` per receipt, each with
+/// `target_cell`, `method`, `effects`, and `authorization` (6-variant tagged union).
+/// Refactor 7: adds `proof_view: Option<ProofView>` per receipt for γ.2 bilateral
+/// PI rendering by `<pyana-proof>`.
+/// Existing fields are byte-equivalent to the prior shape.
 #[wasm_bindgen]
 pub fn get_receipt_chain(handle: usize) -> Result<JsValue, JsError> {
     with_runtime_ref(handle, |rt| {
         #[derive(Serialize)]
         struct ReceiptView {
+            // --- existing fields (unchanged) ---
             turn_hash: String,
             pre_state_hash: String,
             post_state_hash: String,
             timestamp: i64,
             computrons_used: u64,
             action_count: usize,
+            // --- Refactor 3: per-action authorization ---
+            actions: Vec<ActionView>,
+            // --- Refactor 7: per-receipt proof metadata ---
+            proof_view: Option<ProofView>,
         }
 
         let chain: Vec<ReceiptView> = rt
             .receipts
             .iter()
-            .map(|r| ReceiptView {
-                turn_hash: hex_encode(&r.turn_hash),
-                pre_state_hash: hex_encode(&r.pre_state_hash),
-                post_state_hash: hex_encode(&r.post_state_hash),
-                timestamp: r.timestamp,
-                computrons_used: r.computrons_used,
-                action_count: r.action_count,
+            .zip(rt.turns.iter())
+            .map(|(r, t)| {
+                // Refactor 3: walk the call forest and project each action.
+                let actions = collect_actions_from_forest(t);
+                // Refactor 7: the wasm runtime does not run the Effect VM
+                // STARK (no proof generation in-browser). Receipts from the
+                // sim runtime are scope-0 (no attached proof). Surface None
+                // with a gap-note so inspectors can show "no proof — sim
+                // runtime" clearly. If a proof were attached via a
+                // WitnessedReceipt wrapper, we'd decode it here.
+                let proof_view: Option<ProofView> = None;
+
+                ReceiptView {
+                    turn_hash: hex_encode(&r.turn_hash),
+                    pre_state_hash: hex_encode(&r.pre_state_hash),
+                    post_state_hash: hex_encode(&r.post_state_hash),
+                    timestamp: r.timestamp,
+                    computrons_used: r.computrons_used,
+                    action_count: r.action_count,
+                    actions,
+                    proof_view,
+                }
             })
             .collect();
 
         serde_wasm_bindgen::to_value(&chain).map_err(|e| e.to_string())
+    })
+}
+
+// ============================================================================
+// Refactor 8 — decode_peer_transition
+//
+// Decode postcard-encoded PeerStateTransition bytes into a structured JS
+// value. Today the JS layer only sees opaque bytes; this binding surfaces
+// all fields: cell_id, old_commitment, new_commitment, effects_hash,
+// timestamp, sequence, signature (64-byte hex), and transition_proof
+// presence.
+// ============================================================================
+
+/// Postcard-decode a `PeerStateTransition` and return its fields as a
+/// structured JS object. The transition_bytes are the raw postcard bytes
+/// returned by `create_peer_transition`.
+///
+/// Returns `{ cell_id, old_commitment, new_commitment, effects_hash,
+///   timestamp, sequence, signature, has_transition_proof }`.
+/// Full proof bytes are NOT included by default (too large for render);
+/// `has_transition_proof: bool` tells the inspector whether one is
+/// attached.
+#[wasm_bindgen]
+pub fn decode_peer_transition(bytes: &[u8]) -> Result<JsValue, JsError> {
+    use pyana_cell::PeerStateTransition;
+
+    let transition: PeerStateTransition =
+        postcard::from_bytes(bytes).map_err(|e| JsError::new(&format!("decode error: {e}")))?;
+
+    #[derive(Serialize)]
+    struct PeerTransitionView {
+        cell_id: String,
+        old_commitment: String,
+        new_commitment: String,
+        effects_hash: String,
+        timestamp: i64,
+        sequence: u64,
+        /// 64-byte Ed25519 signature, hex-encoded.
+        signature: String,
+        /// True if a STARK proof is attached (full bytes not surfaced for
+        /// default render — use a dedicated endpoint for the raw proof).
+        has_transition_proof: bool,
+    }
+
+    let view = PeerTransitionView {
+        cell_id: hex_encode(&transition.cell_id.0),
+        old_commitment: hex_encode(&transition.old_commitment),
+        new_commitment: hex_encode(&transition.new_commitment),
+        effects_hash: hex_encode(&transition.effects_hash),
+        timestamp: transition.timestamp,
+        sequence: transition.sequence,
+        signature: hex_encode(&transition.signature),
+        has_transition_proof: transition.transition_proof.is_some(),
+    };
+
+    serde_wasm_bindgen::to_value(&view).map_err(|e| JsError::new(&e.to_string()))
+}
+
+// ============================================================================
+// Refactor 5 (new) — get_turn_trace
+//
+// Return the execution trace for a completed turn identified by its
+// turn_hash. The wasm runtime does not persist a full EffectVM trace
+// (no STARK proof generation in-browser) — the trace recorded by
+// `execute_turn_step_by_step` is ephemeral and not stored per-turn.
+//
+// What IS stored is the receipt + committed turn (call forest). This
+// binding surfaces the receipt's per-action effect log as a trace-step
+// list so `<pyana-trace>` can walk execution.
+//
+// Gap note: a full EffectVM trace (151-column AIR rows) is not available
+// from the sim runtime. What we surface is:
+//  - One step per action in the call forest
+//  - Each step has: action_path, target_cell, method (hex symbol),
+//    effects (Debug-printed), computrons_used (from receipt total)
+//
+// For a real node receipt with a WitnessedReceipt (scope-2) attached,
+// the full trace rows would be decoded from WitnessBundle::trace_rows.
+// ============================================================================
+
+/// Return trace steps for the committed turn identified by `turn_hash_hex`.
+/// If the turn is not found in the receipt chain, returns `null`.
+///
+/// Each step: `{ action_path: number[], target_cell: string, method: string,
+///   effects: string[], computrons_used: number, result: string }`.
+#[wasm_bindgen]
+pub fn get_turn_trace(handle: usize, turn_hash_hex: &str) -> Result<JsValue, JsError> {
+    with_runtime_ref(handle, |rt| {
+        let turn_hash = hex_decode_32(turn_hash_hex)?;
+
+        // Find the receipt (and parallel turn) by turn_hash.
+        let idx = rt.receipts.iter().position(|r| r.turn_hash == turn_hash);
+
+        let idx = match idx {
+            Some(i) => i,
+            None => {
+                return serde_wasm_bindgen::to_value(&serde_json::Value::Null)
+                    .map_err(|e| e.to_string());
+            }
+        };
+
+        let receipt = &rt.receipts[idx];
+        let turn = &rt.turns[idx];
+
+        // Build per-step trace from the call forest.
+        let steps = collect_trace_steps_from_forest(turn, receipt.computrons_used);
+
+        #[derive(Serialize)]
+        struct TurnTraceView {
+            turn_hash: String,
+            computrons_total: u64,
+            steps: Vec<TraceStep>,
+            /// Gap note: full EffectVM AIR trace rows are not available from
+            /// the sim runtime. Steps are derived from the stored call forest.
+            trace_gap_note: String,
+        }
+
+        let view = TurnTraceView {
+            turn_hash: hex_encode(&receipt.turn_hash),
+            computrons_total: receipt.computrons_used,
+            steps,
+            trace_gap_note: "sim-runtime: no STARK proof generated; steps derived from call forest. For full AIR trace, use a WitnessedReceipt scope-2 bundle from a real node.".to_string(),
+        };
+
+        serde_wasm_bindgen::to_value(&view).map_err(|e| e.to_string())
     })
 }
 
@@ -1562,6 +1726,730 @@ pub fn get_delegation_graph(handle: usize) -> Result<JsValue, JsError> {
         let graph = DelegationGraph { nodes, edges };
         serde_wasm_bindgen::to_value(&graph).map_err(|e| e.to_string())
     })
+}
+
+// ============================================================================
+// Protocol surface view types (Refactors 3, 6, 7)
+// ============================================================================
+//
+// These serde types are used by get_receipt_chain (Refactors 3+7) and
+// get_cell_state (Refactor 6). They are NOT exposed as #[wasm_bindgen]
+// types — they are serialized to JsValue via serde_wasm_bindgen.
+
+// ---------------------------------------------------------------------------
+// Refactor 3: per-action authorization views
+// ---------------------------------------------------------------------------
+
+/// Per-action view for receipt chain entries (Refactor 3).
+#[derive(Serialize)]
+pub struct ActionView {
+    pub target_cell: String,
+    /// Method symbol as 64-hex string (BLAKE3 of method name).
+    pub method: String,
+    /// Effects Debug-printed (v0 — full structured view in future refactor).
+    pub effects: Vec<String>,
+    /// Per-action authorization.
+    pub authorization: AuthorizationView,
+}
+
+/// Tagged-union view for Authorization (6 variants + Unchecked + OneOf).
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+pub enum AuthorizationView {
+    /// Ed25519 signature (r, s as hex).
+    Signature { r: String, s: String },
+    /// Zero-knowledge proof authorization.
+    Proof {
+        bound_action: String,
+        bound_resource: String,
+        proof_bytes_len: usize,
+    },
+    /// Capability token hash (breadstuff).
+    Breadstuff { token_hash: String },
+    /// Bearer capability proof.
+    Bearer {
+        target: String,
+        expires_at: u64,
+        delegation_kind: String,
+    },
+    /// No authorization (Unchecked / None).
+    Unchecked,
+    /// CapTP-delivered turn authorization (Stage 7 / P1.B).
+    CapTpDelivered {
+        introducer_pk: String,
+        sender_pk: String,
+        sender_signature: String,
+        /// Summary of the handoff certificate (full cert not surfaced for
+        /// render — too large; see the cert's signing_message fields).
+        handoff_cert_summary: HandoffCertSummary,
+    },
+    /// App-defined authorization via a WitnessedPredicate.
+    Custom {
+        predicate_kind: String,
+        commitment: String,
+        input_ref: String,
+        proof_witness_index: usize,
+    },
+    /// Disjunctive 1-of-N authorization.
+    OneOf {
+        num_candidates: usize,
+        proof_index: u32,
+    },
+}
+
+/// Summary fields from a HandoffCertificate for CapTpDelivered display.
+#[derive(Serialize)]
+pub struct HandoffCertSummary {
+    pub introducer_federation: String,
+    pub recipient_pk: String,
+    pub nonce: String,
+}
+
+fn authorization_to_view(auth: &Authorization) -> AuthorizationView {
+    match auth {
+        Authorization::Signature(r, s) => AuthorizationView::Signature {
+            r: hex_encode(r),
+            s: hex_encode(s),
+        },
+        Authorization::Proof {
+            bound_action,
+            bound_resource,
+            proof_bytes,
+        } => AuthorizationView::Proof {
+            bound_action: bound_action.clone(),
+            bound_resource: bound_resource.clone(),
+            proof_bytes_len: proof_bytes.len(),
+        },
+        Authorization::Breadstuff(hash) => AuthorizationView::Breadstuff {
+            token_hash: hex_encode(hash),
+        },
+        Authorization::Bearer(proof) => AuthorizationView::Bearer {
+            target: hex_encode(&proof.target.0),
+            expires_at: proof.expires_at,
+            delegation_kind: match &proof.delegation_proof {
+                pyana_turn::action::DelegationProofData::SignedDelegation { .. } => {
+                    "SignedDelegation".to_string()
+                }
+                pyana_turn::action::DelegationProofData::StarkDelegation { .. } => {
+                    "StarkDelegation".to_string()
+                }
+            },
+        },
+        Authorization::Unchecked => AuthorizationView::Unchecked,
+        Authorization::CapTpDelivered {
+            handoff_cert,
+            introducer_pk,
+            sender_pk,
+            sender_signature,
+        } => AuthorizationView::CapTpDelivered {
+            introducer_pk: hex_encode(introducer_pk),
+            sender_pk: hex_encode(sender_pk),
+            sender_signature: hex_encode(sender_signature),
+            handoff_cert_summary: HandoffCertSummary {
+                introducer_federation: hex_encode(&handoff_cert.introducer.0),
+                recipient_pk: hex_encode(&handoff_cert.recipient_pk),
+                nonce: hex_encode(&handoff_cert.nonce),
+            },
+        },
+        Authorization::Custom { predicate } => {
+            let kind_name = witnessed_predicate_kind_name(&predicate.kind);
+            let input_ref_name = input_ref_name(&predicate.input_ref);
+            AuthorizationView::Custom {
+                predicate_kind: kind_name,
+                commitment: hex_encode(&predicate.commitment),
+                input_ref: input_ref_name,
+                proof_witness_index: predicate.proof_witness_index,
+            }
+        }
+        Authorization::OneOf {
+            candidates,
+            proof_index,
+        } => AuthorizationView::OneOf {
+            num_candidates: candidates.len(),
+            proof_index: *proof_index,
+        },
+    }
+}
+
+fn witnessed_predicate_kind_name(kind: &WitnessedPredicateKind) -> String {
+    match kind {
+        WitnessedPredicateKind::Dfa => "Dfa".to_string(),
+        WitnessedPredicateKind::Temporal => "Temporal".to_string(),
+        WitnessedPredicateKind::MerkleMembership => "MerkleMembership".to_string(),
+        WitnessedPredicateKind::NonMembership => "NonMembership".to_string(),
+        WitnessedPredicateKind::BlindedSet => "BlindedSet".to_string(),
+        WitnessedPredicateKind::BridgePredicate => "BridgePredicate".to_string(),
+        WitnessedPredicateKind::PedersenEquality => "PedersenEquality".to_string(),
+        WitnessedPredicateKind::Custom { vk_hash } => {
+            format!("Custom({})", &hex_encode(vk_hash)[..8])
+        }
+    }
+}
+
+fn input_ref_name(ir: &InputRef) -> String {
+    match ir {
+        InputRef::Slot { index } => format!("Slot({index})"),
+        InputRef::Witness { index } => format!("Witness({index})"),
+        InputRef::PublicInput { pi_index } => format!("PublicInput({pi_index})"),
+        InputRef::Sender => "Sender".to_string(),
+        InputRef::SigningMessage => "SigningMessage".to_string(),
+    }
+}
+
+/// Walk a turn's call forest and collect ActionView for each action.
+fn collect_actions_from_forest(turn: &pyana_turn::Turn) -> Vec<ActionView> {
+    let mut out = Vec::new();
+    for tree in &turn.call_forest.roots {
+        collect_actions_from_tree(tree, &mut out);
+    }
+    out
+}
+
+fn collect_actions_from_tree(tree: &pyana_turn::forest::CallTree, out: &mut Vec<ActionView>) {
+    let action = &tree.action;
+    let effects: Vec<String> = action.effects.iter().map(|e| format!("{e:?}")).collect();
+    out.push(ActionView {
+        target_cell: hex_encode(&action.target.0),
+        method: hex_encode(&action.method),
+        effects,
+        authorization: authorization_to_view(&action.authorization),
+    });
+    for child in &tree.children {
+        collect_actions_from_tree(child, out);
+    }
+}
+
+/// Walk a turn's call forest and build TraceStep entries.
+fn collect_trace_steps_from_forest(
+    turn: &pyana_turn::Turn,
+    total_computrons: u64,
+) -> Vec<TraceStep> {
+    let mut out = Vec::new();
+    for (root_idx, tree) in turn.call_forest.roots.iter().enumerate() {
+        collect_trace_steps_from_tree(tree, &[root_idx], total_computrons, &mut out);
+    }
+    out
+}
+
+fn collect_trace_steps_from_tree(
+    tree: &pyana_turn::forest::CallTree,
+    path: &[usize],
+    total_computrons: u64,
+    out: &mut Vec<TraceStep>,
+) {
+    let action = &tree.action;
+    let effects: Vec<String> = action.effects.iter().map(|e| format!("{e:?}")).collect();
+    out.push(TraceStep {
+        action_path: path.to_vec(),
+        target_cell: hex_encode(&action.target.0),
+        method: hex_encode(&action.method),
+        effects,
+        result: "committed".to_string(),
+        computrons_used: total_computrons,
+    });
+    for (child_idx, child) in tree.children.iter().enumerate() {
+        let mut child_path = path.to_vec();
+        child_path.push(child_idx);
+        collect_trace_steps_from_tree(child, &child_path, total_computrons, out);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Refactor 7: per-receipt proof metadata view
+// ---------------------------------------------------------------------------
+
+/// Proof metadata view for a receipt (Refactor 7).
+///
+/// The wasm sim runtime does not generate STARK proofs — receipts are
+/// scope-0. When a WitnessedReceipt (scope-1/2) is available, ProofView
+/// would be populated with kind, public_inputs, and bilateral PI fields.
+#[derive(Serialize)]
+pub struct ProofView {
+    /// Proof system identifier (e.g. "stark-effect-vm", "plonky3-recursion").
+    pub kind: String,
+    /// Public inputs as hex strings (4-felt chunks encoded as 32 bytes each).
+    pub public_inputs: Vec<String>,
+    /// γ.2 bilateral PI (None when not a cross-cell receipt).
+    pub bilateral_pi: Option<BilateralPiView>,
+    /// True when this receipt's PI includes the IS_AGENT_CELL flag.
+    pub is_agent_cell: bool,
+    /// True when this receipt's PI includes the IS_SOVEREIGN_CELL flag.
+    pub is_sovereign_cell: bool,
+}
+
+/// γ.2 bilateral binding public inputs (Stage 7-γ.2).
+/// Surfaces outgoing/incoming Merkle accumulator roots for Transfer,
+/// Grant, and Introduce cross-cell effect families.
+#[derive(Serialize)]
+pub struct BilateralPiView {
+    pub outgoing_transfer_root: String,
+    pub outgoing_grant_root: String,
+    pub outgoing_introduce_root: String,
+    pub incoming_transfer_root: String,
+    pub incoming_grant_root: String,
+    pub incoming_introduce_root: String,
+}
+
+// ---------------------------------------------------------------------------
+// Refactor 6: cell program view types
+// ---------------------------------------------------------------------------
+
+/// Top-level view of a cell's program (Refactor 6).
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+pub enum CellProgramView {
+    /// No program — any authorized state change is valid.
+    None,
+    /// Predicate program: a list of slot-caveat constraints (implicit AND).
+    Predicate {
+        constraints: Vec<StateConstraintView>,
+    },
+    /// Cases program: operation-scoped cases with guards.
+    Cases { cases: Vec<TransitionCaseView> },
+    /// Circuit program: an AIR/R1CS circuit identified by its VK hash.
+    Circuit { circuit_hash: String },
+}
+
+/// Per-case view in a Cases program.
+#[derive(Serialize)]
+pub struct TransitionCaseView {
+    pub guard: TransitionGuardView,
+    pub constraints: Vec<StateConstraintView>,
+}
+
+/// TransitionGuard view.
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+pub enum TransitionGuardView {
+    Always,
+    MethodIs { method: String },
+    EffectKindIs { mask: u32 },
+    SlotChanged { index: u8 },
+    AnyOf { children: Vec<TransitionGuardView> },
+    AllOf { children: Vec<TransitionGuardView> },
+}
+
+/// Per-variant view for each StateConstraint (21+ variants).
+/// Uses a tagged-union shape so JS can switch on `kind`.
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+pub enum StateConstraintView {
+    FieldEquals {
+        index: u8,
+        value: String,
+    },
+    FieldGte {
+        index: u8,
+        value: String,
+    },
+    FieldLte {
+        index: u8,
+        value: String,
+    },
+    SumEquals {
+        indices: Vec<u8>,
+        value: String,
+    },
+    WriteOnce {
+        index: u8,
+    },
+    Immutable {
+        index: u8,
+    },
+    Monotonic {
+        index: u8,
+    },
+    StrictMonotonic {
+        index: u8,
+    },
+    BoundedBy {
+        index: u8,
+        witness_index: u8,
+    },
+    FieldDelta {
+        index: u8,
+        delta: String,
+    },
+    FieldDeltaInRange {
+        index: u8,
+        min_delta: String,
+        max_delta: String,
+    },
+    FieldGteHeight {
+        index: u8,
+        offset: i64,
+    },
+    FieldLteHeight {
+        index: u8,
+        offset: i64,
+    },
+    SumEqualsAcross {
+        input_fields: Vec<u8>,
+        output_fields: Vec<u8>,
+    },
+    SenderAuthorized {
+        set_kind: String,
+        commitment: String,
+    },
+    CapabilityUniqueness {
+        cap_set_root_slot: u8,
+    },
+    RateLimit {
+        max_per_epoch: u32,
+        epoch_duration: u64,
+    },
+    RateLimitBySum {
+        slot_index: u8,
+        max_sum_per_epoch: u64,
+        epoch_duration: u64,
+    },
+    TemporalGate {
+        not_before: Option<u64>,
+        not_after: Option<u64>,
+    },
+    PreimageGate {
+        commitment_index: u8,
+        hash_kind: String,
+    },
+    MonotonicSequence {
+        seq_index: u8,
+    },
+    AllowedTransitions {
+        slot_index: u8,
+        allowed: Vec<(String, String)>,
+    },
+    TemporalPredicate {
+        witness_index: u8,
+        dsl_hash: String,
+    },
+    BoundDelta {
+        local_slot: u8,
+        peer_cell: String,
+        peer_slot: u8,
+        delta_relation: String,
+    },
+    AnyOf {
+        variants: Vec<StateConstraintView>,
+    },
+    Witnessed {
+        predicate_kind: String,
+        commitment: String,
+        input_ref: String,
+        proof_witness_index: usize,
+    },
+    Renounced {
+        set_kind: String,
+        commitment: String,
+    },
+    Custom {
+        ir_hash: String,
+        descriptor_debug: String,
+    },
+}
+
+fn cell_program_to_view(program: &CellProgram) -> CellProgramView {
+    match program {
+        CellProgram::None => CellProgramView::None,
+        CellProgram::Predicate(constraints) => CellProgramView::Predicate {
+            constraints: constraints.iter().map(state_constraint_to_view).collect(),
+        },
+        CellProgram::Cases(cases) => CellProgramView::Cases {
+            cases: cases.iter().map(transition_case_to_view).collect(),
+        },
+        CellProgram::Circuit { circuit_hash } => CellProgramView::Circuit {
+            circuit_hash: hex_encode(circuit_hash),
+        },
+    }
+}
+
+fn transition_case_to_view(case: &TransitionCase) -> TransitionCaseView {
+    TransitionCaseView {
+        guard: transition_guard_to_view(&case.guard),
+        constraints: case
+            .constraints
+            .iter()
+            .map(state_constraint_to_view)
+            .collect(),
+    }
+}
+
+fn transition_guard_to_view(guard: &TransitionGuard) -> TransitionGuardView {
+    match guard {
+        TransitionGuard::Always => TransitionGuardView::Always,
+        TransitionGuard::MethodIs { method } => TransitionGuardView::MethodIs {
+            method: hex_encode(method),
+        },
+        TransitionGuard::EffectKindIs { mask } => TransitionGuardView::EffectKindIs { mask: *mask },
+        TransitionGuard::SlotChanged { index } => {
+            TransitionGuardView::SlotChanged { index: *index }
+        }
+        TransitionGuard::AnyOf(children) => TransitionGuardView::AnyOf {
+            children: children.iter().map(transition_guard_to_view).collect(),
+        },
+        TransitionGuard::AllOf(children) => TransitionGuardView::AllOf {
+            children: children.iter().map(transition_guard_to_view).collect(),
+        },
+    }
+}
+
+fn state_constraint_to_view(sc: &StateConstraint) -> StateConstraintView {
+    match sc {
+        StateConstraint::FieldEquals { index, value } => StateConstraintView::FieldEquals {
+            index: *index,
+            value: hex_encode(value),
+        },
+        StateConstraint::FieldGte { index, value } => StateConstraintView::FieldGte {
+            index: *index,
+            value: hex_encode(value),
+        },
+        StateConstraint::FieldLte { index, value } => StateConstraintView::FieldLte {
+            index: *index,
+            value: hex_encode(value),
+        },
+        StateConstraint::SumEquals { indices, value } => StateConstraintView::SumEquals {
+            indices: indices.clone(),
+            value: hex_encode(value),
+        },
+        StateConstraint::WriteOnce { index } => StateConstraintView::WriteOnce { index: *index },
+        StateConstraint::Immutable { index } => StateConstraintView::Immutable { index: *index },
+        StateConstraint::Monotonic { index } => StateConstraintView::Monotonic { index: *index },
+        StateConstraint::StrictMonotonic { index } => {
+            StateConstraintView::StrictMonotonic { index: *index }
+        }
+        StateConstraint::BoundedBy {
+            index,
+            witness_index,
+        } => StateConstraintView::BoundedBy {
+            index: *index,
+            witness_index: *witness_index,
+        },
+        StateConstraint::FieldDelta { index, delta } => StateConstraintView::FieldDelta {
+            index: *index,
+            delta: hex_encode(delta),
+        },
+        StateConstraint::FieldDeltaInRange {
+            index,
+            min_delta,
+            max_delta,
+        } => StateConstraintView::FieldDeltaInRange {
+            index: *index,
+            min_delta: hex_encode(min_delta),
+            max_delta: hex_encode(max_delta),
+        },
+        StateConstraint::FieldGteHeight { index, offset } => StateConstraintView::FieldGteHeight {
+            index: *index,
+            offset: *offset,
+        },
+        StateConstraint::FieldLteHeight { index, offset } => StateConstraintView::FieldLteHeight {
+            index: *index,
+            offset: *offset,
+        },
+        StateConstraint::SumEqualsAcross {
+            input_fields,
+            output_fields,
+        } => StateConstraintView::SumEqualsAcross {
+            input_fields: input_fields.clone(),
+            output_fields: output_fields.clone(),
+        },
+        StateConstraint::SenderAuthorized { set } => {
+            let (set_kind, commitment) = match set {
+                AuthorizedSet::PublicRoot { set_root_index } => (
+                    format!("PublicRoot(slot={set_root_index})"),
+                    "from_slot".to_string(),
+                ),
+                AuthorizedSet::BlindedSet { commitment } => {
+                    ("BlindedSet".to_string(), hex_encode(commitment))
+                }
+                AuthorizedSet::CredentialSet {
+                    issuer_cell,
+                    credential_schema_id,
+                } => (
+                    "CredentialSet".to_string(),
+                    format!(
+                        "issuer={} schema={}",
+                        &hex_encode(issuer_cell)[..8],
+                        &hex_encode(credential_schema_id)[..8]
+                    ),
+                ),
+            };
+            StateConstraintView::SenderAuthorized {
+                set_kind,
+                commitment,
+            }
+        }
+        StateConstraint::CapabilityUniqueness { cap_set_root_slot } => {
+            StateConstraintView::CapabilityUniqueness {
+                cap_set_root_slot: *cap_set_root_slot,
+            }
+        }
+        StateConstraint::RateLimit {
+            max_per_epoch,
+            epoch_duration,
+        } => StateConstraintView::RateLimit {
+            max_per_epoch: *max_per_epoch,
+            epoch_duration: *epoch_duration,
+        },
+        StateConstraint::RateLimitBySum {
+            slot_index,
+            max_sum_per_epoch,
+            epoch_duration,
+        } => StateConstraintView::RateLimitBySum {
+            slot_index: *slot_index,
+            max_sum_per_epoch: *max_sum_per_epoch,
+            epoch_duration: *epoch_duration,
+        },
+        StateConstraint::TemporalGate {
+            not_before,
+            not_after,
+        } => StateConstraintView::TemporalGate {
+            not_before: *not_before,
+            not_after: *not_after,
+        },
+        StateConstraint::PreimageGate {
+            commitment_index,
+            hash_kind,
+        } => StateConstraintView::PreimageGate {
+            commitment_index: *commitment_index,
+            hash_kind: match hash_kind {
+                HashKind::Poseidon2 => "Poseidon2".to_string(),
+                HashKind::Blake3 => "Blake3".to_string(),
+            },
+        },
+        StateConstraint::MonotonicSequence { seq_index } => {
+            StateConstraintView::MonotonicSequence {
+                seq_index: *seq_index,
+            }
+        }
+        StateConstraint::AllowedTransitions {
+            slot_index,
+            allowed,
+        } => StateConstraintView::AllowedTransitions {
+            slot_index: *slot_index,
+            allowed: allowed
+                .iter()
+                .map(|(old, new)| (hex_encode(old), hex_encode(new)))
+                .collect(),
+        },
+        StateConstraint::TemporalPredicate {
+            witness_index,
+            dsl_hash,
+        } => StateConstraintView::TemporalPredicate {
+            witness_index: *witness_index,
+            dsl_hash: hex_encode(dsl_hash),
+        },
+        StateConstraint::BoundDelta {
+            local_slot,
+            peer_cell,
+            peer_slot,
+            delta_relation,
+        } => StateConstraintView::BoundDelta {
+            local_slot: *local_slot,
+            peer_cell: hex_encode(&peer_cell.0),
+            peer_slot: *peer_slot,
+            delta_relation: format!("{delta_relation:?}"),
+        },
+        StateConstraint::AnyOf { variants } => {
+            // SimpleStateConstraint subset — project each to a StateConstraintView
+            // via the Debug representation for unsupported variants.
+            StateConstraintView::AnyOf {
+                variants: variants.iter().map(|v| simple_sc_to_view(v)).collect(),
+            }
+        }
+        StateConstraint::Witnessed { wp } => StateConstraintView::Witnessed {
+            predicate_kind: witnessed_predicate_kind_name(&wp.kind),
+            commitment: hex_encode(&wp.commitment),
+            input_ref: input_ref_name(&wp.input_ref),
+            proof_witness_index: wp.proof_witness_index,
+        },
+        StateConstraint::Renounced { set } => {
+            use pyana_cell::program::RenouncedSet;
+            let (set_kind, commitment) = match set {
+                RenouncedSet::PublicRoot { set_root_index } => (
+                    format!("PublicRoot(slot={set_root_index})"),
+                    "from_slot".to_string(),
+                ),
+                RenouncedSet::BlindedSet { commitment } => {
+                    ("BlindedSet".to_string(), hex_encode(commitment))
+                }
+            };
+            StateConstraintView::Renounced {
+                set_kind,
+                commitment,
+            }
+        }
+        StateConstraint::Custom {
+            ir_hash,
+            descriptor,
+            reads: _,
+        } => StateConstraintView::Custom {
+            ir_hash: hex_encode(ir_hash),
+            descriptor_debug: format!("{descriptor:?}"),
+        },
+    }
+}
+
+fn simple_sc_to_view(sc: &pyana_cell::program::SimpleStateConstraint) -> StateConstraintView {
+    use pyana_cell::program::SimpleStateConstraint;
+    match sc {
+        SimpleStateConstraint::FieldEquals { index, value } => StateConstraintView::FieldEquals {
+            index: *index,
+            value: hex_encode(value),
+        },
+        SimpleStateConstraint::FieldGte { index, value } => StateConstraintView::FieldGte {
+            index: *index,
+            value: hex_encode(value),
+        },
+        SimpleStateConstraint::FieldLte { index, value } => StateConstraintView::FieldLte {
+            index: *index,
+            value: hex_encode(value),
+        },
+        SimpleStateConstraint::WriteOnce { index } => {
+            StateConstraintView::WriteOnce { index: *index }
+        }
+        SimpleStateConstraint::Immutable { index } => {
+            StateConstraintView::Immutable { index: *index }
+        }
+        SimpleStateConstraint::Monotonic { index } => {
+            StateConstraintView::Monotonic { index: *index }
+        }
+        SimpleStateConstraint::StrictMonotonic { index } => {
+            StateConstraintView::StrictMonotonic { index: *index }
+        }
+        SimpleStateConstraint::BoundedBy {
+            index,
+            witness_index,
+        } => StateConstraintView::BoundedBy {
+            index: *index,
+            witness_index: *witness_index,
+        },
+        SimpleStateConstraint::FieldGteHeight { index, offset } => {
+            StateConstraintView::FieldGteHeight {
+                index: *index,
+                offset: *offset,
+            }
+        }
+        SimpleStateConstraint::FieldLteHeight { index, offset } => {
+            StateConstraintView::FieldLteHeight {
+                index: *index,
+                offset: *offset,
+            }
+        }
+        SimpleStateConstraint::TemporalGate {
+            not_before,
+            not_after,
+        } => StateConstraintView::TemporalGate {
+            not_before: *not_before,
+            not_after: *not_after,
+        },
+        SimpleStateConstraint::Not(inner) => {
+            // Project Not as a FieldEquals with special marker value
+            // (v0: Debug repr until we have a dedicated variant).
+            StateConstraintView::FieldEquals {
+                index: 255,
+                value: format!("Not({:?})", inner),
+            }
+        }
+    }
 }
 
 // ============================================================================

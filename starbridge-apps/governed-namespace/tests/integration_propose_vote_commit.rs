@@ -84,8 +84,7 @@ fn executor_propose_vote_commit_full_governance_cycle() {
     );
     // Event data[1] is the proposed_root (the commitment to the route table).
     assert_eq!(
-        propose_receipt.emitted_events[0].data[1],
-        proposed_root,
+        propose_receipt.emitted_events[0].data[1], proposed_root,
         "proposal-opened event must carry the proposed route-table commitment"
     );
 
@@ -103,7 +102,10 @@ fn executor_propose_vote_commit_full_governance_cycle() {
     let vote_a_receipt = executor
         .submit_action(&proposer, vote_a_action)
         .expect("proposer's vote must be accepted");
-    assert!(!vote_a_receipt.emitted_events.is_empty(), "vote must emit vote-cast event");
+    assert!(
+        !vote_a_receipt.emitted_events.is_empty(),
+        "vote must emit vote-cast event"
+    );
 
     // ── Step 3: Voter B votes approve (threshold met). ──────────────────────
     let after_vote_a_root = vote_a_receipt.emitted_events[0].data[0];
@@ -128,7 +130,7 @@ fn executor_propose_vote_commit_full_governance_cycle() {
         &proposer,
         namespace_cell,
         &new_table,
-        1,              // new_version = old(0) + 1
+        1, // new_version = old(0) + 1
         b"threshold-sig-placeholder".to_vec(),
         committee_root,
     );
@@ -151,8 +153,11 @@ fn executor_propose_vote_commit_full_governance_cycle() {
             // embedded runtime). The test documents the seam.
             let msg = e.to_string();
             assert!(
-                msg.contains("Custom") || msg.contains("verifier") || msg.contains("witness")
-                    || msg.contains("authorization") || msg.contains("predicate"),
+                msg.contains("Custom")
+                    || msg.contains("verifier")
+                    || msg.contains("witness")
+                    || msg.contains("authorization")
+                    || msg.contains("predicate"),
                 "rejection must be at the authorization/verifier boundary, got: {msg}"
             );
         }
@@ -176,7 +181,11 @@ fn executor_commit_version_plus_two_rejected_by_monotonic_sequence() {
 
     // Propose.
     let propose_action = build_propose_table_update_action(
-        &cipherclerk, namespace_cell, &new_table, 500, "health route",
+        &cipherclerk,
+        namespace_cell,
+        &new_table,
+        500,
+        "health route",
     );
     executor
         .submit_action(&cipherclerk, propose_action)
@@ -185,7 +194,11 @@ fn executor_commit_version_plus_two_rejected_by_monotonic_sequence() {
     // Vote.
     let vote_root = [0u8; 32]; // dummy — commit will fail on version before auth
     let vote_action = build_vote_on_proposal_action(
-        &cipherclerk, namespace_cell, vote_root, VoteKind::Approve, 1,
+        &cipherclerk,
+        namespace_cell,
+        vote_root,
+        VoteKind::Approve,
+        1,
     );
     executor
         .submit_action(&cipherclerk, vote_action)
@@ -224,9 +237,8 @@ fn executor_dispute_window_rollback_rejected_by_monotonic() {
     let table = build_route_table(&[("/a", RouteTarget::handler("a"))]);
 
     // First proposal at window = 500.
-    let propose1 = build_propose_table_update_action(
-        &cipherclerk, namespace_cell, &table, 500, "initial",
-    );
+    let propose1 =
+        build_propose_table_update_action(&cipherclerk, namespace_cell, &table, 500, "initial");
     executor
         .submit_action(&cipherclerk, propose1)
         .expect("first proposal must succeed");
@@ -234,7 +246,11 @@ fn executor_dispute_window_rollback_rejected_by_monotonic() {
     // Adversarial: second proposal tries to shrink dispute window to 100.
     let table2 = build_route_table(&[("/b", RouteTarget::handler("b"))]);
     let propose2 = build_propose_table_update_action(
-        &cipherclerk, namespace_cell, &table2, 100, "shrink window",
+        &cipherclerk,
+        namespace_cell,
+        &table2,
+        100,
+        "shrink window",
     );
     let result = executor.submit_action(&cipherclerk, propose2);
     assert!(
@@ -264,7 +280,10 @@ fn executor_register_service_emits_service_registered_event() {
         .expect("register_service must be accepted by executor");
 
     assert_eq!(receipt.action_count, 1);
-    assert!(!receipt.emitted_events.is_empty(), "register_service must emit service-registered event");
+    assert!(
+        !receipt.emitted_events.is_empty(),
+        "register_service must emit service-registered event"
+    );
 
     let ev = &receipt.emitted_events[0];
     // data[0] = blake3(path).
@@ -276,7 +295,8 @@ fn executor_register_service_emits_service_registered_event() {
 
     // data[1] = target_cell (as 32-byte field — the cell's bytes).
     assert_eq!(
-        ev.data[1], *target_cell.as_bytes(),
+        ev.data[1],
+        *target_cell.as_bytes(),
         "service-registered event must carry the target cell id"
     );
 }
@@ -297,12 +317,14 @@ fn executor_two_sequential_register_service_calls_both_accepted() {
     let target_a = CellId::from_bytes([0xAAu8; 32]);
     let target_b = CellId::from_bytes([0xBBu8; 32]);
 
-    let action_a = build_register_service_action(&cipherclerk, namespace_cell, "/service-a", target_a);
+    let action_a =
+        build_register_service_action(&cipherclerk, namespace_cell, "/service-a", target_a);
     executor
         .submit_action(&cipherclerk, action_a)
         .expect("first register_service must succeed");
 
-    let action_b = build_register_service_action(&cipherclerk, namespace_cell, "/service-b", target_b);
+    let action_b =
+        build_register_service_action(&cipherclerk, namespace_cell, "/service-b", target_b);
     let receipt_b = executor
         .submit_action(&cipherclerk, action_b)
         .expect("second register_service must succeed");
@@ -328,8 +350,8 @@ fn executor_two_sequential_register_service_calls_both_accepted() {
 fn governance_factory_descriptor_state_constraints_match_documented_invariants() {
     use pyana_cell::StateConstraint;
     use starbridge_governed_namespace::{
-        GOVERNANCE_COMMITTEE_ROOT_SLOT, THRESHOLD_SLOT,
-        DISPUTE_WINDOW_HEIGHT_SLOT, RESERVED_SLOT_6, RESERVED_SLOT_7,
+        DISPUTE_WINDOW_HEIGHT_SLOT, GOVERNANCE_COMMITTEE_ROOT_SLOT, RESERVED_SLOT_6,
+        RESERVED_SLOT_7, THRESHOLD_SLOT,
     };
 
     let d = governance_factory_descriptor();

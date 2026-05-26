@@ -115,22 +115,23 @@ pub(super) fn convert_turn_effects_to_vm(
                     // apply_effect (`apply.rs::QueueEnqueue`) reads the
                     // same slots, so the AIR projection and the runtime
                     // mutation agree by construction.
-                    let (queue_len, program_vk) =
-                        if let Some(queue_cell) = ledger.get(queue) {
-                            let qlen = u64::from_le_bytes(
-                                queue_cell.state.fields[1][..8].try_into().unwrap_or([0u8; 8]),
-                            ) as u32;
-                            // program_vk is fields[3] when programmable;
-                            // hash_to_bb folds 4 bytes into a felt. Zero
-                            // sentinel means "no attached program" — the
-                            // AIR's `program_vk != 0` gate is honored.
-                            let pvk = hash_to_bb(&queue_cell.state.fields[3]);
-                            (qlen, pvk)
-                        } else {
-                            // Queue cell missing — executor will reject; we
-                            // project sentinel so PI matching still aligns.
-                            (0, BabyBear::ZERO)
-                        };
+                    let (queue_len, program_vk) = if let Some(queue_cell) = ledger.get(queue) {
+                        let qlen = u64::from_le_bytes(
+                            queue_cell.state.fields[1][..8]
+                                .try_into()
+                                .unwrap_or([0u8; 8]),
+                        ) as u32;
+                        // program_vk is fields[3] when programmable;
+                        // hash_to_bb folds 4 bytes into a felt. Zero
+                        // sentinel means "no attached program" — the
+                        // AIR's `program_vk != 0` gate is honored.
+                        let pvk = hash_to_bb(&queue_cell.state.fields[3]);
+                        (qlen, pvk)
+                    } else {
+                        // Queue cell missing — executor will reject; we
+                        // project sentinel so PI matching still aligns.
+                        (0, BabyBear::ZERO)
+                    };
                     vm_effects.push(VmEffect::EnqueueMessage {
                         message_hash: hash_to_bb(message_hash),
                         deposit_amount: *deposit as u32,
@@ -760,7 +761,9 @@ pub(super) fn convert_turn_effects_to_vm(
                     let export_counter = ledger
                         .get(target)
                         .map(|c| {
-                            u32::from_le_bytes(c.state.fields[7][..4].try_into().unwrap_or([0u8; 4]))
+                            u32::from_le_bytes(
+                                c.state.fields[7][..4].try_into().unwrap_or([0u8; 4]),
+                            )
                         })
                         .unwrap_or(0);
                     vm_effects.push(VmEffect::ExportSturdyRef {
@@ -831,7 +834,9 @@ pub(super) fn convert_turn_effects_to_vm(
                     let current_refcount = ledger
                         .get(cell_id)
                         .map(|c| {
-                            u32::from_le_bytes(c.state.fields[5][..4].try_into().unwrap_or([0u8; 4]))
+                            u32::from_le_bytes(
+                                c.state.fields[5][..4].try_into().unwrap_or([0u8; 4]),
+                            )
                         })
                         .unwrap_or(0);
                     vm_effects.push(VmEffect::DropRef {
@@ -840,37 +845,34 @@ pub(super) fn convert_turn_effects_to_vm(
                         current_refcount,
                     });
                 }
-                Effect::ValidateHandoff { cert_hash } => {
+                Effect::ValidateHandoff {
+                    cert_hash,
+                    recipient_pk,
+                    introducer_pk,
+                } => {
                     // Project: AIR's ValidateHandoff proves
-                    // cert_hash ∈ approved_handoffs_root. P1.C
-                    // tightens to a real Merkle membership proof.
+                    // cert_hash ∈ approved_handoffs_root via 1-hop
+                    // Merkle membership. The PARAMs (cert_hash,
+                    // recipient_pk, introducer_pk) project directly
+                    // from the runtime variant — no executor synthesis.
                     //
-                    // CLOSED-DEFERRED block1-bind: recipient_pk and
-                    // introducer_pk both exit the minimal runtime
-                    // `ValidateHandoff { cert_hash }` variant — they
-                    // are recovered from the off-chain certificate at
-                    // federation-side verification. Closing this site
-                    // fully requires extending the runtime variant to
-                    // `ValidateHandoff { cert_hash, recipient_pk,
-                    // introducer_pk }`. The domain-tagged synthetic
-                    // derivation below is the current binding floor
-                    // (non-tautological per-call identity);
-                    // BLOCK1-BIND-CLOSURE-NOTES.md tracks the variant-
-                    // extension follow-up as
-                    // `ValidateHandoff-runtime-variant-extend`.
+                    // CLOSED block1-bind
+                    // (`ValidateHandoff-runtime-variant-extend`): both
+                    // public keys now exit the runtime variant
+                    // explicitly. The authorization gate
+                    // (`authorize.rs::verify_captp_delivered` post-
+                    // closure check) enforces that the effect-carried
+                    // keys match the action's cert; the AIR's leaf
+                    // `hash(cert_hash, hash(recipient_pk,
+                    // introducer_pk))` therefore binds to keys whose
+                    // cryptographic legitimacy is enforced at the
+                    // authorization layer.
+                    //
                     // `approved_set_root` is already federation-bound
                     // via PI[APPROVED_HANDOFFS_BASE].
                     let cert_bb = hash_to_bb(cert_hash);
-                    let mut rh = blake3::Hasher::new();
-                    rh.update(b"PYANA_HANDOFF_RECIPIENT/v1");
-                    rh.update(cert_hash);
-                    rh.update(cell_id.as_bytes());
-                    let recipient_pk_bb = hash_to_bb(rh.finalize().as_bytes());
-                    let mut ih = blake3::Hasher::new();
-                    ih.update(b"PYANA_HANDOFF_INTRODUCER/v1");
-                    ih.update(cert_hash);
-                    ih.update(cell_id.as_bytes());
-                    let introducer_pk_bb = hash_to_bb(ih.finalize().as_bytes());
+                    let recipient_pk_bb = hash_to_bb(recipient_pk);
+                    let introducer_pk_bb = hash_to_bb(introducer_pk);
                     // approved_set_root stays as ZERO here because
                     // the AIR-side param is matched against the
                     // verifier's PI[APPROVED_HANDOFFS_BASE] (see

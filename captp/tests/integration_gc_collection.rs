@@ -8,9 +8,7 @@
 //! - Multi-holder independence: only last holder triggers CanRevoke
 //! - Import side: multiple local holders; DropMessage sent only on final release
 
-use pyana_captp::{
-    DropResult, ExportGcManager, FederationId, ImportGcManager, SwissTable,
-};
+use pyana_captp::{DropResult, ExportGcManager, FederationId, ImportGcManager, SwissTable};
 use pyana_cell::AuthRequired;
 use pyana_types::CellId;
 
@@ -67,7 +65,9 @@ fn export_import_drop_sweep_stale_ref_fails() {
     assert!(swiss_table.revoke(&swiss));
 
     // Stale reference: B tries to use the same swiss number after revocation.
-    let err = swiss_table.enliven(&swiss, 200).expect_err("stale ref must fail");
+    let err = swiss_table
+        .enliven(&swiss, 200)
+        .expect_err("stale ref must fail");
     assert_eq!(err, pyana_captp::EnlivenError::NotFound);
 }
 
@@ -107,9 +107,18 @@ fn multi_holder_last_drop_triggers_can_revoke() {
     export_gc.record_export(cap, fed(0x03), 100);
     assert_eq!(export_gc.get(&cap).unwrap().total_refs, 3);
 
-    assert_eq!(export_gc.process_drop(cap, fed(0x01)), DropResult::StillHeld);
-    assert_eq!(export_gc.process_drop(cap, fed(0x02)), DropResult::StillHeld);
-    assert_eq!(export_gc.process_drop(cap, fed(0x03)), DropResult::CanRevoke);
+    assert_eq!(
+        export_gc.process_drop(cap, fed(0x01)),
+        DropResult::StillHeld
+    );
+    assert_eq!(
+        export_gc.process_drop(cap, fed(0x02)),
+        DropResult::StillHeld
+    );
+    assert_eq!(
+        export_gc.process_drop(cap, fed(0x03)),
+        DropResult::CanRevoke
+    );
 
     // Drop from an already-dropped federation → Invalid.
     assert_eq!(export_gc.process_drop(cap, fed(0x01)), DropResult::Invalid);

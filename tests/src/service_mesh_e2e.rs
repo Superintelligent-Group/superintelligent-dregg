@@ -392,9 +392,21 @@ fn test_governance_vote_updates_route_table() {
     assert_eq!(net_delta, Some(0), "governance should not change balance");
 
     // Verify the effects hash binds all three operations.
+    // Stage 1 PI layout: EFFECTS_HASH is at indices [8..12] (4 felts).
+    // Use EFFECTS_HASH_LO (index 8) and EFFECTS_HASH_HI (index 9) for the
+    // 2-felt legacy form — compute_effects_hash still returns (lo, hi) at
+    // positions 0 and 1 of the 4-felt block.
     let (expected_lo, expected_hi) = compute_effects_hash(&effects);
-    assert_eq!(public_inputs[4], expected_lo);
-    assert_eq!(public_inputs[5], expected_hi);
+    assert_eq!(
+        public_inputs[effect_vm::pi::EFFECTS_HASH_LO],
+        expected_lo,
+        "effects hash lo mismatch"
+    );
+    assert_eq!(
+        public_inputs[effect_vm::pi::EFFECTS_HASH_HI],
+        expected_hi,
+        "effects hash hi mismatch"
+    );
 
     // Prove all three effects in a single STARK.
     let proof = prove_effects(&initial_state, &effects);
@@ -402,15 +414,19 @@ fn test_governance_vote_updates_route_table() {
     assert!(!proof.query_proofs.is_empty());
 
     // Verify the state commitment changed.
+    // Stage 1 PI layout: OLD_COMMIT at [0..4], NEW_COMMIT at [4..8].
+    // Compare pi[OLD_COMMIT] vs pi[NEW_COMMIT] (position-0 of each 4-felt block).
     assert_ne!(
-        public_inputs[0], public_inputs[1],
+        public_inputs[effect_vm::pi::OLD_COMMIT],
+        public_inputs[effect_vm::pi::NEW_COMMIT],
         "governance should change state commitment"
     );
 
     // Tamper test: change one public input -> fails.
+    // Tamper NEW_COMMIT[0] (index 4) — the continuation binding felt.
     let air = EffectVmAir::new(proof.trace_len);
     let mut tampered_pi = public_inputs.clone();
-    tampered_pi[1] = BabyBear::new(0xBAD); // wrong new_commitment
+    tampered_pi[effect_vm::pi::NEW_COMMIT] = BabyBear::new(0xBAD); // wrong new_commitment
     let tampered_result = stark::verify(&air, &proof, &tampered_pi);
     assert!(
         tampered_result.is_err(),

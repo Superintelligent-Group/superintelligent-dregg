@@ -245,8 +245,22 @@ pub fn drop_ref_effect(ref_id: [u8; 32]) -> Effect {
 }
 
 /// Build the `Effect::ValidateHandoff` for a `PresentHandoff` wire message.
-pub fn validate_handoff_effect(cert_hash: [u8; 32]) -> Effect {
-    Effect::ValidateHandoff { cert_hash }
+///
+/// `recipient_pk` and `introducer_pk` MUST match the carried
+/// `HandoffCertificate`'s recipient pk and the introducer's federation pk,
+/// respectively. The executor's `verify_captp_delivered` rejects the action
+/// if the effect-carried keys diverge from the cert (block1-bind closure
+/// `ValidateHandoff-runtime-variant-extend`).
+pub fn validate_handoff_effect(
+    cert_hash: [u8; 32],
+    recipient_pk: [u8; 32],
+    introducer_pk: [u8; 32],
+) -> Effect {
+    Effect::ValidateHandoff {
+        cert_hash,
+        recipient_pk,
+        introducer_pk,
+    }
 }
 
 // Suppress the otherwise-unused-import lint for `CapabilityRef`. The type is
@@ -287,7 +301,7 @@ mod tests {
         ));
         assert!(matches!(drop_ref_effect([0u8; 32]), Effect::DropRef { .. }));
         assert!(matches!(
-            validate_handoff_effect([0u8; 32]),
+            validate_handoff_effect([0u8; 32], [1u8; 32], [2u8; 32]),
             Effect::ValidateHandoff { .. }
         ));
     }

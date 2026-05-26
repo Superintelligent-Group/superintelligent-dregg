@@ -297,8 +297,7 @@ fn test_validate_handoff_full_pipeline() {
     let mut ctx = EffectVmContext::default();
     ctx.actor_nonce = initial_state.nonce as u64;
     ctx.approved_handoffs_root[0] = approved_set_root;
-    let (trace, public_inputs) =
-        generate_effect_vm_trace_ext(&initial_state, &effects, ctx);
+    let (trace, public_inputs) = generate_effect_vm_trace_ext(&initial_state, &effects, ctx);
 
     // Verify the membership leaf in aux[0] and the chosen-parent in aux[6].
     //

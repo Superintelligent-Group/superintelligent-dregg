@@ -96,10 +96,10 @@ fn audit_77_wrong_prev_hash_is_rejected_strict() {
     let correct_prev = cclerk.receipt_head().unwrap().receipt_hash();
 
     // Build a second receipt with a deliberately wrong `previous_receipt_hash`.
-    let bogus_prev: [u8; 32] = [0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0,
-                                 0, 0, 0, 0, 0, 0, 0, 0,
-                                 0, 0, 0, 0, 0, 0, 0, 0,
-                                 0, 0, 0, 0, 0, 0, 0, 0];
+    let bogus_prev: [u8; 32] = [
+        0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ];
     assert_ne!(bogus_prev, correct_prev, "bogus must differ from correct");
 
     let r2 = common::mock_receipt_with_prev(cell, [2u8; 32], [3u8; 32], Some(bogus_prev));

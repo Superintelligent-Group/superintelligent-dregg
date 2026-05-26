@@ -100,14 +100,7 @@ fn attested_root_from_unknown_signer_rejected() {
     let fed = FederationId([2u8; 32]);
     let known_keys = vec![pk_known]; // stranger NOT in known_keys
 
-    let root = build_attested_root(
-        fed,
-        [99u8; 32],
-        5,
-        500,
-        &[(sk_stranger, pk_stranger)],
-        1,
-    );
+    let root = build_attested_root(fed, [99u8; 32], 5, 500, &[(sk_stranger, pk_stranger)], 1);
 
     assert!(
         !root.is_valid(&known_keys),
@@ -129,14 +122,7 @@ fn tampered_attested_root_rejected() {
     let fed = FederationId([3u8; 32]);
     let known_keys = vec![pk];
 
-    let mut root = build_attested_root(
-        fed,
-        [0xAAu8; 32],
-        20,
-        9_000_000,
-        &[(sk, pk)],
-        1,
-    );
+    let mut root = build_attested_root(fed, [0xAAu8; 32], 20, 9_000_000, &[(sk, pk)], 1);
 
     // Tamper with the merkle root AFTER signing.
     root.merkle_root[0] ^= 0xFF;
@@ -161,14 +147,7 @@ fn attested_root_federation_swap_rejected() {
     let fed_swapped = FederationId([0xBBu8; 32]);
     let known_keys = vec![pk];
 
-    let mut root = build_attested_root(
-        fed_real,
-        [1u8; 32],
-        7,
-        7_000,
-        &[(sk, pk)],
-        1,
-    );
+    let mut root = build_attested_root(fed_real, [1u8; 32], 7, 7_000, &[(sk, pk)], 1);
 
     // Attacker swaps the federation_id after signing.
     root.federation_id = fed_swapped;

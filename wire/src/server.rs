@@ -3034,7 +3034,16 @@ impl SiloServer {
                         let cert_hash: [u8; 32] = blake3::hash(&presentation_bytes).into();
                         let agent_cell = pyana_types::CellId(config.node_id);
                         let target_cell = acceptance.cell_id;
-                        let effect = captp_routing::validate_handoff_effect(cert_hash);
+                        // Block1-bind closure: ValidateHandoff carries the
+                        // cert's recipient/introducer pks explicitly so the
+                        // AIR PI binds the cryptographic identity, not a
+                        // synthetic derivation. The authorization gate
+                        // enforces equality with the carried cert.
+                        let effect = captp_routing::validate_handoff_effect(
+                            cert_hash,
+                            presentation.certificate.recipient_pk,
+                            introducer_pk,
+                        );
 
                         let turn = if let Some(sig) = delivery_signature {
                             // Cert-backed CapTpDelivered authorization closes the

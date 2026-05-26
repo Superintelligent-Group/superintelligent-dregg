@@ -588,8 +588,8 @@ impl TurnExecutor {
         // Sovereign cells own their own state commitments and manage their
         // own nonce through proof-carrying or witness-signed transitions;
         // the hosted executor must not silently mutate them.
-        let target_is_sovereign = ledger.is_sovereign(&action.target)
-            || ledger.is_sovereign_registered(&action.target);
+        let target_is_sovereign =
+            ledger.is_sovereign(&action.target) || ledger.is_sovereign_registered(&action.target);
         if !target_is_turn_agent && !target_is_sovereign && !explicit_target_nonce_bump {
             let target_program_is_none = ledger
                 .get(&action.target)

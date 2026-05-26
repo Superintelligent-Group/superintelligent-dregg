@@ -32,7 +32,9 @@ fn issue_use_revoke_use_fails() {
     assert!(table.contains(&swiss));
 
     // Use: succeeds, increments use_count
-    let entry = table.enliven(&swiss, 100).expect("first enliven must succeed");
+    let entry = table
+        .enliven(&swiss, 100)
+        .expect("first enliven must succeed");
     assert_eq!(entry.cell_id, c);
     assert_eq!(entry.use_count, 1);
 
@@ -41,7 +43,9 @@ fn issue_use_revoke_use_fails() {
     assert!(!table.contains(&swiss));
 
     // Use after revoke: NotFound
-    let err = table.enliven(&swiss, 101).expect_err("must fail after revoke");
+    let err = table
+        .enliven(&swiss, 101)
+        .expect_err("must fail after revoke");
     assert_eq!(err, pyana_captp::EnlivenError::NotFound);
 
     // Double-revoke returns false (idempotent)
@@ -103,8 +107,7 @@ fn max_uses_boundary() {
     let c = cell(0x11);
 
     // max_uses = 2
-    let swiss =
-        table.export_with_options(c, AuthRequired::Signature, 10, None, None, Some(2));
+    let swiss = table.export_with_options(c, AuthRequired::Signature, 10, None, None, Some(2));
 
     // First use: OK
     let e = table.enliven(&swiss, 100).unwrap();
@@ -115,7 +118,9 @@ fn max_uses_boundary() {
     assert_eq!(e.use_count, 2);
 
     // Third use: ExhaustedUses (over limit)
-    let err = table.enliven(&swiss, 102).expect_err("must fail at exhaustion");
+    let err = table
+        .enliven(&swiss, 102)
+        .expect_err("must fail at exhaustion");
     assert_eq!(err, pyana_captp::EnlivenError::ExhaustedUses);
 
     // Entry is still in the table (not automatically removed); explicit revoke removes it.

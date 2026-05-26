@@ -391,6 +391,45 @@ impl TurnExecutor {
             ));
         }
 
+        // 7. Block1-bind closure (BLOCK1-BIND-CLOSURE-NOTES.md
+        // `ValidateHandoff-runtime-variant-extend`): any
+        // `Effect::ValidateHandoff` carried in this action must declare
+        // the same `(recipient_pk, introducer_pk)` as the carrying
+        // CapTpDelivered cert. Without this check, the AIR's
+        // PI-bound `(recipient_pk, introducer_pk)` could carry forged
+        // values while the cert's keys (verified above) carry the real
+        // ones — the per-effect proof would then bind values that
+        // never matched the cryptographic origin.
+        for effect in &action.effects {
+            if let Effect::ValidateHandoff {
+                cert_hash: _,
+                recipient_pk: effect_recipient,
+                introducer_pk: effect_introducer,
+            } = effect
+            {
+                if effect_recipient != &handoff_cert.recipient_pk {
+                    return Err((
+                        TurnError::InvalidAuthorization {
+                            reason: "captp-delivered: Effect::ValidateHandoff.recipient_pk does \
+                                     not match cert.recipient_pk"
+                                .to_string(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+                if effect_introducer != introducer_pk {
+                    return Err((
+                        TurnError::InvalidAuthorization {
+                            reason: "captp-delivered: Effect::ValidateHandoff.introducer_pk does \
+                                     not match cert.introducer"
+                                .to_string(),
+                        },
+                        path.to_vec(),
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 

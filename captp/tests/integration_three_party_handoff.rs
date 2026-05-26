@@ -50,8 +50,8 @@ fn three_party_full_flow_alice_introduces_bob_to_carol() {
         bob_pk.0,
         AuthRequired::Signature,
         None,
-        None,         // no expiry
-        Some(3),      // up to 3 uses
+        None,    // no expiry
+        Some(3), // up to 3 uses
         swiss,
     );
 
@@ -222,8 +222,8 @@ fn cert_compact_string_roundtrip_still_validates() {
     // Simulate out-of-band transport: encode to compact string, then decode.
     let compact = cert.to_compact_string();
     assert!(compact.starts_with("pyana-handoff:"));
-    let decoded_cert = HandoffCertificate::from_compact_string(&compact)
-        .expect("compact string must deserialize");
+    let decoded_cert =
+        HandoffCertificate::from_compact_string(&compact).expect("compact string must deserialize");
 
     let presentation = HandoffPresentation::create(decoded_cert, &bob_sk);
     let known = vec![alice_fed];
@@ -277,7 +277,10 @@ fn handoff_followed_by_gc_lifecycle() {
     bob_import_gc.record_import(carol_fed, acceptance.cell_id);
 
     assert_eq!(
-        bob_import_gc.get(&carol_fed, &acceptance.cell_id).unwrap().local_refs,
+        bob_import_gc
+            .get(&carol_fed, &acceptance.cell_id)
+            .unwrap()
+            .local_refs,
         1
     );
 

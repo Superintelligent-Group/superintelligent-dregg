@@ -2515,9 +2515,9 @@ async fn post_resolve_conditional(
                         }
                     }
                     let turn_hash = hex_encode(&receipt.turn_hash);
-                    s.cclerk
-                .append_receipt(receipt)
-                .expect("local executor and cclerk chains must agree; divergence is a serious bug");
+                    s.cclerk.append_receipt(receipt).expect(
+                        "local executor and cclerk chains must agree; divergence is a serious bug",
+                    );
                     drop(s);
                     state.emit(NodeEvent::Receipt {
                         hash: turn_hash.clone(),

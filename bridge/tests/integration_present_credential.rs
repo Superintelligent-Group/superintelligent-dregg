@@ -49,8 +49,8 @@ fn fed_root() -> [u8; 32] {
 /// bridge/src/tests.rs). Required so `prove_fast()` can complete without a
 /// real federation tree.
 fn matching_root_bb(key: &[u8; 32]) -> pyana_circuit::BabyBear {
-    use pyana_circuit::merkle_air::MerkleAir;
     use pyana_circuit::BabyBear;
+    use pyana_circuit::merkle_air::MerkleAir;
 
     let issuer_hash = pyana_bridge::present::bytes_to_babybear(key);
     let depth = 8;

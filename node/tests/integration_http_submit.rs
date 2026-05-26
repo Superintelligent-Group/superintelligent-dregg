@@ -12,7 +12,9 @@
 
 use pyana_cell::{CellId, Ledger};
 use pyana_sdk::AgentCipherclerk;
-use pyana_turn::{CallForest, ComputronCosts, Turn, TurnExecutor, TurnResult, verify_receipt_chain};
+use pyana_turn::{
+    CallForest, ComputronCosts, Turn, TurnExecutor, TurnResult, verify_receipt_chain,
+};
 use zeroize::Zeroizing;
 
 // ---------------------------------------------------------------------------
@@ -70,7 +72,10 @@ fn valid_cleartext_turn_commits_and_has_was_encrypted_false() {
     match executor.execute(&turn, &mut ledger) {
         TurnResult::Committed { receipt, .. } => {
             assert_eq!(receipt.agent, agent);
-            assert!(!receipt.was_encrypted, "cleartext turn must have was_encrypted=false");
+            assert!(
+                !receipt.was_encrypted,
+                "cleartext turn must have was_encrypted=false"
+            );
         }
         other => panic!("expected Committed, got: {other:?}"),
     }
@@ -97,7 +102,9 @@ fn committed_receipts_appended_to_cclerk_chain_verify() {
     let t0 = make_turn(agent, 0, None);
     match executor.execute(&t0, &mut ledger) {
         TurnResult::Committed { receipt, .. } => {
-            cclerk.append_receipt(receipt).expect("genesis append must succeed");
+            cclerk
+                .append_receipt(receipt)
+                .expect("genesis append must succeed");
         }
         other => panic!("genesis turn must commit, got: {other:?}"),
     }
@@ -108,7 +115,9 @@ fn committed_receipts_appended_to_cclerk_chain_verify() {
         let t = make_turn(agent, nonce, prev);
         match executor.execute(&t, &mut ledger) {
             TurnResult::Committed { receipt, .. } => {
-                cclerk.append_receipt(receipt).expect("non-genesis append must succeed");
+                cclerk
+                    .append_receipt(receipt)
+                    .expect("non-genesis append must succeed");
             }
             other => panic!("turn nonce={nonce} must commit, got: {other:?}"),
         }
@@ -149,7 +158,10 @@ fn chain_links_correct_after_sequential_commits() {
     }
 
     let chain = cclerk.receipt_chain();
-    assert_eq!(chain[0].previous_receipt_hash, None, "genesis must have no predecessor");
+    assert_eq!(
+        chain[0].previous_receipt_hash, None,
+        "genesis must have no predecessor"
+    );
     for i in 1..chain.len() {
         assert_eq!(
             chain[i].previous_receipt_hash,
@@ -183,7 +195,11 @@ fn rejected_turn_does_not_append_to_chain() {
 
     // Second turn with valid_until in the past — should be rejected or expired.
     // The key insight: we only call append_receipt on Committed.
-    let mut t1 = make_turn(agent, 1, Some(cclerk.receipt_head().unwrap().receipt_hash()));
+    let mut t1 = make_turn(
+        agent,
+        1,
+        Some(cclerk.receipt_head().unwrap().receipt_hash()),
+    );
     t1.valid_until = Some(1); // Unix epoch 1 — always in the past.
     match executor.execute(&t1, &mut ledger) {
         TurnResult::Committed { receipt, .. } => {
