@@ -2694,7 +2694,19 @@ impl SiloServer {
                     // the wire here (CapHello only carries cell ids), so
                     // we use the cell_id bytes as a deterministic stub.
                     // The full handshake fills in the swiss properly.
-                    let effect = captp_routing::export_sturdy_ref_effect(*export_bytes, cell_id);
+                    //
+                    // Block1-bind closure (`ExportSturdyRef-permissions`):
+                    // initial-export defaults to `AuthRequired::None`
+                    // (CapHello carries no per-export permissions; the
+                    // peer cell decides on enliven). The apply site
+                    // gates this against the cell's own access tier,
+                    // so a cell whose access requires Signature/Proof
+                    // cannot be exported as None via this path.
+                    let effect = captp_routing::export_sturdy_ref_effect(
+                        *export_bytes,
+                        cell_id,
+                        pyana_cell::permissions::AuthRequired::None,
+                    );
                     let turn = captp_routing::build_captp_turn(agent_cell, cell_id, effect, 0);
                     captp.pending_captp_turns.push(turn);
                 }

@@ -471,6 +471,7 @@ fn all_effect_variants() -> Vec<Variant> {
             effect: Effect::ExportSturdyRef {
                 swiss_number: [0xCDu8; 32],
                 target: cell_b,
+                permissions: pyana_cell::permissions::AuthRequired::None,
             },
         },
         Variant {

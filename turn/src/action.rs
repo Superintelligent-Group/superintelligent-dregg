@@ -990,6 +990,14 @@ pub enum Effect {
     /// Export a cell as a sturdy reference (CapTP). The executor inserts a
     /// swiss-table entry, derives the swiss number, and bumps the cell's
     /// export counter (state.fields[7]).
+    ///
+    /// Block1-bind closure (BLOCK1-BIND-CLOSURE-NOTES.md
+    /// `ExportSturdyRef-permissions`): the exported permissions mask is
+    /// carried explicitly on the variant. The AIR's `EXPORT_PERMISSIONS`
+    /// PARAM projects from this field — no executor synthesis. The apply
+    /// site materialises the same `permissions` in the federation's
+    /// swiss-table mirror, so the AIR's PI binds the cryptographic
+    /// identity of the export rather than a placeholder constant.
     ExportSturdyRef {
         /// 32-byte unguessable swiss number (or seed; the on-chain effect
         /// commits to the exact swiss number used for routing).
@@ -997,6 +1005,13 @@ pub enum Effect {
         /// The cell being exported (the bearer of the sturdy ref talks to
         /// THIS cell when enlivening).
         target: CellId,
+        /// Authorization tier the bearer of the resulting sturdy ref
+        /// obtains on enliven. Bound into the AIR's PI via
+        /// `EXPORT_PERMISSIONS`; mirrored into the swiss-table entry at
+        /// apply time. A forged value diverges from the entry the
+        /// federation mirror records → subsequent `EnlivenRef` against
+        /// this swiss number surfaces a mismatch.
+        permissions: pyana_cell::permissions::AuthRequired,
     },
     /// Enliven a sturdy ref: validate a presented swiss number against the
     /// committed swiss-table state and grant a routing entry to `bearer`.
@@ -2108,10 +2123,25 @@ impl Effect {
             Effect::ExportSturdyRef {
                 swiss_number,
                 target,
+                permissions,
             } => {
                 hasher.update(&[43u8]);
                 hasher.update(swiss_number);
                 hasher.update(target.as_bytes());
+                // Bind the permissions tier (and Custom vk_hash) into the
+                // effects hash so a forged tier diverges from the real
+                // swiss-table entry's commitment.
+                match permissions {
+                    AuthRequired::None => { hasher.update(&[0u8]); }
+                    AuthRequired::Signature => { hasher.update(&[1u8]); }
+                    AuthRequired::Proof => { hasher.update(&[2u8]); }
+                    AuthRequired::Either => { hasher.update(&[3u8]); }
+                    AuthRequired::Impossible => { hasher.update(&[4u8]); }
+                    AuthRequired::Custom { vk_hash } => {
+                        hasher.update(&[5u8]);
+                        hasher.update(vk_hash);
+                    }
+                }
             }
             Effect::EnlivenRef {
                 swiss_number,
@@ -2365,7 +2395,7 @@ impl Effect {
                 32 + 32 + 8 + sinks.len() * 32 // pipeline_id + source + count + sinks
             }
             // CapTP runtime effects: small fixed-size blobs.
-            Effect::ExportSturdyRef { .. } => 32 + 32, // swiss + target
+            Effect::ExportSturdyRef { .. } => 32 + 32 + 33, // swiss + target + perms (1 byte + opt 32-byte vk_hash for Custom)
             Effect::EnlivenRef { .. } => 32 + 32,      // swiss + bearer
             Effect::DropRef { .. } => 32,              // ref_id
             Effect::ValidateHandoff { .. } => 32 + 32 + 32, // cert_hash + recipient_pk + introducer_pk

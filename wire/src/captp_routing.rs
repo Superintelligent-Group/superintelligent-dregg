@@ -224,10 +224,22 @@ pub fn build_captp_turn_delivered_from_parts(
 }
 
 /// Build the `Effect::ExportSturdyRef` for a CapHello-derived export.
-pub fn export_sturdy_ref_effect(swiss_number: [u8; 32], target: CellId) -> Effect {
+///
+/// `permissions` is the authorization tier the bearer of the resulting
+/// sturdy ref obtains on enliven (block1-bind closure
+/// `ExportSturdyRef-permissions`). The apply site rejects the effect if
+/// the declared tier is wider than the cell's access tier; the federation
+/// mirror records this same value when the post-commit hook materialises
+/// the swiss-table entry.
+pub fn export_sturdy_ref_effect(
+    swiss_number: [u8; 32],
+    target: CellId,
+    permissions: pyana_cell::permissions::AuthRequired,
+) -> Effect {
     Effect::ExportSturdyRef {
         swiss_number,
         target,
+        permissions,
     }
 }
 
@@ -292,7 +304,11 @@ mod tests {
     fn effect_builders_produce_expected_variants() {
         let cell = CellId::from_bytes([7u8; 32]);
         assert!(matches!(
-            export_sturdy_ref_effect([0u8; 32], cell),
+            export_sturdy_ref_effect(
+                [0u8; 32],
+                cell,
+                pyana_cell::permissions::AuthRequired::None
+            ),
             Effect::ExportSturdyRef { .. }
         ));
         assert!(matches!(

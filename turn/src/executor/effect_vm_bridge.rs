@@ -726,6 +726,7 @@ pub(super) fn convert_turn_effects_to_vm(
                 Effect::ExportSturdyRef {
                     swiss_number,
                     target,
+                    permissions,
                 } if target == cell_id => {
                     // Project: AIR's ExportSturdyRef proves
                     //   swiss = hash(cell_id, hash(random_seed, counter))
@@ -738,26 +739,27 @@ pub(super) fn convert_turn_effects_to_vm(
                     // bytes of swiss_number; the executor will set
                     // aux[0] to whatever the AIR-side derivation
                     // would compute — the AIR self-consistency check
-                    // is what's enforced. Permissions are not
-                    // carried by the runtime variant, so we use
-                    // ZERO (Stage 2 / P1.C tightens this to bind a
-                    // real permissions mask via the swiss table).
+                    // is what's enforced.
                     let cell_id_bb = hash_to_bb(target.as_bytes());
                     let random_seed_bb = hash_to_bb(swiss_number);
-                    // CLOSED-PARTIALLY block1-bind:
+                    // CLOSED block1-bind:
                     //   - `export_counter` now sourced from
                     //     `target.state.fields[7]` (low 4 bytes LE u32),
                     //     so the AIR's swiss derivation
                     //     `hash_2_to_1(cell_id, hash_2_to_1(random_seed,
                     //     counter))` is no longer tautological — a
                     //     prover cannot pick an arbitrary counter.
-                    //   - `permissions: ZERO` remains because the
-                    //     runtime `ExportSturdyRef { swiss_number,
-                    //     target }` variant does not carry the
-                    //     permissions mask. Closing this requires
-                    //     extending the runtime variant (carried in
-                    //     BLOCK1-BIND-CLOSURE-NOTES.md as
-                    //     `ExportSturdyRef-permissions`).
+                    //   - `permissions` now sourced from the runtime
+                    //     variant (`ExportSturdyRef-permissions`
+                    //     closure). The AIR's `EXPORT_PERMISSIONS`
+                    //     PARAM projects from this field; the apply
+                    //     site validates the declared tier is
+                    //     narrower-or-equal to the cell's access tier
+                    //     (so an exporter cannot fabricate authority
+                    //     beyond what the cell holds). The
+                    //     federation's swiss-table mirror records the
+                    //     same value, keeping AIR and runtime in
+                    //     lock-step.
                     let export_counter = ledger
                         .get(target)
                         .map(|c| {
@@ -766,9 +768,31 @@ pub(super) fn convert_turn_effects_to_vm(
                             )
                         })
                         .unwrap_or(0);
+                    // Encode the permissions tier into a BabyBear. The
+                    // tier-byte (per `cell::commitment::auth_byte`) is
+                    // the canonical discriminator; for `Custom` the
+                    // vk_hash byte stream is hashed into the field
+                    // element to preserve injectivity across distinct
+                    // `Custom` predicates.
+                    let permissions_bb = match permissions {
+                        pyana_cell::permissions::AuthRequired::None => BabyBear::new(0),
+                        pyana_cell::permissions::AuthRequired::Signature => BabyBear::new(1),
+                        pyana_cell::permissions::AuthRequired::Proof => BabyBear::new(2),
+                        pyana_cell::permissions::AuthRequired::Either => BabyBear::new(3),
+                        pyana_cell::permissions::AuthRequired::Impossible => BabyBear::new(4),
+                        pyana_cell::permissions::AuthRequired::Custom { vk_hash } => {
+                            // Fold the discriminant byte + vk_hash via
+                            // blake3 to a single felt. Two distinct
+                            // Custom predicates yield distinct values.
+                            let mut h = blake3::Hasher::new();
+                            h.update(&[5u8]);
+                            h.update(vk_hash);
+                            hash_to_bb(h.finalize().as_bytes())
+                        }
+                    };
                     vm_effects.push(VmEffect::ExportSturdyRef {
                         cell_id: cell_id_bb,
-                        permissions: BabyBear::ZERO,
+                        permissions: permissions_bb,
                         random_seed: random_seed_bb,
                         export_counter,
                     });

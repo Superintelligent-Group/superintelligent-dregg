@@ -2861,6 +2861,7 @@ impl TurnExecutor {
             Effect::ExportSturdyRef {
                 swiss_number,
                 target,
+                permissions,
             } => {
                 if target != action_target {
                     self.check_cross_cell_permission(
@@ -2871,6 +2872,37 @@ impl TurnExecutor {
                         "Delegate",
                         path,
                     )?;
+                }
+                // Block1-bind closure
+                // (`ExportSturdyRef-permissions`): the declared
+                // `permissions` must be narrower-or-equal to the cell's
+                // own permission tier for the chosen action class. A
+                // sturdy ref must NOT be able to grant authority the
+                // cell itself does not hold; without this gate, a
+                // caller could export `permissions: None` from a
+                // `Signature`-protected cell and the AIR would attest
+                // it. We check against the cell's `access` tier
+                // (catch-all). For `Custom`, equality is required —
+                // `Custom { vk_hash }` is incomparable with any other
+                // tier other than itself / Impossible / None per
+                // `AuthRequired::is_narrower_or_equal`.
+                {
+                    let cell_for_check = ledger.get(target).ok_or_else(|| {
+                        (TurnError::CellNotFound { id: *target }, path.to_vec())
+                    })?;
+                    let cell_tier = &cell_for_check.permissions.access;
+                    if !permissions.is_narrower_or_equal(cell_tier) {
+                        return Err((
+                            TurnError::InvalidEffect {
+                                reason: format!(
+                                    "ExportSturdyRef: declared permissions {permissions:?} is \
+                                     not narrower-or-equal to cell's access tier \
+                                     {cell_tier:?}"
+                                ),
+                            },
+                            path.to_vec(),
+                        ));
+                    }
                 }
                 let c = ledger
                     .get_mut(target)
@@ -2883,11 +2915,16 @@ impl TurnExecutor {
                 let new_counter = counter.saturating_add(1);
                 counter_bytes[..8].copy_from_slice(&new_counter.to_le_bytes());
                 c.state.fields[7] = counter_bytes;
-                // The swiss_number is bound into the receipt via the
-                // turn's effects_hash; the federation-level swiss table
-                // mirror is updated by the wire layer's post-commit
-                // hook (`process_introduction_exports`-style path).
+                // The swiss_number + permissions are bound into the
+                // receipt via the turn's effects_hash; the federation-
+                // level swiss table mirror is updated by the wire
+                // layer's post-commit hook
+                // (`process_introduction_exports`-style path), which
+                // uses the same `permissions` value the AIR projects
+                // into PI — so a forged variant value diverges from
+                // the federation mirror.
                 let _ = swiss_number;
+                let _ = permissions;
                 Ok(())
             }
 
