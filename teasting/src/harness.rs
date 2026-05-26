@@ -358,6 +358,33 @@ impl SimFederation {
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
+
+    /// Return all node signing keys sorted to match the canonical member order.
+    ///
+    /// `Federation::from_committee` sorts members lexicographically; the
+    /// per-node signing keys are originally inserted in node-index order.
+    /// This method pairs each node's private key with its corresponding
+    /// public key and re-orders by the canonical sorted pubkey order, so the
+    /// returned `(sk, pk)` pairs are in 1-to-1 correspondence with
+    /// `canonical.members()`.
+    ///
+    /// Used by `SimulationHarness::lift_turn_receipt` to collect
+    /// threshold-many correctly-attributed vote signatures.
+    pub fn all_signing_keys_canonical_order(&self) -> Vec<SigningKey> {
+        // Build (pubkey_bytes, signing_key) pairs in node-index order.
+        let mut pairs: Vec<([u8; 32], SigningKey)> = self
+            .nodes
+            .iter()
+            .map(|n| {
+                let sk = SigningKey::from_bytes(&n.signing_key.to_bytes());
+                let pk = sk.public_key();
+                (pk.0, sk)
+            })
+            .collect();
+        // Sort by pubkey bytes — same order as Federation::from_committee sorts.
+        pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
+        pairs.into_iter().map(|(_, sk)| sk).collect()
+    }
 }
 
 // =============================================================================
@@ -696,8 +723,163 @@ impl SimulationHarness {
     /// Add a new federation to the harness (for multi-federation scenarios).
     pub fn add_federation(&mut self, name: &str, num_nodes: usize) -> usize {
         let idx = self.federations.len();
-        self.federations.push(SimFederation::new(name, num_nodes));
+        let fed = SimFederation::new(name, num_nodes);
+        let mut kf = KnownFederations::new();
+        kf.register(Arc::new(fed.canonical.clone()));
+        self.federations.push(fed);
         self.federation_ids.push(Self::derive_federation_id(name));
+        self.known_federations.push(kf);
         idx
+    }
+
+    // =========================================================================
+    // Seam 6 — Receipt-lift and cross-federation verification helpers
+    // =========================================================================
+
+    /// Lift a `TurnReceipt` produced by this harness's executor into a
+    /// `FederationReceipt` signed by the given federation's committee seat.
+    ///
+    /// This is the "Turn → Federation" seam (Seam 6 from
+    /// `AUDIT-protocol-composition.md`): after the executor commits a turn, the
+    /// federation runs a (simulated) quorum sign and produces a typed receipt
+    /// that downstream federations can verify without re-executing.
+    ///
+    /// In the simulation harness we use the Ed25519 `Votes` flavor,
+    /// collecting exactly `threshold` signatures from the federation's node
+    /// keys (sorted in canonical member order). This satisfies the `Votes`
+    /// path threshold check in `FederationReceipt::verify`. In production a
+    /// multi-node aggregator collects individual votes from each member and
+    /// assembles the QC after quorum is reached. The receipt's `federation_id`
+    /// is derived from the harness's canonical committee so
+    /// `verify_cross_fed_receipt` can authenticate it.
+    ///
+    /// `block_id` can be any 32-byte identifier; in the harness we use the
+    /// current consensus height as the mock block.
+    pub fn lift_turn_receipt(
+        &self,
+        fed_idx: usize,
+        turn_receipt: &TurnReceipt,
+        nonce: u64,
+        block_height: u64,
+        block_id: [u8; 32],
+    ) -> FederationReceipt {
+        let fed = &self.federations[fed_idx];
+
+        // Build the body that commits to all executor-observable state.
+        let body = FederationReceiptBody {
+            turn_hash: turn_receipt.turn_hash,
+            block_height,
+            block_hash: block_id,
+            agent: turn_receipt.agent,
+            nonce,
+            pre_state_hash: turn_receipt.pre_state_hash,
+            post_state_hash: turn_receipt.post_state_hash,
+            effects_hash: turn_receipt.effects_hash,
+            previous_receipt_hash: turn_receipt.previous_receipt_hash,
+        };
+
+        let body_hash = body.body_hash();
+
+        // Collect threshold-many vote signatures from the federation's nodes.
+        //
+        // In the simulation harness all node signing keys are available
+        // in-memory. We gather exactly `threshold` signatures in canonical
+        // (sorted-by-pubkey) order — same order as `canonical.members()` —
+        // so each (pubkey, signature) pair in `votes` correctly attributes
+        // the signature to the right public key when `verify` iterates them.
+        // This reflects the production scenario where the aggregator waits
+        // for quorum before publishing the receipt.
+        let threshold = fed.canonical.threshold_usize();
+        let sorted_keys = fed.all_signing_keys_canonical_order();
+        let members = fed.canonical.members();
+        let mut votes: Vec<(FedPublicKey, pyana_types::Signature)> = Vec::new();
+        for (sk, pk) in sorted_keys.iter().zip(members.iter()) {
+            if votes.len() >= threshold {
+                break;
+            }
+            let sig = pyana_types::sign(sk, &body_hash);
+            votes.push((pk.clone(), sig));
+        }
+
+        FederationReceipt::with_vote_signatures(
+            fed.canonical.id_bytes(),
+            fed.canonical.epoch(),
+            body,
+            votes,
+        )
+    }
+
+    /// Submit a turn to the shared ledger and, if it commits, immediately lift
+    /// the `TurnReceipt` into a `FederationReceipt` attributed to `fed_idx`.
+    ///
+    /// Returns `(TurnResult, Option<FederationReceipt>)`. The `FederationReceipt`
+    /// is `Some` only when the turn committed.
+    pub fn submit_turn_with_lift(
+        &mut self,
+        turn: &Turn,
+        fed_idx: usize,
+    ) -> (TurnResult, Option<FederationReceipt>) {
+        let result = self.submit_turn(turn);
+        let block_height = self.clock.block_height;
+        // Use a deterministic mock block_id: H("mock-block" || height || fed_idx).
+        let block_id = {
+            let mut h = blake3::Hasher::new_derive_key("pyana-teasting-mock-block-id-v1");
+            h.update(&block_height.to_le_bytes());
+            h.update(&(fed_idx as u64).to_le_bytes());
+            *h.finalize().as_bytes()
+        };
+        let fed_receipt = match &result {
+            TurnResult::Committed { receipt, .. } => Some(self.lift_turn_receipt(
+                fed_idx,
+                receipt,
+                turn.nonce,
+                block_height,
+                block_id,
+            )),
+            _ => None,
+        };
+        (result, fed_receipt)
+    }
+
+    /// Register federation `src_idx` as a known peer in federation `dst_idx`'s
+    /// `KnownFederations` registry.
+    ///
+    /// After this call, `dst_idx` can authenticate `FederationReceipt`s
+    /// produced by `src_idx` via `verify_cross_fed_receipt`.
+    ///
+    /// This models the out-of-band federation-descriptor exchange that
+    /// `register-federation` performs in the live node (committee pubkeys,
+    /// epoch, threshold). The verifier-only entry uses the source federation's
+    /// real committee pubkeys and threshold so `FederationReceipt::verify` can
+    /// authenticate receipts produced by `lift_turn_receipt` (which collects
+    /// threshold-many votes from the source federation's node keys).
+    pub fn register_peer_federation(&mut self, src_idx: usize, dst_idx: usize) {
+        assert_ne!(src_idx, dst_idx, "cannot register a federation with itself");
+        let src_fed = &self.federations[src_idx];
+        let verifier_only = Arc::new(Federation::verifier_only(
+            src_fed.canonical.members().to_vec(),
+            src_fed.canonical.epoch(),
+            src_fed.canonical.threshold(),
+        ));
+        self.known_federations[dst_idx].register(verifier_only);
+    }
+
+    /// Verify a `FederationReceipt` claimed to have been produced by
+    /// `src_fed_idx`, as observed by `dst_fed_idx`.
+    ///
+    /// Returns `true` iff the receipt is authentic:
+    /// - `federation_id` in the receipt matches the registered src committee,
+    /// - epoch matches,
+    /// - at least one valid signature from a known src committee member.
+    ///
+    /// This is how F2 authenticates a receipt from F1 without re-executing
+    /// F1's turn: it trusts F1's committee pubkeys (registered out-of-band)
+    /// and verifies the Ed25519 vote signatures over the receipt body hash.
+    pub fn verify_cross_fed_receipt(
+        &self,
+        receipt: &FederationReceipt,
+        dst_fed_idx: usize,
+    ) -> bool {
+        self.known_federations[dst_fed_idx].verify_receipt(receipt)
     }
 }
