@@ -29,6 +29,10 @@ This map is for navigating the backend runtime without reading every crate.
 | Build a canonical app | `starbridge-apps/`, `app-framework/` |
 | Validate subsystem health | `preflight/`, `.config/nextest.toml` |
 
+For import-path guidance, see [api-surface.md](api-surface.md). Do not treat a
+module as a supported API only because it is `pub`; several public modules exist
+for crate composition, tests, or migration compatibility.
+
 ## Main Binary Surfaces
 
 - `dregg-cli` from `cli/` - user-facing command line.

@@ -10,6 +10,8 @@ older plans or one-off session notes when there is a conflict.
 - [runtime-map.md](runtime-map.md) - runtime layer map and developer entry
   points.
 - [crate-map.md](crate-map.md) - crate ownership and dependency-orientation map.
+- [api-surface.md](api-surface.md) - stable, internal, transitional, and
+  experimental API surfaces.
 - [flows/](flows/README.md) - turn, receipt, Effect VM, and Starbridge app
   walkthroughs grounded in code anchors.
 - [model/NEW-WORLD.md](model/NEW-WORLD.md) - current coherent story of dregg:
