@@ -185,15 +185,24 @@ pub fn run_check(name: &str, f: impl FnOnce() -> Result<(), String>) -> CheckRes
 fn classify_subsystem(name: &str) -> EvidenceLevel {
     match name {
         "Cell lifecycle" | "DFA Routing" | "StateConstraint surface" => EvidenceLevel::Real,
-        "Boot" | "Apps" | "Relay" | "CLI" | "Node" | "Demo-Agent Examples" => {
-            EvidenceLevel::Smoke
-        }
+        "Boot" | "Apps" | "Relay" | "CLI" | "Node" | "Demo-Agent Examples" => EvidenceLevel::Smoke,
         "Cross-backend" => EvidenceLevel::Conditional,
-        "Turn execution" | "Proofs" | "Effect VM" | "Privacy" | "Capabilities" | "Intents"
-        | "Composition" | "Federation" | "Blocklace" | "Factory & Sovereign" | "CapTP"
-        | "Storage" | "Nameservice" | "Wire Protocol" | "Solver" | "Bridges" => {
-            EvidenceLevel::Mixed
-        }
+        "Turn execution"
+        | "Proofs"
+        | "Effect VM"
+        | "Privacy"
+        | "Capabilities"
+        | "Intents"
+        | "Composition"
+        | "Federation"
+        | "Blocklace"
+        | "Factory & Sovereign"
+        | "CapTP"
+        | "Storage"
+        | "Nameservice"
+        | "Wire Protocol"
+        | "Solver"
+        | "Bridges" => EvidenceLevel::Mixed,
         _ => EvidenceLevel::Mixed,
     }
 }
