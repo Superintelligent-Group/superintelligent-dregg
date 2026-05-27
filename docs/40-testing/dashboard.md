@@ -11,7 +11,7 @@ command is subsystem evidence, and which gaps are still documentary only.
 | Dev check | `.\scripts\dev-check.ps1` | Docs links, package metadata, format, and a narrow compile check | Hygiene and compile smoke |
 | Fast tests | `.\scripts\test-fast.ps1` | Small deterministic unit-test smoke | Useful local regression signal |
 | Full tests | `.\scripts\test-full.ps1` | Broad local validation before a large branch handoff | Expensive workspace signal |
-| Preflight | `.\scripts\preflight.ps1` | Golden-master subsystem pass across the runtime stack | Highest intended local subsystem gate |
+| Preflight | `.\scripts\preflight.ps1` | Golden-master subsystem pass across the runtime stack | Highest intended local subsystem gate; interpret with [preflight-reality.md](preflight-reality.md) |
 | CI parity | `cargo check --workspace --all-targets`, `cargo test --workspace`, `cargo clippy --workspace -- -D warnings` | Matching current CI shape | Broad but not complete soundness proof |
 
 ## Current Evidence Map

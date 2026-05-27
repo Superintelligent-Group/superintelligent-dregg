@@ -20,6 +20,10 @@ Use [dashboard.md](dashboard.md) as the current command/evidence map. It names
 the supported local scripts, their evidence level, and the main gap areas that
 green output does not yet cover.
 
+Use [preflight-reality.md](preflight-reality.md) to interpret
+`dregg-preflight` subsystem results. It separates real checks from smoke,
+mixed, and feature-conditional coverage.
+
 ## Fast Local Checks
 
 Use narrow checks while iterating:

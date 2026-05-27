@@ -10,6 +10,22 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  repo-hygiene:
+    name: Repo Hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Markdown links
+        shell: pwsh
+        run: ./scripts/docs-check.ps1
+      - name: Package metadata
+        shell: pwsh
+        run: ./scripts/workspace-package-report.ps1
+
   check:
     name: Check
     runs-on: ubuntu-latest

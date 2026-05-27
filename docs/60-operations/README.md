@@ -71,6 +71,11 @@ It exercises boot, cells, turns, proofs, privacy, capabilities, intents, apps,
 composition, federation, blocklace, CapTP, storage, node, wire, bridges, and
 demo-agent examples.
 
+Interpret subsystem confidence through
+[../40-testing/preflight-reality.md](../40-testing/preflight-reality.md). A
+green preflight is a strong subsystem smoke signal, not automatic closure of
+every soundness or adversarial audit item.
+
 Use the Rust test harness form when you specifically want the per-subsystem test
 shape:
 
