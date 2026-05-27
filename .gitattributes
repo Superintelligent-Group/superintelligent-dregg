@@ -1,0 +1,6 @@
+# Keep shell scripts runnable from Bash even on Windows checkouts with
+# core.autocrlf=true.
+*.sh text eol=lf
+
+# PowerShell scripts are first-class Windows entry points.
+*.ps1 text eol=crlf
