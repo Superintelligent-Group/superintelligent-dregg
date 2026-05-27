@@ -2,6 +2,9 @@
 name = "dregg-cli"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "User-facing dregg command line for cells, turns, capabilities, proofs, federation, and node operations"
+readme = "README.md"
 
 [[bin]]
 name = "dregg"

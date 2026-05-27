@@ -1,7 +1,10 @@
 [package]
 name = "dregg-dsl"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Procedural macro DSL for declaring dregg caveats, effects, and constraint surfaces"
+readme = "README.md"
 
 [lib]
 proc-macro = true

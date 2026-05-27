@@ -1,101 +1,105 @@
-# `dregg` - Dragon's Egg
+# dregg - Dragon's Egg
 
-Dragon's Egg is my experiment in the metatheory of constructive knowledge, and a direct expression of my original impetus to build <https://rbg.systems>. Maybe Dragon's Egg will be a Robigalia userspace. In the meantime, here's what the LLMs have to say about it:
+Dragon's Egg is the backend runtime for a capability-secure, proof-carrying
+distributed agent fabric. The core model is:
 
-(end-of-human-text)
+- **Cells**: isolated objects with state, permissions, capabilities, predicates,
+  and optional proof-verification keys.
+- **Turns**: atomic call-forest transactions that apply effects and emit
+  receipts.
+- **Effect VM and circuits**: algebraic execution traces, predicate proofs, and
+  proof-tier typing.
+- **Federation and blocklace**: committee/state-root logic, DAG ordering, and
+  cross-federation receipts.
+- **CapTP and intents**: capability transport, handoff, store-and-forward, and
+  privacy-preserving intent discovery.
+- **SDK, CLI, node, and starbridge apps**: developer/runtime surfaces for using
+  the system.
 
-## The Model
+This is active research software and the core backend runtime for the larger
+company system. Treat canonical docs, tests, and code as a single contract:
+claims should be tied to real runtime behavior or clearly marked as active
+design, scaffold, or debt.
 
-`dregg` is a **unified fabric**: a shared blocklace (DAG) where groups form emergently through mutual acknowledgment. There are no fixed federations to join or leave. Nodes participate in strands; reference groups crystallize from repeated interaction. Your phone is a node. A cloud cluster is a node. The sovereignty spectrum is continuous.
+## Start Here
 
-Cells are isolated objects. Turns are atomic state transitions. The Effect VM proves each turn in a single STARK. CapTP sessions carry capability references across the fabric. Intents broadcast needs; ring trades solve them trustlessly.
+The documentation front door is [docs/README.md](docs/README.md).
 
-## Key Capabilities
+Recommended reading order:
 
-- **CapTP** -- Capability transport protocol. Sessions, sturdy refs, distributed GC, three-party handoff, store-and-forward.
-- **Programmable Queues** -- Merkle queues with attached DSL programs. Every enqueue/dequeue is proven in-circuit.
-- **DFA Routing** -- Governance-controlled route tables compiled to prefix-trie state machines. Constitutional amendments via threshold voting.
-- **Nameservice** -- Hierarchical names with rent-based anti-squatting, sub-delegation, cross-federation resolution.
-- **Intent Solving** -- Privacy-preserving marketplace. Commit-reveal frontrunning protection. Ring trades without a coordinator.
-- **Effect VM** -- Abstract instruction set proven per-turn in one STARK. Transfer, seal, factory, CapTP ops, queue ops, all in circuit.
+1. [docs/00-start-here/README.md](docs/00-start-here/README.md)
+2. [docs/10-canonical/README.md](docs/10-canonical/README.md)
+3. [docs/40-testing/README.md](docs/40-testing/README.md)
+4. [docs/50-apps-runtime/README.md](docs/50-apps-runtime/README.md)
+5. [docs/60-operations/README.md](docs/60-operations/README.md)
 
-## Quick Start
+For current debt and unfinished proof/runtime work, read
+[docs/10-canonical/debt/SILVER-DEBT.md](docs/10-canonical/debt/SILVER-DEBT.md).
+For current test honesty, read
+[docs/30-audits/tests/TEST-REALITY-AUDIT.md](docs/30-audits/tests/TEST-REALITY-AUDIT.md).
 
-```sh
-# Build
-git clone https://github.com/emberian/dregg && cd dregg
-cargo build
+## Quick Checks
 
-# Run a node
-cargo run -p dregg-node run
+Use narrow checks while iterating:
 
-# CLI interaction
-dregg cell list
-dregg cell create --name my-agent
-dregg cap grant <cell-id> --service storage --actions read,write
-dregg turn submit <turn-file>
-dregg namespace register alice --target <cell-id>
-dregg intent post --spec '{"service": "compute", "action": "execute"}'
-
-# Run the demo agent (full pipeline: token + STARK + turn)
-cargo run -p dregg-demo-agent
-
-# 4-node devnet
-cd docker && docker compose up
+```bash
+cargo check -p dregg-cli
+cargo check -p dregg-node
+cargo test -p dregg-turn --lib
 ```
 
-## Crate Overview
+Run the preflight subsystem gate deliberately:
 
-| Crate | Purpose |
-|-------|---------|
-| `circuit` | STARK prover/verifier, Effect VM AIR, 17+ specialized AIRs, IVC, Plonky3 |
-| `turn` | TurnExecutor: call forests, journal rollback, pipeline execution, queue programs |
-| `cell` | Isolated objects with c-lists, notes, programs, oblivious transfer |
-| `blocklace` | Shared DAG consensus. Content-addressed blocks, causal ordering, finality |
-| `captp` | Capability Transport Protocol: sessions, sturdy refs, handoff, distributed GC |
-| `federation` | Ed25519 BFT, state roots in blocks, epoch reconfig, LightClientProof |
-| `intent` | Gossip broadcast, local Datalog matching, commit-reveal, IT-PIR discovery |
-| `storage` | Programmable queues, relay operators, inboxes, erasure-coded availability |
-| `bridge` | Token-to-circuit pipeline, blinded membership, predicate proofs |
-| `cli` | User-facing CLI: cell, turn, cap, namespace, route, storage, cclerk commands |
-| `sdk` | AgentCipherclerk, AgentRuntime, HD keys, verification modes, IT-PIR client |
-| `node` | Federation daemon: HTTP API, MCP server (15+ tools), gossip sync |
-| `net` | Quinn QUIC, Plumtree gossip, topic-based dissemination |
-| `commit` | 4-ary Merkle trees (BLAKE3 fast / Poseidon2 ZK), fold deltas |
-| `token` | AuthToken: Macaroon HMAC-SHA256 + Biscuit Ed25519+Datalog |
-| `trace` | Datalog evaluator with derivation trace, deny-overrides-allow |
-| `coord` | Causal DAG, 2PC atomic commit, Stingray bounded counters |
-| `wire` | TCP postcard framing, STARK verification on receive |
-| `hints` | BLS12-381 threshold sigs via KZG + SNARK aggregate verification |
-| `store` | redb ACID persistence, note commitment tree, nullifier set |
-| `wasm` | Browser WASM bindings (43 exports, full simulation) |
-| `dregg-dsl` | Constraint DSL: `#[dregg_caveat]`, `#[dregg_effect]`, multi-backend |
-| `verification` | Typed composition checker for proof soundness |
-| `app-framework` | Shared patterns for building apps on the runtime |
-| `apps/*` | Stablecoin, AMM, orderbook, lending, identity, gallery, compute exchange, bounty board, nameservice, governed-namespace |
+```bash
+cargo run -p dregg-preflight
+```
 
-## Privacy Model
+Use the Docker devnet when you need a local federation:
 
-Three verification modes from the same Datalog rules:
+```bash
+./docker/start-devnet.sh
+```
 
-| Mode | Verifier Learns | Proof Size |
-|------|----------------|-----------|
-| Trusted | Full cleartext + trace | 0 |
-| Selective Disclosure | Chosen facts + conclusion | ~45 KB |
-| Fully Private | One bit (allow/deny) | ~80 KB |
+See [docker/README.md](docker/README.md) for ports, faucet, logs, and reset.
 
-All modes work offline. Proofs are post-quantum secure (BabyBear STARK + FRI).
+## Workspace Shape
 
-## Links
+The root Cargo workspace contains the core runtime crates, node, CLI, SDK,
+starbridge apps, protocol tests, and preflight harness. `chain/` and
+`chain/program/` are standalone workspaces excluded from the root workspace.
 
-- [Paper](https://dregg.dev/paper.html)
-- [Documentation](https://dregg.dev/docs/)
-- [Playground](https://dregg.dev/playground/)
-- [Explorer](https://dregg.dev/explorer/)
+Primary runtime crates:
 
-## Status: Experimental
+| Area | Crates / Paths |
+| --- | --- |
+| Core model | `cell/`, `turn/`, `types/`, `commit/`, `trace/` |
+| Proofs | `circuit/`, `verifier/`, `dregg-dsl/`, `dregg-dsl-runtime/` |
+| Federation/network | `federation/`, `blocklace/`, `node/`, `net/`, `wire/` |
+| Capability/intents/storage | `captp/`, `intent/`, `storage/`, `dregg-storage-templates/` |
+| Developer surfaces | `cli/`, `sdk/`, `app-framework/`, `wasm/`, `site/` |
+| Apps | `starbridge-apps/*` |
+| Tests/gates | `tests/`, `teasting/`, `protocol-tests/`, `preflight/` |
 
-Research software under active development. The proof system is real (Plonky3 STARKs with algebraic Poseidon2 constraints, 2000+ tests). The networking and consensus layers are functional but not battle-tested. Do not use for anything security-critical without independent audit.
+Legacy/research app crates under `apps/` are not the canonical app direction.
+Start with [starbridge-apps/README.md](starbridge-apps/README.md) and
+[docs/50-apps-runtime/README.md](docs/50-apps-runtime/README.md).
+
+## Documentation Classes
+
+- **Canonical**: current runtime truth.
+- **Active design**: intended or in-flight direction.
+- **Audit evidence**: specific evidence that may need freshness checks.
+- **Operations**: commands and environment constraints.
+- **History**: archaeology, not authority.
+
+When these conflict, prefer current code plus canonical docs plus real tests.
+
+## Status
+
+Experimental. The codebase contains real proof, receipt, federation, and runtime
+work, but some demos and adversarial tests are still scaffolded or intentionally
+ignored. Do not use this for security-critical production behavior without an
+independent audit and a current full-system verification pass.
 
 ## License
 

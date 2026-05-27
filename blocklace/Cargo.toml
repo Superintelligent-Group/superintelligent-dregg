@@ -7,6 +7,7 @@ authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
+readme = "README.md"
 description = "Blocklace: a DAG-based structure for BFT consensus with cordial dissemination"
 
 [dependencies]

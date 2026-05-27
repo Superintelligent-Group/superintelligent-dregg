@@ -5,6 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+description = "P2P networking and gossip transport primitives for dregg"
+readme = "README.md"
 
 [dependencies]
 dregg-types = { workspace = true }

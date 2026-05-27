@@ -2,6 +2,7 @@
 name = "starbridge-nameservice"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 description = "Starbridge userspace nameservice — FactoryDescriptors and turn helpers for federation name registration, resolution, and delegation."
 
 # Greenfield rebuild of `apps/nameservice/` following STARBRIDGE-APPS-PLAN.md

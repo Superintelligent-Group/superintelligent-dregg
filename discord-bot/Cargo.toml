@@ -2,6 +2,7 @@
 name = "dregg-discord-bot"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 description = "Discord bot for the dregg devnet — custodial AppCipherclerk handles, gallery, identity, presence attestation, CapTP, queues, governance, names"
 
 [dependencies]

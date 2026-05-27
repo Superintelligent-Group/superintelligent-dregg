@@ -2,17 +2,17 @@
 
 **Date:** 2026-05-24. **Status:** design (read-only on code; one new
 `.md` committed). **Companion docs:**
-[`AUDIT-distributed-semantics.md`](AUDIT-distributed-semantics.md),
-[`AUDIT-turn-executor.md`](AUDIT-turn-executor.md),
-[`AUDIT-federation.md`](AUDIT-federation.md),
-[`AUDIT-nullifiers.md`](AUDIT-nullifiers.md),
-[`AUDIT-protocol-composition.md`](AUDIT-protocol-composition.md),
-[`AUDIT-cclerk.md`](AUDIT-cclerk.md),
-[`AUDIT-node.md`](AUDIT-node.md),
+[`AUDIT-distributed-semantics.md`](../../../audits/AUDIT-distributed-semantics.md),
+[`AUDIT-turn-executor.md`](../../../audits/AUDIT-turn-executor.md),
+[`AUDIT-federation.md`](../../../audits/AUDIT-federation.md),
+[`AUDIT-nullifiers.md`](../../../audits/AUDIT-nullifiers.md),
+[`AUDIT-protocol-composition.md`](../../../audits/AUDIT-protocol-composition.md),
+[`AUDIT-cclerk.md`](../../../audits/AUDIT-wallet.md),
+[`AUDIT-node.md`](../../../audits/AUDIT-node.md),
 [`KIMCHI-SURVEY.md`](KIMCHI-SURVEY.md),
-[`STARBRIDGE-APPS-PLAN.md`](STARBRIDGE-APPS-PLAN.md),
-[`WITNESSED-RECEIPT-CHAIN-DESIGN.md`](WITNESSED-RECEIPT-CHAIN-DESIGN.md),
-[`demo/two-ai-handoff/`](demo/two-ai-handoff/).
+[`STARBRIDGE-APPS-PLAN.md`](../apps/STARBRIDGE-APPS-PLAN.md),
+[`WITNESSED-RECEIPT-CHAIN-DESIGN.md`](../../../docs-history/WITNESSED-RECEIPT-CHAIN-DESIGN.md),
+[`demo/two-ai-handoff/`](../../../demo/two-ai-handoff/).
 
 The Silver Vision (see `~/.claude/.../memory/project-silver-and-golden-visions.md`)
 is the *integration-complete* pre-algebraic state of dregg: every loop
@@ -306,7 +306,7 @@ delivery — but in steady state both sides exchange.)
 more, if seeded with genesis): each entry pairs R2 with the
 EffectVm STARK proof + public inputs + `WitnessBundle { pre_state,
 effects, context, secrets: [] }` per
-[`WITNESSED-RECEIPT-CHAIN-DESIGN.md`](WITNESSED-RECEIPT-CHAIN-DESIGN.md)
+[`WITNESSED-RECEIPT-CHAIN-DESIGN.md`](../../../docs-history/WITNESSED-RECEIPT-CHAIN-DESIGN.md)
 §2. Strategy A (in-line) — no encryption.
 
 5.1 — The export *additionally* carries:

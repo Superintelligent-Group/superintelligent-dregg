@@ -2,6 +2,7 @@
 name = "starbridge-subscription"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 description = "Starbridge userspace subscription — CapInbox-as-cell-program. The proof-of-pattern for STORAGE-AS-CELL-PROGRAMS.md §3.1: a publisher/consumer message queue whose invariants (monotonic head/tail, WriteOnce message slots, publisher/consumer SenderAuthorized sets) are baked into a FactoryDescriptor and enforced by the executor on every turn — not by an operator-side enforcement loop."
 
 # Greenfield rebuild of `apps/subscription/`'s storage-layer surface as

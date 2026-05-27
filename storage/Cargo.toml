@@ -1,8 +1,11 @@
 [package]
 name = "dregg-storage"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.94.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Storage queues, inboxes, relay primitives, and availability helpers for dregg"
+readme = "README.md"
 
 [features]
 default = []

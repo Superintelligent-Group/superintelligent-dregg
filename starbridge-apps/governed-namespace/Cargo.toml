@@ -2,6 +2,7 @@
 name = "starbridge-governed-namespace"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 description = "Starbridge userspace governed-namespace — DFA-routed governance app. Composes dregg-dfa (GovernedRouter, RouteTableBuilder, AIR-attestable accept/reject) with dregg-directory (named-cell registry) and per-slot caveats to land governance-bound atomic table swaps as a starbridge-app."
 
 # Greenfield rebuild of `apps/governed-namespace/` following

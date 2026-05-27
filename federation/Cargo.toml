@@ -2,6 +2,9 @@
 name = "dregg-federation"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "Federation committee, attested-root, threshold-signature, and consensus orchestration primitives"
+readme = "README.md"
 
 [dependencies]
 dregg-captp = { path = "../captp" }
