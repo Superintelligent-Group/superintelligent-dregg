@@ -2,6 +2,7 @@
 name = "dregg-discord-bot"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 description = "Discord bot for the dregg devnet — custodial AppCipherclerk handles, gallery, identity, presence attestation, CapTP, queues, governance, names"
 
 [dependencies]
@@ -14,7 +15,7 @@ serenity = { version = "0.12", default-features = false, features = [
     "client",
     "gateway",
     "model",
-    "rustls_backend",
+    "native_tls_backend",
     "cache",
 ] }
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }

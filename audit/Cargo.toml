@@ -2,6 +2,9 @@
 name = "dregg-audit"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "Audit helper crate for commitment and evidence utilities used by dregg audits"
+readme = "README.md"
 
 [dependencies]
 dregg-commit = { path = "../commit" }

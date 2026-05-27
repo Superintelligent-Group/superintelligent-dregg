@@ -2,6 +2,9 @@
 name = "dregg-demo-agent"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "Demo agent flows exercising cells, turns, proofs, and coordination"
+readme = "README.md"
 
 [dependencies]
 dregg-cell = { path = "../cell" }

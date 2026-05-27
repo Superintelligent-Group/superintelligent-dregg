@@ -2,6 +2,9 @@
 name = "dregg-captp"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "Capability transport primitives for sturdy refs, handoff certificates, pipelining, and CapTP URIs"
+readme = "README.md"
 
 [dependencies]
 blake3 = "1"

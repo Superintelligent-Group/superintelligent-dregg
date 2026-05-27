@@ -2,6 +2,9 @@
 name = "dregg-bridge"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "Bridge proof and presentation layer connecting token traces, commitments, and turn verification"
+readme = "README.md"
 
 [features]
 default = ["turn"]

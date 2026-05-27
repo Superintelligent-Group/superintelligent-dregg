@@ -2,6 +2,7 @@
 name = "dregg-sdk-consensus-demo"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "SDK-level end-to-end demo that bypasses MCP: federation consensus, attested roots, CapTP wire, direct turn execution, and HandoffCertificate-based cross-cell capability transfer."
 
 [dependencies]

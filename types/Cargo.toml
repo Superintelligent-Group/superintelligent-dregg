@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+readme = "README.md"
 description = "Canonical shared types for the dregg federation: PublicKey, Signature, AttestedRoot, etc."
 
 [dependencies]

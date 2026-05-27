@@ -2,6 +2,9 @@
 name = "dregg-commit"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+description = "Canonical commitment and Merkle helpers for dregg state, capability, and proof inputs"
+readme = "README.md"
 
 [dependencies]
 blake3 = "1"

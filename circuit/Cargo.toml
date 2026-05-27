@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+readme = "README.md"
 description = "Zero-knowledge proof circuits for dregg authorization token chains"
 
 [dependencies]

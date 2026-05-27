@@ -2,6 +2,8 @@
 name = "dregg-directory"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+readme = "README.md"
 description = "Dregg directory primitive — register/lookup/revoke/discover for named cells, lifted from rbg::directory and the nameservice / governed-namespace patterns (G32, G33)."
 
 # This crate is the promotion of `rbg::directory::DirectoryCell` +

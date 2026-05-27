@@ -414,19 +414,17 @@ impl AggregationOuterPi {
     /// Project to the flat outer-PI vector consumed by the AIR.
     pub fn to_vec(&self) -> Vec<BabyBear> {
         let mut pi = vec![BabyBear::ZERO; OUTER_BASE_COUNT];
-        for i in 0..OUTER_TURN_HASH_LEN {
-            pi[OUTER_TURN_HASH_BASE + i] = self.turn_hash[i];
-        }
-        for i in 0..OUTER_EFFECTS_HASH_GLOBAL_LEN {
-            pi[OUTER_EFFECTS_HASH_GLOBAL_BASE + i] = self.effects_hash_global[i];
-        }
+        pi[OUTER_TURN_HASH_BASE..OUTER_TURN_HASH_BASE + OUTER_TURN_HASH_LEN]
+            .copy_from_slice(&self.turn_hash[..OUTER_TURN_HASH_LEN]);
+        pi[OUTER_EFFECTS_HASH_GLOBAL_BASE
+            ..OUTER_EFFECTS_HASH_GLOBAL_BASE + OUTER_EFFECTS_HASH_GLOBAL_LEN]
+            .copy_from_slice(&self.effects_hash_global[..OUTER_EFFECTS_HASH_GLOBAL_LEN]);
         pi[OUTER_ACTOR_NONCE] = self.actor_nonce;
-        for i in 0..OUTER_PREVIOUS_RECEIPT_HASH_LEN {
-            pi[OUTER_PREVIOUS_RECEIPT_HASH_BASE + i] = self.previous_receipt_hash[i];
-        }
-        for i in 0..OUTER_AGENT_CELL_ID_LEN {
-            pi[OUTER_AGENT_CELL_ID_BASE + i] = self.agent_cell_id[i];
-        }
+        pi[OUTER_PREVIOUS_RECEIPT_HASH_BASE
+            ..OUTER_PREVIOUS_RECEIPT_HASH_BASE + OUTER_PREVIOUS_RECEIPT_HASH_LEN]
+            .copy_from_slice(&self.previous_receipt_hash[..OUTER_PREVIOUS_RECEIPT_HASH_LEN]);
+        pi[OUTER_AGENT_CELL_ID_BASE..OUTER_AGENT_CELL_ID_BASE + OUTER_AGENT_CELL_ID_LEN]
+            .copy_from_slice(&self.agent_cell_id[..OUTER_AGENT_CELL_ID_LEN]);
         pi[OUTER_N_CELLS] = BabyBear::new(self.n_cells);
         pi[OUTER_BILATERAL_CONSISTENT] = self.bilateral_consistent;
         pi
@@ -452,16 +450,12 @@ pub fn build_aggregation_trace(rows: &[AggregationInnerRow]) -> Vec<Vec<BabyBear
     for (i, row) in rows.iter().enumerate() {
         let mut t = vec![BabyBear::ZERO; AGG_WIDTH];
         assert_eq!(row.inner_pi.len(), inner_pi::BASE_COUNT);
-        for j in 0..inner_pi::BASE_COUNT {
-            t[PI_BUFFER_BASE + j] = row.inner_pi[j];
-        }
+        t[PI_BUFFER_BASE..PI_BUFFER_BASE + inner_pi::BASE_COUNT]
+            .copy_from_slice(&row.inner_pi[..inner_pi::BASE_COUNT]);
+        t[EXPECTED_COUNTS_BASE..EXPECTED_COUNTS_BASE + 7].copy_from_slice(&row.expected_counts);
         for k in 0..7 {
-            t[EXPECTED_COUNTS_BASE + k] = row.expected_counts[k];
-        }
-        for k in 0..7 {
-            for off in 0..4 {
-                t[EXPECTED_ROOTS_BASE + k * 4 + off] = row.expected_roots[k][off];
-            }
+            let base = EXPECTED_ROOTS_BASE + k * 4;
+            t[base..base + 4].copy_from_slice(&row.expected_roots[k]);
         }
 
         // Active row.

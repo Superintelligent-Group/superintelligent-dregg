@@ -15,6 +15,7 @@ use quote::{format_ident, quote};
 use crate::ir::{ConstraintIr, MutateOp, ParamType, RequirementKind, Statement};
 
 /// Column layout computed at macro time.
+#[allow(dead_code)]
 struct TraceLayout {
     /// Total number of columns.
     width: usize,
@@ -26,6 +27,7 @@ struct TraceLayout {
     aux_cols: Vec<AuxCol>,
 }
 
+#[allow(dead_code)]
 struct ParamLayout {
     name: String,
     start_col: usize,
@@ -35,6 +37,7 @@ struct ParamLayout {
 
 /// An auxiliary column assigned during constraint compilation.
 #[derive(Clone)]
+#[allow(dead_code)]
 enum AuxCol {
     /// Range check: diff_col and high_bit_col.
     RangeCheck { diff_col: usize, bit_col: usize },
@@ -282,7 +285,7 @@ fn emit_constraint_body(ir: &ConstraintIr, layout: &TraceLayout) -> TokenStream 
 
     // Compose: result = sum_i(alpha^i * c_i)
     let n = constraint_exprs.len();
-    let composed = if n == 1 {
+    if n == 1 {
         let c = &constraint_exprs[0];
         quote! {
             let c0 = #c;
@@ -302,9 +305,7 @@ fn emit_constraint_body(ir: &ConstraintIr, layout: &TraceLayout) -> TokenStream 
         }
         stmts.push(quote! { result });
         quote! { #(#stmts)* }
-    };
-
-    composed
+    }
 }
 
 fn emit_constraints_from_statements(
@@ -589,8 +590,7 @@ fn emit_boundary_body(ir: &ConstraintIr, layout: &TraceLayout) -> TokenStream {
         } else {
             // Skip Set/ByteArray32 for now (only bind u64 params).
             let is_bindable = ir.params.iter().any(|ip| {
-                ip.name.to_string() == p.name
-                    && matches!(ip.ty, ParamType::U64 | ParamType::UserDefined(_))
+                ip.name == p.name && matches!(ip.ty, ParamType::U64 | ParamType::UserDefined(_))
             });
             if is_bindable {
                 let col = p.start_col;

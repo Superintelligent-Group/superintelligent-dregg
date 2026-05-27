@@ -13,6 +13,7 @@ paper/*.pdf
 pdfs/
 
 target
+target-clippy*
 node_modules
 __pycache__
 

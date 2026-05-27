@@ -1,7 +1,9 @@
 [package]
 name = "dregg-storage-templates"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+readme = "README.md"
 description = "Cell-program reference templates for the storage primitives migrated per STORAGE-AS-CELL-PROGRAMS.md (§3.2–§3.5). One FactoryDescriptor + operation-scoped CellProgram::Cases per primitive — CapInbox, ProgrammableQueue, PubSubTopic, BlindedQueue, RelayOperator — exported as canonical `<name>_factory_descriptor()` functions. Mirrors `starbridge-apps/subscription/` (the proof-of-pattern for §3.1) and retires the operator-side `dregg_storage::{programmable, inbox, pubsub, blinded, operator, relay}` enforcement loop."
 
 # Per STORAGE-AS-CELL-PROGRAMS.md the storage primitives are not new

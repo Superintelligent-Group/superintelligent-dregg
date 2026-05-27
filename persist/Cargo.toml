@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+readme = "README.md"
 description = "Persistent storage backend for dregg token chains, federation state, and audit logs"
 
 [features]

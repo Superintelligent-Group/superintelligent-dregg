@@ -1,0 +1,9 @@
+[advisories]
+ignore = [
+    # RUSTSEC-2025-0055: pulled transitively by ark-relations 0.5.1 through
+    # the dregg-hints arkworks 0.5 stack. The runtime does not directly use
+    # this tracing-subscriber 0.2 logging surface. The durable fix is an
+    # arkworks 0.6 migration or a no-std ark feature split; tracked in
+    # docs/30-audits/security-audit-baseline.md.
+    "RUSTSEC-2025-0055",
+]
