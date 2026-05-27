@@ -24,4 +24,5 @@ cargo run -p dregg-preflight
 Use [../docs/40-testing/preflight-reality.md](../docs/40-testing/preflight-reality.md)
 to interpret subsystem results. Preflight is the broad local promotion gate, but
 some subsystems are smoke or mixed evidence rather than full adversarial
-soundness proof.
+soundness proof. The binary prints this beside each subsystem as `[real]`,
+`[mixed]`, `[smoke]`, or `[conditional]`.

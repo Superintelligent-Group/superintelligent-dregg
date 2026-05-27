@@ -3,6 +3,30 @@
 use std::fmt;
 use std::time::{Duration, Instant};
 
+/// Evidence level for a preflight subsystem.
+///
+/// This is intentionally coarse. The goal is to keep preflight output honest:
+/// a green smoke check and a green verifier-facing adversarial check should not
+/// look identical to operators.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EvidenceLevel {
+    Real,
+    Mixed,
+    Smoke,
+    Conditional,
+}
+
+impl EvidenceLevel {
+    pub fn label(self) -> &'static str {
+        match self {
+            EvidenceLevel::Real => "real",
+            EvidenceLevel::Mixed => "mixed",
+            EvidenceLevel::Smoke => "smoke",
+            EvidenceLevel::Conditional => "conditional",
+        }
+    }
+}
+
 /// Result of a single check within a subsystem.
 #[derive(Clone, Debug)]
 pub struct CheckResult {
@@ -17,6 +41,7 @@ pub struct CheckResult {
 #[derive(Clone, Debug)]
 pub struct SubsystemResult {
     pub name: String,
+    pub evidence_level: EvidenceLevel,
     pub checks: Vec<CheckResult>,
 }
 
@@ -74,9 +99,10 @@ impl fmt::Display for PreflightReport {
             };
             writeln!(
                 f,
-                "{} {}: {} ({}/{})",
+                "{} {} [{}]: {} ({}/{})",
                 icon,
                 subsystem.name,
+                subsystem.evidence_level.label(),
                 subsystem.check_names(),
                 subsystem.passed_count(),
                 subsystem.total_count(),
@@ -156,10 +182,27 @@ pub fn run_check(name: &str, f: impl FnOnce() -> Result<(), String>) -> CheckRes
     }
 }
 
+fn classify_subsystem(name: &str) -> EvidenceLevel {
+    match name {
+        "Cell lifecycle" | "DFA Routing" | "StateConstraint surface" => EvidenceLevel::Real,
+        "Boot" | "Apps" | "Relay" | "CLI" | "Node" | "Demo-Agent Examples" => {
+            EvidenceLevel::Smoke
+        }
+        "Cross-backend" => EvidenceLevel::Conditional,
+        "Turn execution" | "Proofs" | "Effect VM" | "Privacy" | "Capabilities" | "Intents"
+        | "Composition" | "Federation" | "Blocklace" | "Factory & Sovereign" | "CapTP"
+        | "Storage" | "Nameservice" | "Wire Protocol" | "Solver" | "Bridges" => {
+            EvidenceLevel::Mixed
+        }
+        _ => EvidenceLevel::Mixed,
+    }
+}
+
 /// Run a subsystem by name with a list of checks.
 pub fn run_subsystem(name: &str, checks: Vec<CheckResult>) -> SubsystemResult {
     SubsystemResult {
         name: name.to_string(),
+        evidence_level: classify_subsystem(name),
         checks,
     }
 }

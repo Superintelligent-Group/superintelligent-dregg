@@ -4,6 +4,9 @@
 its meaning explicit: a passing preflight is a broad subsystem smoke signal, not
 a blanket proof that every protocol claim is fully enforced.
 
+The binary output prints the same coarse labels beside each subsystem:
+`[real]`, `[mixed]`, `[smoke]`, or `[conditional]`.
+
 ## Status Legend
 
 | Status | Meaning |
@@ -47,9 +50,9 @@ a blanket proof that every protocol claim is fully enforced.
 ## Operating Rule
 
 When a preflight subsystem moves from smoke to real evidence, update this page
-in the same change. When a check is scaffolded, skipped by feature gates, slow,
-or external-environment-dependent, keep that visible here instead of relying on
-tribal memory.
+and `preflight/src/report.rs` in the same change. When a check is scaffolded,
+skipped by feature gates, slow, or external-environment-dependent, keep that
+visible here instead of relying on tribal memory.
 
 ## Code Anchors
 
