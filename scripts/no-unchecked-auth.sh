@@ -87,6 +87,15 @@ ALLOWLIST_FILE_PATTERNS=(
     # plumbing demos against the in-memory engine. Tracked as a follow-up
     # migration alongside the other demo-agent examples.
     "demo/sdk-consensus/src/main.rs"
+    # Two-AI handoff demo: a local scripted scenario that still uses legacy
+    # scaffolded actions while exercising the handoff flow.
+    "demo/two-ai-handoff"
+    # Observability event tour: deliberately emits one payload for every
+    # Authorization variant so Studio can inspect the JSON wire shape.
+    "observability/src/main.rs"
+    # Atomic executor unit tests live inside the production source file behind
+    # #[cfg(test)] rather than under tests/.
+    "turn/src/executor/atomic.rs"
 )
 
 ROOT="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -105,6 +114,8 @@ files=($(git ls-files '*.rs' 2>/dev/null || find . -name '*.rs' -type f))
 for file in "${files[@]}"; do
     # Skip test-shaped paths.
     case "$file" in
+        tests/*) continue ;;
+        test/*) continue ;;
         */tests/*) continue ;;
         */test/*) continue ;;
     esac
@@ -140,6 +151,12 @@ for file in "${files[@]}"; do
         # Skip match arms.
         case "$trimmed" in
             *"$NEEDLE"*"=>"*) continue ;;
+        esac
+        # Skip defensive/bridging inspections. This permits code to detect the
+        # variant so it can reject, rewrite, or surface it without permitting
+        # new construction sites.
+        case "$line" in
+            *"matches!("*"$NEEDLE"*) continue ;;
         esac
         # Skip the enum variant definition (just the identifier with
         # nothing on either side beyond punctuation).
